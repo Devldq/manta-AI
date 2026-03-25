@@ -1,0 +1,64 @@
+name: "标准前端开发流"
+id: "dev-standard"
+description: "需求 → 架构方案 → 人工审批 → 开发 → QA+Review 并行 → 打分"
+steps:
+  - id: architecting
+    agent: architect
+    name: "拆解需求 · 编写前端技术方案"
+    inputs:
+      - requirement_doc
+      - backend_design
+      - repos
+    outputs:
+      - frontend_design
+    next: pending_approval
+
+  - id: pending_approval
+    agent: you
+    name: "审批前端技术方案"
+    type: human_in_loop
+    actions:
+      approve: developing
+      reject: architecting
+    notify: mac_notification
+
+  - id: developing
+    agent: dev
+    name: "功能开发"
+    inputs:
+      - frontend_design
+    next: parallel_review
+
+  - id: parallel_review
+    parallel: true
+    branches:
+      - agent: qa
+        name: "测试检查"
+        inputs:
+          - requirement_doc
+          - backend_design
+      - agent: review
+        name: "代码评审"
+        inputs:
+          - frontend_design
+    after_all: pending_score
+
+  - id: pending_score
+    agent: you
+    name: "打分评价"
+    type: human_in_loop
+    notify: mac_notification
+
+notifications:
+  on_pending_approval:
+    type: mac
+    message: "架构方案待审批：{task.title}"
+  on_pending_score:
+    type: mac
+    message: "QA报告+CR报告已生成，待打分：{task.title}"
+  on_agent_can_clone:
+    type: mac
+    message: "{agent.name} 生命值达到90分，可以复制啦！"
+  on_agent_banned:
+    type: mac
+    message: "{agent.name} 生命值归零，已封禁，系统正在生成替代 Agent"
