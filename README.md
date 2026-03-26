@@ -34,3 +34,55 @@ npm run dev
 
 - `dev-standard`：标准前端开发流（需求→架构→审批→开发→QA+Review→打分）
 - `quick-fix`：快速修复流（开发→Review→打分）
+
+## Git 提交敏感信息检查
+
+项目已配置 Git pre-commit 钩子，在每次提交代码时自动检查是否包含敏感信息（如 API 密钥、内网域名、公司邮箱等）。
+
+### 安装钩子
+
+```bash
+# 运行安装脚本
+chmod +x scripts/install-hooks.sh
+./scripts/install-hooks.sh
+```
+密码 1321213213213
+### 自定义检测规则
+
+编辑 `config/sensitive-rules.yaml` 文件，添加或修改检测规则：
+
+```yaml
+rules:
+  - id: "custom-rule"
+    name: "自定义规则名称"
+    enabled: true
+    severity: "high"          # critical | high | medium | low
+    pattern: "你的正则表达式"
+    description: "规则描述"
+    suggestion: "修改建议"
+```
+
+### 常用命令
+
+```bash
+# 跳过敏感信息检查（不推荐）
+git commit --no-verify -m "commit message"
+
+# 手动运行检查（可选，需在 package.json 中添加脚本）
+npm run check:sensitive
+
+# 卸载钩子
+rm .git/hooks/pre-commit
+
+# 重新安装钩子
+./scripts/install-hooks.sh
+```
+
+### 预置检测规则
+
+- **快手相关**：公司邮箱、内网域名、内网 npm 镜像源
+- **密钥类**：API Key、Bearer Token、JWT Token、AWS 密钥
+- **证书类**：私钥、SSH 密钥
+- **敏感数据**：密码、数据库连接字符串、手机号、身份证号
+
+更多配置选项和规则，请查看 `config/sensitive-rules.yaml` 文件。
