@@ -2,33 +2,53 @@
 
 export type TaskStatus =
   | 'Inbox'
-  | 'Architecting'
-  | 'PendingApproval'
-  | 'Developing'
-  | 'ParallelReview'
-  | 'PendingScore'
+  | 'InProgress'
   | 'Done'
   | 'Blocked'
   | 'Cancelled'
+
+// AI: 单个工作流步骤的状态
+export type WorkflowStepStatus =
+  | 'pending'    // 未开始（等待前置步骤完成）
+  | 'running'    // 执行中（agent 正在处理 / 等待人工操作）
+  | 'done'       // 已完成
+  | 'rejected'   // 被退回（human_in_loop 退回）
+  | 'skipped'    // 已跳过
+
+// AI: 工作流步骤执行日志 — 记录每个步骤的进度与产出
+export interface WorkflowStepLog {
+  stepId: string              // 步骤 ID（对应 YAML 中的 step.id）
+  stepName: string            // 步骤名称（展示用）
+  status: WorkflowStepStatus  // 步骤状态
+  agentId?: string            // 执行该步骤的 agent（human_in_loop 为 'you'）
+  startedAt?: string          // 开始时间
+  completedAt?: string        // 完成时间
+  outputNote?: string         // 产出摘要 / agent 回写的备注
+  outputs?: Record<string, string>  // 步骤产出文件路径 key→path
+  progress?: number           // 可选：进度 0-100
+  error?: string              // 若步骤失败或被退回，记录原因
+}
 
 export interface Task {
   id: string
   title: string
   description: string
-  workflowId: string
+  workflowId?: string            // AI: 工作流可选，不绑定则为普通任务
+  workflowStep?: string          // AI: 当前所在工作流步骤 ID（如 architecting/pending_approval/developing）
+  stepLogs?: WorkflowStepLog[]   // AI: 每个工作流步骤的执行记录（按步骤顺序）
   status: TaskStatus
   assignedAgent?: string
-  requirementDoc?: string   // 需求文档路径
-  backendDesign?: string    // 后端技术方案路径
-  frontendDesign?: string   // 架构师产出的前端技术方案
-  repos?: string[]          // 关联仓库列表
-  qaReport?: string         // QA 报告内容
-  reviewReport?: string     // CR 报告内容
-  qaDone?: boolean
-  reviewDone?: boolean
-  score?: number            // 最终打分
+  requirementDoc?: string        // 需求文档路径
+  backendDesign?: string         // 后端技术方案路径
+  frontendDesign?: string        // 可选：前端技术方案路径
+  devSummary?: string            // 可选：dev 改动摘要路径
+  repos?: string[]               // 关联仓库列表
+  qaReport?: string              // 可选：QA 报告路径
+  reviewReport?: string          // 可选：CR 报告路径
+  score?: number                 // 最终打分
   createdAt: string
   updatedAt: string
+  deletedAt?: string             // AI: 软删除时间戳，有值表示已删除
   history: TaskHistoryEntry[]
   blockedReason?: string
 }
@@ -107,25 +127,19 @@ export interface WorkflowConfig {
   notifications?: Record<string, { type: string; message: string }>
 }
 
+// AI: 通用任务状态标签
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  Inbox: '待分配',
-  Architecting: '架构规划中',
-  PendingApproval: '待审批',
-  Developing: '开发中',
-  ParallelReview: '并行检查',
-  PendingScore: '待打分',
+  Inbox: '待处理',
+  InProgress: '进行中',
   Done: '已完成',
   Blocked: '阻塞',
   Cancelled: '已取消',
 }
 
+// AI: 通用任务状态颜色
 export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
   Inbox: 'bg-gray-600',
-  Architecting: 'bg-blue-600',
-  PendingApproval: 'bg-yellow-600',
-  Developing: 'bg-indigo-600',
-  ParallelReview: 'bg-purple-600',
-  PendingScore: 'bg-orange-600',
+  InProgress: 'bg-blue-600',
   Done: 'bg-green-600',
   Blocked: 'bg-red-600',
   Cancelled: 'bg-gray-500',

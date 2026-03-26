@@ -53,23 +53,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ taskId:
     }
     tasks[idx].updatedAt = new Date().toISOString()
 
-    // AI: 如果 QA 和 Review 都完成了，自动推进到 PendingScore
+    // AI: 报告提交后检查是否需要推进状态
+    // 注意：ParallelReview/PendingScore 是自定义工作流中的专属状态，通用流中由工作流引擎决定后续步骤
+    // 此处仅发送通知，不强制流转状态（避免破坏通用状态机）
     const t = tasks[idx]
-    if (t.qaDone && t.reviewDone && t.status === 'ParallelReview') {
-      const { validateTransition } = await import('@/lib/workflowEngine')
+    if (t.qaDone && t.reviewDone) {
       const { sendMacNotification } = await import('@/lib/macNotify')
-      validateTransition('ParallelReview', 'PendingScore')
-      t.status = 'PendingScore'
-      t.history.push({
-        from: 'ParallelReview',
-        to: 'PendingScore',
-        agent: 'system',
-        note: 'QA 和 Review 均已完成，等待打分',
-        timestamp: new Date().toISOString(),
-      })
       await sendMacNotification({
-        title: '📊 报告已生成，待打分',
-        message: `${t.title} 的 QA + CR 报告已就绪，请打分`,
+        title: '📊 报告已生成',
+        message: `${t.title} 的 QA + CR 报告已就绪`,
         taskId,
         type: 'score',
       })

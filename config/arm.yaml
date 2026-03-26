@@ -1,0 +1,45 @@
+# ARM · Agent 触发配置
+# 修改此文件后无需重启，下次触发时自动生效
+
+# 触发模式：
+#   local — 通过本机 openclaw CLI 直接调用，零配置开箱即用（默认）
+#   im    — 通过 IM channel 发消息触发，适用于跨机器调用（A 机运行 ARM，B 机运行 OpenClaw）
+trigger_mode: local
+
+# IM 模式配置（trigger_mode: im 时生效）
+im:
+  # IM channel 类型：kim | feishu | telegram | whatsapp | discord | ...
+  channel: kim
+  # 各 agent 在 IM 上对应的联系人 target（远端机器 openclaw 注册的 IM 身份）
+  targets:
+    arm-architect: ""   # 例：飞书 open_id 或 kim 用户名
+    arm-dev: ""
+    arm-qa: ""
+    arm-review: ""
+
+# 本地 CLI 模式配置（trigger_mode: local 时生效）
+local:
+  # openclaw 可执行文件路径（留空则从 PATH 自动查找）
+  openclaw_bin: ""
+  # 单次触发超时（秒），超时后 ARM 不再等待，agent 在后台继续运行
+  timeout: 600
+
+# ARM agent 在 OpenClaw 中的 agent ID 映射
+agent_ids:
+  architect: arm-architect
+  dev: arm-dev
+  qa: arm-qa
+  review: arm-review
+
+# 自动触发规则：任务进入对应状态时，自动触发对应 agent
+# 仅当任务绑定了 workflowId 时触发（普通任务不自动触发）
+trigger_rules:
+  # 新任务进入 Inbox → 触发 architect 拆解需求
+  - on_status: Inbox
+    agent: architect
+    require_workflow: true   # 仅绑定工作流的任务才触发
+
+  # 任务进入 InProgress → 根据阶段触发 dev / architect
+  - on_status: InProgress
+    agent: auto              # auto = 有 frontend-design → dev；否则 → architect
+    require_workflow: true

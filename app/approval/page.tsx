@@ -4,7 +4,7 @@ import { useTasksStore } from '@/store/tasksStore'
 import type { Task } from '@/lib/types'
 import { CheckCircle, XCircle, RefreshCw, FileText } from 'lucide-react'
 
-/* AI start: 审批中心页面 — 展示待审批的架构方案 */
+/* AI start: 审批中心页面 — 展示自定义工作流中待审批的任务（需工作流包含 human_in_loop 步骤） */
 
 export default function ApprovalPage() {
   const { tasks, loading, fetchTasks, approveTask } = useTasksStore()
@@ -12,7 +12,9 @@ export default function ApprovalPage() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [note, setNote] = useState('')
 
-  const pendingTasks = tasks.filter(t => t.status === 'PendingApproval')
+  // AI: 审批中心通过 approve API 处理（自定义工作流可扩展此逻辑）
+  // 目前展示需要人工干预的任务（通用流无 PendingApproval 状态，此页用于自定义工作流）
+  const pendingTasks = tasks.filter(t => (t as { status: string }).status === 'PendingApproval')
 
   useEffect(() => {
     fetchTasks()
@@ -96,7 +98,7 @@ export default function ApprovalPage() {
             <div className="flex flex-col items-center justify-center h-full text-center">
               <div className="text-4xl mb-3">📄</div>
               <p className="text-sm font-medium text-white">选择一个待审批方案</p>
-              <p className="text-xs mt-1" style={{ color: '#8892a4' }}>查看架构师产出的前端技术方案</p>
+              <p className="text-xs mt-1" style={{ color: '#8892a4' }}>查看待审批任务内容（适用于含审批步骤的自定义工作流）</p>
             </div>
           ) : (
             <div>
@@ -111,13 +113,13 @@ export default function ApprovalPage() {
               <div className="rounded-xl p-4 mb-6" style={{ background: '#1e2130', border: '1px solid #2d3148' }}>
                 <div className="flex items-center gap-2 mb-3">
                   <FileText size={14} style={{ color: '#8892a4' }} />
-                  <span className="text-xs font-medium" style={{ color: '#8892a4' }}>前端技术方案</span>
+                  <span className="text-xs font-medium" style={{ color: '#8892a4' }}>技术方案 / 待审批内容</span>
                 </div>
                 {selectedTask.frontendDesign ? (
                   <pre className="text-xs text-white whitespace-pre-wrap leading-relaxed">{selectedTask.frontendDesign}</pre>
                 ) : (
                   <div className="text-center py-8">
-                    <p className="text-sm" style={{ color: '#4a5568' }}>架构师尚未产出技术方案</p>
+                    <p className="text-sm" style={{ color: '#4a5568' }}>暂无待审批内容</p>
                     <p className="text-xs mt-1" style={{ color: '#4a5568' }}>
                       需求文档: {selectedTask.requirementDoc || '未指定'}
                     </p>
@@ -129,7 +131,7 @@ export default function ApprovalPage() {
               <div className="grid grid-cols-2 gap-3 mb-6">
                 <div className="rounded-lg p-3" style={{ background: '#1e2130', border: '1px solid #2d3148' }}>
                   <div className="text-xs mb-1" style={{ color: '#8892a4' }}>工作流</div>
-                  <div className="text-sm text-white">{selectedTask.workflowId === 'dev-standard' ? '标准前端开发流' : '快速修复流'}</div>
+                  <div className="text-sm text-white">{selectedTask.workflowId || '普通任务'}</div>
                 </div>
                 <div className="rounded-lg p-3" style={{ background: '#1e2130', border: '1px solid #2d3148' }}>
                   <div className="text-xs mb-1" style={{ color: '#8892a4' }}>关联仓库</div>
@@ -168,7 +170,7 @@ export default function ApprovalPage() {
                   style={{ background: '#1a3a2a', border: '1px solid #276749', color: '#68d391' }}
                 >
                   <CheckCircle size={16} />
-                  {processingId === selectedTask.id ? '处理中...' : '通过 · 派给开发'}
+                  {processingId === selectedTask.id ? '处理中...' : '通过审批'}
                 </button>
               </div>
             </div>

@@ -1,6 +1,7 @@
 import fs from 'fs'
 import { readJson, writeJson, agentStatsFile, agentDir, agentTasksDir, ensureDir } from './dataStore'
 import type { AgentStats } from './types'
+import { loadAgentConfig } from '@/config/agent'
 
 /* AI start: Agent 生命周期管理 — 生命值奖惩、复制、封禁 */
 
@@ -11,16 +12,17 @@ export const AGENT_DISPLAY_NAMES: Record<string, string> = {
   review: '代码审查官',
 }
 
-export const INITIAL_HEALTH = 60
-export const CLONE_THRESHOLD = 90
-export const BAN_THRESHOLD = 0
-export const SCORE_DELTA = 5
+// AI: 动态读取配置（每次函数调用时重新读 agent.yaml，修改后立即生效）
+function cfg() { return loadAgentConfig() }
+
+// AI: 向后兼容的命名导出（模块初次加载时读取一次）
+export const { INITIAL_HEALTH, CLONE_THRESHOLD, BAN_THRESHOLD, SCORE_DELTA } = loadAgentConfig()
 
 export function getAgentStats(agentId: string): AgentStats {
   const defaultStats: AgentStats = {
     agentId,
     displayName: AGENT_DISPLAY_NAMES[agentId] ?? agentId,
-    health: INITIAL_HEALTH,
+    health: cfg().INITIAL_HEALTH,
     status: 'active',
     generation: 1,
     parentId: null,
@@ -48,13 +50,13 @@ export function adjustHealth(
   stats.health = newHealth
   stats.lastActiveAt = new Date().toISOString()
 
-  if (newHealth <= BAN_THRESHOLD && stats.status === 'active') {
+  if (newHealth <= cfg().BAN_THRESHOLD && stats.status === 'active') {
     stats.status = 'banned'
     saveAgentStats(stats)
     return { stats, event: 'banned' }
   }
 
-  if (newHealth >= CLONE_THRESHOLD && stats.status === 'active') {
+  if (newHealth >= cfg().CLONE_THRESHOLD && stats.status === 'active') {
     saveAgentStats(stats)
     return { stats, event: 'can_clone' }
   }
@@ -66,7 +68,7 @@ export function adjustHealth(
 // AI: 复制 Agent — 新 Agent 继承父 Agent 的 SOUL.md 和 skills
 export function cloneAgent(parentId: string): AgentStats | null {
   const parent = getAgentStats(parentId)
-  if (parent.status !== 'active' || parent.health < CLONE_THRESHOLD) return null
+  if (parent.status !== 'active' || parent.health < cfg().CLONE_THRESHOLD) return null
 
   // AI: 生成新 Agent ID，格式为 {parentId}_{generation+1}
   const newId = `${parentId}_g${parent.generation + 1}`
@@ -82,7 +84,7 @@ export function cloneAgent(parentId: string): AgentStats | null {
   const newStats: AgentStats = {
     agentId: newId,
     displayName: `${AGENT_DISPLAY_NAMES[parentId] ?? parentId} II`,
-    health: INITIAL_HEALTH,
+    health: cfg().INITIAL_HEALTH,
     status: 'active',
     generation: parent.generation + 1,
     parentId,
@@ -116,7 +118,7 @@ export function spawnReplacementAgent(bannedId: string): AgentStats {
   const newStats: AgentStats = {
     agentId: newId,
     displayName: `${AGENT_DISPLAY_NAMES[baseId] ?? baseId}（${banned.generation + 1}代）`,
-    health: INITIAL_HEALTH,
+    health: cfg().INITIAL_HEALTH,
     status: 'active',
     generation: banned.generation + 1,
     parentId: bannedId,

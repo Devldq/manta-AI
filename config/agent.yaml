@@ -1,0 +1,14 @@
+# AI: ARM Agent 生命周期配置
+# 修改此文件后无需重启，下次请求时自动生效
+
+# Agent 初始生命值（满分 100）
+INITIAL_HEALTH: 60
+
+# 达到此值可触发复制（克隆新 Agent）
+CLONE_THRESHOLD: 90
+
+# 降至此值触发封禁
+BAN_THRESHOLD: 0
+
+# 每次任务打分的生命值增减量（ok +SCORE_DELTA，x -SCORE_DELTA）
+SCORE_DELTA: 5

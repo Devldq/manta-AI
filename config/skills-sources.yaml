@@ -1,0 +1,12 @@
+# AI: 远程 Skills 源配置
+# 每条记录对应一个远程 skills 网站，修改后无需重启
+
+sources:
+  - id: skills-sh
+    name: skills.sh 官方市场
+    url: https://skills.sh/
+    enabled: true
+  - id: github-awesome-skills
+    name: Awesome Agent Skills
+    url: https://github.com/topics/agent-skills
+    enabled: true

@@ -91,12 +91,7 @@ for (const agentId of AGENT_IDS) {
   writeIfNotExists(path.join(agentDir, 'queue.jsonl'), '')
 }
 
-// AI: 复制工作流配置
-for (const wf of ['dev-standard.yaml', 'quick-fix.yaml']) {
-  copyIfNotExists(
-    path.join(PROJECT_ROOT, 'workflows', wf),
-    path.join(DATA_ROOT, 'workflows', wf)
-  )
-}
+// AI: workflows 目录已创建，不预置任何工作流文件
+// 用户可在 workflows/ 页面手动创建，或参考项目 workflows/ 目录下的模板文件
 
 console.log(`\n🎉 初始化完成！运行 npm run dev 启动控制台\n`)

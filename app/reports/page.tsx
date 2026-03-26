@@ -25,7 +25,8 @@ export default function ReportsPage() {
   const [scoring, setScoring] = useState<string | null>(null)
   const [scoreMsg, setScoreMsg] = useState<string | null>(null)
 
-  const scorableTasks = tasks.filter(t => t.status === 'PendingScore' || t.status === 'Done')
+  // AI: 报告中心展示所有有 QA/CR 报告的任务（通用化，不依赖 PendingScore 状态）
+  const scorableTasks = tasks.filter(t => t.status === 'Done' || (t as { status: string }).status === 'PendingScore')
 
   useEffect(() => {
     fetchTasks()
@@ -77,7 +78,7 @@ export default function ReportsPage() {
         <div>
           <h1 className="text-lg font-bold text-white">📊 报告中心</h1>
           <p className="text-xs mt-0.5" style={{ color: '#8892a4' }}>
-            {scorableTasks.filter(t => t.status === 'PendingScore').length} 个待打分
+            {scorableTasks.filter(t => (t as { status: string }).status === 'PendingScore').length} 个待打分（自定义工作流）
           </p>
         </div>
         <button onClick={() => fetchTasks()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={{ background: '#1e2130', border: '1px solid #2d3148', color: '#a0aec0' }}>
@@ -95,8 +96,8 @@ export default function ReportsPage() {
             </div>
           ) : (
             <div className="p-3 space-y-2">
-              <div className="text-xs px-1 mb-2 font-medium" style={{ color: '#8892a4' }}>待打分</div>
-              {scorableTasks.filter(t => t.status === 'PendingScore').map(task => (
+              <div className="text-xs px-1 mb-2 font-medium" style={{ color: '#8892a4' }}>待打分（工作流触发）</div>
+              {scorableTasks.filter(t => (t as { status: string }).status === 'PendingScore').map(task => (
                 <div
                   key={task.id}
                   onClick={() => handleSelect(task)}
@@ -172,7 +173,7 @@ export default function ReportsPage() {
               </div>
 
               {/* AI: 打分区域 */}
-              {currentTask?.status === 'PendingScore' && (
+              {(currentTask as { status: string } | undefined)?.status === 'PendingScore' && (
                 <div className="rounded-xl p-5" style={{ background: '#1a1d27', border: '1px solid #2d3148' }}>
                   <h3 className="text-sm font-medium text-white mb-1">打分评价</h3>
                   <p className="text-xs mb-4" style={{ color: '#8892a4' }}>对参与本任务的 Agent 进行评分</p>

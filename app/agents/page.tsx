@@ -390,7 +390,7 @@ export default function AgentsPage() {
       {/* AI: 顶部标题栏 */}
       <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: '#2d3148' }}>
         <div>
-          <h1 className="text-lg font-bold text-white">🧬 Agent 状态</h1>
+          <h1 className="text-lg font-bold text-white">🧬 Agent</h1>
           <p className="text-xs mt-0.5" style={{ color: '#8892a4' }}>
             ARM: {activeAgents.length} 在线 · {bannedAgents.length} 封禁
             {ocAgents.length > 0 && ` · OpenClaw: ${ocAgents.length} 个代理`}
