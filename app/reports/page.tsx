@@ -54,7 +54,7 @@ export default function ReportsPage() {
     setScoring(agentId)
     try {
       const result = await scoreAgent(agentId, action)
-      const label = action === 'ok' ? '+5分 ✅' : '-5分 ❌'
+      const label = action === 'ok' ? '+10分 ✅' : '-10分 ❌'
       if (result.event === 'can_clone') {
         setScoreMsg(`${label} · ${agentId} 生命值达到90分，可以复制！`)
       } else if (result.event === 'banned') {

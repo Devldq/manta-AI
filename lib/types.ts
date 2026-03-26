@@ -45,6 +45,8 @@ export interface Task {
   repos?: string[]               // 关联仓库列表
   qaReport?: string              // 可选：QA 报告路径
   reviewReport?: string          // 可选：CR 报告路径
+  qaDone?: boolean               // AI: QA 是否完成
+  reviewDone?: boolean           // AI: CR 是否完成
   score?: number                 // 最终打分
   createdAt: string
   updatedAt: string

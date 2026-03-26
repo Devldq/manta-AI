@@ -7,10 +7,13 @@ node_modules/
 # Next.js
 /.next/
 /out/
-/.dist
+
 
 # Production
 /build
+
+# Electron
+dist/
 
 # Misc
 .DS_Store

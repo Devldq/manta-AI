@@ -835,29 +835,45 @@ function TaskDetailModal({ task, onClose, onRefresh }: { task: Task; onClose: ()
                 <div className="text-xs font-semibold mb-2" style={{ color: '#86efac' }}>
                   🏆 待打分：QA + Code Review 已完成
                 </div>
-                <div className="flex gap-1 mb-3">
-                  {[1, 2, 3, 4, 5].map(s => (
-                    <button
-                      key={s}
-                      onClick={async () => {
-                        setLoading(true)
-                        try {
-                          await fetch(`/api/tasks/${task.id}/approve`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: 'score', note: `打分: ${s}/5`, score: s }),
-                          })
-                          onRefresh()
-                          onClose()
-                        } finally { setLoading(false) }
-                      }}
-                      disabled={loading}
-                      className="flex-1 py-2 rounded-lg text-sm font-bold transition-opacity disabled:opacity-50"
-                      style={{ background: '#14532d', color: '#86efac', border: '1px solid #16a34a' }}
-                    >
-                      {s}⭐
-                    </button>
-                  ))}
+                <div className="flex gap-2 mb-3">
+                  <button
+                    onClick={async () => {
+                      setLoading(true)
+                      try {
+                        await fetch(`/api/tasks/${task.id}/approve`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'approve', note: '✅ 完成任务 +10分', score: 10 }),
+                        })
+                        onRefresh()
+                        onClose()
+                      } finally { setLoading(false) }
+                    }}
+                    disabled={loading}
+                    className="flex-1 py-2.5 rounded-lg text-sm font-bold transition-opacity disabled:opacity-50"
+                    style={{ background: '#14532d', color: '#86efac', border: '1px solid #16a34a' }}
+                  >
+                    ✅ +10分
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setLoading(true)
+                      try {
+                        await fetch(`/api/tasks/${task.id}/approve`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'reject', note: '❌ 未完成 -10分', score: -10 }),
+                        })
+                        onRefresh()
+                        onClose()
+                      } finally { setLoading(false) }
+                    }}
+                    disabled={loading}
+                    className="flex-1 py-2.5 rounded-lg text-sm font-bold transition-opacity disabled:opacity-50"
+                    style={{ background: '#7f1d1d', color: '#fca5a5', border: '1px solid #dc2626' }}
+                  >
+                    ❌ -10分
+                  </button>
                 </div>
               </div>
             )}

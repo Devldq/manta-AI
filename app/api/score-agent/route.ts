@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { adjustHealth, cloneAgent, spawnReplacementAgent, getAgentStats, AGENT_DISPLAY_NAMES } from '@/lib/agentLifecycle'
 import { sendMacNotification } from '@/lib/macNotify'
 
-// AI: POST /api/score-agent — 打分接口（ok: +5 / x: -5）
+// AI: POST /api/score-agent — 打分接口（ok: +10 / x: -10）
 export async function POST(req: Request) {
   const { agentId, action } = await req.json()
   // action: 'ok' | 'x'
@@ -10,7 +10,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: '参数错误，action 必须是 ok 或 x' }, { status: 400 })
   }
 
-  const delta = action === 'ok' ? 5 : -5
+  const delta = action === 'ok' ? 10 : -10
   const { stats, event } = adjustHealth(agentId, delta)
 
   // AI: 根据事件类型推送 Mac 通知
