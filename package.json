@@ -7,30 +7,32 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "init-data": "npx tsx scripts/init-data.ts"
+    "init-data": "npx tsx scripts/init-data.ts",
+    "check:sensitive": "npx tsx scripts/sensitive-check.ts"
   },
   "dependencies": {
+    "date-fns": "^4.1.0",
+    "js-yaml": "^4.1.0",
+    "lucide-react": "^0.475.0",
     "next": "15.3.0",
+    "proper-lockfile": "^4.1.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zustand": "^5.0.3",
-    "js-yaml": "^4.1.0",
-    "proper-lockfile": "^4.1.2",
-    "lucide-react": "^0.475.0",
-    "date-fns": "^4.1.0"
+    "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/js-yaml": "^4.0.9",
-    "@types/proper-lockfile": "^4.1.4",
-    "typescript": "^5",
-    "tsx": "^4.19.2",
-    "tailwindcss": "^3.4.17",
-    "postcss": "^8",
     "autoprefixer": "^10.0.1",
     "eslint": "^9",
-    "eslint-config-next": "15.2.4"
+    "eslint-config-next": "15.2.4",
+    "postcss": "^8",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.21.0",
+    "typescript": "^5",
+    "yaml": "^2.8.3"
   }
 }

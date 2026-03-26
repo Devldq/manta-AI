@@ -46,7 +46,7 @@ npm run dev
 chmod +x scripts/install-hooks.sh
 ./scripts/install-hooks.sh
 ```
-密码 1321213213213
+
 ### 自定义检测规则
 
 编辑 `config/sensitive-rules.yaml` 文件，添加或修改检测规则：

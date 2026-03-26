@@ -204,49 +204,85 @@ function CreateTaskModal({ onClose, onCreated }: { onClose: () => void; onCreate
 }
 /*  end: 创建任务弹窗 */
 
-// AI: 任务卡片 — 已删除任务用遞色+删除线标示
+// AI: 任务卡片 — 已删除任务用遞色+删除线标示，工作流任务显示细粒度步骤状态
 function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
   const isDeleted = !!task.deletedAt
+  const hasWorkflow = !!task.workflowId && !!task.stepLogs && task.stepLogs.length > 0
+
+  // AI: 找到当前正在运行的步骤（用于显示细粒度状态）
+  const currentStep = hasWorkflow
+    ? task.stepLogs!.find(s => s.status === 'running')
+    : null
+
+  // AI: 计算步骤进度（已完成/总数）
+  const stepProgress = hasWorkflow
+    ? `${task.stepLogs!.filter(s => s.status === 'done').length + 1}/${task.stepLogs!.length}`
+    : null
+
   return (
     <div
       onClick={onClick}
-      className="p-3 rounded-lg cursor-pointer transition-colors hover:border-blue-500"
+      className="p-2.5 rounded-lg cursor-pointer transition-colors hover:border-blue-500"
       style={isDeleted
         ? { background: '#16181f', border: '1px solid #3d1f1f', opacity: 0.65 }
         : { background: '#1e2130', border: '1px solid #2d3148' }}
     >
+      {/* AI: 标题行 — 更紧凑 */}
       <div
-        className="text-sm font-medium leading-snug mb-1.5 line-clamp-2"
+        className="text-xs font-medium leading-snug mb-1 line-clamp-2"
         style={isDeleted ? { color: '#6b7280', textDecoration: 'line-through' } : { color: '#fff' }}
       >
-        {isDeleted && <span className="mr-1 text-xs" style={{ color: '#ef4444' }}>🗑</span>}
+        {isDeleted && <span className="mr-1" style={{ color: '#ef4444' }}>🗑</span>}
         {task.title}
       </div>
+
+      {/* AI: 描述 — 字体更小 */}
       {task.description && (
-        <div className="text-xs mb-2 line-clamp-2" style={{ color: '#8892a4' }}>{task.description}</div>
+        <div className="text-[11px] mb-1.5 line-clamp-2" style={{ color: '#6b7280' }}>{task.description}</div>
       )}
+
+      {/* AI: 工作流任务 — 显示当前步骤 + 主导 agent + 进度 */}
+      {hasWorkflow && currentStep && (
+        <div className="mb-1.5 space-y-1">
+          {/* AI: 当前步骤名称 */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] px-1.5 py-0.5 rounded font-medium" style={{ background: '#1e2d4a', color: '#60a5fa' }}>
+              {currentStep.stepName}
+            </span>
+            {stepProgress && (
+              <span className="text-[10px] font-mono" style={{ color: '#4a5568' }}>{stepProgress}</span>
+            )}
+          </div>
+          {/* AI: 主导 agent 标签 */}
+          {currentStep.agentId && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded-full"
+              style={(() => {
+                const c = agentColor(currentStep.agentId!)
+                return { background: c.bg, color: c.color, border: `1px solid ${c.border}` }
+              })()}
+            >
+              {currentStep.agentId === 'you' ? '👤 你' : `🤖 ${currentStep.agentId}`}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* AI: 底部状态行 */}
       <div className="flex items-center justify-between">
-        {task.workflowId ? (
-          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#0f1117', color: '#8892a4' }}>
-            {task.workflowId}
-          </span>
-        ) : (
-          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#0f1117', color: '#4a5568' }}>
+        {!hasWorkflow ? (
+          <span className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ background: '#0f1117', color: '#4a5568' }}>
             普通任务
           </span>
-        )}
-        <span className="text-xs" style={{ color: '#4a5568' }}>
+        ) : !currentStep ? (
+          <span className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ background: '#0f1117', color: '#8892a4' }}>
+            {task.workflowId}
+          </span>
+        ) : null}
+        <span className="text-[11px]" style={{ color: '#4a5568' }}>
           {new Date(task.updatedAt).toLocaleDateString('zh-CN')}
         </span>
       </div>
-      {/* AI: Agent 标签 — 有指定 agent 时显示，否则不显示 */}
-      {task.assignedAgent && (
-        <div className="mt-1.5 flex items-center gap-1">
-          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#1a2340', color: '#60a5fa', border: '1px solid #1e3a5f' }}>
-            🤖 {task.assignedAgent}
-          </span>
-        </div>
-      )}
     </div>
   )
 }
@@ -270,28 +306,77 @@ const STATUS_STYLE: Record<string, { bg: string; color: string }> = {
   Cancelled:  { bg: '#1f1f1f', color: '#6b7280' },
 }
 
-// AI: 文档链接组件 — 路径可点击打开新窗口
-function DocLink({ label, path: docPath, icon }: { label: string; path?: string; icon: string }) {
+// AI: 文档链接组件 — 路径可点击打开新窗口，hover 显示复制按钮
+function DocLink({ label, path: docPath, icon, isRepo }: { label: string; path?: string; icon: string; isRepo?: boolean }) {
+  const [copied, setCopied] = useState(false)
+  const [hovering, setHovering] = useState(false)
+  
   if (!docPath) return null
+  
   // AI: 判断是否为 URL（http/https 开头）或本地路径
   const isUrl = docPath.startsWith('http://') || docPath.startsWith('https://')
-  const href = isUrl ? docPath : `file://${docPath}`
+  const href = isUrl ? docPath : (isRepo ? undefined : `file://${docPath}`)
+  
+  const handleCopy = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    navigator.clipboard.writeText(docPath)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  
+  const handleClick = (e: React.MouseEvent) => {
+    if (isRepo) {
+      e.preventDefault()
+      navigator.clipboard.writeText(docPath)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }
+  }
+  
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="flex items-center gap-2 px-3 py-2 rounded-lg group transition-colors"
-      style={{ background: '#0f1117', border: '1px solid #2d3148', textDecoration: 'none' }}
-      onMouseEnter={e => (e.currentTarget.style.borderColor = '#3b82f6')}
-      onMouseLeave={e => (e.currentTarget.style.borderColor = '#2d3148')}
+      onClick={handleClick}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+      className="flex items-center gap-2 px-3 py-2 rounded-lg group transition-all relative"
+      style={{ 
+        background: '#0f1117', 
+        border: `1px solid ${hovering ? '#3b82f6' : '#2d3148'}`, 
+        textDecoration: 'none',
+        cursor: isRepo ? 'pointer' : 'default'
+      }}
     >
       <span className="text-base">{icon}</span>
       <div className="flex-1 min-w-0">
-        <div className="text-xs font-medium" style={{ color: '#94a3b8' }}>{label}</div>
+        <div className="text-xs font-medium" style={{ color: '#94a3b8' }}>
+          {label}
+          {isRepo && <span className="ml-1.5 text-[10px]" style={{ color: '#4a5568' }}>(点击复制，Finder 打开)</span>}
+        </div>
         <div className="text-xs truncate group-hover:underline" style={{ color: '#60a5fa' }}>{docPath}</div>
       </div>
-      <span className="text-xs flex-shrink-0" style={{ color: '#4a5568' }}>↗</span>
+      
+      {/* AI: Hover 复制按钮 */}
+      {hovering && (
+        <button
+          onClick={handleCopy}
+          className="flex-shrink-0 px-2 py-1 rounded text-xs font-medium transition-colors"
+          style={{ 
+            background: copied ? '#1a2e2e' : '#1e2d4a', 
+            color: copied ? '#34d399' : '#60a5fa',
+            border: `1px solid ${copied ? '#065f46' : '#2563eb'}`
+          }}
+        >
+          {copied ? '✓ 已复制' : '📋 复制'}
+        </button>
+      )}
+      
+      {!hovering && !isRepo && (
+        <span className="text-xs flex-shrink-0" style={{ color: '#4a5568' }}>↗</span>
+      )}
     </a>
   )
 }

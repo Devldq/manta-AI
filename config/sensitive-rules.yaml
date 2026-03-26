@@ -113,6 +113,14 @@ rules:
     description: "检测到明文密码"
     suggestion: "请移除明文密码，使用环境变量或加密存储"
 
+  - id: "password-in-comment"
+    name: "注释中的密码"
+    enabled: true
+    severity: "high"
+    pattern: "(密码|password|pwd|口令)[^a-zA-Z0-9]*[:：=\\s]+[0-9a-zA-Z_@#$%^&*!]{6,}"
+    description: "检测到注释或文本中的密码信息"
+    suggestion: "请移除明文密码，即使在注释中也不应该包含真实密码"
+
   - id: "connection-string"
     name: "数据库连接字符串"
     enabled: true
