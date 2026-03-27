@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { readJson, writeJson, TASKS_FILE } from '@/lib/dataStore'
-import { validateTransition, markCurrentStepRunning } from '@/lib/workflowEngine'
+import { validateTransition, markCurrentStepRunning, loadWorkflow, findStep } from '@/lib/workflowEngine'
 import { triggerAgent, resolveAgentForTask, buildTriggerMessage } from '@/lib/agentTrigger'
 import type { Task, TaskStatus, TaskHistoryEntry } from '@/lib/types'
 
@@ -43,6 +43,23 @@ export async function PUT(req: Request, { params }: Params) {
     validateTransition(task.status, status as TaskStatus)
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 })
+  }
+
+  // AI: 工作流保护 — 若任务绑定了工作流且 agent 想直接标记 Done，检查工作流是否真的走完了
+  // 防止 agent 违规调用 status API 绕过 pending_approval 等 human_in_loop 步骤
+  if (status === 'Done' && agent.startsWith('arm-') && task.workflowId) {
+    const workflow = loadWorkflow(task.workflowId)
+    if (workflow) {
+      // AI: 找到工作流中最后一个步骤，只有完成了最后步骤才允许 Done
+      const lastStep = workflow.steps[workflow.steps.length - 1]
+      const currentStep = task.workflowStep ? findStep(workflow, task.workflowStep) : null
+      const isLastStep = currentStep?.id === lastStep?.id || task.workflowStep === lastStep?.id
+      if (!isLastStep) {
+        return NextResponse.json({
+          error: `工作流任务禁止直接标记 Done！当前步骤: ${task.workflowStep ?? '未知'}，请调用 POST /api/tasks/${id}/advance-step 推进工作流。`,
+        }, { status: 403 })
+      }
+    }
   }
 
   const entry: TaskHistoryEntry = {

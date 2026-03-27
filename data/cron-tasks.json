@@ -1,0 +1,15 @@
+[
+  {
+    "id": "6d30f4a6-5424-412a-ab6c-2a5aab2f8b25",
+    "name": "每天中午14点通过系统通知提醒我起床",
+    "description": "",
+    "cronExpression": "0 0 * * *",
+    "command": "每天中午14点通过系统通知提醒我起床",
+    "enabled": true,
+    "createdAt": "2026-03-27T04:46:19.936Z",
+    "updatedAt": "2026-03-27T04:46:19.936Z",
+    "nextRunAt": "2026-03-27T05:46:19.936Z",
+    "runCount": 0,
+    "failCount": 0
+  }
+]

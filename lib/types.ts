@@ -147,4 +147,34 @@ export const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
   Cancelled: 'bg-gray-500',
 }
 
+// AI: 定时任务类型
+export interface CronTask {
+  id: string
+  name: string
+  description?: string
+  cronExpression: string
+  command: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+  lastRunAt?: string
+  lastRunStatus?: 'success' | 'failed' | 'running'
+  nextRunAt?: string
+  runCount: number
+  failCount: number
+}
+
+// AI: 定时任务执行记录
+export interface ExecutionRecord {
+  id: string
+  taskId: string
+  taskName: string
+  startedAt: string
+  endedAt?: string
+  status: 'running' | 'success' | 'failed' | 'cancelled'
+  output?: string
+  error?: string
+  duration?: number
+}
+
 /* AI end: 全局类型定义 */

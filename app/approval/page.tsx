@@ -12,9 +12,9 @@ export default function ApprovalPage() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [note, setNote] = useState('')
 
-  // AI: 审批中心通过 approve API 处理（自定义工作流可扩展此逻辑）
-  // 目前展示需要人工干预的任务（通用流无 PendingApproval 状态，此页用于自定义工作流）
-  const pendingTasks = tasks.filter(t => (t as { status: string }).status === 'PendingApproval')
+  // AI: 审批中心展示工作流中 workflowStep === 'pending_approval' 的任务
+  // （旧版过滤条件 status==='PendingApproval' 已废弃，该状态不再存在于新系统）
+  const pendingTasks = tasks.filter(t => t.workflowStep === 'pending_approval' && t.status === 'InProgress')
 
   useEffect(() => {
     fetchTasks()

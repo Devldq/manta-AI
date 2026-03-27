@@ -11,11 +11,13 @@ const NAV_ITEMS = [
   { href: '/kanban', label: '任务看板', icon: '📋' },
   { href: '/approval', label: '审批中心', icon: '✅' },
   { href: '/scoreboard', label: '记分板', icon: '🏆' },
+  { href: '/cron', label: '定时任务', icon: '⏰' },
   { href: '/reports', label: '报告中心', icon: '📊' },
   { href: '/agents', label: 'Agent', icon: '🧬' },
   { href: '/skills', label: 'Skills', icon: '📦' }, // AI: Skills 页面入口
   { href: '/workflows', label: '工作流', icon: '⚙️' },
   { href: '/archive', label: '归档阁', icon: '📚' },
+  { href: '/ai-news', label: 'AI 要闻', icon: '📰' }, // AI: AI 要闻日报入口
 ]
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
