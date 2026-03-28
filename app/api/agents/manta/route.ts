@@ -1,36 +1,38 @@
-/*  start: Manta 托管 Agent CRUD — GET 列表 / POST 创建 */
-// AI: Manta 是 agent 的 source of truth，定义存在 ~/manta-data/agents/<name>/
-//     启动时自动注入到各 CLI 工具目录，方便备份和迁移
+/*  start: Manta Agent 管理 API — GET 列表 / POST 创建 */
+// AI: Core 层只知道 AgentOps 接口，不含任何 CLI 特有操作
+// CLI 特有的文件操作全部封装在对应插件的 agent-ops.ts 里
 import { NextRequest, NextResponse } from 'next/server'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { getAgentOps } from '@/plugins/loader'
 
+// AI: Manta 元数据存储目录（只存 agent.json 元数据，不存内容）
 const MANTA_AGENTS_DIR = path.join(os.homedir(), 'manta-data', 'agents')
 
-// AI: 确保目录存在
+interface AgentMeta {
+  name: string
+  targetCli: 'openclaw' | 'claude-code'
+  description: string
+  createdAt: string
+  updatedAt: string
+}
+
 function ensureDir(dir: string) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 }
 
-// AI: 读取单个 Manta agent 的元数据
-function readMantaAgent(name: string) {
-  const agentDir = path.join(MANTA_AGENTS_DIR, name)
-  const metaPath = path.join(agentDir, 'agent.json')
-  const soulPath = path.join(agentDir, 'SOUL.md')
-
+function readMeta(name: string): AgentMeta | null {
+  const metaPath = path.join(MANTA_AGENTS_DIR, name, 'agent.json')
   if (!fs.existsSync(metaPath)) return null
-
   try {
-    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
-    const soul = fs.existsSync(soulPath) ? fs.readFileSync(soulPath, 'utf-8') : ''
-    return { ...meta, soul, agentDir }
+    return JSON.parse(fs.readFileSync(metaPath, 'utf-8'))
   } catch {
     return null
   }
 }
 
-// AI: GET /api/agents/manta — 列出所有 Manta 托管 agent
+// AI: GET /api/agents/manta — 列出所有 Manta 管理的 agent（元数据 + 内容从 CLI 目录读取）
 export async function GET() {
   try {
     ensureDir(MANTA_AGENTS_DIR)
@@ -38,8 +40,14 @@ export async function GET() {
 
     for (const entry of fs.readdirSync(MANTA_AGENTS_DIR, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue
-      const agent = readMantaAgent(entry.name)
-      if (agent) agents.push(agent)
+      const meta = readMeta(entry.name)
+      if (!meta) continue
+
+      // AI: 通过插件接口读取 agent 内容（从 CLI 原生目录读取）
+      const ops = getAgentOps(meta.targetCli)
+      const soul = ops ? await ops.readAgentContent(meta.name) : null
+
+      agents.push({ ...meta, soul })
     }
 
     return NextResponse.json({ agents })
@@ -48,13 +56,13 @@ export async function GET() {
   }
 }
 
-// AI: POST /api/agents/manta — 创建新的 Manta 托管 agent
+// AI: POST /api/agents/manta — 创建 agent（通过对应 CLI 插件创建，并在 manta-data 存元数据）
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const { name, targetCli, description, soul } = body
 
-    // AI: 校验字段
+    // AI: 参数校验
     if (!name?.trim()) {
       return NextResponse.json({ error: 'name 不能为空' }, { status: 400 })
     }
@@ -66,17 +74,28 @@ export async function POST(req: NextRequest) {
     }
 
     const agentName = name.trim()
-    const agentDir = path.join(MANTA_AGENTS_DIR, agentName)
 
-    if (fs.existsSync(agentDir)) {
+    // AI: 检查 manta-data 中是否已存在（防止重复创建）
+    const agentMetaDir = path.join(MANTA_AGENTS_DIR, agentName)
+    if (fs.existsSync(agentMetaDir)) {
       return NextResponse.json({ error: `Agent "${agentName}" 已存在` }, { status: 409 })
     }
 
-    // AI: 创建目录和文件
-    ensureDir(agentDir)
+    // AI: 通过插件接口在 CLI 原生目录创建 agent
+    const ops = getAgentOps(targetCli)
+    if (!ops) {
+      return NextResponse.json({ error: `不支持的 targetCli: ${targetCli}` }, { status: 400 })
+    }
 
+    await ops.createAgent({
+      name: agentName,
+      soul: soul ?? `# ${agentName} Agent · SOUL\n\n你是一个 AI Agent。\n`,
+      description: description?.trim() ?? '',
+    })
+
+    // AI: 在 manta-data 存储元数据（方便知道哪些 agent 是 Manta 管理的）
     const now = new Date().toISOString()
-    const meta = {
+    const meta: AgentMeta = {
       name: agentName,
       targetCli,
       description: description?.trim() ?? '',
@@ -84,8 +103,8 @@ export async function POST(req: NextRequest) {
       updatedAt: now,
     }
 
-    fs.writeFileSync(path.join(agentDir, 'agent.json'), JSON.stringify(meta, null, 2), 'utf-8')
-    fs.writeFileSync(path.join(agentDir, 'SOUL.md'), soul ?? `# ${agentName} Agent · SOUL\n\n你是一个 AI Agent。\n`, 'utf-8')
+    ensureDir(agentMetaDir)
+    fs.writeFileSync(path.join(agentMetaDir, 'agent.json'), JSON.stringify(meta, null, 2), 'utf-8')
 
     return NextResponse.json({ agent: { ...meta, soul: soul ?? '' } }, { status: 201 })
   } catch (err) {

@@ -3,7 +3,9 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import * as yaml from 'js-yaml'
-import type { AgentEntry, PluginManifest } from '../core/types'
+import type { AgentEntry, AgentOps, PluginManifest } from '../core/types'
+import { openclawAgentOps } from './openclaw/agent-ops'
+import { claudeCodeAgentOps } from './claude-code/agent-ops'
 
 // AI: 插件根目录（项目内的 plugins/ 文件夹）
 const PLUGINS_DIR = path.join(process.cwd(), 'plugins')
@@ -279,5 +281,22 @@ export function listPlugins(): PluginManifest[] {
     return []
   }
   return manifests
+}
+/**
+ * getAgentOps — Core 层通过此函数获取对应 CLI 插件的 AgentOps 实现
+ * 插件层负责封装 CLI 特有操作，Core 只知道 AgentOps 接口
+ *
+ * @param pluginId - 插件 ID（对应 plugin.yaml 的 id 字段）
+ * @returns AgentOps 实现，若插件不支持则返回 null
+ */
+export function getAgentOps(pluginId: string): AgentOps | null {
+  switch (pluginId) {
+    case 'openclaw':
+      return openclawAgentOps
+    case 'claude-code':
+      return claudeCodeAgentOps
+    default:
+      return null
+  }
 }
 /* AI end: 插件 Loader 结束 */

@@ -120,6 +120,60 @@ export interface PluginAdapter {
   probe(): Promise<{ available: boolean; reason?: string; version?: string }>
 }
 
+// ─── Agent CRUD 操作接口（插件层实现，Core 只知道此接口）─────────
+
+/** 创建 agent 的参数 */
+export interface CreateAgentParams {
+  /** agent 唯一名称（英文/连字符/下划线）*/
+  name: string
+  /** 系统提示内容（SOUL.md 正文）*/
+  soul: string
+  /** 描述（可选）*/
+  description?: string
+}
+
+/** 更新 agent 的参数（所有字段可选）*/
+export interface UpdateAgentParams {
+  /** 更新后的系统提示内容 */
+  soul?: string
+  /** 更新后的描述 */
+  description?: string
+}
+
+/**
+ * AgentOps — 每个 CLI 插件实现此接口，封装 CLI 特有的 agent 文件操作
+ * Core 层只知道此接口，不关心底层是 openclaw 还是 claude-code
+ */
+export interface AgentOps {
+  /**
+   * 在对应 CLI 中创建 agent
+   * - openclaw: 更新 openclaw.json + 创建 workspace-<name>/SOUL.md
+   * - claude-code: 写 ~/.claude/agents/<name>.md
+   */
+  createAgent(params: CreateAgentParams): Promise<void>
+
+  /**
+   * 更新 agent 定义（仅更新有传入的字段）
+   */
+  updateAgent(name: string, params: UpdateAgentParams): Promise<void>
+
+  /**
+   * 读取 agent 的系统提示内容
+   * 返回 null 表示 agent 不存在或无法读取
+   */
+  readAgentContent(name: string): Promise<string | null>
+
+  /**
+   * 删除 agent（从 CLI 原生目录中移除）
+   */
+  deleteAgent(name: string): Promise<void>
+
+  /**
+   * 检查 agent 是否已存在于 CLI 中
+   */
+  agentExists(name: string): Promise<boolean>
+}
+
 // ─── Runner 接口 ───────────────────────────────────────────────
 export interface RunParams {
   /** Agent 条目 */
