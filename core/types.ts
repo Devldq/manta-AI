@@ -70,6 +70,12 @@ export interface AgentEntry {
 
   /** 来自哪个插件（对应 plugin.yaml 的 id）*/
   pluginId?: string
+
+  /** AI: agent 定义文件的绝对路径（用于查看/编辑）*/
+  filePath?: string
+
+  /** AI: 定义文件是否只读（如 openclaw models.json 含 API key，只展示不允许编辑）*/
+  fileReadonly?: boolean
 }
 
 // ─── 插件系统 ───────────────────────────────────────────────

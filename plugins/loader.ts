@@ -39,14 +39,15 @@ function parseMarkdownAgent(
       enabled: true,
       source: 'plugin-native',
       pluginId,
+      filePath,
+      fileReadonly: false,
     }
   } catch {
     return null
   }
 }
 
-// AI: 解析 yaml 格式的 agent 文件（openclaw 使用此格式）
-// 每个 .yaml/.yml 文件对应一个 agent
+// AI: 解析 yaml 格式的 agent 文件，每个 .yaml/.yml 文件对应一个 agent
 function parseYamlAgent(
   filePath: string,
   pluginId: string,
@@ -67,14 +68,15 @@ function parseYamlAgent(
       enabled: true,
       source: 'plugin-native',
       pluginId,
+      filePath,
+      fileReadonly: false,
     }
   } catch {
     return null
   }
 }
 
-// AI: 解析 codeflicker-skill 格式（每个 skill 是一个子目录，入口文件为 SKILL.md）
-// CodeFlicker Skills 存放在 ~/.codeflicker/skills/<skill-name>/SKILL.md
+// AI: 解析 codeflicker-skill 格式，每个 skill 是一个子目录，入口文件为 SKILL.md
 function parseCodeflickerSkillDir(
   skillDir: string,
   pluginId: string,
@@ -85,7 +87,6 @@ function parseCodeflickerSkillDir(
 
   try {
     const content = fs.readFileSync(skillMdPath, 'utf-8')
-    // AI: 解析 YAML frontmatter（--- ... ---）
     const match = content.match(/^---\n([\s\S]*?)\n---/)
     const skillDirName = path.basename(skillDir)
 
@@ -109,17 +110,17 @@ function parseCodeflickerSkillDir(
       enabled: true,
       source: 'plugin-native',
       pluginId,
+      filePath: skillMdPath,
+      fileReadonly: false,
     }
   } catch {
     return null
   }
 }
 
-// AI: 解析 openclaw-json 格式 — 读 openclawConfigFile 指定的 JSON 文件中的 agents.list
+// AI: 解析 openclaw-json 格式，读 openclawConfigFile 指定的 JSON 文件中的 agents.list
 // openclaw.json 结构: { agents: { list: [{ id, name, workspace, agentDir? }] } }
-function loadOpenclawJsonAgents(
-  manifest: PluginManifest
-): AgentEntry[] {
+function loadOpenclawJsonAgents(manifest: PluginManifest): AgentEntry[] {
   const configPath = manifest.openclawConfigFile
   if (!configPath) return []
 
@@ -129,20 +130,25 @@ function loadOpenclawJsonAgents(
   try {
     const raw = fs.readFileSync(expanded, 'utf-8')
     const parsed = JSON.parse(raw)
-    // AI: openclaw.json 结构: { agents: { list: [...] } }
-    const list: Array<{ id?: string; name?: string; workspace?: string }> =
+    const list: Array<{ id?: string; name?: string; workspace?: string; agentDir?: string }> =
       parsed?.agents?.list ?? []
 
     return list
       .filter((a) => a.id)
-      .map((a) => ({
-        name: a.name || a.id!,
-        runnerId: manifest.runnerId,
-        description: a.workspace ? `workspace: ${a.workspace}` : undefined,
-        enabled: true,
-        source: 'plugin-native' as const,
-        pluginId: manifest.id,
-      }))
+      .map((a) => {
+        // AI: agentDir 是具体 agent 目录（如 ~/.openclaw/agents/taizi/agent），models.json 含 API key，只读
+        const filePath = a.agentDir ? path.join(a.agentDir, 'models.json') : undefined
+        return {
+          name: a.name || a.id!,
+          runnerId: manifest.runnerId,
+          description: a.workspace ? `workspace: ${a.workspace}` : undefined,
+          enabled: true,
+          source: 'plugin-native' as const,
+          pluginId: manifest.id,
+          filePath,
+          fileReadonly: true, // AI: models.json 含 API key，只读展示
+        }
+      })
   } catch {
     return []
   }
@@ -172,7 +178,7 @@ function loadPluginAgents(manifest: PluginManifest): AgentEntry[] {
       let agentEntry: AgentEntry | null = null
 
       if (manifest.agentFormat === 'codeflicker-skill') {
-        // AI: CodeFlicker skill 格式 — 每个子目录是一个 skill，入口是 SKILL.md
+        // AI: CodeFlicker skill 格式，每个子目录是一个 skill，入口是 SKILL.md
         if (entry.isDirectory()) {
           agentEntry = parseCodeflickerSkillDir(
             path.join(dir, entry.name),
@@ -181,7 +187,7 @@ function loadPluginAgents(manifest: PluginManifest): AgentEntry[] {
           )
         }
       } else if (manifest.agentFormat === 'markdown') {
-        // AI: claude-code 格式 — 每个 .md 文件是一个 agent
+        // AI: claude-code 格式，每个 .md 文件是一个 agent
         if (entry.isFile()) {
           const ext = path.extname(entry.name).toLowerCase()
           if (ext === '.md' || ext === '.mdx') {
@@ -193,7 +199,7 @@ function loadPluginAgents(manifest: PluginManifest): AgentEntry[] {
           }
         }
       } else if (manifest.agentFormat === 'yaml') {
-        // AI: yaml 文件格式 — 每个 .yaml/.yml 文件是一个 agent
+        // AI: yaml 文件格式，每个 .yaml/.yml 文件是一个 agent
         if (entry.isFile()) {
           const ext = path.extname(entry.name).toLowerCase()
           if (ext === '.yaml' || ext === '.yml') {
