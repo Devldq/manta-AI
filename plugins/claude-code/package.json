@@ -1,0 +1,10 @@
+{
+  "name": "manta-plugin-claude-code",
+  "version": "1.0.0",
+  "description": "Official Manta plugin for Anthropic Claude Code CLI — supports custom sub-agents (~/.claude/agents/)",
+  "keywords": ["manta", "manta-plugin", "claude-code", "anthropic"],
+  "license": "MIT",
+  "manta": {
+    "pluginManifest": "plugin.yaml"
+  }
+}

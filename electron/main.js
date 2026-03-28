@@ -69,6 +69,18 @@ if (!isDev) {
   });
 }
 
+// IPC 处理：打开文件夹选择对话框
+const { dialog } = require('electron');
+ipcMain.handle('dialog:openDirectory', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: '选择插件目录',
+    buttonLabel: '选择此文件夹',
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
 // IPC 处理：开始下载更新
 ipcMain.handle('download-update', async () => {
   if (!isDev) {

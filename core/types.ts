@@ -105,6 +105,12 @@ export interface PluginManifest {
    */
   agentFormat: 'markdown' | 'yaml' | 'codeflicker-skill' | 'openclaw-json'
 
+  // AI: 是否为 npm 安装的插件（loader 自动填充，plugin.yaml 本身无此字段）
+  isNpm?: boolean
+
+  // AI: 是否禁用（loader 从 plugins/_disabled.json 读取，plugin.yaml 本身无此字段）
+  disabled?: boolean
+
   // AI: openclaw-json 格式专用：openclaw 主配置文件路径（支持 ~ 展开）
   openclawConfigFile?: string
 }

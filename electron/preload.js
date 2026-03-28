@@ -14,5 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
+
+  // AI: 文件夹选择对话框（用于插件安装）
+  selectDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
 });
 // AI end: Preload 脚本
