@@ -1,10 +1,47 @@
 /*  start: Agent 定义文件读写 API — GET 读取内容 / PUT 保存修改 */
-// AI: 通过 agent name 查找对应的 filePath，直接读写原始文件
-// openclaw agents (fileReadonly=true): 只读展示，不允许修改（含 API key）
-// claude/codeflicker agents: 可读可写
+// AI: 直接内联 Node fs 操作，不通过 @/registry（避免 webpack 打包破坏 Node 模块）
 import { NextRequest, NextResponse } from 'next/server'
 import * as fs from 'fs'
-import { loadAgents } from '@/registry'
+import * as path from 'path'
+import * as os from 'os'
+
+// AI: 展开 ~ 路径
+function expandDir(rawDir: string): string {
+  if (rawDir.startsWith('~/')) return path.join(os.homedir(), rawDir.slice(2))
+  return path.resolve(process.cwd(), rawDir)
+}
+
+// AI: 重建 agent 的 filePath 信息（不依赖 registry，直接从配置扫描）
+function findAgentFilePath(name: string): { filePath: string | null; readonly: boolean } {
+  // 1. openclaw agents — 从 openclaw.json 查找 agentDir
+  try {
+    const configPath = expandDir('~/.openclaw/openclaw.json')
+    if (fs.existsSync(configPath)) {
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      const list: Array<{ id?: string; name?: string; agentDir?: string }> =
+        parsed?.agents?.list ?? []
+      const found = list.find((a) => (a.name || a.id) === name)
+      if (found) {
+        const filePath = found.agentDir ? path.join(found.agentDir, 'models.json') : null
+        return { filePath, readonly: true }
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 2. claude-code agents — ~/.claude/agents/<name>.md
+  const claudeAgentPath = expandDir(`~/.claude/agents/${name}.md`)
+  if (fs.existsSync(claudeAgentPath)) {
+    return { filePath: claudeAgentPath, readonly: false }
+  }
+
+  // 3. codeflicker skills — ~/.codeflicker/internal/skills/<name>/SKILL.md
+  const skillMdPath = expandDir(`~/.codeflicker/internal/skills/${name}/SKILL.md`)
+  if (fs.existsSync(skillMdPath)) {
+    return { filePath: skillMdPath, readonly: false }
+  }
+
+  return { filePath: null, readonly: false }
+}
 
 // AI: GET /api/agents/definition?name=<agentName> — 读取 agent 定义文件内容
 export async function GET(req: NextRequest) {
@@ -13,32 +50,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: '缺少 name 参数' }, { status: 400 })
   }
 
-  const agents = loadAgents()
-  const agent = agents.find((a) => a.name === name)
-  if (!agent) {
-    return NextResponse.json({ error: `未找到 agent: ${name}` }, { status: 404 })
-  }
+  const { filePath, readonly } = findAgentFilePath(name)
 
-  // AI: 无定义文件路径（如 openclaw 中 agentDir 为空的 agent）
-  if (!agent.filePath) {
+  if (!filePath) {
     return NextResponse.json({
-      name: agent.name,
+      name,
       content: null,
       filePath: null,
       readonly: true,
-      message: '该 Agent 无可查看的定义文件（agentDir 为空）',
+      message: '该 Agent 无可查看的定义文件',
     })
   }
 
   try {
-    const content = fs.readFileSync(agent.filePath, 'utf-8')
-    return NextResponse.json({
-      name: agent.name,
-      content,
-      filePath: agent.filePath,
-      readonly: agent.fileReadonly ?? false,
-      pluginId: agent.pluginId,
-    })
+    const content = fs.readFileSync(filePath, 'utf-8')
+    return NextResponse.json({ name, content, filePath, readonly })
   } catch (err) {
     return NextResponse.json({ error: `读取文件失败: ${String(err)}` }, { status: 500 })
   }
@@ -53,29 +79,23 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: '缺少 name 或 content 参数' }, { status: 400 })
   }
 
-  const agents = loadAgents()
-  const agent = agents.find((a) => a.name === name)
-  if (!agent) {
-    return NextResponse.json({ error: `未找到 agent: ${name}` }, { status: 404 })
-  }
+  const { filePath, readonly } = findAgentFilePath(name)
 
-  // AI: 只读文件（如 openclaw models.json）不允许修改
-  if (agent.fileReadonly) {
+  if (readonly) {
     return NextResponse.json({ error: '该 Agent 定义文件为只读，无法修改' }, { status: 403 })
   }
 
-  if (!agent.filePath) {
+  if (!filePath) {
     return NextResponse.json({ error: '该 Agent 无定义文件路径' }, { status: 404 })
   }
 
   try {
-    // AI: 写前先备份（同目录 .bak 文件）
-    const bakPath = agent.filePath + '.bak'
-    if (fs.existsSync(agent.filePath)) {
-      fs.copyFileSync(agent.filePath, bakPath)
+    // AI: 写前先备份 .bak
+    if (fs.existsSync(filePath)) {
+      fs.copyFileSync(filePath, filePath + '.bak')
     }
-    fs.writeFileSync(agent.filePath, content, 'utf-8')
-    return NextResponse.json({ success: true, filePath: agent.filePath })
+    fs.writeFileSync(filePath, content, 'utf-8')
+    return NextResponse.json({ success: true, filePath })
   } catch (err) {
     return NextResponse.json({ error: `写入文件失败: ${String(err)}` }, { status: 500 })
   }

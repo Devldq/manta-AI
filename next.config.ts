@@ -13,7 +13,6 @@ const nextConfig: NextConfig = {
     'os',
     'child_process',
   ],
-
   // AI: 禁用图片优化（Electron 环境）
   images: {
     unoptimized: true,
