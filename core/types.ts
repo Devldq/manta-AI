@@ -43,8 +43,7 @@ export interface Task {
 
 // ─── Agent 来源 ───────────────────────────────────────────────
 export type AgentSource =
-  | 'plugin-native'   // 从插件目录扫描得到（openclaw/claude-code 原生 agents）
-  | 'manta-custom'    // 用户在 Manta 界面手动创建
+  | 'plugin-native'   // AI: 从插件目录扫描得到（openclaw/claude-code 原生 agents）
 
 // ─── Agent 注册表 ───────────────────────────────────────────────
 export interface AgentEntry {
@@ -89,15 +88,19 @@ export interface PluginManifest {
   /** 描述 */
   description?: string
 
-  /** agents 目录扫描路径列表（支持 ~ 展开）*/
-  agentsDirs: string[]
+  /** agents 目录扫描路径列表（支持 ~ 展开）。openclaw-json 格式不需要此字段 */
+  agentsDirs?: string[]
 
-  /** Agent 文件格式
-   * - markdown: YAML frontmatter + MD body（claude-code sub-agents，每个文件是一个 agent）
-   * - yaml: YAML 配置文件（openclaw agents 目录，每个 yaml 是一个 agent）
-   * - codeflicker-skill: CodeFlicker Skills（每个 skill 是一个子目录，内含 SKILL.md）
+  /** agent 格式：
+   * - yaml: 每个 .yaml 文件是一个 agent（旧 openclaw 格式）
+   * - markdown: 每个 .md 文件是一个 agent（claude-code sub-agents）
+   * - codeflicker-skill: 每个子目录含 SKILL.md（codeflicker skills）
+   * - openclaw-json: 读 openclawConfigFile 指向的 JSON 文件（openclaw 真实格式）
    */
-  agentFormat: 'markdown' | 'yaml' | 'codeflicker-skill'
+  agentFormat: 'markdown' | 'yaml' | 'codeflicker-skill' | 'openclaw-json'
+
+  // AI: openclaw-json 格式专用：openclaw 主配置文件路径（支持 ~ 展开）
+  openclawConfigFile?: string
 }
 
 /** 插件 Adapter 接口 — 每个插件实现此接口 */

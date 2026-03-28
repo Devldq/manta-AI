@@ -115,11 +115,49 @@ function parseCodeflickerSkillDir(
   }
 }
 
+// AI: 解析 openclaw-json 格式 — 读 openclawConfigFile 指定的 JSON 文件中的 agents.list
+// openclaw.json 结构: { agents: { list: [{ id, name, workspace, agentDir? }] } }
+function loadOpenclawJsonAgents(
+  manifest: PluginManifest
+): AgentEntry[] {
+  const configPath = manifest.openclawConfigFile
+  if (!configPath) return []
+
+  const expanded = expandDir(configPath)
+  if (!fs.existsSync(expanded)) return []
+
+  try {
+    const raw = fs.readFileSync(expanded, 'utf-8')
+    const parsed = JSON.parse(raw)
+    // AI: openclaw.json 结构: { agents: { list: [...] } }
+    const list: Array<{ id?: string; name?: string; workspace?: string }> =
+      parsed?.agents?.list ?? []
+
+    return list
+      .filter((a) => a.id)
+      .map((a) => ({
+        name: a.name || a.id!,
+        runnerId: manifest.runnerId,
+        description: a.workspace ? `workspace: ${a.workspace}` : undefined,
+        enabled: true,
+        source: 'plugin-native' as const,
+        pluginId: manifest.id,
+      }))
+  } catch {
+    return []
+  }
+}
+
 // AI: 加载单个插件的所有 agents（根据 agentFormat 选择不同解析策略）
 function loadPluginAgents(manifest: PluginManifest): AgentEntry[] {
+  // AI: openclaw-json 格式走独立分支，不依赖 agentsDirs
+  if (manifest.agentFormat === 'openclaw-json') {
+    return loadOpenclawJsonAgents(manifest)
+  }
+
   const agents: AgentEntry[] = []
 
-  for (const rawDir of manifest.agentsDirs) {
+  for (const rawDir of (manifest.agentsDirs ?? [])) {
     const dir = expandDir(rawDir)
     if (!fs.existsSync(dir)) continue
 
@@ -155,7 +193,7 @@ function loadPluginAgents(manifest: PluginManifest): AgentEntry[] {
           }
         }
       } else if (manifest.agentFormat === 'yaml') {
-        // AI: openclaw 格式 — 每个 .yaml/.yml 文件是一个 agent
+        // AI: yaml 文件格式 — 每个 .yaml/.yml 文件是一个 agent
         if (entry.isFile()) {
           const ext = path.extname(entry.name).toLowerCase()
           if (ext === '.yaml' || ext === '.yml') {
