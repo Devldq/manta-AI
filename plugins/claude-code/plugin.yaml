@@ -1,0 +1,12 @@
+id: claude-code
+name: Claude Code
+runnerId: claude-code
+description: Anthropic Claude Code CLI — 支持自定义 sub-agents（~/.claude/agents/）
+
+# AI: Manta 扫描此路径列表寻找 sub-agent 定义文件（支持 ~ 展开）
+# claude-code 的 sub-agents 存储在 Markdown 文件（YAML frontmatter + 系统提示正文）
+agentsDirs:
+  - ~/.claude/agents
+
+# AI: agent 文件格式：markdown（YAML frontmatter 定义配置，正文是系统提示）
+agentFormat: markdown

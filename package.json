@@ -1,0 +1,51 @@
+{
+  "name": "manta",
+  "version": "2.0.0",
+  "private": true,
+  "main": "electron/main.js",
+  "author": "lidaqing",
+  "description": "Manta — Agent 调度操作系统 · Humans steer. Agents execute. Drivers are pluggable.",
+  "scripts": {
+    "dev": "concurrently -n \"NEXT,ELECTRON\" -c \"yellow,blue\" --kill-others \"next dev -p 3000\" \"wait-on http://localhost:3000 && electron .\"",
+    "dev:next": "next dev -p 3000",
+    "dev:electron": "electron .",
+    "build": "next build && electron-builder",
+    "build:next": "next build",
+    "build:electron": "electron-builder",
+    "start": "next start",
+    "lint": "next lint",
+    "check:sensitive": "npx tsx scripts/sensitive-check.ts"
+  },
+  "dependencies": {
+    "@types/uuid": "^11.0.0",
+    "date-fns": "^4.1.0",
+    "electron-updater": "^6.8.3",
+    "js-yaml": "^4.1.0",
+    "lucide-react": "^0.475.0",
+    "next": "15.3.0",
+    "proper-lockfile": "^4.1.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "uuid": "^13.0.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22",
+    "@types/proper-lockfile": "^4.1.4",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.0.1",
+    "concurrently": "^9.2.1",
+    "electron": "^41.0.4",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9",
+    "eslint-config-next": "15.2.4",
+    "postcss": "^8",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.21.0",
+    "typescript": "^5",
+    "wait-on": "^9.0.4",
+    "yaml": "^2.8.3"
+  }
+}
