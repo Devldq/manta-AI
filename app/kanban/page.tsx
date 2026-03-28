@@ -162,7 +162,7 @@ function TaskCard({ task }: { task: Task }) {
   )
 }
 
-// AI: 新建任务弹窗 — 从 API 动态加载 Agent 列表（plugin-native + manta-custom）
+// AI: 新建任务弹窗 — 从 API 加载插件扫描到的 Agent 列表
 function NewTaskModal({
   onClose,
   onSuccess,
@@ -176,11 +176,11 @@ function NewTaskModal({
     mode: 'lightweight' as 'lightweight' | 'workflow',
     agentName: '',
   })
-  const [agents, setAgents] = useState<{ name: string; runnerId: string; source?: string; pluginId?: string }[]>([])
+  const [agents, setAgents] = useState<{ name: string; runnerId: string; pluginId?: string }[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // AI: 加载可用的 Agent 列表（启用的）
+  // AI: 加载可用的 Agent 列表（插件扫描，启用的）
   useEffect(() => {
     fetch('/api/agents?enabled=true')
       .then((r) => r.json())
@@ -225,10 +225,7 @@ function NewTaskModal({
     }
   }
 
-  // AI: 按来源分组 Agent 列表（用于 select 的 optgroup）
-  const pluginAgents = agents.filter((a) => a.source === 'plugin-native')
-  const customAgents = agents.filter((a) => a.source !== 'plugin-native')
-
+  // AI: 按 pluginId 分组展示 Agent（用于 select）
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
       <div className="bg-background border border-border rounded-xl p-6 w-full max-w-md shadow-xl">
@@ -270,7 +267,7 @@ function NewTaskModal({
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1">
                 选择 Agent
-                <span className="ml-1 text-text-muted font-normal">（来自插件扫描 + 自定义）</span>
+                <span className="ml-1 text-text-muted font-normal">（来自插件目录扫描）</span>
               </label>
               <select
                 value={form.agentName}
@@ -278,26 +275,13 @@ function NewTaskModal({
                 className="w-full px-3 py-2 text-sm border border-border rounded-md bg-surface text-text-primary focus:outline-none focus:border-accent font-mono"
               >
                 {agents.length === 0 && (
-                  <option value="" disabled>加载中...</option>
+                  <option value="" disabled>扫描中... / 未发现 Agent</option>
                 )}
-                {pluginAgents.length > 0 && (
-                  <optgroup label="插件 Agent">
-                    {pluginAgents.map((a) => (
-                      <option key={a.name} value={a.name}>
-                        {a.name} ({a.pluginId ?? a.runnerId})
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {customAgents.length > 0 && (
-                  <optgroup label="自定义 Agent">
-                    {customAgents.map((a) => (
-                      <option key={a.name} value={a.name}>
-                        {a.name} ({a.runnerId})
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
+                {agents.map((a) => (
+                  <option key={a.name} value={a.name}>
+                    {a.name} ({a.pluginId ?? a.runnerId})
+                  </option>
+                ))}
               </select>
             </div>
           )}
