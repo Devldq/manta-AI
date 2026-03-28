@@ -1,15 +1,12 @@
 id: codeflicker
 name: CodeFlicker
 runnerId: codeflicker
-description: CodeFlicker IDE 内置 Agent 执行器，Skills 即 sub-agents（~/.codeflicker/skills/ 或 .codeflicker/skills/）
+description: CodeFlicker IDE 内置 Skills 执行器 — Skills 即 sub-agents
 
-# AI: Manta 扫描此路径列表寻找 skill 定义文件（支持 ~ 展开）
-# CodeFlicker Skills 存放在 SKILL.md 文件中，位于 skill 名称子目录内
-# 同时扫描全局（~/.codeflicker/skills/）和项目级（.codeflicker/skills/）
+# AI: 扫描 CodeFlicker 内置 skills 目录（每个子目录含 SKILL.md 的即为一个 skill/agent）
+# 经实际确认路径为 ~/.codeflicker/internal/skills/（含 code-review、help 等 6 个内置 skill）
 agentsDirs:
-  - ~/.codeflicker/skills
-  - .codeflicker/skills
+  - ~/.codeflicker/internal/skills
 
-# AI: agent 文件格式：skill（SKILL.md，YAML frontmatter + 系统提示正文）
-# 与 claude-code markdown 格式兼容，但入口文件名为 SKILL.md 而非任意 .md
+# AI: agent 格式：codeflicker-skill（子目录 + SKILL.md，frontmatter 含 name / description）
 agentFormat: codeflicker-skill
