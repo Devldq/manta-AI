@@ -118,8 +118,8 @@ function getTaskOutputDir(taskId: string): string {
   return path.join(DATA_DIR, 'tasks', taskId)
 }
 
-// AI: 执行轻量模式任务（Task → Runner → 结果）
-async function runLightweightTask(task: Task): Promise<void> {
+// AI: 执行轻量模式任务（Task → Runner → 结果）—— 导出供 /run API 复用
+export async function runLightweightTask(task: Task): Promise<void> {
   if (!task.agentName) {
     await dataStore.updateTask(task.id, {
       status: 'failed',
@@ -204,6 +204,29 @@ export async function createAndDispatch(
           error: String(err),
         })
       })
+    })
+  } else if (task.mode === 'workflow' && task.workflowId) {
+    // AI: 工作流模式 — 延迟导入避免循环依赖
+    setImmediate(async () => {
+      try {
+        const { startWorkflow } = await import('./executor')
+        const { findWorkflow } = await import('./loader')
+        const workflow = findWorkflow(task.workflowId!)
+        if (!workflow) {
+          await dataStore.updateTask(task.id, {
+            status: 'failed',
+            error: `工作流 "${task.workflowId}" 不存在`,
+          })
+          return
+        }
+        await startWorkflow(task, workflow, dataStore)
+      } catch (err) {
+        console.error('[engine] workflow dispatch error:', err)
+        dataStore.updateTask(task.id, {
+          status: 'failed',
+          error: String(err),
+        })
+      }
     })
   }
 

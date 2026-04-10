@@ -10,6 +10,14 @@ interface TaskStats {
   total: number
 }
 
+// AI: 工作流执行概况统计
+interface WfStats {
+  running: number
+  waiting: number
+  doneToday: number
+  total: number
+}
+
 interface RecentTask {
   id: string
   title: string
@@ -21,29 +29,50 @@ interface RecentTask {
 
 export default function HomePage() {
   const [stats, setStats] = useState<TaskStats>({ running: 0, inbox: 0, doneToday: 0, total: 0 })
+  const [wfStats, setWfStats] = useState<WfStats | null>(null)
   const [recentTasks, setRecentTasks] = useState<RecentTask[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function loadData() {
       try {
-        const res = await fetch('/api/tasks')
-        const data = await res.json()
-        const tasks: RecentTask[] = data.tasks ?? []
+        // AI: 并行拉取任务列表 + 工作流执行实例
+        const [tasksRes, wfRes] = await Promise.allSettled([
+          fetch('/api/tasks'),
+          fetch('/api/workflows/executions'),
+        ])
 
-        // AI: 计算统计数据
-        const today = new Date().toDateString()
-        const s: TaskStats = {
-          running: tasks.filter((t) => t.status === 'running').length,
-          inbox: tasks.filter((t) => t.status === 'inbox').length,
-          doneToday: tasks.filter(
-            (t) => t.status === 'done' && new Date(t.updatedAt).toDateString() === today
-          ).length,
-          total: tasks.length,
+        if (tasksRes.status === 'fulfilled' && tasksRes.value.ok) {
+          const data = await tasksRes.value.json()
+          const tasks: RecentTask[] = data.tasks ?? []
+
+          const today = new Date().toDateString()
+          const s: TaskStats = {
+            running: tasks.filter((t) => t.status === 'running').length,
+            inbox: tasks.filter((t) => t.status === 'inbox').length,
+            doneToday: tasks.filter(
+              (t) => t.status === 'done' && new Date(t.updatedAt).toDateString() === today
+            ).length,
+            total: tasks.length,
+          }
+          setStats(s)
+          setRecentTasks(tasks.slice(0, 5))
         }
-        setStats(s)
-        // AI: 最近 5 条任务（按更新时间降序，API 已排好序）
-        setRecentTasks(tasks.slice(0, 5))
+
+        // AI: 工作流执行概况统计
+        if (wfRes.status === 'fulfilled' && wfRes.value.ok) {
+          const wfData = await wfRes.value.json()
+          const execs: { status: string; updatedAt: string }[] = wfData.executions ?? []
+          const today = new Date().toDateString()
+          setWfStats({
+            running: execs.filter((e) => e.status === 'running').length,
+            waiting: execs.filter((e) => e.status === 'waiting').length,
+            doneToday: execs.filter(
+              (e) => e.status === 'done' && new Date(e.updatedAt).toDateString() === today
+            ).length,
+            total: execs.length,
+          })
+        }
       } catch {
         console.error('首页加载数据失败')
       } finally {
@@ -91,6 +120,44 @@ export default function HomePage() {
         />
       </div>
 
+      {/* AI: 工作流执行概况（有执行记录时显示）*/}
+      {wfStats && wfStats.total > 0 && (
+        <div className="mb-10">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-medium text-text-muted uppercase tracking-wider">工作流概况</h2>
+            <a href="/workflows" className="text-xs text-text-muted hover:text-text-primary transition-colors">
+              查看编排 →
+            </a>
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            <WfStatCard
+              label="执行中"
+              value={loading ? '—' : String(wfStats.running)}
+              color="var(--color-status-running)"
+              urgent={false}
+            />
+            <WfStatCard
+              label="等待操作"
+              value={loading ? '—' : String(wfStats.waiting)}
+              color="#f59e0b"
+              urgent={wfStats.waiting > 0}
+            />
+            <WfStatCard
+              label="今日完成"
+              value={loading ? '—' : String(wfStats.doneToday)}
+              color="var(--color-status-done)"
+              urgent={false}
+            />
+            <WfStatCard
+              label="流程总数"
+              value={loading ? '—' : String(wfStats.total)}
+              color="var(--color-text-muted)"
+              urgent={false}
+            />
+          </div>
+        </div>
+      )}
+
       {/* 快速操作区 */}
       <div className="mb-10">
         <h2 className="text-xs font-medium text-text-muted mb-3 uppercase tracking-wider">
@@ -98,9 +165,9 @@ export default function HomePage() {
         </h2>
         <div className="grid grid-cols-2 gap-3">
           <QuickAction href="/kanban" title="任务看板" description="查看并管理所有任务的执行状态" icon="▦" />
+          <QuickAction href="/workflows" title="工作流编排" description="查看步骤流、执行记录和人工审批" icon="⟳" />
           <QuickAction href="/processing" title="处理中心" description="审批、打分、查看 Agent 输出" icon="◈" />
           <QuickAction href="/agents" title="Agent 管理" description="注册和配置 Agent 执行驱动" icon="◉" />
-          <QuickAction href="/settings" title="系统设置" description="Runner 探测、Channel 配置" icon="◎" />
         </div>
       </div>
 
@@ -150,6 +217,33 @@ function getGreeting(): string {
   if (h < 18) return '下午好'
   if (h < 22) return '晚上好'
   return '夜深了，注意休息'
+}
+
+// AI: 工作流概况统计卡片
+function WfStatCard({
+  label,
+  value,
+  color,
+  urgent,
+}: {
+  label: string
+  value: string
+  color: string
+  urgent: boolean
+}) {
+  return (
+    <div className={`border rounded-lg p-4 ${
+      urgent ? 'border-yellow-300 bg-yellow-50' : 'border-border bg-surface'
+    }`}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs text-text-muted uppercase tracking-wider">{label}</span>
+        <div className={`w-1.5 h-1.5 rounded-full ${urgent ? 'animate-pulse' : ''}`} style={{ backgroundColor: color }} />
+      </div>
+      <div className={`text-2xl font-semibold ${
+        urgent ? 'text-yellow-700' : 'text-text-primary'
+      }`}>{value}</div>
+    </div>
+  )
 }
 
 // AI: 统计卡片

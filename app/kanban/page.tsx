@@ -5,6 +5,14 @@ import { useState, useEffect, useCallback } from 'react'
 
 type TaskStatus = 'inbox' | 'planning' | 'running' | 'done' | 'failed' | 'archived'
 
+// AI: 工作流执行进度摘要（来自 API 附加字段 _wfProgress）
+interface WfProgress {
+  execStatus: 'running' | 'waiting' | 'done' | 'failed'
+  currentStepName: string | null
+  currentStepType: string | null
+  stepsDot: string[]
+}
+
 interface Task {
   id: string
   title: string
@@ -15,6 +23,7 @@ interface Task {
   workflowId?: string
   createdAt: string
   updatedAt: string
+  _wfProgress?: WfProgress
 }
 
 const COLUMNS: { id: TaskStatus; label: string; color: string }[] = [
@@ -81,6 +90,7 @@ export default function KanbanPage() {
               key={col.id}
               column={col}
               tasks={getTasksByStatus(col.id)}
+              onRefresh={fetchTasks}
             />
           ))}
         </div>
@@ -99,9 +109,11 @@ export default function KanbanPage() {
 function KanbanColumn({
   column,
   tasks,
+  onRefresh,
 }: {
   column: { id: TaskStatus; label: string; color: string }
   tasks: Task[]
+  onRefresh: () => void
 }) {
   return (
     <div className="flex flex-col w-64 flex-shrink-0">
@@ -117,7 +129,7 @@ function KanbanColumn({
 
       <div className="flex-1 overflow-y-auto space-y-2 min-h-32">
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} />
+          <TaskCard key={task.id} task={task} onRefresh={onRefresh} />
         ))}
         {tasks.length === 0 && (
           <div className="h-20 border border-dashed border-border-subtle rounded-md flex items-center justify-center">
@@ -129,40 +141,177 @@ function KanbanColumn({
   )
 }
 
-function TaskCard({ task }: { task: Task }) {
-  return (
-    <a
-      href={`/processing?taskId=${task.id}`}
-      className="block p-3 bg-surface border border-border rounded-lg hover:border-accent hover:bg-accent-subtle transition-colors cursor-pointer"
-    >
-      <div className="text-sm font-medium text-text-primary leading-snug">
-        {task.title}
-      </div>
-      {task.description && (
-        <div className="text-xs text-text-muted mt-1 line-clamp-2">
-          {task.description}
-        </div>
-      )}
-      <div className="flex items-center gap-2 mt-2 flex-wrap">
-        {task.agentName && (
-          <span className="text-xs text-text-muted bg-background border border-border-subtle px-1.5 py-0.5 rounded font-mono">
-            {task.agentName}
-          </span>
-        )}
-        {task.workflowId && (
-          <span className="text-xs text-text-muted">
-            {task.workflowId}
-          </span>
-        )}
-        <span className="text-xs text-text-muted ml-auto">
-          {task.mode === 'lightweight' ? '轻量' : '工作流'}
-        </span>
-      </div>
-    </a>
-  )
+// AI: 步骤状态圆点颜色映射
+const DOT_COLOR: Record<string, string> = {
+  pending:  'bg-border',
+  running:  'bg-status-running animate-pulse',
+  waiting:  'bg-yellow-400 animate-pulse',
+  done:     'bg-status-done',
+  failed:   'bg-status-failed',
+  skipped:  'bg-border opacity-40',
 }
 
-// AI: 新建任务弹窗 — 从 API 加载插件扫描到的 Agent 列表
+/* AI start: TaskCard — 支持快捷操作菜单（归档/删除）*/
+function TaskCard({ task, onRefresh }: { task: Task; onRefresh: () => void }) {
+  const wf = task._wfProgress
+  const isWaiting = wf?.execStatus === 'waiting'
+  // AI: 操作菜单状态
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [actionLoading, setActionLoading] = useState(false)
+
+  // AI: 归档任务
+  async function handleArchive(e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (task.status === 'archived') return
+    setActionLoading(true)
+    try {
+      await fetch(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'archived' }),
+      })
+      onRefresh()
+    } finally {
+      setActionLoading(false)
+      setMenuOpen(false)
+    }
+  }
+
+  // AI: 删除任务
+  async function handleDelete(e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!confirm(`确认删除任务「${task.title}」？此操作不可撤销。`)) return
+    setActionLoading(true)
+    try {
+      await fetch(`/api/tasks/${task.id}`, { method: 'DELETE' })
+      onRefresh()
+    } finally {
+      setActionLoading(false)
+      setMenuOpen(false)
+    }
+  }
+
+  return (
+    <div className="relative group">
+      <a
+        href={`/processing?taskId=${task.id}`}
+        className={`block p-3 bg-surface border rounded-lg hover:bg-accent-subtle transition-colors cursor-pointer ${
+          isWaiting
+            ? 'border-yellow-300 shadow-sm shadow-yellow-100'
+            : 'border-border hover:border-accent'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-1">
+          <div className="text-sm font-medium text-text-primary leading-snug flex-1 min-w-0">
+            {task.title}
+          </div>
+          {/* AI: 操作菜单触发按钮（hover 时显示） */}
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen(!menuOpen) }}
+            className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-surface text-text-muted hover:text-text-primary"
+            title="更多操作"
+          >
+            ···
+          </button>
+        </div>
+        {task.description && (
+          <div className="text-xs text-text-muted mt-1 line-clamp-2">
+            {task.description}
+          </div>
+        )}
+
+        {/* AI: 工作流执行进度 */}
+        {wf && (
+          <div className="mt-2 space-y-1">
+            {wf.currentStepName && (
+              <div className="flex items-center gap-1.5">
+                <span className={`text-xs ${
+                  wf.execStatus === 'waiting' ? 'text-yellow-600' :
+                  wf.execStatus === 'running' ? 'text-status-running' :
+                  wf.execStatus === 'done' ? 'text-status-done' :
+                  'text-text-muted'
+                }`}>
+                  {wf.execStatus === 'waiting' ? '⚠ 等待:' :
+                   wf.execStatus === 'running' ? '▶ 执行:' :
+                   wf.execStatus === 'done' ? '✓' :
+                   '◉'}
+                </span>
+                <span className="text-xs text-text-secondary truncate">{wf.currentStepName}</span>
+              </div>
+            )}
+            {wf.stepsDot.length > 0 && (
+              <div className="flex gap-1 flex-wrap">
+                {wf.stepsDot.map((status, i) => (
+                  <div
+                    key={i}
+                    title={status}
+                    className={`w-2 h-2 rounded-full ${DOT_COLOR[status] ?? 'bg-border'}`}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
+          {task.agentName && (
+            <span className="text-xs text-text-muted bg-background border border-border-subtle px-1.5 py-0.5 rounded font-mono">
+              {task.agentName}
+            </span>
+          )}
+          {task.workflowId && !wf && (
+            <span className="text-xs text-text-muted font-mono">{task.workflowId}</span>
+          )}
+          <span className="text-xs text-text-muted ml-auto">
+            {task.mode === 'lightweight' ? '轻量' : '工作流'}
+          </span>
+        </div>
+      </a>
+
+      {/* AI: 下拉操作菜单 */}
+      {menuOpen && (
+        <>
+          {/* 点击空白区域关闭菜单 */}
+          <div
+            className="fixed inset-0 z-10"
+            onClick={() => setMenuOpen(false)}
+          />
+          <div className="absolute right-0 top-8 z-20 bg-background border border-border rounded-lg shadow-lg py-1 min-w-[110px]">
+            {task.status !== 'archived' && (
+              <button
+                onClick={handleArchive}
+                disabled={actionLoading}
+                className="w-full text-left px-3 py-1.5 text-xs text-text-secondary hover:bg-surface transition-colors disabled:opacity-50"
+              >
+                归档
+              </button>
+            )}
+            <button
+              onClick={handleDelete}
+              disabled={actionLoading}
+              className="w-full text-left px-3 py-1.5 text-xs text-status-failed hover:bg-status-failed/5 transition-colors disabled:opacity-50"
+            >
+              {actionLoading ? '处理中...' : '删除'}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+/* AI end: TaskCard 结束 */
+
+// AI: 工作流定义精简类型（新建任务弹窗用）
+interface WorkflowDefBrief {
+  id: string
+  name: string
+  description?: string
+  steps: { id: string }[]
+}
+
+// AI: 新建任务弹窗 — 支持轻量模式（选 Agent）和工作流模式（选工作流）
 function NewTaskModal({
   onClose,
   onSuccess,
@@ -175,12 +324,14 @@ function NewTaskModal({
     description: '',
     mode: 'lightweight' as 'lightweight' | 'workflow',
     agentName: '',
+    workflowId: '',
   })
   const [agents, setAgents] = useState<{ name: string; runnerId: string; pluginId?: string }[]>([])
+  const [workflows, setWorkflows] = useState<WorkflowDefBrief[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // AI: 加载可用的 Agent 列表（插件扫描，启用的）
+  // AI: 加载可用的 Agent 列表 + 工作流列表
   useEffect(() => {
     fetch('/api/agents?enabled=true')
       .then((r) => r.json())
@@ -189,6 +340,17 @@ function NewTaskModal({
         setAgents(list)
         if (list.length > 0 && !form.agentName) {
           setForm((f) => ({ ...f, agentName: list[0].name }))
+        }
+      })
+      .catch(() => {})
+
+    fetch('/api/workflows')
+      .then((r) => r.json())
+      .then((data) => {
+        const list: WorkflowDefBrief[] = data.workflows ?? []
+        setWorkflows(list)
+        if (list.length > 0 && !form.workflowId) {
+          setForm((f) => ({ ...f, workflowId: list[0].id }))
         }
       })
       .catch(() => {})
@@ -204,13 +366,23 @@ function NewTaskModal({
       setError('请选择一个 Agent')
       return
     }
+    if (form.mode === 'workflow' && !form.workflowId) {
+      setError('请选择一个工作流')
+      return
+    }
     setLoading(true)
     setError('')
     try {
       const res = await fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          title: form.title,
+          description: form.description,
+          mode: form.mode,
+          agentName: form.mode === 'lightweight' ? form.agentName : undefined,
+          workflowId: form.mode === 'workflow' ? form.workflowId : undefined,
+        }),
       })
       if (!res.ok) {
         const data = await res.json()
@@ -225,7 +397,6 @@ function NewTaskModal({
     }
   }
 
-  // AI: 按 pluginId 分组展示 Agent（用于 select）
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
       <div className="bg-background border border-border rounded-xl p-6 w-full max-w-md shadow-xl">
@@ -260,9 +431,11 @@ function NewTaskModal({
               className="w-full px-3 py-2 text-sm border border-border rounded-md bg-surface text-text-primary focus:outline-none focus:border-accent"
             >
               <option value="lightweight">轻量模式（直接指定 Agent）</option>
-              <option value="workflow">完整工作流</option>
+              <option value="workflow">工作流编排（多步骤）</option>
             </select>
           </div>
+
+          {/* AI: 轻量模式 — 选择 Agent */}
           {form.mode === 'lightweight' && (
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1">
@@ -285,6 +458,38 @@ function NewTaskModal({
               </select>
             </div>
           )}
+
+          {/* AI: 工作流模式 — 选择工作流 */}
+          {form.mode === 'workflow' && (
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                选择工作流
+                <span className="ml-1 text-text-muted font-normal">（来自 workflows/*.yaml）</span>
+              </label>
+              <select
+                value={form.workflowId}
+                onChange={(e) => setForm({ ...form, workflowId: e.target.value })}
+                className="w-full px-3 py-2 text-sm border border-border rounded-md bg-surface text-text-primary focus:outline-none focus:border-accent"
+              >
+                {workflows.length === 0 && (
+                  <option value="" disabled>加载中... / 未发现工作流</option>
+                )}
+                {workflows.map((wf) => (
+                  <option key={wf.id} value={wf.id}>
+                    {wf.name} ({wf.steps.length} 步)
+                  </option>
+                ))}
+              </select>
+              {/* AI: 当前所选工作流的描述 */}
+              {form.workflowId && (() => {
+                const wf = workflows.find((w) => w.id === form.workflowId)
+                return wf?.description ? (
+                  <p className="text-xs text-text-muted mt-1">{wf.description}</p>
+                ) : null
+              })()}
+            </div>
+          )}
+
           {error && <p className="text-xs text-status-failed">{error}</p>}
         </div>
         <div className="flex justify-end gap-2 mt-5">

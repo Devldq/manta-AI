@@ -243,6 +243,8 @@ export interface WorkflowStep {
   next?: string
   actions?: Record<string, string>
   notify?: boolean | { mac?: boolean; webhook?: boolean }
+  /** AI: 并行步骤的子分支 */
+  branches?: WorkflowStep[]
 }
 
 export interface WorkflowDef {
@@ -251,6 +253,55 @@ export interface WorkflowDef {
   description?: string
   version?: string
   steps: WorkflowStep[]
+}
+
+// ─── 工作流执行状态 ───────────────────────────────────────────────
+
+/** 单步执行状态 */
+export type StepStatus =
+  | 'pending'        // 待执行
+  | 'running'        // 执行中
+  | 'waiting'        // 等待人工操作（human_in_loop）
+  | 'done'           // 完成
+  | 'failed'         // 失败
+  | 'skipped'        // 已跳过
+
+/** 工作流执行实例整体状态 */
+export type WorkflowExecutionStatus =
+  | 'running'
+  | 'waiting'        // 暂停在 human_in_loop 步骤
+  | 'done'
+  | 'failed'
+
+/** 单步执行日志条目 */
+export interface StepLog {
+  stepId: string
+  stepName: string
+  status: StepStatus
+  agentName?: string
+  startedAt?: string
+  completedAt?: string
+  error?: string
+  /** human_in_loop 步骤的可选操作 */
+  actions?: Record<string, string>
+}
+
+/** 工作流执行实例（对应一个 Task 的 workflow 执行过程） */
+export interface WorkflowExecution {
+  /** 对应 Task ID */
+  taskId: string
+  /** 工作流定义 ID */
+  workflowId: string
+  /** 当前整体状态 */
+  status: WorkflowExecutionStatus
+  /** 当前正在执行或等待的 stepId */
+  currentStepId?: string
+  /** 所有步骤的执行日志 */
+  steps: StepLog[]
+  /** 工作流上下文（各步骤输出） */
+  context: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
 }
 
 // ─── 数据存储 ───────────────────────────────────────────────

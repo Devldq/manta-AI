@@ -67,33 +67,33 @@ export class OpenClawRunner implements Runner {
     const start = Date.now()
     ensureOutputDir(params.outputDir)
 
-    const contextFile = path.join(params.outputDir, 'task-context.json')
-    fs.writeFileSync(contextFile, JSON.stringify({
-      taskId: params.task.id,
-      title: params.task.title,
-      description: params.task.description,
-      outputDir: params.outputDir,
-    }, null, 2))
-
     const bin = params.agent.bin || 'openclaw'
+    const agentId = params.agent.name
+    const message = buildPrompt(params)
 
+    // AI: 对齐 v1 实现 — 用 spawn detached + unref fire-and-forget
+    // openclaw 是异步 IM 投递，不需要等待结果，等待会导致超时
     try {
-      const result = await runCli(
-        bin,
-        ['run', '--task', contextFile],
-        { ARM_OUTPUT_DIR: params.outputDir },
-        60 * 60 * 1000 // 1h timeout
-      )
+      const child = spawn(bin, [
+        'agent',
+        '--agent', agentId,
+        '--message', message,
+      ], {
+        detached: true,
+        stdio: 'ignore',
+        env: {
+          ...process.env,
+          PATH: `${path.join(os.homedir(), '.openclaw', 'bin')}:${process.env.PATH ?? ''}`,
+        },
+      })
+      child.unref()
 
-      const outputFiles = fs.readdirSync(params.outputDir)
-        .filter((f) => f !== 'task-context.json')
-        .map((f) => path.join(params.outputDir, f))
+      console.log(`[Manta] 已触发 openclaw agent ${agentId} (pid: ${child.pid})`)
 
       return {
-        success: result.exitCode === 0,
-        exitCode: result.exitCode,
-        outputFiles,
-        error: result.exitCode !== 0 ? result.stderr : undefined,
+        success: true,
+        exitCode: 0,
+        outputFiles: [],
         durationMs: Date.now() - start,
       }
     } catch (err) {
@@ -308,13 +308,13 @@ export async function probeAllRunners(): Promise<{ id: string; available: boolea
 // ─── 辅助函数 ───────────────────────────────────────────────
 
 function buildPrompt(params: RunParams): string {
-  return [
+  // AI: 对齐 v1 buildTriggerMessage — 包含完整任务上下文给 agent
+  const lines = [
     `任务ID: ${params.task.id}`,
     `任务标题: ${params.task.title}`,
-    params.task.description ? `任务描述: ${params.task.description}` : '',
-    `输出目录: ${params.outputDir}`,
-    '',
-    '请完成以上任务，并将主要输出写入输出目录。',
-  ].filter(Boolean).join('\n')
+    params.task.description ? `任务描述: ${params.task.description}` : null,
+    `\n新任务已创建，请按工作循环开始执行。`,
+  ].filter(Boolean) as string[]
+  return lines.join('\n')
 }
 /*  end: Runner 层结束 */

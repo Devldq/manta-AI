@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation'
 const NAV_ITEMS = [
   { href: '/',           label: '首页',       icon: '◎' },
   { href: '/kanban',     label: '任务看板',   icon: '▦' },
+  { href: '/workflows',  label: '工作流',     icon: '⟳' },
   { href: '/processing', label: '处理中心',   icon: '◈' },
   { href: '/agents',     label: 'Agent 管理', icon: '◉' },
   { href: '/settings',   label: '设置',       icon: '◌' },

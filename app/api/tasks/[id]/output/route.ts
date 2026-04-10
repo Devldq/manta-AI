@@ -22,8 +22,10 @@ const PRIORITY_FILES = [
   'cr-report.md',
 ]
 
-export async function GET(_req: NextRequest, { params }: RouteContext) {
+export async function GET(req: NextRequest, { params }: RouteContext) {
   const { id } = await params
+  // AI: 支持 ?file= 查询参数切换展示的文件
+  const requestedFile = req.nextUrl.searchParams.get('file') ?? null
   try {
     const task = await dataStore.getTask(id)
     if (!task) {
@@ -56,8 +58,15 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ content: null, files: [] })
     }
 
-    // AI: 按优先级找最合适的文件来展示
-    let targetFile = allFiles.find((f) => PRIORITY_FILES.includes(f.name))
+    // AI: 若指定了 file 参数，优先找该文件
+    let targetFile = requestedFile
+      ? allFiles.find((f) => f.name === requestedFile)
+      : undefined
+
+    if (!targetFile) {
+      // AI: 按优先级找最合适的文件来展示
+      targetFile = allFiles.find((f) => PRIORITY_FILES.includes(f.name))
+    }
     if (!targetFile) {
       // AI: 找第一个文本文件
       targetFile = allFiles.find((f) =>

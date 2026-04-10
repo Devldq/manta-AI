@@ -1,6 +1,8 @@
 /*  start: 任务列表 API — GET /api/tasks（查询）, POST /api/tasks（创建）*/
 import { NextRequest, NextResponse } from 'next/server'
 import { dataStore, createAndDispatch } from '@/core/workflow-engine'
+import { getAllExecutions } from '@/core/workflow-engine/executor'
+import { findWorkflow } from '@/core/workflow-engine/loader'
 import type { TaskMode } from '@/core/types'
 
 export async function GET() {
@@ -10,7 +12,35 @@ export async function GET() {
     const sorted = tasks.sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     )
-    return NextResponse.json({ tasks: sorted })
+
+    // AI: 对工作流任务，附加执行摘要（当前步骤名 + 步骤状态圆点数组）
+    const executions = getAllExecutions()
+    const tasksWithProgress = sorted.map((task) => {
+      if (task.mode !== 'workflow' || !task.workflowId) return task
+
+      const exec = executions.find((e) => e.taskId === task.id)
+      if (!exec) return task
+
+      const workflow = findWorkflow(exec.workflowId)
+      const currentStep = workflow?.steps.find((s) => s.id === exec.currentStepId)
+
+      // AI: 只取顶层步骤（不含 parallel 子分支）作为圆点展示
+      const stepsDot = exec.steps
+        .filter((sl) => workflow?.steps.some((ws) => ws.id === sl.stepId))
+        .map((sl) => sl.status)
+
+      return {
+        ...task,
+        _wfProgress: {
+          execStatus: exec.status,
+          currentStepName: currentStep?.name ?? null,
+          currentStepType: currentStep?.type ?? null,
+          stepsDot,
+        },
+      }
+    })
+
+    return NextResponse.json({ tasks: tasksWithProgress })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }

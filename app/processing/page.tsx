@@ -1,10 +1,55 @@
-/*  start: 处理中心 — 接真实 API，支持读取 Agent 输出文件内容 */
+/*  start: 处理中心 — 接真实 API，支持读取 Agent 输出文件内容 + 工作流步骤日志时间线 */
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 type TaskStatus = 'inbox' | 'planning' | 'running' | 'done' | 'failed' | 'archived'
+type StepStatus = 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'skipped'
+type WorkflowStepType = 'agent' | 'human_in_loop' | 'parallel' | 'conditional' | 'loop'
+type WfExecStatus = 'running' | 'waiting' | 'done' | 'failed'
+
+// AI: 工作流步骤定义
+interface WorkflowStepDef {
+  id: string
+  type: WorkflowStepType
+  name: string
+  agentName?: string
+  actions?: Record<string, string>
+  branches?: WorkflowStepDef[]
+}
+
+// AI: 步骤执行日志
+interface StepLog {
+  stepId: string
+  stepName: string
+  status: StepStatus
+  agentName?: string
+  startedAt?: string
+  completedAt?: string
+  error?: string
+  actions?: Record<string, string>
+}
+
+// AI: 工作流执行实例
+interface WorkflowExecution {
+  taskId: string
+  workflowId: string
+  status: WfExecStatus
+  currentStepId?: string
+  steps: StepLog[]
+  context: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+// AI: 工作流定义
+interface WorkflowDef {
+  id: string
+  name: string
+  description?: string
+  steps: WorkflowStepDef[]
+}
 
 interface Task {
   id: string
@@ -40,16 +85,26 @@ function ProcessingPageInner() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [selected, setSelected] = useState<Task | null>(null)
   const [outputContent, setOutputContent] = useState<string | null>(null)
+  // AI: 多文件 tab 切换
+  const [outputFiles, setOutputFiles] = useState<string[]>([])
+  const [activeFile, setActiveFile] = useState<string | null>(null)
   const [outputLoading, setOutputLoading] = useState(false)
   const [viewMode, setViewMode] = useState<'inbox' | 'all'>('all')
   const [note, setNote] = useState('')
   const [score, setScore] = useState(8)
   const [actionLoading, setActionLoading] = useState(false)
+  // AI: 工作流执行实例 + 定义（点击工作流任务时加载）
+  const [wfExec, setWfExec] = useState<WorkflowExecution | null>(null)
+  const [wfDef, setWfDef] = useState<WorkflowDef | null>(null)
+  const [wfActionLoading, setWfActionLoading] = useState(false)
+  // AI: 用 ref 标记 URL taskId 是否已完成初始选中（避免每次 fetchTasks 重复触发）
+  const initSelectedRef = useRef(false)
 
   useEffect(() => {
     fetchTasks()
     const timer = setInterval(fetchTasks, 5000)
     return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function fetchTasks() {
@@ -59,12 +114,17 @@ function ProcessingPageInner() {
       const all: Task[] = data.tasks ?? []
       setTasks(all)
 
-      // AI: 若 URL 携带 taskId，自动选中该任务
-      if (initTaskId && !selected) {
+      // AI: 若 URL 携带 taskId 且尚未完成初始选中，自动选中该任务
+      if (initTaskId && !initSelectedRef.current) {
         const t = all.find((t) => t.id === initTaskId)
         if (t) {
+          initSelectedRef.current = true
           setSelected(t)
-          loadOutput(t)
+          if (t.mode === 'workflow') {
+            loadWfExecution(t.id)
+          } else {
+            loadOutput(t)
+          }
         }
       }
     } catch {
@@ -75,6 +135,8 @@ function ProcessingPageInner() {
   async function loadOutput(task: Task) {
     if (!task.outputDir) {
       setOutputContent(null)
+      setOutputFiles([])
+      setActiveFile(null)
       return
     }
     setOutputLoading(true)
@@ -83,20 +145,100 @@ function ProcessingPageInner() {
       if (res.ok) {
         const data = await res.json()
         setOutputContent(data.content ?? null)
+        // AI: 保存多文件列表和当前激活文件
+        setOutputFiles(data.files ?? [])
+        setActiveFile(data.file ?? null)
       } else {
         setOutputContent(null)
+        setOutputFiles([])
+        setActiveFile(null)
       }
     } catch {
       setOutputContent(null)
+      setOutputFiles([])
+      setActiveFile(null)
     } finally {
       setOutputLoading(false)
+    }
+  }
+
+  // AI: 切换输出文件 tab
+  async function loadOutputFile(task: Task, fileName: string) {
+    setOutputLoading(true)
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/output?file=${encodeURIComponent(fileName)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setOutputContent(data.content ?? null)
+        setActiveFile(fileName)
+      }
+    } catch { /* ignore */ } finally {
+      setOutputLoading(false)
+    }
+  }
+
+  // AI: 加载工作流执行详情（工作流任务专用）
+  async function loadWfExecution(taskId: string) {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`)
+      if (!res.ok) return
+      const data = await res.json()
+      setWfExec(data.workflowExecution ?? null)
+      setWfDef(data.workflow ?? null)
+    } catch {
+      setWfExec(null)
+      setWfDef(null)
     }
   }
 
   function selectTask(task: Task) {
     setSelected(task)
     setNote('')
-    loadOutput(task)
+    setWfExec(null)
+    setWfDef(null)
+    if (task.mode === 'workflow') {
+      loadWfExecution(task.id)
+    } else {
+      loadOutput(task)
+    }
+  }
+
+  // AI: 工作流 human_in_loop 操作
+  async function handleWfAction(actionKey: string) {
+    if (!selected) return
+    setWfActionLoading(true)
+    try {
+      const res = await fetch(`/api/workflows/${selected.id}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionKey }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setWfExec(data.execution)
+      }
+    } finally {
+      setWfActionLoading(false)
+    }
+  }
+
+  // AI: 调用 /run API 真正触发 Runner 执行（inbox/failed 任务）
+  async function handleRun() {
+    if (!selected) return
+    setActionLoading(true)
+    try {
+      const res = await fetch(`/api/tasks/${selected.id}/run`, { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json()
+        setSelected(data.task)
+        await fetchTasks()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        alert(data.error ?? '执行失败')
+      }
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   async function handleStatusChange(newStatus: TaskStatus) {
@@ -111,6 +253,42 @@ function ProcessingPageInner() {
       if (res.ok) {
         const data = await res.json()
         setSelected(data.task)
+        await fetchTasks()
+      }
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  // AI: 保存任务评分
+  async function handleSaveScore() {
+    if (!selected) return
+    setActionLoading(true)
+    try {
+      const res = await fetch(`/api/tasks/${selected.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ score }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSelected(data.task)
+      }
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  // AI: 删除任务
+  async function handleDeleteTask() {
+    if (!selected) return
+    if (!confirm(`确认删除任务「${selected.title}」？此操作不可撤销。`)) return
+    setActionLoading(true)
+    try {
+      const res = await fetch(`/api/tasks/${selected.id}`, { method: 'DELETE' })
+      if (res.ok) {
+        setSelected(null)
+        setOutputContent(null)
         await fetchTasks()
       }
     } finally {
@@ -217,11 +395,27 @@ function ProcessingPageInner() {
                   )}
                 </div>
               </div>
+              {/* AI: 删除任务按钮 */}
+              <button
+                onClick={handleDeleteTask}
+                disabled={actionLoading}
+                title="删除任务"
+                className="flex-shrink-0 px-2 py-1 text-xs border border-status-failed/30 text-status-failed rounded hover:bg-status-failed/5 transition-colors disabled:opacity-40"
+              >
+                删除
+              </button>
             </div>
 
-            {/* 输出内容查看器 */}
+            {/* AI: 工作流任务显示步骤时间线，轻量任务显示输出内容 */}
             <div className="flex-1 overflow-auto p-6">
-              {outputLoading ? (
+              {selected.mode === 'workflow' ? (
+                <WorkflowTimeline
+                  exec={wfExec}
+                  def={wfDef}
+                  onAction={handleWfAction}
+                  actionLoading={wfActionLoading}
+                />
+              ) : outputLoading ? (
                 <div className="text-sm text-text-muted">读取输出文件...</div>
               ) : selected.error ? (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -230,10 +424,28 @@ function ProcessingPageInner() {
                 </div>
               ) : outputContent ? (
                 <div>
-                  <div className="flex items-center gap-2 mb-3">
+                  <div className="flex items-center gap-2 mb-3 flex-wrap">
                     <p className="text-xs font-medium text-text-muted uppercase tracking-wider">Agent 输出</p>
-                    {selected.outputDir && (
-                      <span className="text-xs text-text-muted font-mono truncate">{selected.outputDir}</span>
+                    {/* AI: 多文件 tab 切换 */}
+                    {outputFiles.length > 1 && (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {outputFiles.map((f) => (
+                          <button
+                            key={f}
+                            onClick={() => loadOutputFile(selected, f)}
+                            className={`text-xs px-2 py-0.5 rounded border font-mono transition-colors ${
+                              f === activeFile
+                                ? 'bg-accent text-text-inverse border-accent'
+                                : 'bg-surface text-text-secondary border-border hover:border-accent hover:text-text-primary'
+                            }`}
+                          >
+                            {f}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {outputFiles.length === 1 && activeFile && (
+                      <span className="text-xs text-text-muted font-mono">{activeFile}</span>
                     )}
                   </div>
                   <pre className="text-sm text-text-primary font-mono whitespace-pre-wrap leading-relaxed bg-surface rounded-lg p-5 border border-border-subtle overflow-x-auto">
@@ -272,11 +484,12 @@ function ProcessingPageInner() {
                   note={note}
                   onNoteChange={setNote}
                   onStatusChange={handleStatusChange}
+                  onRun={handleRun}
                   loading={actionLoading}
                 />
               )}
               {selected.status === 'done' && (
-                <ScorePanel score={score} onScore={setScore} />
+                <ScorePanel score={score} onScore={setScore} onSave={handleSaveScore} saving={actionLoading} />
               )}
               {selected.status === 'running' && (
                 <div className="flex items-center gap-2 text-sm text-text-muted">
@@ -353,12 +566,14 @@ function QuickActionPanel({
   note,
   onNoteChange,
   onStatusChange,
+  onRun,
   loading,
 }: {
   task: Task
   note: string
   onNoteChange: (v: string) => void
   onStatusChange: (s: TaskStatus) => void
+  onRun: () => void
   loading: boolean
 }) {
   return (
@@ -373,8 +588,9 @@ function QuickActionPanel({
       />
       <div className="flex items-center gap-2">
         {task.status === 'inbox' && (
+          // AI: 点击「开始执行」调用 /run API 触发 Runner 真实执行
           <button
-            onClick={() => onStatusChange('running')}
+            onClick={onRun}
             disabled={loading}
             className="flex-1 py-2 text-sm font-medium bg-status-running text-white rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
           >
@@ -382,12 +598,13 @@ function QuickActionPanel({
           </button>
         )}
         {task.status === 'failed' && (
+          // AI: 失败任务重新调度执行
           <button
-            onClick={() => onStatusChange('inbox')}
+            onClick={onRun}
             disabled={loading}
             className="flex-1 py-2 text-sm font-medium bg-status-pending text-white rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
           >
-            ↺ 重新入队
+            ↺ 重新执行
           </button>
         )}
         <button
@@ -406,9 +623,13 @@ function QuickActionPanel({
 function ScorePanel({
   score,
   onScore,
+  onSave,
+  saving,
 }: {
   score: number
   onScore: (s: number) => void
+  onSave: () => void
+  saving: boolean
 }) {
   return (
     <div className="space-y-3">
@@ -424,6 +645,13 @@ function ScorePanel({
         />
         <span className="text-2xl font-semibold text-text-primary w-8 text-right">{score}</span>
         <span className="text-sm text-text-muted">/ 10</span>
+        <button
+          onClick={onSave}
+          disabled={saving}
+          className="px-3 py-1.5 text-xs bg-accent text-text-inverse rounded hover:bg-accent-hover transition-colors disabled:opacity-50 flex-shrink-0"
+        >
+          {saving ? '保存中...' : '保存评分'}
+        </button>
       </div>
     </div>
   )
@@ -439,4 +667,192 @@ function formatRelative(iso: string): string {
   if (hours < 24) return `${hours}h 前`
   return `${Math.floor(hours / 24)}d 前`
 }
+// ─── 工作流步骤时间线组件 ───────────────────────────────────────────────
+
+// AI: 步骤状态视觉配置
+const STEP_STYLE: Record<StepStatus, { icon: string; textCls: string; lineCls: string }> = {
+  pending:  { icon: '○', textCls: 'text-text-muted',       lineCls: 'border-border-subtle' },
+  running:  { icon: '◉', textCls: 'text-status-running',   lineCls: 'border-status-running' },
+  waiting:  { icon: '◈', textCls: 'text-yellow-500',       lineCls: 'border-yellow-300' },
+  done:     { icon: '✓', textCls: 'text-status-done',      lineCls: 'border-status-done' },
+  failed:   { icon: '✗', textCls: 'text-status-failed',    lineCls: 'border-status-failed' },
+  skipped:  { icon: '—', textCls: 'text-text-muted',       lineCls: 'border-border-subtle' },
+}
+
+const STEP_TYPE_LABEL: Record<WorkflowStepType, string> = {
+  agent:        'Agent',
+  human_in_loop:'Human',
+  parallel:     'Parallel',
+  conditional:  'Cond',
+  loop:         'Loop',
+}
+
+function fmtDuration(start?: string, end?: string): string {
+  if (!start) return ''
+  const s = new Date(start).getTime()
+  const e = end ? new Date(end).getTime() : Date.now()
+  const ms = e - s
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.floor(ms / 60000)}m${Math.floor((ms % 60000) / 1000)}s`
+}
+
+function WorkflowTimeline({
+  exec,
+  def,
+  onAction,
+  actionLoading,
+}: {
+  exec: WorkflowExecution | null
+  def: WorkflowDef | null
+  onAction: (actionKey: string) => void
+  actionLoading: boolean
+}) {
+  if (!exec && !def) {
+    return (
+      <div className="flex flex-col items-center justify-center h-48 text-center">
+        <p className="text-sm text-text-muted">工作流执行记录加载中...</p>
+      </div>
+    )
+  }
+
+  if (!exec) {
+    return (
+      <div className="flex flex-col items-center justify-center h-48 text-center">
+        <p className="text-sm text-text-muted">工作流尚未开始执行</p>
+        <p className="text-xs text-text-muted mt-1">任务创建后将自动调度工作流</p>
+      </div>
+    )
+  }
+
+  const steps = def?.steps ?? []
+
+  return (
+    <div className="max-w-2xl">
+      {/* 整体状态头 */}
+      <div className="flex items-center gap-3 mb-5 pb-4 border-b border-border">
+        <div className={`text-xs px-2 py-1 rounded-full font-medium border ${
+          exec.status === 'running' ? 'bg-blue-50 text-blue-600 border-blue-200' :
+          exec.status === 'waiting' ? 'bg-yellow-50 text-yellow-600 border-yellow-200' :
+          exec.status === 'done'    ? 'bg-green-50 text-green-600 border-green-200' :
+                                      'bg-red-50 text-red-600 border-red-200'
+        }`}>
+          {exec.status === 'running' ? '执行中' :
+           exec.status === 'waiting' ? '⚠ 等待操作' :
+           exec.status === 'done'    ? '✓ 已完成' : '✗ 失败'}
+        </div>
+        {def && <span className="text-sm text-text-secondary">{def.name}</span>}
+        <span className="text-xs text-text-muted ml-auto">
+          {new Date(exec.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+        </span>
+      </div>
+
+      {/* 步骤时间线 */}
+      <div className="relative">
+        {steps.map((step, idx) => {
+          const log = exec.steps.find((s) => s.stepId === step.id)
+          const status: StepStatus = log?.status ?? 'pending'
+          const style = STEP_STYLE[status]
+          const isLast = idx === steps.length - 1
+          const isCurrentWaiting = exec.status === 'waiting' && exec.currentStepId === step.id
+
+          return (
+            <div key={step.id} className="flex gap-4">
+              {/* AI: 垂直连接线 + 图标 */}
+              <div className="flex flex-col items-center">
+                <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-medium ${
+                  status === 'done'    ? 'bg-status-done/10 border-status-done text-status-done' :
+                  status === 'running' ? 'bg-status-running/10 border-status-running text-status-running animate-pulse' :
+                  status === 'waiting' ? 'bg-yellow-50 border-yellow-400 text-yellow-500' :
+                  status === 'failed'  ? 'bg-red-50 border-status-failed text-status-failed' :
+                  'bg-background border-border text-text-muted'
+                }`}>
+                  {style.icon}
+                </div>
+                {!isLast && <div className={`w-px flex-1 min-h-4 border-l-2 my-1 ${style.lineCls}`} />}
+              </div>
+
+              {/* 步骤内容 */}
+              <div className="flex-1 pb-5 min-w-0">
+                <div className="flex items-start gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-text-primary">{step.name}</span>
+                  <span className="text-xs text-text-muted bg-surface border border-border-subtle px-1.5 py-0.5 rounded">
+                    {STEP_TYPE_LABEL[step.type]}
+                  </span>
+                  {step.agentName && (
+                    <span className="text-xs text-text-muted font-mono">{step.agentName}</span>
+                  )}
+                  {log?.startedAt && (
+                    <span className="text-xs text-text-muted ml-auto">
+                      {fmtDuration(log.startedAt, log.completedAt)}
+                    </span>
+                  )}
+                </div>
+
+                {/* AI: 错误详情 */}
+                {log?.error && (
+                  <div className="mt-2 text-xs text-status-failed bg-red-50 rounded p-2 break-all">
+                    {log.error}
+                  </div>
+                )}
+
+                {/* AI: parallel 子分支展示 */}
+                {step.type === 'parallel' && step.branches && (
+                  <div className="mt-2 flex gap-2 flex-wrap">
+                    {step.branches.map((branch) => {
+                      const branchLog = exec.steps.find((s) => s.stepId === branch.id)
+                      const bStatus = branchLog?.status ?? 'pending'
+                      const bStyle = STEP_STYLE[bStatus]
+                      return (
+                        <div
+                          key={branch.id}
+                          className="flex items-center gap-1.5 px-2 py-1 bg-surface border border-border-subtle rounded text-xs"
+                        >
+                          <span className={bStyle.textCls}>{bStyle.icon}</span>
+                          <span className="text-text-secondary">{branch.name}</span>
+                          {branch.agentName && (
+                            <span className="text-text-muted font-mono">({branch.agentName})</span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* AI: human_in_loop 等待操作按钮（当前步骤 waiting 时才显示）*/}
+                {isCurrentWaiting && step.type === 'human_in_loop' && log?.actions && (
+                  <div className="mt-3 flex gap-2 flex-wrap">
+                    {Object.entries(log.actions).map(([key, targetStep]) => (
+                      <button
+                        key={key}
+                        onClick={() => onAction(key)}
+                        disabled={actionLoading}
+                        className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${
+                          key === 'approve' || key === 'score'
+                            ? 'bg-accent text-text-inverse hover:bg-accent-hover'
+                            : key === 'reject'
+                            ? 'bg-red-50 text-status-failed border border-status-failed/30 hover:bg-red-100'
+                            : 'bg-surface text-text-secondary border border-border hover:bg-accent-subtle'
+                        } disabled:opacity-50`}
+                      >
+                        {actionLoading ? '处理中...' : (
+                          key === 'approve' ? '✓ 批准'
+                          : key === 'reject'  ? '✗ 拒绝'
+                          : key === 'score'   ? '★ 打分'
+                          : key
+                        )}
+                        <span className="ml-1 text-xs opacity-60 font-mono">→ {targetStep}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /*  end: 处理中心结束 */
