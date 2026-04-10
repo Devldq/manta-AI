@@ -46,6 +46,12 @@
   /* 布局 */
   --sidebar-width: 240px;
   --header-height: 56px;
+
+  /* 壁纸（默认无） */
+  --main-wallpaper: none;
+  --main-bg-opacity: 1;
+  --sidebar-wallpaper: none;
+  --sidebar-overlay-color: transparent;
 }
 
 /* ─── 基础重置 ─── */
@@ -81,6 +87,78 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-muted);
+}
+
+/* ─── 主内容区壁纸（通过 CSS 变量控制）─── */
+/* AI: 壁纸铺在 ::before 伪元素，背景色透明度控制覆盖程度 */
+.manta-main-container {
+  position: relative;
+  overflow: hidden;
+}
+
+.manta-main-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image: var(--main-wallpaper, none);
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  pointer-events: none;
+}
+
+/* AI: 背景色覆盖层，透明度由 --main-bg-opacity 控制 */
+.manta-main-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background-color: var(--color-background);
+  opacity: var(--main-bg-opacity, 1);
+  pointer-events: none;
+}
+
+/* AI: 内容在壁纸/背景色覆盖层之上 */
+.manta-main-container > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* ─── 侧边栏壁纸（通过 CSS 变量控制，由 ThemeInitializer/applyTheme 注入）─── */
+.manta-sidebar {
+  position: relative;
+  background-color: var(--sidebar-bg, var(--color-surface));
+  overflow: hidden;
+}
+
+/* AI: 壁纸层 */
+.manta-sidebar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image: var(--sidebar-wallpaper, none);
+  background-size: cover;
+  background-position: center;
+  pointer-events: none;
+}
+
+/* AI: 背景色覆盖层，透明度由 --sidebar-bg-opacity 控制 */
+.manta-sidebar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background-color: var(--sidebar-bg, var(--color-surface));
+  opacity: var(--sidebar-bg-opacity, 1);
+  pointer-events: none;
+}
+
+/* AI: 确保侧边栏内容在壁纸/背景色覆盖层之上 */
+.manta-sidebar > * {
+  position: relative;
+  z-index: 2;
 }
 
 /* ─── 代码块基础样式 ─── */

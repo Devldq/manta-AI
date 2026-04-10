@@ -17,9 +17,10 @@ export function SidebarNav() {
   const pathname = usePathname()
 
   return (
+    // AI: 侧边栏容器，壁纸通过 CSS 变量 + ::before/::after 伪元素实现（见 globals.css）
     <aside
       style={{ width: 'var(--sidebar-width)' }}
-      className="flex flex-col border-r border-border bg-surface flex-shrink-0"
+      className="manta-sidebar flex flex-col border-r border-border flex-shrink-0"
     >
       {/* Logo 区域 */}
       <div

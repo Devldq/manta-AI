@@ -38,6 +38,9 @@ interface SidebarConfig {
   border: string
   width: number
   collapsedWidth: number
+  // AI: 侧边栏独立壁纸（可选，支持 URL 和 base64 DataURL）
+  wallpaper?: string
+  wallpaperOverlay?: number
 }
 
 interface FontConfig {
@@ -48,6 +51,8 @@ interface FontConfig {
 
 interface ThemeConfig {
   wallpaper?: string
+  // AI: 背景色透明度（0 = 完全透明看壁纸，1 = 完全不透明看背景色），默认 0.85
+  wallpaperOpacity?: number
   background: string
   surface: string
   surfaceElevated: string
@@ -429,6 +434,18 @@ export default function SettingsPage() {
     root.style.setProperty('--sidebar-border', config.sidebar.border)
     root.style.setProperty('--sidebar-width', `${config.sidebar.width}px`)
     root.style.setProperty('--sidebar-collapsed-width', `${config.sidebar.collapsedWidth}px`)
+    // AI: 侧边栏独立壁纸
+    if (config.sidebar.wallpaper) {
+      const sbWallpaper = config.sidebar.wallpaper.startsWith('data:')
+        ? `url("${config.sidebar.wallpaper}")`
+        : `url(${config.sidebar.wallpaper})`
+      root.style.setProperty('--sidebar-wallpaper', sbWallpaper)
+      // AI: 背景色透明度（0 = 完全透明看壁纸，1 = 完全不透明），默认 0.85
+      root.style.setProperty('--sidebar-bg-opacity', String(config.sidebar.wallpaperOverlay ?? 0.85))
+    } else {
+      root.style.setProperty('--sidebar-wallpaper', 'none')
+      root.style.setProperty('--sidebar-bg-opacity', '1')
+    }
     // 字体配置
     root.style.setProperty('--font-family', config.font.family)
     root.style.setProperty('--font-size-scale', config.font.size === 'sm' ? '0.875' : config.font.size === 'md' ? '1' : '1.125')
@@ -437,19 +454,17 @@ export default function SettingsPage() {
     root.style.setProperty('--density-scale', config.density === 'compact' ? '0.75' : config.density === 'normal' ? '1' : '1.25')
     root.style.setProperty('--density-padding', config.density === 'compact' ? '0.5rem' : config.density === 'normal' ? '1rem' : '1.5rem')
     root.style.setProperty('--density-gap', config.density === 'compact' ? '0.5rem' : config.density === 'normal' ? '0.75rem' : '1rem')
-    // 应用壁纸
+    // AI: 应用主内容区壁纸（通过 CSS 变量，由 ::before 伪元素渲染，无独立 div）
     if (config.wallpaper) {
-      root.style.setProperty('--wallpaper', `url(${config.wallpaper})`)
-      document.body.style.backgroundImage = `url(${config.wallpaper})`
-      document.body.style.backgroundSize = 'cover'
-      document.body.style.backgroundPosition = 'center'
-      document.body.style.backgroundAttachment = 'fixed'
+      const wallpaperValue = config.wallpaper.startsWith('data:')
+        ? `url("${config.wallpaper}")`
+        : `url(${config.wallpaper})`
+      root.style.setProperty('--main-wallpaper', wallpaperValue)
+      // AI: 背景色透明度（0 = 完全透明看壁纸，1 = 完全不透明），默认 0.85
+      root.style.setProperty('--main-bg-opacity', String(config.wallpaperOpacity ?? 0.85))
     } else {
-      root.style.removeProperty('--wallpaper')
-      document.body.style.backgroundImage = ''
-      document.body.style.backgroundSize = ''
-      document.body.style.backgroundPosition = ''
-      document.body.style.backgroundAttachment = ''
+      root.style.setProperty('--main-wallpaper', 'none')
+      root.style.setProperty('--main-bg-opacity', '1')
     }
   }
 
@@ -690,24 +705,64 @@ export default function SettingsPage() {
           <div className="flex gap-2">
             <input
               type="text"
-              value={customWallpaper}
+              value={customWallpaper.startsWith('data:') ? '' : customWallpaper}
               onChange={(e) => {
                 setCustomWallpaper(e.target.value)
                 updateThemeColor('wallpaper', e.target.value)
               }}
-              placeholder="输入图片 URL 或本地路径"
+              placeholder="输入图片 URL"
               className="flex-1 px-3 py-2 text-sm border border-border rounded-md bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
             />
+            {/* AI: 本地文件选择按钮（隐藏 input file，点击触发） */}
+            <label
+              className="px-3 py-2 text-xs border border-border rounded-md text-text-secondary hover:bg-surface cursor-pointer flex items-center gap-1 flex-shrink-0"
+              title="选择本地图片"
+            >
+              <span>📁 本地</span>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  // AI: 读取本地图片为 base64 DataURL，应用并持久化
+                  const reader = new FileReader()
+                  reader.onload = (ev) => {
+                    const dataUrl = ev.target?.result as string
+                    if (dataUrl) {
+                      setCustomWallpaper(dataUrl)
+                      // AI: 同时更新 theme 对象并写入 localStorage
+                      const newTheme = { ...theme, wallpaper: dataUrl }
+                      setTheme(newTheme)
+                      setActiveThemeId('custom')
+                      applyTheme(newTheme)
+                      localStorage.setItem('manta:theme', JSON.stringify({
+                        presetId: 'custom',
+                        config: newTheme,
+                      }))
+                    }
+                  }
+                  reader.readAsDataURL(file)
+                  // AI: 清空 input，允许重复选同一文件
+                  e.target.value = ''
+                }}
+              />
+            </label>
             <button
               onClick={() => {
                 setCustomWallpaper('')
                 updateThemeColor('wallpaper', '')
               }}
-              className="px-3 py-2 text-xs border border-border rounded-md text-text-secondary hover:bg-surface"
+              className="px-3 py-2 text-xs border border-border rounded-md text-text-secondary hover:bg-surface flex-shrink-0"
             >
               清除
             </button>
           </div>
+          {/* AI: 已选本地文件时显示文件名提示 */}
+          {customWallpaper.startsWith('data:') && (
+            <p className="mt-1 text-xs text-text-muted">已加载本地图片</p>
+          )}
           {customWallpaper && (
             <div className="mt-2 p-2 bg-surface rounded-md">
               <img
@@ -718,6 +773,37 @@ export default function SettingsPage() {
                   (e.target as HTMLImageElement).style.display = 'none'
                 }}
               />
+            </div>
+          )}
+          {/* AI: 背景色透明度滑块 — 仅有壁纸时显示，控制壁纸透出程度 */}
+          {customWallpaper && (
+            <div className="mt-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-text-secondary">背景色透明度</span>
+                <span className="text-xs text-text-muted font-mono">
+                  {Math.round((theme.wallpaperOpacity ?? 0.85) * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="5"
+                value={Math.round((theme.wallpaperOpacity ?? 0.85) * 100)}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value) / 100
+                  // AI: wallpaperOpacity 是 number，单独处理
+                  const newTheme = { ...theme, wallpaperOpacity: val }
+                  setTheme(newTheme)
+                  setActiveThemeId('custom')
+                  applyTheme(newTheme)
+                }}
+                className="w-full accent-accent"
+              />
+              <div className="flex justify-between text-xs text-text-muted mt-0.5">
+                <span>完全透明（看壁纸）</span>
+                <span>完全不透明</span>
+              </div>
             </div>
           )}
         </div>
@@ -794,7 +880,7 @@ export default function SettingsPage() {
               }}
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
               <label className="block text-xs text-text-muted mb-1">侧边栏宽度</label>
               <input
@@ -829,6 +915,99 @@ export default function SettingsPage() {
               />
               <span className="text-xs text-text-muted">{theme.sidebar.collapsedWidth}px</span>
             </div>
+          </div>
+
+          {/* AI: 侧边栏独立壁纸配置 */}
+          <div className="border-t border-border-subtle pt-3">
+            <p className="text-xs text-text-muted mb-2">侧边栏壁纸（可与全局壁纸不同）</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={(theme.sidebar.wallpaper ?? '').startsWith('data:') ? '' : (theme.sidebar.wallpaper ?? '')}
+                onChange={(e) => {
+                  const newTheme = { ...theme, sidebar: { ...theme.sidebar, wallpaper: e.target.value } }
+                  setTheme(newTheme)
+                  setActiveThemeId('custom')
+                  applyTheme(newTheme)
+                }}
+                placeholder="输入图片 URL"
+                className="flex-1 px-3 py-2 text-sm border border-border rounded-md bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+              />
+              {/* AI: 本地文件选择 */}
+              <label
+                className="px-3 py-2 text-xs border border-border rounded-md text-text-secondary hover:bg-surface cursor-pointer flex items-center gap-1 flex-shrink-0"
+                title="选择本地图片"
+              >
+                <span>📁 本地</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    const reader = new FileReader()
+                    reader.onload = (ev) => {
+                      const dataUrl = ev.target?.result as string
+                      if (dataUrl) {
+                        const newTheme = { ...theme, sidebar: { ...theme.sidebar, wallpaper: dataUrl } }
+                        setTheme(newTheme)
+                        setActiveThemeId('custom')
+                        applyTheme(newTheme)
+                        localStorage.setItem('manta:theme', JSON.stringify({ presetId: 'custom', config: newTheme }))
+                      }
+                    }
+                    reader.readAsDataURL(file)
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+              <button
+                onClick={() => {
+                  const newTheme = { ...theme, sidebar: { ...theme.sidebar, wallpaper: '' } }
+                  setTheme(newTheme)
+                  setActiveThemeId('custom')
+                  applyTheme(newTheme)
+                }}
+                className="px-3 py-2 text-xs border border-border rounded-md text-text-secondary hover:bg-surface flex-shrink-0"
+              >
+                清除
+              </button>
+            </div>
+            {/* AI: 本地图片提示 */}
+            {(theme.sidebar.wallpaper ?? '').startsWith('data:') && (
+              <p className="mt-1 text-xs text-text-muted">已加载本地图片</p>
+            )}
+            {/* AI: 背景色透明度滑块（0=完全透明看壁纸，1=完全不透明） */}
+            {theme.sidebar.wallpaper && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-text-secondary">背景色透明度</span>
+                  <span className="text-xs text-text-muted font-mono">
+                    {Math.round((theme.sidebar.wallpaperOverlay ?? 0.85) * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={Math.round((theme.sidebar.wallpaperOverlay ?? 0.85) * 100)}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value) / 100
+                    const newTheme = { ...theme, sidebar: { ...theme.sidebar, wallpaperOverlay: val } }
+                    setTheme(newTheme)
+                    setActiveThemeId('custom')
+                    applyTheme(newTheme)
+                  }}
+                  className="w-full accent-accent"
+                />
+                <div className="flex justify-between text-xs text-text-muted mt-0.5">
+                  <span>完全透明（看壁纸）</span>
+                  <span>完全不透明</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         {/* AI end: 侧边栏配置 */}

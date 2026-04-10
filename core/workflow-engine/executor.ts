@@ -114,10 +114,12 @@ function flattenSteps(steps: WorkflowStep[]): WorkflowStep[] {
 }
 
 // AI: 更新 StepLog 状态
+// persist=true（默认）时同步写磁盘；persist=false 时只修改内存（供 parallel 分支使用，避免并发写覆盖）
 function updateStepLog(
   exec: WorkflowExecution,
   stepId: string,
-  patch: Partial<StepLog>
+  patch: Partial<StepLog>,
+  persist = true
 ): WorkflowExecution {
   const now = new Date().toISOString()
   const updated: WorkflowExecution = {
@@ -127,7 +129,7 @@ function updateStepLog(
       s.stepId === stepId ? { ...s, ...patch } : s
     ),
   }
-  saveExecution(updated)
+  if (persist) saveExecution(updated)
   return updated
 }
 
@@ -139,17 +141,19 @@ function getStepOutputDir(taskId: string, stepId: string): string {
 
 // ─── 单步执行 ───────────────────────────────────────────────
 
+// AI: persist=false 时所有 updateStepLog 均不写磁盘（供 parallel 分支使用，避免并发写覆盖）
 async function runAgentStep(
   exec: WorkflowExecution,
   step: WorkflowStep,
   task: Task,
-  dataStore: DataStore
+  dataStore: DataStore,
+  persist = true
 ): Promise<WorkflowExecution> {
   // AI: 标记步骤为 running
   let updated = updateStepLog(exec, step.id, {
     status: 'running',
     startedAt: new Date().toISOString(),
-  })
+  }, persist)
 
   const agentName = step.agentName
   if (!agentName) {
@@ -157,7 +161,7 @@ async function runAgentStep(
       status: 'failed',
       error: `步骤 ${step.id} 未指定 agentName`,
       completedAt: new Date().toISOString(),
-    })
+    }, persist)
     return updated
   }
 
@@ -167,7 +171,7 @@ async function runAgentStep(
       status: 'failed',
       error: `Agent "${agentName}" 未注册或已禁用`,
       completedAt: new Date().toISOString(),
-    })
+    }, persist)
     return updated
   }
 
@@ -177,7 +181,7 @@ async function runAgentStep(
       status: 'failed',
       error: `Runner "${agent.runnerId}" 不存在`,
       completedAt: new Date().toISOString(),
-    })
+    }, persist)
     return updated
   }
 
@@ -190,13 +194,13 @@ async function runAgentStep(
       status: stepStatus,
       completedAt: new Date().toISOString(),
       error: result.error,
-    })
+    }, persist)
   } catch (err) {
     updated = updateStepLog(updated, step.id, {
       status: 'failed',
       error: String(err),
       completedAt: new Date().toISOString(),
-    })
+    }, persist)
   }
 
   return updated
@@ -223,26 +227,30 @@ async function runParallelStep(
     return updated
   }
 
-  // AI: 并行执行所有分支（各分支独立运行，互不阻塞）
+  // AI: 并行执行所有分支，persist=false 避免各分支写磁盘时互相覆盖（race condition）
   const branchResults = await Promise.allSettled(
-    branches.map((branch) => runAgentStep(updated, branch, task, dataStore))
+    branches.map((branch) => runAgentStep(updated, branch, task, dataStore, false))
   )
 
-  // AI: 汇总分支结果，更新各分支 stepLog
+  // AI: 汇总分支结果：将各分支的最终 stepLog 合并到 updated 中
+  // 每个分支的 exec 只修改了自己的 stepId，取各分支中状态有变化的 stepLog
   for (const res of branchResults) {
     if (res.status === 'fulfilled') {
+      const branchExec = res.value
       updated = {
         ...updated,
         steps: updated.steps.map((s) => {
-          const branchStep = res.value.steps.find((bs) => bs.stepId === s.stepId)
-          return branchStep ?? s
+          const fromBranch = branchExec.steps.find((bs) => bs.stepId === s.stepId)
+          // AI: 只采纳该分支中状态已发生变化（非 pending）的 stepLog
+          if (fromBranch && fromBranch.status !== 'pending') return fromBranch
+          return s
         }),
         updatedAt: new Date().toISOString(),
       }
     }
   }
 
-  // AI: 所有分支完成（不论成败），父步骤标记为 done
+  // AI: 所有分支完成（不论成败），父步骤标记为 done，此处统一写一次磁盘
   const allBranchIds = new Set(branches.map((b) => b.id))
   const branchLogs = updated.steps.filter((s) => allBranchIds.has(s.stepId))
   const anyFailed = branchLogs.some((s) => s.status === 'failed')

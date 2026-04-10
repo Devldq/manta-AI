@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import { SidebarNav } from './components/SidebarNav'
+import { ThemeInitializer } from './components/ThemeInitializer'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
@@ -32,7 +33,13 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body>
-        <div className="flex h-screen overflow-hidden bg-background">
+        {/* AI: 全局主题初始化 — 任何页面加载时都从 localStorage 恢复主题配置 */}
+        <ThemeInitializer />
+        {/*
+          AI: manta-main-container — 壁纸通过 ::before 伪元素铺底，
+          背景色透明度 (--main-bg-opacity) 控制壁纸透出程度，无额外蒙层 div
+        */}
+        <div className="manta-main-container flex h-screen overflow-hidden">
           {/* AI: SidebarNav 是独立的 Client Component，支持 usePathname 活跃高亮 */}
           <SidebarNav />
           {/* 主内容区 */}
