@@ -49,7 +49,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { title, description, mode, agentName, workflowId } = body
+    const { title, description, mode, agentName, workflowId, workDir } = body
 
     if (!title?.trim()) {
       return NextResponse.json({ error: '任务标题不能为空' }, { status: 400 })
@@ -63,6 +63,8 @@ export async function POST(req: NextRequest) {
       mode: taskMode,
       agentName: taskMode === 'lightweight' ? agentName : undefined,
       workflowId: taskMode === 'workflow' ? workflowId : undefined,
+      // AI: 工作目录（可选），传入后将附加到提示词并作为 CLI 的 cwd
+      workDir: workDir?.trim() || undefined,
       status: 'inbox',
     })
 

@@ -8,6 +8,23 @@ const WORKFLOWS_DIR = path.join(process.cwd(), 'workflows')
 
 // AI: 极简 YAML 解析 — 只解析工作流定义所需的结构
 // 不引入 js-yaml 等库，手动解析 key: value 格式
+
+// AI: 解析 YAML 标量值：去掉首尾引号；若无引号则去掉行内注释（# 及之后内容）
+function parseScalar(raw: string): string {
+  const trimmed = raw.trim()
+  // AI: 带引号的值，# 是字符串内容，只去引号
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1)
+  }
+  // AI: 不带引号时，去除行内注释（空格+# 之后的内容）
+  const commentIdx = trimmed.search(/\s+#/)
+  if (commentIdx >= 0) {
+    return trimmed.slice(0, commentIdx).trim()
+  }
+  return trimmed
+}
+
 function parseSimpleYaml(content: string): Record<string, unknown> {
   const lines = content.split('\n')
   const result: Record<string, unknown> = {}
@@ -33,8 +50,8 @@ function parseSimpleYaml(content: string): Record<string, unknown> {
       const val = trimmed.slice(colonIdx + 1).trim()
       
       if (val) {
-        // AI: 去掉引号
-        result[key] = val.replace(/^["']|["']$/g, '')
+        // AI: 解析标量值（去引号 + 去行内注释）
+        result[key] = parseScalar(val)
         i++
       } else {
         // AI: 值在下一行（列表或子对象）
@@ -76,7 +93,7 @@ function parseBlock(lines: string[], startIdx: number, expectedIndent: number): 
     return parseObject(lines, i, actualIndent)
   }
   
-  return { value: firstTrimmed.replace(/^["']|["']$/g, ''), nextIndex: i + 1 }
+  return { value: parseScalar(firstTrimmed), nextIndex: i + 1 }
 }
 
 function parseList(lines: string[], startIdx: number, baseIndent: number): { value: unknown[]; nextIndex: number } {
@@ -102,7 +119,7 @@ function parseList(lines: string[], startIdx: number, baseIndent: number): { val
           const k = rest.slice(0, colonIdx).trim()
           const v = rest.slice(colonIdx + 1).trim()
           if (v) {
-            obj[k] = v.replace(/^["']|["']$/g, '')
+            obj[k] = parseScalar(v)
           }
           // AI: 继续读取同一 item 的后续子字段
           i++
@@ -120,7 +137,7 @@ function parseList(lines: string[], startIdx: number, baseIndent: number): { val
               const sk = subTrimmed.slice(0, subColonIdx).trim()
               const sv = subTrimmed.slice(subColonIdx + 1).trim()
               if (sv) {
-                obj[sk] = sv.replace(/^["']|["']$/g, '')
+                obj[sk] = parseScalar(sv)
               } else {
                 // AI: 值在下行，如 branches: 或 actions:
                 const { value, nextIndex: ni } = parseBlock(lines, i + 1, subIndent + 2)
@@ -133,7 +150,7 @@ function parseList(lines: string[], startIdx: number, baseIndent: number): { val
           }
           items.push(obj)
         } else {
-          items.push(rest.replace(/^["']|["']$/g, ''))
+          items.push(parseScalar(rest))
           i++
         }
       } else {
@@ -153,7 +170,7 @@ function parseList(lines: string[], startIdx: number, baseIndent: number): { val
             const sk = subTrimmed.slice(0, subColonIdx).trim()
             const sv = subTrimmed.slice(subColonIdx + 1).trim()
             if (sv) {
-              obj[sk] = sv.replace(/^["']|["']$/g, '')
+              obj[sk] = parseScalar(sv)
             } else {
               const { value, nextIndex: ni } = parseBlock(lines, i + 1, subIndent + 2)
               obj[sk] = value
@@ -193,7 +210,7 @@ function parseObject(lines: string[], startIdx: number, baseIndent: number): { v
       const k = trimmed.slice(0, colonIdx).trim()
       const v = trimmed.slice(colonIdx + 1).trim()
       if (v && !v.startsWith('#')) {
-        obj[k] = v.replace(/^["']|["']$/g, '')
+        obj[k] = parseScalar(v)
         i++
       } else {
         const { value, nextIndex: ni } = parseBlock(lines, i + 1, baseIndent + 2)

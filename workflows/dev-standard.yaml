@@ -1,93 +1,31 @@
-name: "需求开发流"
-id: "dev-standard"
-description: "需求 → 架构方案 → 人工审批 → 开发 → QA+Review 并行 → 打分"
+name: 需求开发流
+id: dev-standard
+description: 需求 → 架构方案 → 人工审批 → 开发 → QA+Review 并行 → 打分
 
 steps:
-  # ── Step 1：architect 拆解需求，产出技术方案 ──
   - id: architecting
-    agent: architect
-    name: "拆解需求 · 编写需求技术方案"
-    inputs:
-      - requirementDoc    # 任务字段：需求文档路径
-      - backendDesign     # 任务字段：后端技术方案路径
-      - repos             # 任务字段：关联仓库列表
-      - title             # 任务字段：任务标题
-      - description       # 任务字段：任务描述
-    outputs:
-      - frontendDesign    # → 写入 task.frontendDesign = ~/arm-data/tasks/{id}/frontend-design.md
+    name: 拆解需求 · 编写需求技术方案
+    agent: arm-architect
     next: pending_approval
-
-  # ── Step 2：人工审批技术方案（human_in_loop） ──
   - id: pending_approval
-    type: human_in_loop
-    name: "审批技术方案"
-    inputs:
-      - frontendDesign    # 来自上一步：技术方案路径
-    outputs:
-      - approvalResult    # approve → developing；reject → architecting
-    actions:
-      approve: developing
-      reject: architecting
+    name: 审批技术方案
+    agent: arm-review
+    next: developing
     notify: mac_notification
-
-  # ── Step 3：dev 功能开发 ──
   - id: developing
-    agent: dev
-    name: "功能开发"
-    inputs:
-      - frontendDesign    # 来自 architecting 步骤：技术方案路径
-      - repos             # 关联仓库列表
-    outputs:
-      - devSummary        # → 写入 task.devSummary = ~/arm-data/tasks/{id}/dev-summary.md
+    name: 功能开发
+    agent: arm-dev
     next: parallel_review
-
-  # ── Step 4：QA + Code Review 并行执行 ──
   - id: parallel_review
     parallel: true
-    name: "并行评审"
+    name: 并行评审
     branches:
-      - agent: qa
-        name: "功能测试"
-        inputs:
-          - requirementDoc    # 需求文档
-          - backendDesign     # 后端接口规范
-          - devSummary        # 来自 developing 步骤：改动摘要
-        outputs:
-          - qaReport          # → 写入 task.qaReport = ~/arm-data/tasks/{id}/qa-report.md
-      - agent: review
-        name: "代码评审"
-        inputs:
-          - frontendDesign    # 技术方案
-          - devSummary        # 改动摘要
-        outputs:
-          - reviewReport      # → 写入 task.reviewReport = ~/arm-data/tasks/{id}/cr-report.md
+      - agent: arm-qa
+        name: 功能测试
+      - agent: arm-review
+        name: 代码评审
     after_all: pending_score
-
-  # ── Step 5：人工打分（human_in_loop） ──
   - id: pending_score
     type: human_in_loop
-    name: "打分评价"
-    inputs:
-      - qaReport          # QA 报告
-      - reviewReport      # CR 报告
-      - devSummary        # 改动摘要
-    outputs:
-      - score             # → 写入 task.score
-    actions:
-      score: done         # 打分后任务完成
+    name: 打分评价
     notify: mac_notification
-
-# ── 人工步骤 Mac 通知模板 ──
-notifications:
-  on_pending_approval:
-    type: mac
-    message: "架构方案待审批：{task.title}"
-  on_pending_score:
-    type: mac
-    message: "QA+CR报告已生成，请打分：{task.title}"
-  on_agent_can_clone:
-    type: mac
-    message: "{agent.name} 生命值达到90分，可以复制啦！"
-  on_agent_banned:
-    type: mac
-    message: "{agent.name} 生命值归零，已封禁，系统正在生成替代 Agent"

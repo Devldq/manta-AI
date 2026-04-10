@@ -15,24 +15,42 @@ function ensureOutputDir(outputDir: string): void {
 }
 
 // AI: 运行 CLI 进程，收集输出（env 用宽松类型避免 NODE_ENV required 冲突）
+// logFile 可选：若指定，每收到 chunk 立即 append 写入（实时日志）
 function runCli(
   bin: string,
   args: string[],
   env: Record<string, string | undefined>,
-  timeoutMs: number
+  timeoutMs: number,
+  cwd?: string,
+  logFile?: string,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const start = Date.now()
     const proc = spawn(bin, args, {
       env: { ...process.env, ...env },
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // AI: 若指定了工作目录，在该目录下运行 CLI
+      ...(cwd ? { cwd } : {}),
     })
 
     let stdout = ''
     let stderr = ''
-    proc.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
-    proc.stderr.on('data', (d: Buffer) => (stderr += d.toString()))
+    proc.stdout.on('data', (d: Buffer) => {
+      const chunk = d.toString()
+      stdout += chunk
+      // AI: 实时追加写入日志文件（前端可轮询读取）
+      if (logFile) {
+        try { fs.appendFileSync(logFile, chunk) } catch { /* ignore */ }
+      }
+    })
+    proc.stderr.on('data', (d: Buffer) => {
+      const chunk = d.toString()
+      stderr += chunk
+      // AI: stderr 加 [ERR] 前缀写入同一日志文件
+      if (logFile) {
+        try { fs.appendFileSync(logFile, `[ERR] ${chunk}`) } catch { /* ignore */ }
+      }
+    })
 
     const timer = setTimeout(() => {
       proc.kill('SIGTERM')
@@ -71,29 +89,33 @@ export class OpenClawRunner implements Runner {
     const agentId = params.agent.name
     const message = buildPrompt(params)
 
-    // AI: 对齐 v1 实现 — 用 spawn detached + unref fire-and-forget
-    // openclaw 是异步 IM 投递，不需要等待结果，等待会导致超时
+    // AI: 工作流模式下需要同步等待 openclaw 进程完成，才能推进到下一步骤
+    // 不再使用 detached + unref（fire-and-forget），改为等待子进程退出
+    // AI: runner.log 用于前端实时轮询展示执行日志
+    const logFile = path.join(params.outputDir, 'runner.log')
     try {
-      const child = spawn(bin, [
-        'agent',
-        '--agent', agentId,
-        '--message', message,
-      ], {
-        detached: true,
-        stdio: 'ignore',
-        env: {
-          ...process.env,
-          PATH: `${path.join(os.homedir(), '.openclaw', 'bin')}:${process.env.PATH ?? ''}`,
-        },
-      })
-      child.unref()
+      const result = await runCli(
+        bin,
+        ['agent', '--agent', agentId, '--message', message],
+        { PATH: `${path.join(os.homedir(), '.openclaw', 'bin')}:${process.env.PATH ?? ''}` },
+        60 * 60 * 1000, // AI: 最长等待 1 小时（与 claude-code 保持一致）
+        undefined,
+        logFile,
+      )
 
-      console.log(`[Manta] 已触发 openclaw agent ${agentId} (pid: ${child.pid})`)
+      console.log(`[Manta] openclaw agent ${agentId} 已完成 (exitCode: ${result.exitCode})`)
+
+      // AI: 将 stdout 写入 output.md（如有输出）
+      const outputFile = path.join(params.outputDir, 'output.md')
+      if (result.stdout) {
+        fs.writeFileSync(outputFile, result.stdout, 'utf-8')
+      }
 
       return {
-        success: true,
-        exitCode: 0,
-        outputFiles: [],
+        success: result.exitCode === 0,
+        exitCode: result.exitCode,
+        outputFiles: result.stdout ? [outputFile] : [],
+        error: result.exitCode !== 0 ? result.stderr : undefined,
         durationMs: Date.now() - start,
       }
     } catch (err) {
@@ -131,13 +153,19 @@ export class ClaudeCodeRunner implements Runner {
 
     const bin = params.agent.bin || 'claude'
     const prompt = buildPrompt(params)
+    // AI: 若任务指定了工作目录则在该目录下运行，否则默认当前目录
+    const cwd = params.task.workDir || undefined
 
     try {
+      // AI: runner.log 用于前端实时轮询展示执行日志
+      const logFile = path.join(params.outputDir, 'runner.log')
       const result = await runCli(
         bin,
         ['--print', prompt],
         { CLAUDE_OUTPUT_DIR: params.outputDir },
-        60 * 60 * 1000
+        60 * 60 * 1000,
+        cwd,
+        logFile,
       )
 
       // AI: 将 claude 的 stdout 写入 output.md
@@ -239,6 +267,8 @@ export class CodeFlickerRunner implements Runner {
 
     const bin = params.agent.bin || 'cf'
     const prompt = buildPrompt(params)
+    // AI: 若任务指定了工作目录则在该目录下运行
+    const cwd = params.task.workDir || undefined
 
     // AI: CodeFlicker CLI 执行方式：cf run --skill <agent.name> --print "<prompt>"
     // 如果 agent 没有指定 skill 名，则直接 cf --print "<prompt>" 进入默认 agent 会话
@@ -252,7 +282,8 @@ export class CodeFlickerRunner implements Runner {
         bin,
         args,
         { CF_OUTPUT_DIR: params.outputDir },
-        60 * 60 * 1000
+        60 * 60 * 1000,
+        cwd
       )
 
       // AI: 将输出写入 output.md
@@ -313,6 +344,8 @@ function buildPrompt(params: RunParams): string {
     `任务ID: ${params.task.id}`,
     `任务标题: ${params.task.title}`,
     params.task.description ? `任务描述: ${params.task.description}` : null,
+    // AI: 若指定了工作目录，提示 Agent 在该目录下操作文件
+    params.task.workDir ? `工作目录: ${params.task.workDir}` : null,
     `\n新任务已创建，请按工作循环开始执行。`,
   ].filter(Boolean) as string[]
   return lines.join('\n')

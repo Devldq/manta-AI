@@ -55,6 +55,16 @@ export function getAllExecutions(): WorkflowExecution[] {
   return readExecutions()
 }
 
+// AI: 清理任务的工作流执行状态（任务删除时调用）
+export function cleanupExecution(taskId: string): void {
+  const execs = readExecutions()
+  const filtered = execs.filter((e) => e.taskId !== taskId)
+  if (filtered.length !== execs.length) {
+    writeExecutions(filtered)
+    console.log(`[Executor] 清理任务 ${taskId} 的工作流执行状态`)
+  }
+}
+
 function saveExecution(exec: WorkflowExecution): void {
   const execs = readExecutions()
   const idx = execs.findIndex((e) => e.taskId === exec.taskId)
@@ -323,7 +333,19 @@ export async function advanceWorkflow(
 
   while (currentStepId) {
     const step = steps.find((s) => s.id === currentStepId)
-    if (!step) break
+    if (!step) {
+      // AI: while 条件保证 currentStepId 非空，但找不到对应步骤说明 actions 配置了非法跳转目标
+      const errMsg = `工作流步骤 "${currentStepId}" 不存在，可能是 actions 配置了无效的 stepId`
+      console.error(`[executor] advanceWorkflow: ${errMsg}`)
+      const failed: WorkflowExecution = {
+        ...updated,
+        status: 'failed',
+        updatedAt: new Date().toISOString(),
+      }
+      saveExecution(failed)
+      await dataStore.updateTask(task.id, { status: 'failed', error: errMsg })
+      return failed
+    }
 
     const currentLog = updated.steps.find((s) => s.stepId === step.id)
     

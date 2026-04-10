@@ -667,7 +667,61 @@ function formatRelative(iso: string): string {
   if (hours < 24) return `${hours}h 前`
   return `${Math.floor(hours / 24)}d 前`
 }
-// ─── 工作流步骤时间线组件 ───────────────────────────────────────────────
+// AI: 工作流步骤时间线组件（含 StepLogViewer 实时日志）
+
+// AI: 步骤实时日志查看器 — 轮询 /api/tasks/{taskId}/steps/{stepId}/log 展示日志
+function StepLogViewer({ taskId, stepId, active }: { taskId: string; stepId: string; active: boolean }) {
+  const [log, setLog] = useState('')
+  const [offset, setOffset] = useState(0)
+  const [done, setDone] = useState(false)
+  const logRef = useRef<HTMLPreElement>(null)
+
+  useEffect(() => {
+    if (!active && done) return
+
+    async function fetchLog() {
+      try {
+        const res = await fetch(`/api/tasks/${taskId}/steps/${stepId}/log?offset=${offset}`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (data.content) {
+          setLog((prev) => prev + data.content)
+          setOffset(data.offset)
+          // AI: 自动滚动到底部
+          if (logRef.current) {
+            logRef.current.scrollTop = logRef.current.scrollHeight
+          }
+        }
+        if (data.done) setDone(true)
+      } catch { /* ignore */ }
+    }
+
+    fetchLog()
+    if (done) return
+    const timer = setInterval(fetchLog, 1500)
+    return () => clearInterval(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, stepId, active, done])
+
+  if (!log && !active) return null
+  if (!log) {
+    return (
+      <div className="mt-2 flex items-center gap-1.5 text-xs text-text-muted">
+        <div className="w-1.5 h-1.5 rounded-full bg-status-running animate-pulse" />
+        <span>等待日志输出...</span>
+      </div>
+    )
+  }
+
+  return (
+    <pre
+      ref={logRef}
+      className="mt-2 text-xs font-mono text-text-secondary bg-surface border border-border-subtle rounded-md p-3 max-h-48 overflow-y-auto whitespace-pre-wrap break-all leading-relaxed"
+    >
+      {log}
+    </pre>
+  )
+}
 
 // AI: 步骤状态视觉配置
 const STEP_STYLE: Record<StepStatus, { icon: string; textCls: string; lineCls: string }> = {
@@ -817,6 +871,15 @@ function WorkflowTimeline({
                       )
                     })}
                   </div>
+                )}
+
+                {/* AI: agent 步骤实时日志（running 时轮询显示，完成后保留） */}
+                {step.type === 'agent' && (status === 'running' || status === 'done' || status === 'failed') && (
+                  <StepLogViewer
+                    taskId={exec.taskId}
+                    stepId={step.id}
+                    active={status === 'running'}
+                  />
                 )}
 
                 {/* AI: human_in_loop 等待操作按钮（当前步骤 waiting 时才显示）*/}

@@ -49,6 +49,8 @@ interface WorkflowExecution {
   context: Record<string, unknown>
   createdAt: string
   updatedAt: string
+  // AI: 来自 API 附加的关联任务标题
+  taskTitle?: string | null
 }
 
 // ─── 可视化编辑器内部数据模型 ───────────────────────────────────────────────
@@ -302,6 +304,19 @@ export default function WorkflowsPage() {
   const [draft, setDraft] = useState<DraftWorkflow | null>(null)
   const [visualSaving, setVisualSaving] = useState(false)
   const [visualError, setVisualError] = useState('')
+
+  // AI: 已加载的 agent 选项列表（供步骤编辑下拉用）
+  const [agentOptions, setAgentOptions] = useState<string[]>([])
+
+  useEffect(() => {
+    fetch('/api/agents')
+      .then((r) => r.json())
+      .then((d) => {
+        const names: string[] = (d.agents ?? []).map((a: { name?: string; id?: string }) => a.name ?? a.id ?? '')
+        setAgentOptions(names.filter(Boolean))
+      })
+      .catch(() => {})
+  }, [])
 
   const fetchWorkflows = useCallback(async () => {
     try {
@@ -623,6 +638,7 @@ export default function WorkflowsPage() {
                 <VisualEditor
                   draft={draft}
                   onChange={setDraft}
+                  agentOptions={agentOptions}
                 />
               ) : editMode === 'yaml' ? (
                 <div className="h-full flex flex-col p-6">
@@ -703,36 +719,18 @@ export default function WorkflowsPage() {
               </div>
             ) : (
               getExecutionsByWorkflow(selected.id).map((exec) => (
-                <button
+                <ExecutionRecord
                   key={exec.taskId}
+                  exec={exec}
+                  selected={selectedExec?.taskId === exec.taskId}
                   onClick={() => setSelectedExec(exec)}
-                  className={`w-full text-left px-4 py-3 border-b border-border-subtle transition-colors ${
-                    selectedExec?.taskId === exec.taskId ? 'bg-accent-subtle' : 'hover:bg-surface'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${EXEC_STATUS_BADGE[exec.status]}`}>
-                      {exec.status === 'running' ? '执行中' : exec.status === 'waiting' ? '待操作' : exec.status === 'done' ? '完成' : '失败'}
-                    </span>
-                    {exec.status === 'waiting' && (
-                      <span className="text-xs text-yellow-600 font-medium">⚠ 需操作</span>
-                    )}
-                  </div>
-                  <p className="text-xs font-mono text-text-muted truncate">{exec.taskId}</p>
-                  <p className="text-xs text-text-muted mt-1">
-                    {new Date(exec.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </p>
-                  <div className="flex gap-1 mt-2 flex-wrap">
-                    {exec.steps
-                      .filter((s) => !selected.steps.find((ws) => ws.id !== s.stepId && ws.branches?.find((b) => b.id === s.stepId)))
-                      .map((s) => {
-                        const st = STEP_STATUS_STYLE[s.status]
-                        return (
-                          <div key={s.stepId} title={`${s.stepName}: ${st.label}`} className={`w-2 h-2 rounded-full ${st.dot}`} />
-                        )
-                      })}
-                  </div>
-                </button>
+                  onDeleted={() => {
+                    if (selectedExec?.taskId === exec.taskId) setSelectedExec(null)
+                    fetchExecutions()
+                  }}
+                  stepStatusStyle={STEP_STATUS_STYLE}
+                  execStatusBadge={EXEC_STATUS_BADGE}
+                />
               ))
             )}
           </div>
@@ -742,15 +740,98 @@ export default function WorkflowsPage() {
   )
 }
 
+/* AI start: ExecutionRecord — 执行记录单条组件，支持显示任务标题和删除操作 */
+function ExecutionRecord({
+  exec,
+  selected,
+  onClick,
+  onDeleted,
+  stepStatusStyle,
+  execStatusBadge,
+}: {
+  exec: WorkflowExecution
+  selected: boolean
+  onClick: () => void
+  onDeleted: () => void
+  stepStatusStyle: Record<StepStatus, { dot: string; text: string; label: string }>
+  execStatusBadge: Record<WorkflowExecutionStatus, string>
+}) {
+  const [deleting, setDeleting] = useState(false)
+
+  // AI: 删除执行记录（同时删除关联任务，若正在执行则强制停止 Agent）
+  async function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation()
+    const isActive = exec.status === 'running' || exec.status === 'waiting'
+    const msg = isActive
+      ? `任务「${exec.taskTitle ?? exec.taskId}」正在执行，删除将强制停止 Agent。确认继续？`
+      : `确认删除执行记录「${exec.taskTitle ?? exec.taskId}」？关联任务也将一并删除，此操作不可撤销。`
+    if (!confirm(msg)) return
+    setDeleting(true)
+    try {
+      await fetch(`/api/workflows/${exec.taskId}`, { method: 'DELETE' })
+      onDeleted()
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <div className={`relative group border-b border-border-subtle ${selected ? 'bg-accent-subtle' : 'hover:bg-surface'}`}>
+      <button
+        onClick={onClick}
+        className="w-full text-left px-4 py-3 transition-colors"
+      >
+        {/* AI: 任务标题（优先展示） */}
+        {exec.taskTitle && (
+          <p className="text-xs font-medium text-text-primary truncate mb-1">{exec.taskTitle}</p>
+        )}
+        <div className="flex items-center gap-2 mb-1">
+          <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${execStatusBadge[exec.status]}`}>
+            {exec.status === 'running' ? '执行中' : exec.status === 'waiting' ? '待操作' : exec.status === 'done' ? '完成' : '失败'}
+          </span>
+          {exec.status === 'waiting' && (
+            <span className="text-xs text-yellow-600 font-medium">⚠ 需操作</span>
+          )}
+        </div>
+        <p className="text-xs font-mono text-text-muted truncate">{exec.taskId}</p>
+        <p className="text-xs text-text-muted mt-1">
+          {new Date(exec.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+        </p>
+        <div className="flex gap-1 mt-2 flex-wrap">
+          {exec.steps.map((s) => {
+            const st = stepStatusStyle[s.status]
+            return (
+              <div key={s.stepId} title={`${s.stepName}: ${st.label}`} className={`w-2 h-2 rounded-full ${st.dot}`} />
+            )
+          })}
+        </div>
+      </button>
+
+      {/* AI: 删除按钮（hover 显示） */}
+      <button
+        onClick={handleDelete}
+        disabled={deleting}
+        title="删除执行记录及关联任务"
+        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-status-failed hover:bg-status-failed/5 disabled:opacity-40"
+      >
+        {deleting ? '…' : '✕'}
+      </button>
+    </div>
+  )
+}
+/* AI end: ExecutionRecord 结束 */
+
 // ─── 可视化编辑器主组件 ─────────────────────────────────────────────────────
 
 /*  start: VisualEditor — 可视化工作流编辑器，支持步骤增删排序、字段内联编辑 */
 function VisualEditor({
   draft,
   onChange,
+  agentOptions,
 }: {
   draft: DraftWorkflow
   onChange: (d: DraftWorkflow) => void
+  agentOptions: string[]
 }) {
   // AI: 当前展开编辑的步骤 ID
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null)
@@ -844,6 +925,7 @@ function VisualEditor({
                 onDelete={() => deleteStep(idx)}
                 onMoveUp={() => moveStep(idx, -1)}
                 onMoveDown={() => moveStep(idx, 1)}
+                agentOptions={agentOptions}
               />
             </div>
           ))}
@@ -879,6 +961,7 @@ function EditableStepCard({
   onDelete,
   onMoveUp,
   onMoveDown,
+  agentOptions,
 }: {
   step: DraftStep
   idx: number
@@ -890,6 +973,7 @@ function EditableStepCard({
   onDelete: () => void
   onMoveUp: () => void
   onMoveDown: () => void
+  agentOptions: string[]
 }) {
   const typeColor = STEP_TYPE_COLOR[step.type]
   const typeIconColor = STEP_TYPE_ICON_COLOR[step.type]
@@ -1018,17 +1102,30 @@ function EditableStepCard({
             </div>
           </div>
 
-          {/* AI: agent 类型专属字段 */}
+          {/* AI: agent 类型专属字段 — 下拉筛选已加载的 agent */}
           {step.type === 'agent' && (
             <div>
               <label className="block text-xs text-text-muted mb-1">Agent 名称</label>
-              <input
-                type="text"
-                value={step.agentName}
-                onChange={(e) => onChange({ agentName: e.target.value })}
-                placeholder="如 architect / dev / qa / review"
-                className="w-full px-2.5 py-1.5 text-xs font-mono border border-border rounded-md bg-background text-text-primary focus:outline-none focus:border-accent placeholder:text-text-muted"
-              />
+              {agentOptions.length > 0 ? (
+                <select
+                  value={step.agentName}
+                  onChange={(e) => onChange({ agentName: e.target.value })}
+                  className="w-full px-2.5 py-1.5 text-xs font-mono border border-border rounded-md bg-background text-text-primary focus:outline-none focus:border-accent"
+                >
+                  <option value="">-- 请选择 Agent --</option>
+                  {agentOptions.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={step.agentName}
+                  onChange={(e) => onChange({ agentName: e.target.value })}
+                  placeholder="如 architect / dev / qa / review"
+                  className="w-full px-2.5 py-1.5 text-xs font-mono border border-border rounded-md bg-background text-text-primary focus:outline-none focus:border-accent placeholder:text-text-muted"
+                />
+              )}
             </div>
           )}
 
@@ -1128,17 +1225,35 @@ function EditableStepCard({
                       className="flex-1 px-2 py-1 text-xs border border-border rounded bg-background text-text-primary focus:outline-none focus:border-accent placeholder:text-text-muted"
                     />
                     <span className="text-text-muted text-xs flex-shrink-0">agent:</span>
-                    <input
-                      type="text"
-                      value={branch.agentName}
-                      onChange={(e) => {
-                        const branches = [...step.branches]
-                        branches[bi] = { ...branches[bi], agentName: e.target.value }
-                        onChange({ branches })
-                      }}
-                      placeholder="如 qa / review"
-                      className="flex-1 px-2 py-1 text-xs font-mono border border-border rounded bg-background text-text-primary focus:outline-none focus:border-accent placeholder:text-text-muted"
-                    />
+                    {/* AI: branch agentName 下拉选择 */}
+                    {agentOptions.length > 0 ? (
+                      <select
+                        value={branch.agentName}
+                        onChange={(e) => {
+                          const branches = [...step.branches]
+                          branches[bi] = { ...branches[bi], agentName: e.target.value }
+                          onChange({ branches })
+                        }}
+                        className="flex-1 px-2 py-1 text-xs font-mono border border-border rounded bg-background text-text-primary focus:outline-none focus:border-accent"
+                      >
+                        <option value="">-- 选择 Agent --</option>
+                        {agentOptions.map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={branch.agentName}
+                        onChange={(e) => {
+                          const branches = [...step.branches]
+                          branches[bi] = { ...branches[bi], agentName: e.target.value }
+                          onChange({ branches })
+                        }}
+                        placeholder="如 qa / review"
+                        className="flex-1 px-2 py-1 text-xs font-mono border border-border rounded bg-background text-text-primary focus:outline-none focus:border-accent placeholder:text-text-muted"
+                      />
+                    )}
                     <button
                       onClick={() => onChange({ branches: step.branches.filter((_, i) => i !== bi) })}
                       className="text-text-muted hover:text-status-failed transition-colors text-xs"

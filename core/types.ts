@@ -30,6 +30,9 @@ export interface Task {
   currentStepId?: string
   workflowContext?: Record<string, unknown>
 
+  // AI: 工作目录（可选，指定 Agent 在哪个文件夹下执行任务）
+  workDir?: string
+
   // 执行结果
   outputDir?: string  // ~/arm-data/tasks/{id}/
   error?: string

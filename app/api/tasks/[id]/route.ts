@@ -1,8 +1,9 @@
 /*  start: 单任务 API — GET/PATCH/DELETE /api/tasks/[id] */
 import { NextRequest, NextResponse } from 'next/server'
 import { dataStore, advanceTaskStatus } from '@/core/workflow-engine'
-import { getExecution } from '@/core/workflow-engine/executor'
+import { getExecution, cleanupExecution } from '@/core/workflow-engine/executor'
 import { findWorkflow } from '@/core/workflow-engine/loader'
+import { processRegistry } from '@/core/runner/process-registry'
 import type { TaskStatus } from '@/core/types'
 
 interface RouteContext {
@@ -61,6 +62,17 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 export async function DELETE(_req: NextRequest, { params }: RouteContext) {
   const { id } = await params
   try {
+    // AI: 1. 查找执行实例，若正在执行则强制停止 Agent 进程
+    const exec = getExecution(id)
+    if (exec && (exec.status === 'running' || exec.status === 'waiting')) {
+      await processRegistry.kill(id)
+      console.log(`[tasks/delete] 已强制停止任务 ${id} 的 Agent 进程`)
+    }
+
+    // AI: 2. 清除工作流执行记录（若存在）
+    cleanupExecution(id)
+
+    // AI: 3. 删除任务本身
     await dataStore.deleteTask(id)
     return NextResponse.json({ ok: true })
   } catch (err) {

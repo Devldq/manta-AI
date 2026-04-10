@@ -325,6 +325,7 @@ function NewTaskModal({
     mode: 'lightweight' as 'lightweight' | 'workflow',
     agentName: '',
     workflowId: '',
+    workDir: '',
   })
   const [agents, setAgents] = useState<{ name: string; runnerId: string; pluginId?: string }[]>([])
   const [workflows, setWorkflows] = useState<WorkflowDefBrief[]>([])
@@ -382,6 +383,8 @@ function NewTaskModal({
           mode: form.mode,
           agentName: form.mode === 'lightweight' ? form.agentName : undefined,
           workflowId: form.mode === 'workflow' ? form.workflowId : undefined,
+          // AI: 工作目录（可选），非空时传给后端
+          workDir: form.workDir.trim() || undefined,
         }),
       })
       if (!res.ok) {
@@ -490,6 +493,28 @@ function NewTaskModal({
             </div>
           )}
 
+          {/* AI start: 工作目录（可选）— 告知 Agent 在哪个文件夹下修改代码 */}
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1">
+              工作目录
+              <span className="ml-1 text-text-muted font-normal">（可选，Agent 将在此目录下修改文件）</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={form.workDir}
+                onChange={(e) => setForm({ ...form, workDir: e.target.value })}
+                placeholder="/Users/yourname/projects/my-app"
+                className="flex-1 px-3 py-2 text-sm border border-border rounded-md bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent font-mono"
+              />
+              {/* AI: 浏览按钮 — 优先用 Electron dialog，降级到浏览器 File System Access API */}
+              <SelectDirectoryButton
+                onSelect={(dir) => setForm((f) => ({ ...f, workDir: dir }))}
+              />
+            </div>
+          </div>
+          {/* AI end: 工作目录输入结束 */}
+
           {error && <p className="text-xs text-status-failed">{error}</p>}
         </div>
         <div className="flex justify-end gap-2 mt-5">
@@ -512,3 +537,53 @@ function NewTaskModal({
   )
 }
 /*  end: 看板页结束 */
+
+/* AI start: SelectDirectoryButton — Electron 用原生 dialog 获取完整路径，浏览器用 showDirectoryPicker 获取目录名 */
+function SelectDirectoryButton({ onSelect }: { onSelect: (dir: string) => void }) {
+  const [picking, setPicking] = useState(false)
+
+  // AI: 检测 Electron 环境
+  const electronSelectDirectory = typeof window !== 'undefined'
+    ? (window as unknown as { electronAPI?: { selectDirectory?: () => Promise<string | null> } })
+        .electronAPI?.selectDirectory
+    : undefined
+
+  // AI: 检测浏览器 File System Access API
+  const hasBrowserPicker = typeof window !== 'undefined' && 'showDirectoryPicker' in window
+
+  // AI: 两种 API 都不可用时不渲染按钮
+  if (!electronSelectDirectory && !hasBrowserPicker) return null
+
+  async function handleClick() {
+    setPicking(true)
+    try {
+      if (electronSelectDirectory) {
+        // AI: Electron — 调用系统原生文件夹对话框，返回完整绝对路径
+        const dir = await electronSelectDirectory()
+        if (dir) onSelect(dir)
+      } else {
+        // AI: 浏览器 — showDirectoryPicker 只能获取目录名（浏览器安全限制），填入目录名
+        const handle = await (window as unknown as {
+          showDirectoryPicker: () => Promise<{ name: string }>
+        }).showDirectoryPicker()
+        onSelect(handle.name)
+      }
+    } catch {
+      // AI: 用户取消选择，忽略
+    } finally {
+      setPicking(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={picking}
+      className="px-3 py-2 text-xs border border-border rounded-md bg-surface text-text-secondary hover:bg-accent-subtle transition-colors flex-shrink-0 disabled:opacity-50"
+    >
+      {picking ? '选择中...' : '浏览...'}
+    </button>
+  )
+}
+/* AI end: SelectDirectoryButton 结束 */

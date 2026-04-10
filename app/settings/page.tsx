@@ -1,7 +1,7 @@
-/*  start: Manta 设置页 — Runner 探测状态 + Webhook Channel 配置 + 插件管理 */
+/*  start: Manta 设置页 — Runner 探测状态 + Webhook Channel 配置 + 插件管理 + 主题配置 */
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 interface RunnerStatus {
   id: string
@@ -30,6 +30,327 @@ interface PluginManifest {
 }
 /* AI end: 插件 manifest 类型结束 */
 
+/* AI start: 主题配置类型 */
+interface SidebarConfig {
+  background: string
+  textPrimary: string
+  textSecondary: string
+  border: string
+  width: number
+  collapsedWidth: number
+}
+
+interface FontConfig {
+  family: string
+  size: 'sm' | 'md' | 'lg'
+  lineHeight: 'compact' | 'normal' | 'relaxed'
+}
+
+interface ThemeConfig {
+  wallpaper?: string
+  background: string
+  surface: string
+  surfaceElevated: string
+  border: string
+  borderSubtle: string
+  textPrimary: string
+  textSecondary: string
+  textMuted: string
+  textInverse: string
+  accent: string
+  accentHover: string
+  accentSubtle: string
+  emphasis: string
+  emphasisHover: string
+  success: string
+  warning: string
+  error: string
+  info: string
+  radius: 'sm' | 'md' | 'lg' | 'xl'
+  sidebar: SidebarConfig
+  font: FontConfig
+  density: 'compact' | 'normal' | 'comfortable'
+}
+
+const FONT_OPTIONS = [
+  { label: '系统默认', value: 'system-ui, -apple-system, sans-serif' },
+  { label: 'Inter', value: 'Inter, sans-serif' },
+  { label: '思源黑体', value: '"Noto Sans SC", "Source Han Sans", sans-serif' },
+  { label: '微软雅黑', value: '"Microsoft YaHei", sans-serif' },
+  { label: '等宽字体', value: '"JetBrains Mono", "Fira Code", monospace' },
+]
+
+const PRESET_THEMES = [
+  { name: 'WorkBuddy 默认', id: 'default' },
+  { name: '深色模式', id: 'dark' },
+  { name: '海洋蓝', id: 'ocean' },
+  { name: '森林绿', id: 'forest' },
+  { name: '紫罗兰', id: 'violet' },
+  { name: '暖橙色', id: 'warm' },
+  { name: '樱花粉', id: 'sakura' },
+  { name: '高级黑', id: 'luxury' },
+]
+
+const DEFAULT_SIDEBAR: SidebarConfig = {
+  background: '#f8f8f8',
+  textPrimary: '#0a0a0a',
+  textSecondary: '#525252',
+  border: '#e5e5e5',
+  width: 240,
+  collapsedWidth: 64,
+}
+
+const DEFAULT_FONT: FontConfig = {
+  family: 'system-ui, -apple-system, sans-serif',
+  size: 'md',
+  lineHeight: 'normal',
+}
+
+const THEME_PRESETS: Record<string, ThemeConfig> = {
+  default: {
+    background: '#ffffff',
+    surface: '#f8f8f8',
+    surfaceElevated: '#ffffff',
+    border: '#e5e5e5',
+    borderSubtle: '#f0f0f0',
+    textPrimary: '#0a0a0a',
+    textSecondary: '#525252',
+    textMuted: '#a3a3a3',
+    textInverse: '#ffffff',
+    accent: '#0a0a0a',
+    accentHover: '#1a1a1a',
+    accentSubtle: '#f5f5f5',
+    emphasis: '#3b82f6',
+    emphasisHover: '#2563eb',
+    success: '#22c55e',
+    warning: '#f59e0b',
+    error: '#ef4444',
+    info: '#3b82f6',
+    radius: 'md',
+    sidebar: DEFAULT_SIDEBAR,
+    font: DEFAULT_FONT,
+    density: 'normal',
+  },
+  dark: {
+    background: '#0f1117',
+    surface: '#1e2130',
+    surfaceElevated: '#252a3d',
+    border: '#2d3148',
+    borderSubtle: '#1e2130',
+    textPrimary: '#ffffff',
+    textSecondary: '#a0aec0',
+    textMuted: '#4a5568',
+    textInverse: '#0a0a0a',
+    accent: '#3b82f6',
+    accentHover: '#2563eb',
+    accentSubtle: '#1e3a5f',
+    emphasis: '#60a5fa',
+    emphasisHover: '#3b82f6',
+    success: '#22c55e',
+    warning: '#fbbf24',
+    error: '#f87171',
+    info: '#60a5fa',
+    radius: 'md',
+    sidebar: {
+      background: '#1a1d27',
+      textPrimary: '#ffffff',
+      textSecondary: '#a0aec0',
+      border: '#2d3148',
+      width: 240,
+      collapsedWidth: 64,
+    },
+    font: DEFAULT_FONT,
+    density: 'normal',
+  },
+  ocean: {
+    background: '#f0f9ff',
+    surface: '#e0f2fe',
+    surfaceElevated: '#ffffff',
+    border: '#bae6fd',
+    borderSubtle: '#e0f2fe',
+    textPrimary: '#0c4a6e',
+    textSecondary: '#0369a1',
+    textMuted: '#64748b',
+    textInverse: '#ffffff',
+    accent: '#0284c7',
+    accentHover: '#0369a1',
+    accentSubtle: '#e0f2fe',
+    emphasis: '#0ea5e9',
+    emphasisHover: '#0284c7',
+    success: '#10b981',
+    warning: '#f59e0b',
+    error: '#ef4444',
+    info: '#0ea5e9',
+    radius: 'lg',
+    sidebar: {
+      background: '#e0f2fe',
+      textPrimary: '#0c4a6e',
+      textSecondary: '#0369a1',
+      border: '#bae6fd',
+      width: 240,
+      collapsedWidth: 64,
+    },
+    font: DEFAULT_FONT,
+    density: 'normal',
+  },
+  forest: {
+    background: '#f0fdf4',
+    surface: '#dcfce7',
+    surfaceElevated: '#ffffff',
+    border: '#bbf7d0',
+    borderSubtle: '#dcfce7',
+    textPrimary: '#14532d',
+    textSecondary: '#166534',
+    textMuted: '#64748b',
+    textInverse: '#ffffff',
+    accent: '#16a34a',
+    accentHover: '#15803d',
+    accentSubtle: '#dcfce7',
+    emphasis: '#22c55e',
+    emphasisHover: '#16a34a',
+    success: '#22c55e',
+    warning: '#eab308',
+    error: '#ef4444',
+    info: '#3b82f6',
+    radius: 'md',
+    sidebar: {
+      background: '#dcfce7',
+      textPrimary: '#14532d',
+      textSecondary: '#166534',
+      border: '#bbf7d0',
+      width: 240,
+      collapsedWidth: 64,
+    },
+    font: DEFAULT_FONT,
+    density: 'normal',
+  },
+  violet: {
+    background: '#faf5ff',
+    surface: '#f3e8ff',
+    surfaceElevated: '#ffffff',
+    border: '#e9d5ff',
+    borderSubtle: '#f3e8ff',
+    textPrimary: '#581c87',
+    textSecondary: '#7c3aed',
+    textMuted: '#8b5cf6',
+    textInverse: '#ffffff',
+    accent: '#8b5cf6',
+    accentHover: '#7c3aed',
+    accentSubtle: '#f3e8ff',
+    emphasis: '#a855f7',
+    emphasisHover: '#8b5cf6',
+    success: '#22c55e',
+    warning: '#f59e0b',
+    error: '#ef4444',
+    info: '#8b5cf6',
+    radius: 'xl',
+    sidebar: {
+      background: '#f3e8ff',
+      textPrimary: '#581c87',
+      textSecondary: '#7c3aed',
+      border: '#e9d5ff',
+      width: 240,
+      collapsedWidth: 64,
+    },
+    font: DEFAULT_FONT,
+    density: 'normal',
+  },
+  warm: {
+    background: '#fff7ed',
+    surface: '#ffedd5',
+    surfaceElevated: '#ffffff',
+    border: '#fed7aa',
+    borderSubtle: '#ffedd5',
+    textPrimary: '#7c2d12',
+    textSecondary: '#c2410c',
+    textMuted: '#9a3412',
+    textInverse: '#ffffff',
+    accent: '#ea580c',
+    accentHover: '#c2410c',
+    accentSubtle: '#ffedd5',
+    emphasis: '#f97316',
+    emphasisHover: '#ea580c',
+    success: '#22c55e',
+    warning: '#f59e0b',
+    error: '#ef4444',
+    info: '#3b82f6',
+    radius: 'lg',
+    sidebar: {
+      background: '#ffedd5',
+      textPrimary: '#7c2d12',
+      textSecondary: '#c2410c',
+      border: '#fed7aa',
+      width: 240,
+      collapsedWidth: 64,
+    },
+    font: DEFAULT_FONT,
+    density: 'normal',
+  },
+  sakura: {
+    background: '#fdf2f8',
+    surface: '#fce7f3',
+    surfaceElevated: '#ffffff',
+    border: '#fbcfe8',
+    borderSubtle: '#fce7f3',
+    textPrimary: '#831843',
+    textSecondary: '#be185d',
+    textMuted: '#9d174d',
+    textInverse: '#ffffff',
+    accent: '#ec4899',
+    accentHover: '#db2777',
+    accentSubtle: '#fce7f3',
+    emphasis: '#f472b6',
+    emphasisHover: '#ec4899',
+    success: '#22c55e',
+    warning: '#f59e0b',
+    error: '#ef4444',
+    info: '#3b82f6',
+    radius: 'xl',
+    sidebar: {
+      background: '#fce7f3',
+      textPrimary: '#831843',
+      textSecondary: '#be185d',
+      border: '#fbcfe8',
+      width: 240,
+      collapsedWidth: 64,
+    },
+    font: DEFAULT_FONT,
+    density: 'comfortable',
+  },
+  luxury: {
+    background: '#0a0a0a',
+    surface: '#171717',
+    surfaceElevated: '#262626',
+    border: '#404040',
+    borderSubtle: '#262626',
+    textPrimary: '#fafafa',
+    textSecondary: '#a3a3a3',
+    textMuted: '#525252',
+    textInverse: '#0a0a0a',
+    accent: '#eab308',
+    accentHover: '#ca8a04',
+    accentSubtle: '#3f3f00',
+    emphasis: '#fbbf24',
+    emphasisHover: '#eab308',
+    success: '#22c55e',
+    warning: '#f59e0b',
+    error: '#ef4444',
+    info: '#3b82f6',
+    radius: 'sm',
+    sidebar: {
+      background: '#0a0a0a',
+      textPrimary: '#fafafa',
+      textSecondary: '#a3a3a3',
+      border: '#404040',
+      width: 200,
+      collapsedWidth: 56,
+    },
+    font: { ...DEFAULT_FONT, family: 'Inter, sans-serif' },
+    density: 'compact',
+  },
+}
+/* AI end: 主题配置类型 */
+
 export default function SettingsPage() {
   const [runners, setRunners] = useState<RunnerStatus[]>([])
   const [runnerLoading, setRunnerLoading] = useState(false)
@@ -49,11 +370,118 @@ export default function SettingsPage() {
   const [installMsg, setInstallMsg] = useState('')
   // AI: 运行环境检测 — true 表示在 Electron 中，可用原生文件夹对话框
   const [isElectron, setIsElectron] = useState(false)
+  // AI start: 主题配置状态
+  const [theme, setTheme] = useState<ThemeConfig>(THEME_PRESETS.default)
+  const [activeThemeId, setActiveThemeId] = useState<string>('default')
+  const [customWallpaper, setCustomWallpaper] = useState<string>('')
+  const [showColorPicker, setShowColorPicker] = useState<string | null>(null)
+  // AI end: 主题配置状态
 
   useEffect(() => {
     const api = (window as Window & { electronAPI?: { selectDirectory?: unknown } }).electronAPI
     setIsElectron(typeof api?.selectDirectory === 'function')
+    // AI start: 从 localStorage 加载主题配置
+    const savedTheme = localStorage.getItem('manta:theme')
+    if (savedTheme) {
+      try {
+        const parsed = JSON.parse(savedTheme)
+        setTheme(parsed.config || THEME_PRESETS.default)
+        setActiveThemeId(parsed.presetId || 'custom')
+        setCustomWallpaper(parsed.config?.wallpaper || '')
+        applyTheme(parsed.config || THEME_PRESETS.default)
+      } catch {}
+    }
+    // AI end: 加载主题配置
   }, [])
+
+  // AI start: 应用主题到 CSS 变量
+  function applyTheme(config: ThemeConfig) {
+    const root = document.documentElement
+    // 基础颜色
+    root.style.setProperty('--color-background', config.background)
+    root.style.setProperty('--color-surface', config.surface)
+    root.style.setProperty('--color-surface-elevated', config.surfaceElevated)
+    root.style.setProperty('--color-border', config.border)
+    root.style.setProperty('--color-border-subtle', config.borderSubtle)
+    root.style.setProperty('--color-text-primary', config.textPrimary)
+    root.style.setProperty('--color-text-secondary', config.textSecondary)
+    root.style.setProperty('--color-text-muted', config.textMuted)
+    root.style.setProperty('--color-text-inverse', config.textInverse)
+    root.style.setProperty('--color-accent', config.accent)
+    root.style.setProperty('--color-accent-hover', config.accentHover)
+    root.style.setProperty('--color-accent-subtle', config.accentSubtle)
+    // 新增：重点色和状态色
+    root.style.setProperty('--color-emphasis', config.emphasis)
+    root.style.setProperty('--color-emphasis-hover', config.emphasisHover)
+    root.style.setProperty('--color-status-done', config.success)
+    root.style.setProperty('--color-status-pending', config.warning)
+    root.style.setProperty('--color-status-failed', config.error)
+    root.style.setProperty('--color-status-running', config.info)
+    // 圆角
+    root.style.setProperty('--radius-sm', config.radius === 'sm' ? '4px' : config.radius === 'md' ? '8px' : config.radius === 'lg' ? '12px' : '16px')
+    root.style.setProperty('--radius-md', config.radius === 'sm' ? '6px' : config.radius === 'md' ? '8px' : config.radius === 'lg' ? '12px' : '16px')
+    root.style.setProperty('--radius-lg', config.radius === 'sm' ? '8px' : config.radius === 'md' ? '12px' : config.radius === 'lg' ? '16px' : '20px')
+    root.style.setProperty('--radius-xl', config.radius === 'sm' ? '12px' : config.radius === 'md' ? '16px' : config.radius === 'lg' ? '20px' : '24px')
+    // 侧边栏配置
+    root.style.setProperty('--sidebar-bg', config.sidebar.background)
+    root.style.setProperty('--sidebar-text', config.sidebar.textPrimary)
+    root.style.setProperty('--sidebar-text-secondary', config.sidebar.textSecondary)
+    root.style.setProperty('--sidebar-border', config.sidebar.border)
+    root.style.setProperty('--sidebar-width', `${config.sidebar.width}px`)
+    root.style.setProperty('--sidebar-collapsed-width', `${config.sidebar.collapsedWidth}px`)
+    // 字体配置
+    root.style.setProperty('--font-family', config.font.family)
+    root.style.setProperty('--font-size-scale', config.font.size === 'sm' ? '0.875' : config.font.size === 'md' ? '1' : '1.125')
+    root.style.setProperty('--line-height', config.font.lineHeight === 'compact' ? '1.25' : config.font.lineHeight === 'normal' ? '1.5' : '1.75')
+    // 密度配置
+    root.style.setProperty('--density-scale', config.density === 'compact' ? '0.75' : config.density === 'normal' ? '1' : '1.25')
+    root.style.setProperty('--density-padding', config.density === 'compact' ? '0.5rem' : config.density === 'normal' ? '1rem' : '1.5rem')
+    root.style.setProperty('--density-gap', config.density === 'compact' ? '0.5rem' : config.density === 'normal' ? '0.75rem' : '1rem')
+    // 应用壁纸
+    if (config.wallpaper) {
+      root.style.setProperty('--wallpaper', `url(${config.wallpaper})`)
+      document.body.style.backgroundImage = `url(${config.wallpaper})`
+      document.body.style.backgroundSize = 'cover'
+      document.body.style.backgroundPosition = 'center'
+      document.body.style.backgroundAttachment = 'fixed'
+    } else {
+      root.style.removeProperty('--wallpaper')
+      document.body.style.backgroundImage = ''
+      document.body.style.backgroundSize = ''
+      document.body.style.backgroundPosition = ''
+      document.body.style.backgroundAttachment = ''
+    }
+  }
+
+  function saveTheme() {
+    const themeToSave = { ...theme }
+    if (customWallpaper) {
+      themeToSave.wallpaper = customWallpaper
+    }
+    localStorage.setItem('manta:theme', JSON.stringify({
+      presetId: activeThemeId,
+      config: themeToSave,
+    }))
+    applyTheme(themeToSave)
+  }
+
+  function loadPresetTheme(presetId: string) {
+    const preset = THEME_PRESETS[presetId]
+    if (preset) {
+      setTheme(preset)
+      setActiveThemeId(presetId)
+      setCustomWallpaper('')
+      applyTheme(preset)
+    }
+  }
+
+  function updateThemeColor(key: keyof ThemeConfig, value: string) {
+    const newTheme = { ...theme, [key]: value }
+    setTheme(newTheme)
+    setActiveThemeId('custom')
+    applyTheme(newTheme)
+  }
+  // AI end: 应用主题
 
   async function probeRunners() {
     setRunnerLoading(true)
@@ -186,6 +614,7 @@ export default function SettingsPage() {
 
   // AI: 目录项定义
   const TOC = [
+    { id: 'section-theme', label: '主题配置' },
     { id: 'section-runner', label: 'Runner 状态' },
     { id: 'section-webhook', label: 'Webhook 通知' },
     { id: 'section-plugins', label: '插件管理' },
@@ -220,8 +649,307 @@ export default function SettingsPage() {
       {/* Header */}
       <div className="mb-10">
         <h1 className="text-2xl font-semibold text-text-primary tracking-tight">系统设置</h1>
-        <p className="mt-1 text-sm text-text-muted">Runner 状态探测 · Channel 配置 · 插件管理 · 系统信息</p>
+        <p className="mt-1 text-sm text-text-muted">主题配置 · Runner 状态探测 · Channel 配置 · 插件管理 · 系统信息</p>
       </div>
+
+      {/* AI start: 主题配置 */}
+      <section id="section-theme" className="mb-10 scroll-mt-8">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-medium text-text-primary">🎨 主题配置</h2>
+          <button
+            onClick={saveTheme}
+            className="text-xs px-3 py-1.5 bg-accent text-text-inverse rounded-md hover:bg-accent-hover transition-colors"
+          >
+            保存主题
+          </button>
+        </div>
+
+        {/* 预设主题选择 */}
+        <div className="border border-border rounded-lg p-4 mb-4">
+          <p className="text-xs font-medium text-text-secondary mb-3">预设主题</p>
+          <div className="grid grid-cols-3 gap-2">
+            {PRESET_THEMES.map((preset) => (
+              <button
+                key={preset.id}
+                onClick={() => loadPresetTheme(preset.id)}
+                className={`px-3 py-2 text-xs rounded-md border transition-all ${
+                  activeThemeId === preset.id
+                    ? 'bg-accent text-text-inverse border-accent'
+                    : 'bg-surface text-text-secondary border-border hover:border-accent'
+                }`}
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 背景壁纸 */}
+        <div className="border border-border rounded-lg p-4 mb-4">
+          <p className="text-xs font-medium text-text-secondary mb-3">背景壁纸</p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={customWallpaper}
+              onChange={(e) => {
+                setCustomWallpaper(e.target.value)
+                updateThemeColor('wallpaper', e.target.value)
+              }}
+              placeholder="输入图片 URL 或本地路径"
+              className="flex-1 px-3 py-2 text-sm border border-border rounded-md bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+            />
+            <button
+              onClick={() => {
+                setCustomWallpaper('')
+                updateThemeColor('wallpaper', '')
+              }}
+              className="px-3 py-2 text-xs border border-border rounded-md text-text-secondary hover:bg-surface"
+            >
+              清除
+            </button>
+          </div>
+          {customWallpaper && (
+            <div className="mt-2 p-2 bg-surface rounded-md">
+              <img
+                src={customWallpaper}
+                alt="壁纸预览"
+                className="w-full h-24 object-cover rounded"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none'
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* 颜色配置 */}
+        <div className="border border-border rounded-lg p-4 mb-4">
+          <p className="text-xs font-medium text-text-secondary mb-3">颜色配置</p>
+          <div className="grid grid-cols-2 gap-4">
+            <ColorPicker
+              label="背景色"
+              value={theme.background}
+              onChange={(v) => updateThemeColor('background', v)}
+            />
+            <ColorPicker
+              label="表面色"
+              value={theme.surface}
+              onChange={(v) => updateThemeColor('surface', v)}
+            />
+            <ColorPicker
+              label="主题色"
+              value={theme.accent}
+              onChange={(v) => updateThemeColor('accent', v)}
+            />
+            <ColorPicker
+              label="重点色"
+              value={theme.emphasis}
+              onChange={(v) => updateThemeColor('emphasis', v)}
+            />
+            <ColorPicker
+              label="主文字"
+              value={theme.textPrimary}
+              onChange={(v) => updateThemeColor('textPrimary', v)}
+            />
+            <ColorPicker
+              label="次文字"
+              value={theme.textSecondary}
+              onChange={(v) => updateThemeColor('textSecondary', v)}
+            />
+            <ColorPicker
+              label="成功色"
+              value={theme.success}
+              onChange={(v) => updateThemeColor('success', v)}
+            />
+            <ColorPicker
+              label="警告色"
+              value={theme.warning}
+              onChange={(v) => updateThemeColor('warning', v)}
+            />
+          </div>
+        </div>
+
+        {/* AI start: 侧边栏配置 */}
+        <div className="border border-border rounded-lg p-4 mb-4">
+          <p className="text-xs font-medium text-text-secondary mb-3">侧边栏配置</p>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <ColorPicker
+              label="侧边栏背景"
+              value={theme.sidebar.background}
+              onChange={(v) => {
+                const newTheme = { ...theme, sidebar: { ...theme.sidebar, background: v } }
+                setTheme(newTheme)
+                setActiveThemeId('custom')
+                applyTheme(newTheme)
+              }}
+            />
+            <ColorPicker
+              label="侧边栏文字"
+              value={theme.sidebar.textPrimary}
+              onChange={(v) => {
+                const newTheme = { ...theme, sidebar: { ...theme.sidebar, textPrimary: v } }
+                setTheme(newTheme)
+                setActiveThemeId('custom')
+                applyTheme(newTheme)
+              }}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-text-muted mb-1">侧边栏宽度</label>
+              <input
+                type="range"
+                min="180"
+                max="300"
+                value={theme.sidebar.width}
+                onChange={(e) => {
+                  const newTheme = { ...theme, sidebar: { ...theme.sidebar, width: parseInt(e.target.value) } }
+                  setTheme(newTheme)
+                  setActiveThemeId('custom')
+                  applyTheme(newTheme)
+                }}
+                className="w-full"
+              />
+              <span className="text-xs text-text-muted">{theme.sidebar.width}px</span>
+            </div>
+            <div>
+              <label className="block text-xs text-text-muted mb-1">折叠宽度</label>
+              <input
+                type="range"
+                min="48"
+                max="80"
+                value={theme.sidebar.collapsedWidth}
+                onChange={(e) => {
+                  const newTheme = { ...theme, sidebar: { ...theme.sidebar, collapsedWidth: parseInt(e.target.value) } }
+                  setTheme(newTheme)
+                  setActiveThemeId('custom')
+                  applyTheme(newTheme)
+                }}
+                className="w-full"
+              />
+              <span className="text-xs text-text-muted">{theme.sidebar.collapsedWidth}px</span>
+            </div>
+          </div>
+        </div>
+        {/* AI end: 侧边栏配置 */}
+
+        {/* AI start: 字体配置 */}
+        <div className="border border-border rounded-lg p-4 mb-4">
+          <p className="text-xs font-medium text-text-secondary mb-3">字体配置</p>
+          <div className="mb-3">
+            <label className="block text-xs text-text-muted mb-1">字体族</label>
+            <select
+              value={theme.font.family}
+              onChange={(e) => {
+                const newTheme = { ...theme, font: { ...theme.font, family: e.target.value } }
+                setTheme(newTheme)
+                setActiveThemeId('custom')
+                applyTheme(newTheme)
+              }}
+              className="w-full px-3 py-2 text-sm border border-border rounded-md bg-surface text-text-primary"
+            >
+              {FONT_OPTIONS.map((font) => (
+                <option key={font.value} value={font.value}>{font.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                const newTheme = { ...theme, font: { ...theme.font, size: 'sm' } }
+                setTheme(newTheme)
+                setActiveThemeId('custom')
+                applyTheme(newTheme)
+              }}
+              className={`flex-1 px-3 py-2 text-xs rounded-md border transition-all ${
+                theme.font.size === 'sm'
+                  ? 'bg-accent text-text-inverse border-accent'
+                  : 'bg-surface text-text-secondary border-border hover:border-accent'
+              }`}
+            >
+              小字
+            </button>
+            <button
+              onClick={() => {
+                const newTheme = { ...theme, font: { ...theme.font, size: 'md' } }
+                setTheme(newTheme)
+                setActiveThemeId('custom')
+                applyTheme(newTheme)
+              }}
+              className={`flex-1 px-3 py-2 text-xs rounded-md border transition-all ${
+                theme.font.size === 'md'
+                  ? 'bg-accent text-text-inverse border-accent'
+                  : 'bg-surface text-text-secondary border-border hover:border-accent'
+              }`}
+            >
+              标准
+            </button>
+            <button
+              onClick={() => {
+                const newTheme = { ...theme, font: { ...theme.font, size: 'lg' } }
+                setTheme(newTheme)
+                setActiveThemeId('custom')
+                applyTheme(newTheme)
+              }}
+              className={`flex-1 px-3 py-2 text-xs rounded-md border transition-all ${
+                theme.font.size === 'lg'
+                  ? 'bg-accent text-text-inverse border-accent'
+                  : 'bg-surface text-text-secondary border-border hover:border-accent'
+              }`}
+            >
+              大字
+            </button>
+          </div>
+        </div>
+        {/* AI end: 字体配置 */}
+
+        {/* AI start: 布局密度 */}
+        <div className="border border-border rounded-lg p-4 mb-4">
+          <p className="text-xs font-medium text-text-secondary mb-3">布局密度</p>
+          <div className="flex gap-2">
+            {(['compact', 'normal', 'comfortable'] as const).map((d) => (
+              <button
+                key={d}
+                onClick={() => {
+                  const newTheme = { ...theme, density: d }
+                  setTheme(newTheme)
+                  setActiveThemeId('custom')
+                  applyTheme(newTheme)
+                }}
+                className={`flex-1 px-3 py-2 text-xs rounded-md border transition-all ${
+                  theme.density === d
+                    ? 'bg-accent text-text-inverse border-accent'
+                    : 'bg-surface text-text-secondary border-border hover:border-accent'
+                }`}
+              >
+                {d === 'compact' ? '紧凑' : d === 'normal' ? '标准' : '宽松'}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* AI end: 布局密度 */}
+
+        {/* 圆角配置 */}
+        <div className="border border-border rounded-lg p-4">
+          <p className="text-xs font-medium text-text-secondary mb-3">圆角大小</p>
+          <div className="flex gap-2">
+            {(['sm', 'md', 'lg', 'xl'] as const).map((r) => (
+              <button
+                key={r}
+                onClick={() => updateThemeColor('radius', r)}
+                className={`flex-1 px-3 py-2 text-xs rounded-md border transition-all ${
+                  theme.radius === r
+                    ? 'bg-accent text-text-inverse border-accent'
+                    : 'bg-surface text-text-secondary border-border hover:border-accent'
+                }`}
+              >
+                {r === 'sm' ? '小' : r === 'md' ? '中' : r === 'lg' ? '大' : '特大'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+      {/* AI end: 主题配置 */}
 
       {/* Runner 状态 */}
       <section id="section-runner" className="mb-10 scroll-mt-8">
@@ -545,4 +1273,79 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
+
+// AI start: 颜色选择器组件
+function ColorPicker({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const pickerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (pickerRef.current && !pickerRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [isOpen])
+
+  const presetColors = [
+    '#0a0a0a', '#525252', '#a3a3a3', '#ffffff',
+    '#ef4444', '#f97316', '#f59e0b', '#84cc16',
+    '#22c55e', '#10b981', '#06b6d4', '#3b82f6',
+    '#6366f1', '#8b5cf6', '#a855f7', '#ec4899',
+  ]
+
+  return (
+    <div className="relative" ref={pickerRef}>
+      <label className="block text-xs text-text-muted mb-1">{label}</label>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-2 w-full px-3 py-2 border border-border rounded-md bg-surface hover:border-accent transition-colors"
+      >
+        <div
+          className="w-5 h-5 rounded border border-border-subtle"
+          style={{ backgroundColor: value }}
+        />
+        <span className="text-sm text-text-primary font-mono flex-1 text-left">{value}</span>
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 mt-1 p-3 bg-surface-elevated border border-border rounded-lg shadow-lg" style={{ minWidth: '200px' }}>
+          <div className="grid grid-cols-8 gap-1 mb-2">
+            {presetColors.map((color) => (
+              <button
+                key={color}
+                onClick={() => {
+                  onChange(color)
+                  setIsOpen(false)
+                }}
+                className="w-5 h-5 rounded border border-border-subtle hover:scale-110 transition-transform"
+                style={{ backgroundColor: color }}
+              />
+            ))}
+          </div>
+          <input
+            type="color"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full h-8 cursor-pointer"
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+// AI end: 颜色选择器组件
+
 /*  end: 设置页结束 */
