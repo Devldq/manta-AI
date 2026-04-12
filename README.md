@@ -86,3 +86,13 @@ rm .git/hooks/pre-commit
 - **敏感数据**：密码、数据库连接字符串、手机号、身份证号
 
 更多配置选项和规则，请查看 `config/sensitive-rules.yaml` 文件。
+
+## 致谢
+
+### 设计系统
+
+Manta 的多主题系统灵感和设计 token 提取自以下开源项目：
+
+- **[VoltAgent / awesome-design-md](https://github.com/VoltAgent/awesome-design-md)** — 一个汇集了 60+ 款知名产品（Notion、Linear、Cursor、Supabase、Vercel、Spotify、Stripe、Apple、Raycast、IBM 等）设计规范的开源合集，以 Markdown 格式整理，供 AI Agent 直接读取并生成一致的 UI。感谢该项目让我们能够快速引入多种高质量设计语言，为 Manta 用户提供丰富的主题选择。
+
+  > *"Copy a DESIGN.md into your project, tell your AI agent 'build me a page that looks like this' and get pixel-perfect UI that actually matches."*

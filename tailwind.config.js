@@ -4,6 +4,8 @@ module.exports = {
     './app/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
   ],
+  // AI: 使用 class 策略驱动暗色模式（.dark 类由 ThemeInitializer 管理）
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
