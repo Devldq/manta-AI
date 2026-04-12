@@ -52,4 +52,3 @@ asar: false
 compression: "normal"
 
 # 自动更新配置
-afterSign: ""

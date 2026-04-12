@@ -335,7 +335,7 @@ export async function advanceWorkflow(
 ): Promise<WorkflowExecution> {
   // AI: 找到当前步骤在步骤列表中的位置
   const steps = workflow.steps
-  let currentStepId = exec.currentStepId ?? steps[0]?.id
+  let currentStepId: string | undefined = exec.currentStepId ?? steps[0]?.id
   
   let updated = exec
 

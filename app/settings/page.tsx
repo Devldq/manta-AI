@@ -569,7 +569,7 @@ export default function SettingsPage() {
   async function browseDirectory() {
     if (isElectron) {
       // AI: Electron 环境：调用原生文件夹选择对话框
-      const api = (window as Window & { electronAPI: { selectDirectory: () => Promise<string | null> } }).electronAPI
+      const api = (window as unknown as { electronAPI: { selectDirectory: () => Promise<string | null> } }).electronAPI
       const selected = await api.selectDirectory()
       if (selected) {
         setInstallPkg(selected)
@@ -1035,7 +1035,7 @@ export default function SettingsPage() {
           <div className="flex gap-2">
             <button
               onClick={() => {
-                const newTheme = { ...theme, font: { ...theme.font, size: 'sm' } }
+                const newTheme = { ...theme, font: { ...theme.font, size: 'sm' as const } }
                 setTheme(newTheme)
                 setActiveThemeId('custom')
                 applyTheme(newTheme)
@@ -1050,7 +1050,7 @@ export default function SettingsPage() {
             </button>
             <button
               onClick={() => {
-                const newTheme = { ...theme, font: { ...theme.font, size: 'md' } }
+                const newTheme = { ...theme, font: { ...theme.font, size: 'md' as const } }
                 setTheme(newTheme)
                 setActiveThemeId('custom')
                 applyTheme(newTheme)
@@ -1065,7 +1065,7 @@ export default function SettingsPage() {
             </button>
             <button
               onClick={() => {
-                const newTheme = { ...theme, font: { ...theme.font, size: 'lg' } }
+                const newTheme = { ...theme, font: { ...theme.font, size: 'lg' as const } }
                 setTheme(newTheme)
                 setActiveThemeId('custom')
                 applyTheme(newTheme)
