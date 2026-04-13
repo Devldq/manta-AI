@@ -96,55 +96,6 @@ function buildOpenclawSummary(name: string): AgentSummary {
   }
 }
 
-function buildClaudeSummary(name: string): AgentSummary {
-  const filePath = expandDir(`~/.claude/agents/${name}.md`)
-  if (!fs.existsSync(filePath)) {
-    return { type: 'claude-code', name, models: [], isUsingDefaultModel: true, defaultModel: 'claude (系统默认)', subagents: [], extra: {} }
-  }
-  const content = fs.readFileSync(filePath, 'utf-8')
-  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/)
-  const fm = frontmatterMatch?.[1] ?? ''
-
-  // AI: 解析 frontmatter 的 tools 字段（可能是逗号分隔或 YAML 列表）
-  const toolsRaw = fm.match(/^tools:\s*(.+)$/m)?.[1]?.trim()
-  let tools: string[] = []
-  if (toolsRaw) {
-    tools = toolsRaw.split(',').map((t) => t.trim()).filter(Boolean)
-  }
-
-  const model = fm.match(/^model:\s*(.+)$/m)?.[1]?.trim() ?? null
-  const description = fm.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? ''
-
-  return {
-    type: 'claude-code',
-    name,
-    models: model ? [{ provider: 'anthropic', id: model, name: model, capabilities: [], reasoning: false }] : [],
-    isUsingDefaultModel: !model,
-    defaultModel: model ?? 'claude (系统默认)',
-    subagents: [],
-    extra: { tools, description },
-  }
-}
-
-function buildCodeflickerSummary(name: string): AgentSummary {
-  const skillMd = expandDir(`~/.codeflicker/internal/skills/${name}/SKILL.md`)
-  if (!fs.existsSync(skillMd)) {
-    return { type: 'codeflicker', name, models: [], isUsingDefaultModel: true, defaultModel: '系统默认', subagents: [], extra: {} }
-  }
-  const content = fs.readFileSync(skillMd, 'utf-8')
-  const description = content.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? ''
-  const source = content.match(/^source:\s*(.+)$/m)?.[1]?.trim() ?? ''
-  return {
-    type: 'codeflicker',
-    name,
-    models: [],
-    isUsingDefaultModel: true,
-    defaultModel: 'CodeFlicker 内置',
-    subagents: [],
-    extra: { description, source },
-  }
-}
-
 // ─── 类型定义 ───────────────────────────────────────────────
 interface ModelInfo {
   provider: string
@@ -157,7 +108,7 @@ interface ModelInfo {
 }
 
 interface AgentSummary {
-  type: 'openclaw' | 'claude-code' | 'codeflicker'
+  type: 'openclaw'
   name: string
   models: ModelInfo[]
   isUsingDefaultModel: boolean
@@ -205,7 +156,7 @@ interface ModelsJson {
 }
 
 // ─── Route Handler ───────────────────────────────────────────
-// AI: GET /api/agents/summary?name=<name>&pluginId=<openclaw|claude-code|codeflicker>
+// AI: GET /api/agents/summary?name=<name>&pluginId=openclaw
 export async function GET(req: NextRequest) {
   const name = req.nextUrl.searchParams.get('name')
   const pluginId = req.nextUrl.searchParams.get('pluginId') ?? ''
@@ -213,27 +164,8 @@ export async function GET(req: NextRequest) {
   if (!name) return NextResponse.json({ error: '缺少 name 参数' }, { status: 400 })
 
   try {
-    let summary: AgentSummary
-
-    if (pluginId === 'openclaw') {
-      summary = buildOpenclawSummary(name)
-    } else if (pluginId === 'claude-code') {
-      summary = buildClaudeSummary(name)
-    } else if (pluginId === 'codeflicker') {
-      summary = buildCodeflickerSummary(name)
-    } else {
-      // AI: 自动探测：先试 openclaw，再 claude-code，再 codeflicker
-      const config = readOpenclawConfig()
-      const inOpenclaw = config?.agents?.list?.some((a) => (a.name || a.id) === name)
-      if (inOpenclaw) {
-        summary = buildOpenclawSummary(name)
-      } else if (fs.existsSync(expandDir(`~/.claude/agents/${name}.md`))) {
-        summary = buildClaudeSummary(name)
-      } else {
-        summary = buildCodeflickerSummary(name)
-      }
-    }
-
+    // AI: 只支持 openclaw
+    const summary = buildOpenclawSummary(name)
     return NextResponse.json({ summary })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

@@ -12,7 +12,7 @@ const MANTA_AGENTS_DIR = path.join(os.homedir(), 'manta-data', 'agents')
 
 interface AgentMeta {
   name: string
-  targetCli: 'openclaw' | 'claude-code'
+  targetCli: 'openclaw'
   description: string
   createdAt: string
   updatedAt: string
@@ -66,8 +66,8 @@ export async function POST(req: NextRequest) {
     if (!name?.trim()) {
       return NextResponse.json({ error: 'name 不能为空' }, { status: 400 })
     }
-    if (!targetCli || !['openclaw', 'claude-code'].includes(targetCli)) {
-      return NextResponse.json({ error: 'targetCli 必须是 openclaw 或 claude-code' }, { status: 400 })
+    if (targetCli !== 'openclaw') {
+      return NextResponse.json({ error: 'targetCli 必须是 openclaw' }, { status: 400 })
     }
     if (!/^[a-zA-Z0-9_-]+$/.test(name.trim())) {
       return NextResponse.json({ error: 'name 只能包含字母、数字、连字符和下划线' }, { status: 400 })

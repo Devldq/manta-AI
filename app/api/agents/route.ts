@@ -27,64 +27,15 @@ function loadOpenclawAgents() {
       source: 'plugin-native',
       pluginId: 'openclaw',
       filePath: a.agentDir ? path.join(a.agentDir, 'models.json') : undefined,
-      fileReadonly: true,
+      fileReadonly: true,  // AI: models.json 只读（含 API key）
+      soulEditable: true,  // AI: SOUL.md 可编辑
     }))
   } catch { return [] }
 }
 
-// AI: 加载 markdown 格式 agents（claude-code sub-agents，每个 .md 文件是一个 agent）
-function loadMarkdownAgents(dir: string, pluginId: string, runnerId: string) {
-  const expanded = expandDir(dir)
-  if (!fs.existsSync(expanded)) return []
-  const results = []
-  try {
-    for (const entry of fs.readdirSync(expanded, { withFileTypes: true })) {
-      if (!entry.isFile()) continue
-      const ext = path.extname(entry.name).toLowerCase()
-      if (ext !== '.md' && ext !== '.mdx') continue
-      const filePath = path.join(expanded, entry.name)
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8')
-        const match = content.match(/^---\n([\s\S]*?)\n---/)
-        const name = match
-          ? (content.match(/^name:\s*(.+)$/m)?.[1]?.trim() ?? path.basename(entry.name, ext))
-          : path.basename(entry.name, ext)
-        const description = match ? (content.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? '') : ''
-        results.push({ name, runnerId, description, enabled: true, source: 'plugin-native', pluginId, filePath, fileReadonly: false })
-      } catch { /* skip */ }
-    }
-  } catch { /* dir unreadable */ }
-  return results
-}
-
-// AI: 加载 codeflicker-skill 格式 agents（每个子目录含 SKILL.md）
-function loadSkillAgents(dir: string, pluginId: string, runnerId: string) {
-  const expanded = expandDir(dir)
-  if (!fs.existsSync(expanded)) return []
-  const results = []
-  try {
-    for (const entry of fs.readdirSync(expanded, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
-      const skillMdPath = path.join(expanded, entry.name, 'SKILL.md')
-      if (!fs.existsSync(skillMdPath)) continue
-      try {
-        const content = fs.readFileSync(skillMdPath, 'utf-8')
-        const name = content.match(/^name:\s*(.+)$/m)?.[1]?.trim() ?? entry.name
-        const description = content.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? ''
-        results.push({ name, runnerId, description, enabled: true, source: 'plugin-native', pluginId, filePath: skillMdPath, fileReadonly: false })
-      } catch { /* skip */ }
-    }
-  } catch { /* dir unreadable */ }
-  return results
-}
-
 // AI: 汇总所有插件的 agents
 function loadAllAgents() {
-  return [
-    ...loadOpenclawAgents(),
-    ...loadMarkdownAgents('~/.claude/agents', 'claude-code', 'claude-code'),
-    ...loadSkillAgents('~/.codeflicker/internal/skills', 'codeflicker', 'codeflicker'),
-  ]
+  return loadOpenclawAgents()
 }
 
 export async function GET(req: NextRequest) {

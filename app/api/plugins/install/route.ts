@@ -11,7 +11,7 @@ import * as yaml from 'js-yaml'
 const PLUGINS_DIR = path.join(process.cwd(), 'plugins')
 
 // AI: 内置插件目录名列表（这些目录不允许被卸载）
-const BUILTIN_PLUGIN_DIRS = new Set(['codeflicker', 'openclaw', 'claude-code'])
+const BUILTIN_PLUGIN_DIRS = new Set(['openclaw'])
 
 // AI: 读取目录内的 plugin.yaml
 function readPluginYaml(dir: string): { id: string; name: string } | null {

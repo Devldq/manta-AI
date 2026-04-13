@@ -17,6 +17,44 @@ npm run dev
 
 访问 http://localhost:3000
 
+## ✨ AI 润色功能
+
+Manta 内置 AI 润色助手，帮助你快速创建专业的 Agent SOUL.md 文档。
+
+### 🎉 零配置使用（推荐）
+
+**直接使用本地 OpenClaw，无需配置任何 API Key！**
+
+前提条件：已安装 OpenClaw CLI
+```bash
+brew install openclaw
+```
+
+### 可选：使用外部 API
+
+如果想使用更快的外部模型，创建 `.env` 文件：
+
+```bash
+# 使用 OpenAI 或兼容服务
+AI_API_KEY=your-api-key-here
+AI_BASE_URL=https://api.openai.com/v1
+AI_MODEL=gpt-4o-mini
+```
+
+### 智能降级策略
+
+- ✅ 有外部 API Key → 使用外部 API（更快）
+- ✅ 无外部 API Key → 自动使用 OpenClaw（零配置）
+- ✅ 完全自动化，对用户透明
+
+### 使用场景
+
+- **新建 Agent**: 描述职责和流程，AI 自动生成完整 SOUL.md
+- **编辑 Agent**: 基于现有内容优化改进，提升专业度
+- **快速上手**: 无需了解 SOUL.md 格式，AI 帮你搞定
+
+详细使用指南：[docs/ai-polish-guide.md](docs/ai-polish-guide.md)
+
 ## Agent 角色
 
 | Agent | 对应古制 | 职责 |

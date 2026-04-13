@@ -220,7 +220,13 @@ pre {
 
 /* ─── 选中文本样式 ─── */
 ::selection {
-  background-color: var(--color-accent-subtle);
+  background-color: rgba(0, 158, 106, 0.3); /* 亮色主题：accent 颜色 30% 透明度 */
+  color: var(--color-text-primary);
+}
+
+/* AI: 暗色主题下的选中样式 */
+.dark ::selection {
+  background-color: rgba(0, 217, 146, 0.25); /* 暗色主题：accent 颜色 25% 透明度 */
   color: var(--color-text-primary);
 }
 

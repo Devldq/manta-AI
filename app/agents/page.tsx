@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback } from 'react'
 // ─── 类型定义 ───────────────────────────────────────────────
 interface MantaAgent {
   name: string
-  targetCli: 'openclaw' | 'claude-code'
+  targetCli: 'openclaw'
   description: string
   createdAt: string
   updatedAt: string
@@ -22,6 +22,7 @@ interface ExternalAgent {
   pluginId?: string
   filePath?: string
   fileReadonly?: boolean
+  soulEditable?: boolean
 }
 
 type SelectedAgent =
@@ -40,7 +41,7 @@ interface ModelInfo {
 }
 
 interface AgentSummary {
-  type: 'openclaw' | 'claude-code' | 'codeflicker'
+  type: 'openclaw'
   name: string
   models: ModelInfo[]
   isUsingDefaultModel: boolean
@@ -67,8 +68,6 @@ function fmtOut(n?: number): string {
 
 const CLI_LABEL: Record<string, string> = {
   'openclaw': 'OpenClaw',
-  'claude-code': 'Claude Code',
-  'codeflicker': 'CodeFlicker',
 }
 
 // ─── 主页面 ─────────────────────────────────────────────────
@@ -310,7 +309,18 @@ export default function AgentsPage() {
               }}
             />
           ) : (
-            <ExternalDetailPanel agent={selected.agent} />
+            <ExternalDetailPanel
+              agent={selected.agent}
+              onDeleted={(name) => {
+                setExternalAgents((prev) => prev.filter((a) => a.name !== name))
+                // AI: 删除后自动选中第一个可用 agent
+                const firstManta = mantaAgents[0]
+                const firstExt = externalAgents.find((a) => a.name !== name)
+                if (firstManta) setSelected({ type: 'manta', agent: firstManta })
+                else if (firstExt) setSelected({ type: 'external', agent: firstExt })
+                else setSelected(null)
+              }}
+            />
           )
         ) : (
           <div className="flex-1 flex items-center justify-center">
@@ -474,6 +484,10 @@ function MantaDetailPanel({
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  // AI: 润色相关状态
+  const [polishing, setPolishing] = useState(false)
+  const [showPolishHelper, setShowPolishHelper] = useState(false)
+  const [polishInput, setPolishInput] = useState({ responsibilities: '', workflow: '' })
 
   // AI: agent 切换时重置编辑状态
   useEffect(() => {
@@ -482,6 +496,8 @@ function MantaDetailPanel({
     setEditDesc(agent.description)
     setMsg(null)
     setConfirmDelete(false)
+    setShowPolishHelper(false)
+    setPolishInput({ responsibilities: '', workflow: '' })
   }, [agent.name, agent.soul, agent.description])
 
   async function handleSave() {
@@ -507,6 +523,56 @@ function MantaDetailPanel({
       setMsg({ ok: false, text: '网络错误' })
     } finally {
       setSaving(false)
+    }
+  }
+
+  // AI: 调用 AI 润色接口（优先外部 API，降级到 OpenClaw）
+  async function handlePolish() {
+    setPolishing(true)
+    setMsg(null)
+    try {
+      // AI: 准备请求数据
+      const requestData = {
+        name: agent.name,
+        description: editDesc || undefined,
+        responsibilities: polishInput.responsibilities || undefined,
+        workflow: polishInput.workflow || undefined,
+        currentSoul: editSoul,
+      }
+
+      // AI: Step 1 - 优先尝试外部 API
+      let res = await fetch('/api/agents/polish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestData),
+      })
+
+      // AI: Step 2 - 如果外部 API 失败（未配置 Key），降级到 OpenClaw
+      if (!res.ok) {
+        const errorData = await res.json()
+        if (errorData.error && errorData.error.includes('NO_API_KEY')) {
+          console.log('[polish] 外部 API 未配置，降级到 OpenClaw')
+          res = await fetch('/api/agents/polish-openclaw', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestData),
+          })
+        }
+      }
+
+      const data = await res.json()
+      if (data.success) {
+        setEditSoul(data.soul)
+        setPolishInput({ responsibilities: '', workflow: '' })
+        setShowPolishHelper(false)
+        setMsg({ ok: true, text: '✓ AI 润色完成' })
+      } else {
+        setMsg({ ok: false, text: data.error || 'AI 润色失败' })
+      }
+    } catch {
+      setMsg({ ok: false, text: '网络错误' })
+    } finally {
+      setPolishing(false)
     }
   }
 
@@ -590,22 +656,77 @@ function MantaDetailPanel({
         </div>
       )}
 
-      {/* SOUL.md 标题栏 */}
-      <div className="px-3 py-1 border-b border-border-subtle bg-surface flex-shrink-0 flex items-center justify-between">
-        <span className="text-[10px] font-mono text-text-muted">SOUL.md</span>
-        <span className="text-[10px] text-text-muted">{new Date(agent.updatedAt).toLocaleDateString('zh-CN')}</span>
-      </div>
-
       {/* SOUL 内容 */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto flex flex-col">
         {editing ? (
-          <textarea value={editSoul} onChange={(e) => setEditSoul(e.target.value)}
-            className="w-full h-full p-3 text-xs font-mono bg-background text-text-primary focus:outline-none resize-none leading-relaxed"
-            spellCheck={false} />
+          <>
+            {/* AI: AI 润色辅助区（编辑模式下显示）*/}
+            {showPolishHelper && (
+              <div className="border-b border-accent/20 bg-accent/5 flex-shrink-0">
+                <div className="p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-accent">✨ AI 润色助手</span>
+                    <button
+                      onClick={() => setShowPolishHelper(false)}
+                      className="text-xs text-text-muted hover:text-text-primary"
+                    >
+                      收起
+                    </button>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1">补充职责（可选）</label>
+                    <textarea
+                      value={polishInput.responsibilities}
+                      onChange={(e) => setPolishInput({ ...polishInput, responsibilities: e.target.value })}
+                      placeholder="补充 Agent 的职责说明..."
+                      className="w-full px-2 py-1.5 text-xs border border-border rounded bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
+                      rows={2}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1">补充流程（可选）</label>
+                    <textarea
+                      value={polishInput.workflow}
+                      onChange={(e) => setPolishInput({ ...polishInput, workflow: e.target.value })}
+                      placeholder="补充工作流程说明..."
+                      className="w-full px-2 py-1.5 text-xs border border-border rounded bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
+                      rows={2}
+                    />
+                  </div>
+                  <button
+                    onClick={handlePolish}
+                    disabled={polishing}
+                    className="w-full px-3 py-1.5 text-xs bg-accent text-text-inverse rounded hover:bg-accent-hover transition-colors disabled:opacity-50"
+                  >
+                    {polishing ? '✨ AI 优化中...' : '✨ AI 优化 SOUL.md'}
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-subtle bg-surface/50 flex-shrink-0">
+              <span className="text-[10px] font-mono text-text-muted">编辑 SOUL.md</span>
+              {!showPolishHelper && (
+                <button
+                  onClick={() => setShowPolishHelper(true)}
+                  className="text-[10px] text-accent hover:underline"
+                >
+                  ✨ AI 润色
+                </button>
+              )}
+            </div>
+            <textarea value={editSoul} onChange={(e) => setEditSoul(e.target.value)}
+              className="flex-1 p-3 text-xs font-mono bg-background text-text-primary focus:outline-none resize-none leading-relaxed"
+              spellCheck={false} />
+          </>
         ) : (
-          <pre className="p-3 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-words">
-            {agent.soul || '（SOUL.md 为空）'}
-          </pre>
+          <>
+            <div className="px-3 py-1 border-b border-border-subtle bg-surface flex-shrink-0">
+              <span className="text-[10px] font-mono text-text-muted">SOUL.md</span>
+            </div>
+            <pre className="flex-1 p-3 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-words overflow-auto">
+              {agent.soul || '（SOUL.md 为空）'}
+            </pre>
+          </>
         )}
       </div>
     </div>
@@ -690,16 +811,33 @@ function SummaryCard({ summary }: { summary: AgentSummary }) {
   )
 }
 
-// ─── 外部 CLI Agent 只读详情面板 ─────────────────────────────
-function ExternalDetailPanel({ agent }: { agent: ExternalAgent }) {
+// ─── 外部 CLI Agent 详情面板（支持编辑 SOUL.md）─────────────────────────────
+function ExternalDetailPanel({ agent, onDeleted }: { agent: ExternalAgent; onDeleted: (name: string) => void }) {
   const [content, setContent] = useState<string | null>(null)
   const [loadingDef, setLoadingDef] = useState(false)
   const [summary, setSummary] = useState<AgentSummary | null>(null)
+  
+  // AI: 编辑相关状态
+  const [soul, setSoul] = useState<string>('')
+  const [editing, setEditing] = useState(false)
+  const [editingSoul, setEditingSoul] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [loadingSoul, setLoadingSoul] = useState(false)
+  // AI: 润色相关状态
+  const [polishing, setPolishing] = useState(false)
+  const [showPolishHelper, setShowPolishHelper] = useState(false)
+  const [polishInput, setPolishInput] = useState({ responsibilities: '', workflow: '' })
+  // AI: 删除相关状态
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     // AI: 并行加载 summary 和 definition
     setSummary(null)
     setLoadingDef(true)
+    setShowPolishHelper(false)
+    setPolishInput({ responsibilities: '', workflow: '' })
     Promise.all([
       fetch(`/api/agents/summary?name=${encodeURIComponent(agent.name)}&pluginId=${encodeURIComponent(agent.pluginId ?? '')}`)
         .then(r => r.json()).then(d => d.summary ?? null).catch(() => null),
@@ -709,16 +847,175 @@ function ExternalDetailPanel({ agent }: { agent: ExternalAgent }) {
       setSummary(sum)
       setContent(def)
     }).finally(() => setLoadingDef(false))
-  }, [agent.name, agent.pluginId])
+
+    // AI: 如果支持编辑 SOUL，加载 SOUL.md
+    if (agent.soulEditable && agent.pluginId === 'openclaw') {
+      setLoadingSoul(true)
+      fetch(`/api/agents/openclaw/${encodeURIComponent(agent.name)}/soul`)
+        .then(r => r.json())
+        .then(d => {
+          if (d.soul) {
+            setSoul(d.soul)
+            setEditingSoul(d.soul)
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoadingSoul(false))
+    }
+  }, [agent.name, agent.pluginId, agent.soulEditable])
+
+  async function handleSave() {
+    setSaving(true)
+    setMsg(null)
+    try {
+      const res = await fetch(`/api/agents/openclaw/${encodeURIComponent(agent.name)}/soul`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ soul: editingSoul }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setSoul(editingSoul)
+        setEditing(false)
+        setMsg({ ok: true, text: '✓ 已保存' })
+      } else {
+        setMsg({ ok: false, text: data.error || '保存失败' })
+      }
+    } catch {
+      setMsg({ ok: false, text: '网络错误' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // AI: 调用 AI 润色接口（优先外部 API，降级到 OpenClaw）
+  async function handlePolish() {
+    setPolishing(true)
+    setMsg(null)
+    try {
+      // AI: 准备请求数据
+      const requestData = {
+        name: agent.name,
+        description: agent.description || undefined,
+        responsibilities: polishInput.responsibilities || undefined,
+        workflow: polishInput.workflow || undefined,
+        currentSoul: editingSoul,
+      }
+
+      // AI: Step 1 - 优先尝试外部 API
+      let res = await fetch('/api/agents/polish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestData),
+      })
+
+      // AI: Step 2 - 如果外部 API 失败（未配置 Key），降级到 OpenClaw
+      if (!res.ok) {
+        const errorData = await res.json()
+        if (errorData.error && errorData.error.includes('NO_API_KEY')) {
+          console.log('[polish] 外部 API 未配置，降级到 OpenClaw')
+          res = await fetch('/api/agents/polish-openclaw', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestData),
+          })
+        }
+      }
+
+      const data = await res.json()
+      if (data.success) {
+        setEditingSoul(data.soul)
+        setPolishInput({ responsibilities: '', workflow: '' })
+        setShowPolishHelper(false)
+        setMsg({ ok: true, text: '✓ AI 润色完成' })
+      } else {
+        setMsg({ ok: false, text: data.error || 'AI 润色失败' })
+      }
+    } catch {
+      setMsg({ ok: false, text: '网络错误' })
+    } finally {
+      setPolishing(false)
+    }
+  }
+
+  // AI: 删除 openclaw agent
+  async function handleDelete() {
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/agents/openclaw/${encodeURIComponent(agent.name)}`, {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        onDeleted(agent.name)
+      } else {
+        const data = await res.json()
+        setMsg({ ok: false, text: data.error || '删除失败' })
+      }
+    } catch {
+      setMsg({ ok: false, text: '网络错误' })
+    } finally {
+      setDeleting(false)
+      setConfirmDelete(false)
+    }
+  }
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header — 无关闭按钮 */}
-      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-border flex-shrink-0 min-w-0">
-        <span className="font-mono text-xs font-semibold text-text-primary truncate">{agent.name}</span>
-        <span className="text-[10px] px-1 py-0.5 bg-surface border border-border rounded text-text-muted flex-shrink-0">只读</span>
-        {agent.pluginId && (
-          <span className="text-[10px] px-1 py-0.5 bg-surface border border-border rounded font-mono text-text-muted flex-shrink-0">{agent.pluginId}</span>
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0 gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="font-mono text-xs font-semibold text-text-primary truncate">{agent.name}</span>
+          {agent.soulEditable ? (
+            <span className="text-[10px] px-1 py-0.5 bg-accent/10 text-accent border border-accent/20 rounded flex-shrink-0">可编辑</span>
+          ) : (
+            <span className="text-[10px] px-1 py-0.5 bg-surface border border-border rounded text-text-muted flex-shrink-0">只读</span>
+          )}
+          {agent.pluginId && (
+            <span className="text-[10px] px-1 py-0.5 bg-surface border border-border rounded font-mono text-text-muted flex-shrink-0">{agent.pluginId}</span>
+          )}
+        </div>
+        
+        {/* AI: 编辑按钮（仅当 soulEditable 为 true 时显示）*/}
+        {agent.soulEditable && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {!editing && !confirmDelete && (
+              <>
+                <button onClick={() => { setEditing(true); setMsg(null) }}
+                  className="px-2 py-0.5 text-xs border border-border rounded text-text-secondary hover:bg-accent-subtle transition-colors">
+                  编辑
+                </button>
+                <button onClick={() => setConfirmDelete(true)}
+                  className="px-2 py-0.5 text-xs border border-status-failed/30 text-status-failed rounded hover:bg-status-failed/5 transition-colors">
+                  删除
+                </button>
+              </>
+            )}
+            {editing && !confirmDelete && (
+              <>
+                <button onClick={() => { setEditing(false); setEditingSoul(soul); setMsg(null) }}
+                  className="px-2 py-0.5 text-xs border border-border rounded text-text-secondary hover:bg-accent-subtle transition-colors">
+                  取消
+                </button>
+                <button onClick={handleSave} disabled={saving}
+                  className="px-2 py-0.5 text-xs bg-accent text-text-inverse rounded hover:bg-accent-hover transition-colors disabled:opacity-50">
+                  {saving ? '保存中...' : '保存'}
+                </button>
+              </>
+            )}
+            {confirmDelete && (
+              <>
+                <span className="text-xs text-status-failed">确认删除?</span>
+                <button onClick={handleDelete} disabled={deleting}
+                  className="px-2 py-0.5 text-xs bg-status-failed text-white rounded disabled:opacity-50">
+                  {deleting ? '...' : '删除'}
+                </button>
+                <button onClick={() => setConfirmDelete(false)}
+                  className="px-2 py-0.5 text-xs border border-border rounded text-text-secondary">
+                  取消
+                </button>
+              </>
+            )}
+          </div>
         )}
       </div>
 
@@ -729,26 +1026,103 @@ function ExternalDetailPanel({ agent }: { agent: ExternalAgent }) {
         </div>
       )}
 
+      {/* 状态消息 */}
+      {msg && (
+        <div className={`px-3 py-1 text-xs flex-shrink-0 ${msg.ok ? 'text-status-done' : 'text-status-failed'}`}>
+          {msg.text}
+        </div>
+      )}
+
       {/* AI: Summary 摘要卡片 — 默认展示模型、工具、sub-agents 等关键信息 */}
       {summary && <SummaryCard summary={summary} />}
 
-      {/* 原始定义文件内容 */}
-      <div className="flex-1 overflow-auto">
-        {loadingDef ? (
-          <div className="p-4 text-xs text-text-muted">加载中...</div>
-        ) : content ? (
-          <>
-            <div className="px-3 py-1 bg-surface border-b border-border-subtle flex-shrink-0">
-              <span className="text-[10px] font-mono text-text-muted">原始定义</span>
+      {/* AI: SOUL.md 编辑区域（如果支持编辑）*/}
+      {agent.soulEditable ? (
+        <div className="flex-1 overflow-auto flex flex-col">
+          {editing && showPolishHelper && (
+            <div className="border-b border-accent/20 bg-accent/5 flex-shrink-0">
+              <div className="p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-accent">✨ AI 润色助手</span>
+                  <button
+                    onClick={() => setShowPolishHelper(false)}
+                    className="text-xs text-text-muted hover:text-text-primary"
+                  >
+                    收起
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-xs text-text-secondary mb-1">补充职责（可选）</label>
+                  <textarea
+                    value={polishInput.responsibilities}
+                    onChange={(e) => setPolishInput({ ...polishInput, responsibilities: e.target.value })}
+                    placeholder="补充 Agent 的职责说明..."
+                    className="w-full px-2 py-1.5 text-xs border border-border rounded bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
+                    rows={2}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-text-secondary mb-1">补充流程（可选）</label>
+                  <textarea
+                    value={polishInput.workflow}
+                    onChange={(e) => setPolishInput({ ...polishInput, workflow: e.target.value })}
+                    placeholder="补充工作流程说明..."
+                    className="w-full px-2 py-1.5 text-xs border border-border rounded bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
+                    rows={2}
+                  />
+                </div>
+                <button
+                  onClick={handlePolish}
+                  disabled={polishing}
+                  className="w-full px-3 py-1.5 text-xs bg-accent text-text-inverse rounded hover:bg-accent-hover transition-colors disabled:opacity-50"
+                >
+                  {polishing ? '✨ AI 优化中...' : '✨ AI 优化 SOUL.md'}
+                </button>
+              </div>
             </div>
-            <pre className="p-3 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-words">
-              {content}
+          )}
+          <div className="px-3 py-1 bg-surface border-b border-border-subtle flex-shrink-0 flex items-center justify-between">
+            <span className="text-[10px] font-mono text-text-muted">{editing ? '编辑 SOUL.md' : 'SOUL.md'}</span>
+            {editing && !showPolishHelper && (
+              <button
+                onClick={() => setShowPolishHelper(true)}
+                className="text-[10px] text-accent hover:underline"
+              >
+                ✨ AI 润色
+              </button>
+            )}
+          </div>
+          {loadingSoul ? (
+            <div className="p-4 text-xs text-text-muted">加载中...</div>
+          ) : editing ? (
+            <textarea value={editingSoul} onChange={(e) => setEditingSoul(e.target.value)}
+              className="flex-1 p-3 text-xs font-mono bg-background text-text-primary focus:outline-none resize-none leading-relaxed"
+              spellCheck={false} />
+          ) : (
+            <pre className="flex-1 p-3 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-words overflow-auto">
+              {soul || '（SOUL.md 为空）'}
             </pre>
-          </>
-        ) : (
-          <div className="p-4 text-xs text-text-muted">（该 agent 由 CLI 工具直接管理，无单独定义文件）</div>
-        )}
-      </div>
+          )}
+        </div>
+      ) : (
+        /* AI: 原始定义文件内容（只读模式）*/
+        <div className="flex-1 overflow-auto">
+          {loadingDef ? (
+            <div className="p-4 text-xs text-text-muted">加载中...</div>
+          ) : content ? (
+            <>
+              <div className="px-3 py-1 bg-surface border-b border-border-subtle flex-shrink-0">
+                <span className="text-[10px] font-mono text-text-muted">原始定义</span>
+              </div>
+              <pre className="p-3 text-xs font-mono text-text-primary leading-relaxed whitespace-pre-wrap break-words">
+                {content}
+              </pre>
+            </>
+          ) : (
+            <div className="p-4 text-xs text-text-muted">（该 agent 由 CLI 工具直接管理，无单独定义文件）</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -757,12 +1131,18 @@ function ExternalDetailPanel({ agent }: { agent: ExternalAgent }) {
 function CreateAgentModal({ onClose, onCreated }: { onClose: () => void; onCreated: (agent: MantaAgent) => void }) {
   const [form, setForm] = useState({
     name: '',
-    targetCli: 'openclaw' as 'openclaw' | 'claude-code',
+    targetCli: 'openclaw' as 'openclaw',
     description: '',
     soul: '# Agent · SOUL\n\n## 身份\n你是一个 AI Agent。\n\n## 职责\n\n## 工作流程\n',
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // AI: 润色相关状态
+  const [polishing, setPolishing] = useState(false)
+  const [polishInput, setPolishInput] = useState({
+    responsibilities: '',
+    workflow: '',
+  })
 
   async function handleCreate() {
     if (!form.name.trim()) { setError('Agent 名称不能为空'); return }
@@ -791,10 +1171,61 @@ function CreateAgentModal({ onClose, onCreated }: { onClose: () => void; onCreat
     }
   }
 
+  // AI: 调用 AI 润色接口（优先外部 API，降级到 OpenClaw）
+  async function handlePolish() {
+    setPolishing(true)
+    setError('')
+    try {
+      // AI: 准备请求数据
+      const requestData = {
+        name: form.name || undefined,
+        description: form.description || undefined,
+        responsibilities: polishInput.responsibilities || undefined,
+        workflow: polishInput.workflow || undefined,
+        currentSoul: form.soul !== '# Agent · SOUL\n\n## 身份\n你是一个 AI Agent。\n\n## 职责\n\n## 工作流程\n' ? form.soul : undefined,
+      }
+
+      // AI: Step 1 - 优先尝试外部 API
+      let res = await fetch('/api/agents/polish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestData),
+      })
+
+      // AI: Step 2 - 如果外部 API 失败（未配置 Key），降级到 OpenClaw
+      if (!res.ok) {
+        const errorData = await res.json()
+        if (errorData.error && errorData.error.includes('NO_API_KEY')) {
+          console.log('[polish] 外部 API 未配置，降级到 OpenClaw')
+          res = await fetch('/api/agents/polish-openclaw', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestData),
+          })
+        }
+      }
+
+      const data = await res.json()
+      if (data.success) {
+        setForm({ ...form, soul: data.soul })
+        // AI: 清空辅助输入
+        setPolishInput({ responsibilities: '', workflow: '' })
+      } else {
+        setError(data.error || 'AI 润色失败')
+      }
+    } catch {
+      setError('网络错误')
+    } finally {
+      setPolishing(false)
+    }
+  }
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-background border border-border rounded-xl p-5 w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]">
+      <div className="bg-background border border-border rounded-xl p-5 w-full max-w-3xl shadow-2xl flex flex-col max-h-[90vh]">
         <h2 className="text-sm font-semibold text-text-primary mb-3 flex-shrink-0">新建 Manta Agent</h2>
+        
+        {/* AI: 基础信息区 */}
         <div className="space-y-2 flex-shrink-0">
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -806,12 +1237,9 @@ function CreateAgentModal({ onClose, onCreated }: { onClose: () => void; onCreat
             </div>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1">目标 CLI *</label>
-              <select value={form.targetCli}
-                onChange={(e) => setForm({ ...form, targetCli: e.target.value as 'openclaw' | 'claude-code' })}
-                className="w-full px-2 py-1.5 text-xs border border-border rounded bg-surface text-text-primary focus:outline-none focus:border-accent">
-                <option value="openclaw">OpenClaw</option>
-                <option value="claude-code">Claude Code</option>
-              </select>
+              <div className="w-full px-2 py-1.5 text-xs border border-border rounded bg-surface text-text-primary">
+                OpenClaw
+              </div>
             </div>
           </div>
           <div>
@@ -822,14 +1250,57 @@ function CreateAgentModal({ onClose, onCreated }: { onClose: () => void; onCreat
               className="w-full px-2 py-1.5 text-xs border border-border rounded bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent" />
           </div>
         </div>
-        <div className="mt-2 flex-1 min-h-0 flex flex-col">
+
+        {/* AI: AI 润色辅助区（可折叠）*/}
+        <div className="mt-3 border border-accent/20 rounded-lg bg-accent/5 flex-shrink-0">
+          <div className="px-3 py-2 border-b border-accent/20 bg-accent/10">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-accent">✨ AI 润色助手</span>
+              <span className="text-[10px] text-text-muted">描述你的想法，让 AI 帮你生成完整 SOUL.md</span>
+            </div>
+          </div>
+          <div className="p-3 space-y-2">
+            <div>
+              <label className="block text-xs text-text-secondary mb-1">核心职责（可选）</label>
+              <textarea
+                value={polishInput.responsibilities}
+                onChange={(e) => setPolishInput({ ...polishInput, responsibilities: e.target.value })}
+                placeholder="例如：负责代码审查、自动修复常见问题、生成测试报告..."
+                className="w-full px-2 py-1.5 text-xs border border-border rounded bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
+                rows={2}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-text-secondary mb-1">工作流程（可选）</label>
+              <textarea
+                value={polishInput.workflow}
+                onChange={(e) => setPolishInput({ ...polishInput, workflow: e.target.value })}
+                placeholder="例如：1. 接收代码变更 2. 运行静态分析 3. 自动修复 4. 生成报告..."
+                className="w-full px-2 py-1.5 text-xs border border-border rounded bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
+                rows={2}
+              />
+            </div>
+            <button
+              onClick={handlePolish}
+              disabled={polishing || (!form.name && !form.description && !polishInput.responsibilities && !polishInput.workflow)}
+              className="w-full px-3 py-1.5 text-xs bg-accent text-text-inverse rounded hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {polishing ? '✨ AI 生成中...' : '✨ AI 生成 SOUL.md'}
+            </button>
+          </div>
+        </div>
+
+        {/* AI: SOUL.md 编辑区 */}
+        <div className="mt-3 flex-1 min-h-0 flex flex-col">
           <label className="block text-xs font-medium text-text-secondary mb-1 flex-shrink-0">SOUL.md *</label>
           <textarea value={form.soul}
             onChange={(e) => setForm({ ...form, soul: e.target.value })}
             className="flex-1 min-h-[200px] px-3 py-2 text-xs font-mono border border-border rounded bg-surface text-text-primary focus:outline-none focus:border-accent resize-none leading-relaxed"
             spellCheck={false} />
         </div>
+
         {error && <p className="text-xs text-status-failed mt-2 flex-shrink-0">{error}</p>}
+        
         <div className="flex justify-between items-center mt-3 flex-shrink-0">
           <p className="text-xs text-text-muted">
             保存到 ~/manta-data/agents/ 并注入到 {form.targetCli === 'openclaw' ? 'OpenClaw' : 'Claude Code'}

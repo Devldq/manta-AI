@@ -1,6 +1,6 @@
-/*  start: Agent Registry — 只做插件扫描，Manta 不持有 agent 定义权 */
-// AI: Manta 是 Agent OS，agent 定义权在各 CLI 工具（openclaw/claude-code/codeflicker）
-// Registry 只负责：启动时扫描各插件目录 → 合并返回 AgentEntry 列表
+/*  start: Agent Registry — 扫描 openclaw 插件 */
+// AI: Manta 是 Agent OS，agent 定义权在 openclaw CLI 工具
+// Registry 只负责：启动时扫描 openclaw 插件目录 → 返回 AgentEntry 列表
 import type { AgentEntry } from '../core/types'
 import { loadAllPluginAgents } from '../plugins/loader'
 

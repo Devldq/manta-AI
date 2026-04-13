@@ -11,9 +11,9 @@ function expandDir(rawDir: string): string {
   return path.resolve(process.cwd(), rawDir)
 }
 
-// AI: 重建 agent 的 filePath 信息（不依赖 registry，直接从配置扫描）
+// AI: 查找 openclaw agent 的 filePath
 function findAgentFilePath(name: string): { filePath: string | null; readonly: boolean } {
-  // 1. openclaw agents — 从 openclaw.json 查找 agentDir
+  // openclaw agents — 从 openclaw.json 查找 agentDir
   try {
     const configPath = expandDir('~/.openclaw/openclaw.json')
     if (fs.existsSync(configPath)) {
@@ -27,18 +27,6 @@ function findAgentFilePath(name: string): { filePath: string | null; readonly: b
       }
     }
   } catch { /* ignore */ }
-
-  // 2. claude-code agents — ~/.claude/agents/<name>.md
-  const claudeAgentPath = expandDir(`~/.claude/agents/${name}.md`)
-  if (fs.existsSync(claudeAgentPath)) {
-    return { filePath: claudeAgentPath, readonly: false }
-  }
-
-  // 3. codeflicker skills — ~/.codeflicker/internal/skills/<name>/SKILL.md
-  const skillMdPath = expandDir(`~/.codeflicker/internal/skills/${name}/SKILL.md`)
-  if (fs.existsSync(skillMdPath)) {
-    return { filePath: skillMdPath, readonly: false }
-  }
 
   return { filePath: null, readonly: false }
 }

@@ -297,8 +297,6 @@ export default function SettingsPage() {
             </p>
             <div className="space-y-1.5" style={{ fontSize: '12px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
               <div>openclaw: <span style={{ color: 'var(--color-text-secondary)' }}>brew install openclaw</span></div>
-              <div>claude code: <span style={{ color: 'var(--color-text-secondary)' }}>npm install -g @anthropic-ai/claude-code</span></div>
-              <div>generic-cli: <span style={{ color: 'var(--color-text-secondary)' }}>在 Agent 管理页配置 bin 路径</span></div>
             </div>
           </div>
         </section>
@@ -620,9 +618,6 @@ function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: (v: b
 /* AI start: 插件卡片 */
 const FORMAT_LABEL: Record<string, string> = {
   'openclaw-json': 'openclaw-json',
-  'markdown': 'markdown',
-  'codeflicker-skill': 'codeflicker-skill',
-  'yaml': 'yaml',
 }
 
 function PluginCard({

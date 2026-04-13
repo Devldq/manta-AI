@@ -79,6 +79,9 @@ export interface AgentEntry {
 
   /** AI: 定义文件是否只读（如 openclaw models.json 含 API key，只展示不允许编辑）*/
   fileReadonly?: boolean
+
+  /** AI: SOUL.md 是否可编辑（区分文件只读和系统提示可编辑）*/
+  soulEditable?: boolean
 }
 
 // ─── 插件系统 ───────────────────────────────────────────────
@@ -101,12 +104,9 @@ export interface PluginManifest {
   agentsDirs?: string[]
 
   /** agent 格式：
-   * - yaml: 每个 .yaml 文件是一个 agent（旧 openclaw 格式）
-   * - markdown: 每个 .md 文件是一个 agent（claude-code sub-agents）
-   * - codeflicker-skill: 每个子目录含 SKILL.md（codeflicker skills）
-   * - openclaw-json: 读 openclawConfigFile 指向的 JSON 文件（openclaw 真实格式）
+   * - openclaw-json: 读 openclawConfigFile 指向的 JSON 文件（openclaw 格式）
    */
-  agentFormat: 'markdown' | 'yaml' | 'codeflicker-skill' | 'openclaw-json'
+  agentFormat: 'openclaw-json'
 
   // AI: 是否为 npm 安装的插件（loader 自动填充，plugin.yaml 本身无此字段）
   isNpm?: boolean
@@ -150,14 +150,12 @@ export interface UpdateAgentParams {
 }
 
 /**
- * AgentOps — 每个 CLI 插件实现此接口，封装 CLI 特有的 agent 文件操作
- * Core 层只知道此接口，不关心底层是 openclaw 还是 claude-code
+ * AgentOps — openclaw 插件实现此接口，封装 CLI 特有的 agent 文件操作
  */
 export interface AgentOps {
   /**
-   * 在对应 CLI 中创建 agent
-   * - openclaw: 更新 openclaw.json + 创建 workspace-<name>/SOUL.md
-   * - claude-code: 写 ~/.claude/agents/<name>.md
+   * 在 openclaw 中创建 agent
+   * - 更新 openclaw.json + 创建 workspace-<name>/SOUL.md
    */
   createAgent(params: CreateAgentParams): Promise<void>
 

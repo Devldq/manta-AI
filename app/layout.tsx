@@ -31,7 +31,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" suppressHydrationWarning>
       <head>
         {/*
           AI start: 阻塞式主题注入脚本 — 在任何 HTML 渲染前同步读取 localStorage 并写入 CSS 变量，

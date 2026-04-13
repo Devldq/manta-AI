@@ -10,7 +10,7 @@ const MANTA_AGENTS_DIR = path.join(os.homedir(), 'manta-data', 'agents')
 
 interface AgentMeta {
   name: string
-  targetCli: 'openclaw' | 'claude-code'
+  targetCli: 'openclaw'
   description: string
   createdAt: string
   updatedAt: string

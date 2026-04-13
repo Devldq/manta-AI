@@ -1,4 +1,4 @@
-/*  start: Runner 层 — 所有 Runner 必须实现此接口，openclaw + claude-code 内置实现 */
+/*  start: Runner 层 — openclaw runner 实现 */
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -98,7 +98,7 @@ export class OpenClawRunner implements Runner {
         bin,
         ['agent', '--agent', agentId, '--message', message],
         { PATH: `${path.join(os.homedir(), '.openclaw', 'bin')}:${process.env.PATH ?? ''}` },
-        60 * 60 * 1000, // AI: 最长等待 1 小时（与 claude-code 保持一致）
+        60 * 60 * 1000, // AI: 最长等待 1 小时
         undefined,
         logFile,
       )
@@ -130,194 +130,10 @@ export class OpenClawRunner implements Runner {
   }
 }
 
-// ─── Claude Code Runner ───────────────────────────────────────────────
-
-export class ClaudeCodeRunner implements Runner {
-  readonly id = 'claude-code'
-
-  async probe(): Promise<{ available: boolean; reason?: string; version?: string }> {
-    try {
-      const result = await runCli('claude', ['--version'], {}, 5000)
-      if (result.exitCode === 0) {
-        return { available: true, version: result.stdout.trim() }
-      }
-      return { available: false, reason: 'claude CLI 未就绪' }
-    } catch {
-      return { available: false, reason: 'claude CLI 未找到，请安装 Claude Code CLI' }
-    }
-  }
-
-  async run(params: RunParams): Promise<RunResult> {
-    const start = Date.now()
-    ensureOutputDir(params.outputDir)
-
-    const bin = params.agent.bin || 'claude'
-    const prompt = buildPrompt(params)
-    // AI: 若任务指定了工作目录则在该目录下运行，否则默认当前目录
-    const cwd = params.task.workDir || undefined
-
-    try {
-      // AI: runner.log 用于前端实时轮询展示执行日志
-      const logFile = path.join(params.outputDir, 'runner.log')
-      const result = await runCli(
-        bin,
-        ['--print', prompt],
-        { CLAUDE_OUTPUT_DIR: params.outputDir },
-        60 * 60 * 1000,
-        cwd,
-        logFile,
-      )
-
-      // AI: 将 claude 的 stdout 写入 output.md
-      const outputFile = path.join(params.outputDir, 'output.md')
-      if (result.stdout) {
-        fs.writeFileSync(outputFile, result.stdout, 'utf-8')
-      }
-
-      return {
-        success: result.exitCode === 0,
-        exitCode: result.exitCode,
-        outputFiles: result.stdout ? [outputFile] : [],
-        error: result.exitCode !== 0 ? result.stderr : undefined,
-        durationMs: Date.now() - start,
-      }
-    } catch (err) {
-      return {
-        success: false,
-        exitCode: -1,
-        outputFiles: [],
-        error: String(err),
-        durationMs: Date.now() - start,
-      }
-    }
-  }
-}
-
-// ─── Generic CLI Runner ───────────────────────────────────────────────
-
-export class GenericCLIRunner implements Runner {
-  readonly id = 'generic-cli'
-
-  async probe(): Promise<{ available: boolean; reason?: string }> {
-    return { available: true }
-  }
-
-  async run(params: RunParams): Promise<RunResult> {
-    const start = Date.now()
-    ensureOutputDir(params.outputDir)
-
-    if (!params.agent.bin) {
-      return {
-        success: false,
-        exitCode: -1,
-        outputFiles: [],
-        error: 'generic-cli runner 需要配置 bin 路径',
-        durationMs: Date.now() - start,
-      }
-    }
-
-    try {
-      const result = await runCli(
-        params.agent.bin,
-        [params.task.title],
-        { ARM_TASK_ID: params.task.id, ARM_OUTPUT_DIR: params.outputDir },
-        60 * 60 * 1000
-      )
-
-      return {
-        success: result.exitCode === 0,
-        exitCode: result.exitCode,
-        outputFiles: [],
-        error: result.exitCode !== 0 ? result.stderr : undefined,
-        durationMs: Date.now() - start,
-      }
-    } catch (err) {
-      return {
-        success: false,
-        exitCode: -1,
-        outputFiles: [],
-        error: String(err),
-        durationMs: Date.now() - start,
-      }
-    }
-  }
-}
-
-// ─── CodeFlicker Runner ───────────────────────────────────────────────
-
-export class CodeFlickerRunner implements Runner {
-  readonly id = 'codeflicker'
-
-  async probe(): Promise<{ available: boolean; reason?: string; version?: string }> {
-    // AI: 检查 cf CLI 是否存在（CodeFlicker CLI）
-    try {
-      const result = await runCli('cf', ['--version'], {}, 5000)
-      if (result.exitCode === 0) {
-        return { available: true, version: result.stdout.trim() }
-      }
-      return { available: false, reason: 'CodeFlicker CLI (cf) 返回非零退出码' }
-    } catch {
-      return { available: false, reason: 'CodeFlicker CLI (cf) 未找到，请安装 CodeFlicker CLI' }
-    }
-  }
-
-  async run(params: RunParams): Promise<RunResult> {
-    const start = Date.now()
-    ensureOutputDir(params.outputDir)
-
-    const bin = params.agent.bin || 'cf'
-    const prompt = buildPrompt(params)
-    // AI: 若任务指定了工作目录则在该目录下运行
-    const cwd = params.task.workDir || undefined
-
-    // AI: CodeFlicker CLI 执行方式：cf run --skill <agent.name> --print "<prompt>"
-    // 如果 agent 没有指定 skill 名，则直接 cf --print "<prompt>" 进入默认 agent 会话
-    const skillName = params.agent.name
-    const args = skillName
-      ? ['run', '--skill', skillName, '--print', prompt]
-      : ['--print', prompt]
-
-    try {
-      const result = await runCli(
-        bin,
-        args,
-        { CF_OUTPUT_DIR: params.outputDir },
-        60 * 60 * 1000,
-        cwd
-      )
-
-      // AI: 将输出写入 output.md
-      const outputFile = path.join(params.outputDir, 'output.md')
-      if (result.stdout) {
-        fs.writeFileSync(outputFile, result.stdout, 'utf-8')
-      }
-
-      return {
-        success: result.exitCode === 0,
-        exitCode: result.exitCode,
-        outputFiles: result.stdout ? [outputFile] : [],
-        error: result.exitCode !== 0 ? result.stderr : undefined,
-        durationMs: Date.now() - start,
-      }
-    } catch (err) {
-      return {
-        success: false,
-        exitCode: -1,
-        outputFiles: [],
-        error: String(err),
-        durationMs: Date.now() - start,
-      }
-    }
-  }
-}
-
 // ─── Runner 注册表 ───────────────────────────────────────────────
 
 const RUNNERS = new Map<string, Runner>([
   ['openclaw', new OpenClawRunner()],
-  ['claude-code', new ClaudeCodeRunner()],
-  ['codeflicker', new CodeFlickerRunner()],
-  ['generic-cli', new GenericCLIRunner()],
 ])
 
 // AI: 根据 runnerId 获取 Runner 实例
