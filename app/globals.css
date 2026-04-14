@@ -246,4 +246,10 @@ pre {
   animation: volt-glow 3s ease-in-out infinite;
 }
 
+/* AI: 光标闪烁动画（流式输出用） */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
 /* AI end: 全局样式结束 */

@@ -155,6 +155,11 @@ export async function probeAllRunners(): Promise<{ id: string; available: boolea
 // ─── 辅助函数 ───────────────────────────────────────────────
 
 function buildPrompt(params: RunParams): string {
+  // AI: 对话聊天产生的隐藏任务，直接发用户原始消息，不加任务框架文本
+  if (params.task.hidden) {
+    return params.task.description || params.task.title
+  }
+
   // AI: 对齐 v1 buildTriggerMessage — 包含完整任务上下文给 agent
   const lines = [
     `任务ID: ${params.task.id}`,

@@ -8,8 +8,10 @@ import type { TaskMode } from '@/core/types'
 export async function GET() {
   try {
     const tasks = await dataStore.getTasks()
+    // AI: 过滤掉对话内聊天产生的隐藏任务
+    const visible = tasks.filter((t) => !t.hidden)
     // AI: 按更新时间降序排列
-    const sorted = tasks.sort(
+    const sorted = visible.sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     )
 

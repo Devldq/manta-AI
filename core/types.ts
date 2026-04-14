@@ -42,6 +42,9 @@ export interface Task {
   updatedAt: string
   startedAt?: string
   completedAt?: string
+
+  // 对话内聊天产生的隐藏任务，不在任务列表显示
+  hidden?: boolean
 }
 
 // ─── Agent 来源 ───────────────────────────────────────────────

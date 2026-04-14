@@ -1,10 +1,30 @@
-/*  start: 任务页面 — 左侧列表 + 右侧聊天 */
+/*  start: 任务页面 — 支持 convId（对话模式）和 taskId（任务日志模式）*/
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import { AgentSelector } from '../components/AgentSelector'
 
-// AI: 任务状态类型
+// ─── 类型定义 ──────────────────────────────────────────────────────────────────
+
+interface Message {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: string
+  taskId?: string
+  streaming?: boolean
+}
+
+interface Conversation {
+  id: string
+  title: string
+  agentName: string
+  messages: Message[]
+  createdAt: string
+  updatedAt: string
+}
+
 type TaskStatus = 'inbox' | 'planning' | 'running' | 'done' | 'failed' | 'archived'
 
 interface Task {
@@ -12,424 +32,711 @@ interface Task {
   title: string
   description?: string
   status: TaskStatus
-  mode: 'lightweight' | 'workflow'
   agentName?: string
   workflowId?: string
+  error?: string
   createdAt: string
   updatedAt: string
-  error?: string
-  outputDir?: string
-}
-
-interface LogEntry {
-  timestamp: string
-  type: 'user' | 'system' | 'log' | 'output'
-  content: string
 }
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
-  inbox: '待处理',
-  planning: '规划中',
-  running: '进行中',
-  done: '已完成',
-  failed: '失败',
-  archived: '已归档',
+  inbox: '待处理', planning: '规划中', running: '进行中',
+  done: '已完成', failed: '失败', archived: '已归档',
 }
-
 const STATUS_COLORS: Record<TaskStatus, string> = {
-  inbox: '#6b7280',
-  planning: '#a855f7',
-  running: '#3b82f6',
-  done: '#22c55e',
-  failed: '#ef4444',
-  archived: '#6b7280',
+  inbox: '#6b7280', planning: '#a855f7', running: '#3b82f6',
+  done: '#22c55e', failed: '#ef4444', archived: '#6b7280',
 }
 
+const DEFAULT_AGENT = 'manta-main'
+
+// ─── 消息行组件 ────────────────────────────────────────────────────────────────
+function MsgRow({ msg, onDelete }: { msg: Message; onDelete: (id: string) => void }) {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <div
+      style={{ position: 'relative' }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {msg.role === 'user' ? (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', gap: '6px' }}>
+          {/* 删除按钮（用户消息，在气泡左侧） */}
+          <button
+            onClick={() => onDelete(msg.id)}
+            style={{
+              opacity: hovered ? 1 : 0,
+              transition: 'opacity 0.15s',
+              color: 'var(--color-text-muted)',
+              flexShrink: 0,
+              marginTop: '10px',
+              width: '20px',
+              height: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '4px',
+              fontSize: '12px',
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = '#ef444415' }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.background = 'transparent' }}
+            title="删除消息"
+          >✕</button>
+          <div
+            style={{
+              maxWidth: '75%',
+              padding: '10px 16px',
+              borderRadius: '18px 18px 4px 18px',
+              fontSize: '14px',
+              lineHeight: '1.6',
+              background: 'var(--color-accent)',
+              color: 'var(--color-text-inverse)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+          >
+            {msg.content}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+          <div
+            style={{
+              width: '28px',
+              height: '28px',
+              borderRadius: '50%',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '11px',
+              fontWeight: 700,
+              background: 'var(--color-accent)',
+              color: '#000',
+              marginTop: '2px',
+            }}
+          >M</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                padding: '10px 16px',
+                borderRadius: '18px 18px 18px 4px',
+                fontSize: '14px',
+                lineHeight: '1.6',
+                fontFamily: 'var(--font-mono)',
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text-primary)',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {msg.content
+                ? <>
+                    {msg.content}
+                    {msg.streaming && (
+                      <span style={{ display: 'inline-block', width: '2px', height: '14px', background: 'var(--color-accent)', marginLeft: '2px', verticalAlign: 'text-bottom', animation: 'blink 1s step-end infinite' }} />
+                    )}
+                  </>
+                : <span style={{ color: 'var(--color-text-muted)' }}>{msg.streaming ? '▋' : '（无输出）'}</span>
+              }
+            </div>
+            {msg.taskId && (
+              <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'monospace' }}>
+                task:{msg.taskId.slice(0, 8)}
+              </span>
+            )}
+          </div>
+          {/* 删除按钮（assistant 消息，在气泡右侧） */}
+          <button
+            onClick={() => onDelete(msg.id)}
+            style={{
+              opacity: hovered ? 1 : 0,
+              transition: 'opacity 0.15s',
+              color: 'var(--color-text-muted)',
+              flexShrink: 0,
+              marginTop: '6px',
+              width: '20px',
+              height: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '4px',
+              fontSize: '12px',
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = '#ef444415' }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.background = 'transparent' }}
+            title="删除消息"
+          >✕</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── 输入框组件 ────────────────────────────────────────────────────────────────
+function InputBar({
+  value,
+  onChange,
+  onSend,
+  onInterrupt,
+  sending,
+  placeholder,
+}: {
+  value: string
+  onChange: (v: string) => void
+  onSend: () => void
+  onInterrupt: () => void
+  sending: boolean
+  placeholder: string
+}) {
+  return (
+    <div style={{ borderTop: '1px solid var(--color-border)', padding: '12px 16px' }}>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend() } }}
+          placeholder={placeholder}
+          style={{
+            flex: 1,
+            padding: '10px 14px',
+            fontSize: '14px',
+            borderRadius: '12px',
+            resize: 'none',
+            outline: 'none',
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text-primary)',
+            minHeight: '52px',
+            maxHeight: '180px',
+            fontFamily: 'inherit',
+          }}
+          rows={2}
+          disabled={sending}
+          autoFocus
+        />
+        {sending ? (
+          <button
+            onClick={onInterrupt}
+            style={{
+              padding: '10px 16px',
+              borderRadius: '12px',
+              fontSize: '14px',
+              fontWeight: 500,
+              background: '#ef444418',
+              border: '1px solid #ef4444',
+              color: '#ef4444',
+              cursor: 'pointer',
+            }}
+          >中断</button>
+        ) : (
+          <button
+            onClick={onSend}
+            disabled={!value.trim()}
+            style={{
+              padding: '10px 16px',
+              borderRadius: '12px',
+              fontSize: '14px',
+              fontWeight: 500,
+              background: 'var(--color-accent)',
+              color: 'var(--color-text-inverse)',
+              border: 'none',
+              cursor: value.trim() ? 'pointer' : 'not-allowed',
+              opacity: value.trim() ? 1 : 0.4,
+            }}
+          >发送</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── 主页面 ────────────────────────────────────────────────────────────────────
 export default function TasksPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const initialTaskId = searchParams.get('taskId')
-  const isNewMode = searchParams.get('new') === 'true'  // AI: v7 新建模式标识
 
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialTaskId)
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null)
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [loading, setLoading] = useState(false)
+  const convIdParam = searchParams.get('convId')
+  const taskIdParam = searchParams.get('taskId')
+
+  // ── 对话模式 ──
+  const [conversation, setConversation] = useState<Conversation | null>(null)
+  const [convLoading, setConvLoading] = useState(false)
+  const [draftAgent, setDraftAgent] = useState(DEFAULT_AGENT)
+
+  // ── 任务日志模式 ──
+  const [taskView, setTaskView] = useState<{ task: Task; logs: string; output: string } | null>(null)
+  const [taskLoading, setTaskLoading] = useState(false)
+  // 任务视图关联的对话（持久化，刷新可恢复）
+  const [taskConv, setTaskConv] = useState<Conversation | null>(null)
+
+  // ── 共用 ──
   const [inputText, setInputText] = useState('')
   const [sending, setSending] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  
-  // AI: 任务详情缓存（避免重复加载）
-  const taskDetailsCache = useRef<Map<string, { task: Task; logs: LogEntry[] }>>(new Map())
 
-  // AI: 同步 URL 参数到内部状态
   useEffect(() => {
-    const urlTaskId = searchParams.get('taskId')
-    if (urlTaskId !== selectedTaskId) {
-      setSelectedTaskId(urlTaskId)
+    if (taskIdParam) {
+      setConversation(null)
+      loadTaskView(taskIdParam, convIdParam)
+    } else if (convIdParam) {
+      setTaskView(null)
+      setTaskConv(null)
+      loadConversation(convIdParam)
+    } else {
+      setConversation(null)
+      setTaskView(null)
+      setTaskConv(null)
     }
-  }, [searchParams])
-
-  // AI: 加载任务列表
-  useEffect(() => {
-    fetchTasks()
-    const timer = setInterval(fetchTasks, 5000)
-    return () => clearInterval(timer)
-  }, [])
-
-  async function fetchTasks() {
-    try {
-      const res = await fetch('/api/tasks')
-      const data = await res.json()
-      const all = (data.tasks ?? []).filter((t: Task) => t.status !== 'archived')
-      setTasks(all)
-    } catch {}
-  }
-
-  // AI: 内部状态变化时加载任务详情（带缓存优化）
-  useEffect(() => {
-    if (!selectedTaskId) {
-      setSelectedTask(null)
-      setLogs([])
-      return
-    }
-
-    const task = tasks.find(t => t.id === selectedTaskId)
-    if (!task) return
-
-    // AI: 检查缓存（立即显示，避免白屏）
-    const cached = taskDetailsCache.current.get(selectedTaskId)
-    if (cached) {
-      setSelectedTask(cached.task)
-      setLogs(cached.logs)
-      setLoading(false)
-      // 后台刷新最新数据
-      loadTaskDetails(selectedTaskId, task, true)
-      return
-    }
-
-    // AI: 无缓存时显示加载状态
-    setSelectedTask(task)
-    setLoading(true)
-    loadTaskDetails(selectedTaskId, task, false)
-  }, [selectedTaskId, tasks])
-
-  async function loadTaskDetails(taskId: string, task: Task, silent: boolean) {
-    try {
-      const [logsData, outputData] = await Promise.all([
-        fetch(`/api/tasks/${taskId}/logs`).then(r => r.json()),
-        fetch(`/api/tasks/${taskId}/output`).then(r => r.json()),
-      ])
-
-      const entries: LogEntry[] = []
-
-      if (task.description) {
-        entries.push({
-          timestamp: task.createdAt,
-          type: 'user',
-          content: task.description,
-        })
-      }
-
-      entries.push({
-        timestamp: task.createdAt,
-        type: 'system',
-        content: `任务已创建 - ${task.agentName || task.workflowId || '未指定执行器'}`,
-      })
-
-      if (logsData.logs) {
-        const logLines = logsData.logs.split('\n').filter((line: string) => line.trim())
-        logLines.forEach((line: string) => {
-          const match = line.match(/^\[(\d{2}:\d{2}:\d{2})\](.*)/)
-          entries.push({
-            timestamp: match ? match[1] : new Date().toISOString(),
-            type: 'log',
-            content: match ? match[2].trim() : line,
-          })
-        })
-      }
-
-      if (outputData.content && task.status === 'done') {
-        entries.push({
-          timestamp: task.updatedAt,
-          type: 'output',
-          content: outputData.content,
-        })
-      }
-
-      if (task.error) {
-        entries.push({
-          timestamp: task.updatedAt,
-          type: 'system',
-          content: `❌ ${task.error}`,
-        })
-      }
-
-      // AI: 更新缓存
-      taskDetailsCache.current.set(taskId, { task, logs: entries })
-      
-      if (!silent) {
-        setSelectedTask(task)
-      }
-      setLogs(entries)
-    } catch (err) {
-      if (!silent) {
-        setLogs([])
-      }
-    } finally {
-      if (!silent) {
-        setLoading(false)
-      }
-    }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskIdParam, convIdParam])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
+  }, [conversation?.messages, taskConv?.messages])
 
-  function handleSelectTask(taskId: string) {
-    // AI: 立即更新选中状态（乐观更新，无延迟）
-    setSelectedTaskId(taskId)
-    // AI: 使用 shallow routing，不重新加载页面
-    router.replace(`/tasks?taskId=${taskId}`, { scroll: false })
+  // ── 加载 ──────────────────────────────────────────────────────────────────
+
+  async function loadTaskView(taskId: string, convId?: string | null) {
+    setTaskLoading(true)
+    setTaskConv(null)
+    try {
+      const [taskRes, logsRes, outputRes] = await Promise.all([
+        fetch(`/api/tasks/${taskId}`),
+        fetch(`/api/tasks/${taskId}/logs`),
+        fetch(`/api/tasks/${taskId}/output`),
+      ])
+      const taskData = await taskRes.json()
+      const logsData = logsRes.ok ? await logsRes.json() : {}
+      const outputData = outputRes.ok ? await outputRes.json() : {}
+      setTaskView({
+        task: taskData.task,
+        logs: logsData.logs ?? '',
+        output: outputData.content ?? '',
+      })
+      // 若 URL 中有 convId，同时加载对应对话
+      if (convId) {
+        const convRes = await fetch(`/api/conversations/${convId}`)
+        if (convRes.ok) {
+          const convData = await convRes.json()
+          setTaskConv(convData.conversation)
+        }
+      }
+    } catch {}
+    setTaskLoading(false)
   }
 
-  async function handleSend() {
-    const userMsg = inputText.trim()
-    if (!userMsg || sending) return
-
-    setSending(true)
-    setInputText('')
-
+  async function loadConversation(convId: string) {
+    setConvLoading(true)
     try {
-      // AI: v7 新建模式 - 先创建任务
-      if (isNewMode) {
-        const res = await fetch('/api/tasks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: userMsg.slice(0, 50),  // 使用用户输入的前50字符作为标题
-            status: 'inbox',
-            description: userMsg
-          })
-        })
+      const res = await fetch(`/api/conversations/${convId}`)
+      if (res.ok) {
         const data = await res.json()
-        if (data.task) {
-          // 创建成功后切换到正常模式
-          router.replace(`/tasks?taskId=${data.task.id}`, { scroll: false })
-          // 刷新任务列表
-          fetchTasks()
-        }
+        setConversation(data.conversation)
+        setConvLoading(false)
         return
       }
+    } catch {}
+    setConversation(null)
+    setConvLoading(false)
+    router.replace('/tasks', { scroll: false })
+  }
 
-      // AI: 正常模式 - 发送消息到已有任务
-      if (!selectedTaskId) return
-
-      setLogs(prev => [...prev, {
-        timestamp: new Date().toISOString(),
-        type: 'user',
-        content: userMsg,
-      }])
-
-      await fetch(`/api/tasks/${selectedTaskId}`, {
-        method: 'PATCH',
+  async function ensureConversation(): Promise<Conversation | null> {
+    if (conversation) return conversation
+    try {
+      const res = await fetch('/api/conversations', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg }),
+        body: JSON.stringify({ agentName: draftAgent }),
       })
-
-      setLogs(prev => [...prev, {
-        timestamp: new Date().toISOString(),
-        type: 'system',
-        content: '消息已发送',
-      }])
-    } catch (err) {
-      setLogs(prev => [...prev, {
-        timestamp: new Date().toISOString(),
-        type: 'system',
-        content: `发送失败：${String(err)}`,
-      }])
-    } finally {
-      setSending(false)
+      const data = await res.json()
+      const newConv: Conversation = data.conversation
+      setConversation(newConv)
+      router.replace(`/tasks?convId=${newConv.id}`, { scroll: false })
+      return newConv
+    } catch {
+      return null
     }
   }
 
+  function startNewDraft() {
+    setConversation(null)
+    setTaskView(null)
+    setTaskConv(null)
+    setDraftAgent(DEFAULT_AGENT)
+    router.replace('/tasks', { scroll: false })
+  }
+
+  // ── SSE 流式输出（通用，传入 setter）────────────────────────────────────────
+  async function streamOutput(
+    convId: string,
+    taskId: string,
+    assistantMsgId: string,
+    signal: AbortSignal,
+    setConv: React.Dispatch<React.SetStateAction<Conversation | null>>
+  ) {
+    return new Promise<void>((resolve, reject) => {
+      fetch(`/api/conversations/${convId}/stream?taskId=${taskId}`, { signal })
+        .then(async (res) => {
+          if (!res.ok || !res.body) { reject(new Error('SSE 连接失败')); return }
+          const reader = res.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = '', accLog = ''
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() ?? ''
+            let event = '', dataStr = ''
+            for (const line of lines) {
+              if (line.startsWith('event: ')) event = line.slice(7).trim()
+              else if (line.startsWith('data: ')) dataStr = line.slice(6).trim()
+              else if (line === '') {
+                if (event && dataStr) {
+                  try {
+                    const payload = JSON.parse(dataStr)
+                    if (event === 'log') {
+                      accLog += payload.chunk ?? ''
+                      setConv((prev) => prev ? { ...prev, messages: prev.messages.map((m) =>
+                        m.id === assistantMsgId ? { ...m, content: accLog, streaming: true } : m
+                      )} : prev)
+                    } else if (event === 'done') {
+                      const finalContent = payload.content || accLog
+                      setConv((prev) => prev ? { ...prev, messages: prev.messages.map((m) =>
+                        m.id === assistantMsgId ? { ...m, content: finalContent, streaming: false } : m
+                      )} : prev)
+                      resolve(); return
+                    } else if (event === 'error') { reject(new Error(payload.message ?? 'SSE 错误')); return }
+                  } catch {}
+                }
+                event = ''; dataStr = ''
+              }
+            }
+          }
+          resolve()
+        })
+        .catch((err) => err?.name === 'AbortError' ? resolve() : reject(err))
+    })
+  }
+
+  // ── 对话模式发消息 ────────────────────────────────────────────────────────
+  async function handleSend() {
+    const userMsg = inputText.trim()
+    if (!userMsg || sending) return
+    setSending(true)
+    setInputText('')
+
+    const conv = await ensureConversation()
+    if (!conv) { setSending(false); return }
+
+    const tempUserId = `tmp-user-${Date.now()}`
+    const tempAssistantId = `tmp-asst-${Date.now()}`
+
+    setConversation((prev) => prev ? {
+      ...prev,
+      messages: [
+        ...prev.messages,
+        { id: tempUserId, role: 'user', content: userMsg, timestamp: new Date().toISOString() },
+        { id: tempAssistantId, role: 'assistant', content: '', timestamp: new Date().toISOString(), streaming: true },
+      ],
+    } : prev)
+
+    try {
+      const msgRes = await fetch(`/api/conversations/${conv.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: userMsg }),
+      })
+      if (!msgRes.ok) { const e = await msgRes.json(); throw new Error(e.error ?? '发送失败') }
+      const msgData = await msgRes.json()
+      const taskId: string = msgData.task?.id
+      if (!taskId) throw new Error('未获取到 taskId')
+      const abort = new AbortController()
+      abortRef.current = abort
+      await streamOutput(conv.id, taskId, tempAssistantId, abort.signal, setConversation)
+    } catch (err) {
+      setConversation((prev) => prev ? {
+        ...prev,
+        messages: prev.messages.map((m) =>
+          m.id === tempAssistantId ? { ...m, content: `❌ ${String(err)}`, streaming: false } : m
+        ),
+      } : prev)
+    } finally {
+      setSending(false)
+      abortRef.current = null
+    }
+  }
+
+  // ── 任务视图发消息（持久化到 conversation，写入 URL）────────────────────────
+  async function handleSendFromTask(task: Task) {
+    const userMsg = inputText.trim()
+    if (!userMsg || sending) return
+    setSending(true)
+    setInputText('')
+
+    const tempUserId = `tmp-user-${Date.now()}`
+    const tempAssistantId = `tmp-asst-${Date.now()}`
+
+    // 乐观更新 UI
+    const optimisticMsg = (prev: Conversation | null): Conversation | null => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        messages: [
+          ...prev.messages,
+          { id: tempUserId, role: 'user', content: userMsg, timestamp: new Date().toISOString() },
+          { id: tempAssistantId, role: 'assistant', content: '', timestamp: new Date().toISOString(), streaming: true },
+        ],
+      }
+    }
+
+    try {
+      // 创建或复用 taskConv
+      let conv = taskConv
+      if (!conv) {
+        const res = await fetch('/api/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentName: task.agentName || DEFAULT_AGENT, title: task.title }),
+        })
+        conv = (await res.json()).conversation as Conversation
+        // 写入 URL，使刷新可恢复
+        router.replace(`/tasks?taskId=${task.id}&convId=${conv.id}`, { scroll: false })
+      }
+      setTaskConv(optimisticMsg(conv) ?? conv)
+
+      const msgRes = await fetch(`/api/conversations/${conv.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: userMsg, hideTask: true }),
+      })
+      if (!msgRes.ok) { const e = await msgRes.json(); throw new Error(e.error ?? '发送失败') }
+      const { task: newTask } = await msgRes.json()
+      if (!newTask?.id) throw new Error('未获取到 taskId')
+
+      const abort = new AbortController()
+      abortRef.current = abort
+      await streamOutput(conv.id, newTask.id, tempAssistantId, abort.signal, setTaskConv)
+    } catch (err) {
+      setTaskConv((prev) => prev ? {
+        ...prev,
+        messages: prev.messages.map((m) =>
+          m.id === tempAssistantId ? { ...m, content: `❌ ${String(err)}`, streaming: false } : m
+        ),
+      } : prev)
+    } finally {
+      setSending(false)
+      abortRef.current = null
+    }
+  }
+
+  // ── 删除消息（通用）──────────────────────────────────────────────────────
+  async function handleDeleteMessage(convId: string, msgId: string, isTaskConv: boolean) {
+    const setter = isTaskConv ? setTaskConv : setConversation
+    setter((prev) => prev ? { ...prev, messages: prev.messages.filter((m) => m.id !== msgId) } : prev)
+    try {
+      await fetch(`/api/conversations/${convId}/messages/${msgId}`, { method: 'DELETE' })
+    } catch {}
+  }
+
+  // ── Agent 切换 ────────────────────────────────────────────────────────────
+  async function handleAgentChange(agentName: string) {
+    setDraftAgent(agentName)
+    if (!conversation) return
+    try {
+      const res = await fetch(`/api/conversations/${conversation.id}/agent`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentName }),
+      })
+      if (res.ok) setConversation((await res.json()).conversation)
+    } catch {}
+  }
+
+  function handleInterrupt(isTaskConv = false) {
+    abortRef.current?.abort()
+    setSending(false)
+    const setter = isTaskConv ? setTaskConv : setConversation
+    setter((prev) => prev ? { ...prev, messages: prev.messages.map((m) =>
+      m.streaming ? { ...m, streaming: false, content: m.content + '\n\n[已中断]' } : m
+    )} : prev)
+  }
+
+  const currentAgent = conversation?.agentName ?? draftAgent
+
+  // ─── 加载中 ───────────────────────────────────────────────────────────────
+  if (convLoading || taskLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>加载中...</p>
+      </div>
+    )
+  }
+
+  // ─── 任务日志模式 ─────────────────────────────────────────────────────────
+  if (taskView) {
+    const { task, logs, output } = taskView
+    const taskConvId = taskConv?.id
+    return (
+      <div className="flex-1 flex flex-col" style={{ height: '100%', overflow: 'hidden' }}>
+        {/* Header */}
+        <div className="flex-shrink-0 flex items-center justify-between px-6"
+          style={{ height: 'var(--header-height)', borderBottom: '1px solid var(--color-border)' }}>
+          <div className="flex items-center gap-3 min-w-0">
+            <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
+              {task.title}
+            </h3>
+            <span className="px-2 py-0.5 text-xs rounded flex-shrink-0" style={{
+              background: `${STATUS_COLORS[task.status]}18`,
+              color: STATUS_COLORS[task.status],
+              border: `1px solid ${STATUS_COLORS[task.status]}40`,
+            }}>
+              {STATUS_LABELS[task.status]}
+            </span>
+          </div>
+          <button onClick={startNewDraft} className="px-2.5 py-1 rounded-md text-xs transition-colors flex-shrink-0"
+            style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-text-primary)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
+            + 新任务
+          </button>
+        </div>
+
+        {/* 内容区 */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {/* 任务描述 */}
+          {task.description && (
+            <div className="flex justify-end">
+              <div className="max-w-[75%] px-4 py-3 rounded-2xl rounded-tr-sm text-sm leading-relaxed"
+                style={{ background: 'var(--color-accent)', color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap' }}>
+                {task.description}
+              </div>
+            </div>
+          )}
+          {/* Agent 信息 */}
+          <div className="flex justify-center">
+            <span className="text-xs px-3 py-1 rounded-full" style={{ color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}>
+              {task.agentName || task.workflowId || '未指定执行器'}
+            </span>
+          </div>
+          {/* 执行日志 */}
+          {logs && (
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold"
+                style={{ background: 'var(--color-accent)', color: '#000', marginTop: '2px' }}>M</div>
+              <div className="flex-1 px-4 py-3 rounded-2xl rounded-tl-sm text-xs font-mono leading-relaxed"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {logs}
+              </div>
+            </div>
+          )}
+          {/* 输出 */}
+          {output && task.status === 'done' && (
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold"
+                style={{ background: 'var(--color-accent)', color: '#000', marginTop: '2px' }}>M</div>
+              <div className="flex-1 px-4 py-3 rounded-2xl rounded-tl-sm text-sm leading-relaxed"
+                style={{ background: 'var(--color-accent)15', border: '1px solid var(--color-accent)30', color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {output}
+              </div>
+            </div>
+          )}
+          {/* 错误 */}
+          {task.error && (
+            <div className="flex justify-center">
+              <span className="text-xs px-3 py-1.5 rounded-full" style={{ color: '#ef4444', border: '1px solid #ef444440', background: '#ef444410' }}>
+                ❌ {task.error}
+              </span>
+            </div>
+          )}
+          {(!logs && !output && !task.error) && !taskConv && (
+            <div className="flex justify-center pt-8">
+              <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>暂无执行记录</p>
+            </div>
+          )}
+
+          {/* 持久化的后续对话 */}
+          {taskConv?.messages.map((msg) => (
+            <MsgRow
+              key={msg.id}
+              msg={msg}
+              onDelete={(msgId) => taskConvId && handleDeleteMessage(taskConvId, msgId, true)}
+            />
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+
+        <InputBar
+          value={inputText}
+          onChange={setInputText}
+          onSend={() => handleSendFromTask(task)}
+          onInterrupt={() => handleInterrupt(true)}
+          sending={sending}
+          placeholder={`继续和 ${task.agentName || DEFAULT_AGENT} 聊…（Shift+Enter 换行）`}
+        />
+      </div>
+    )
+  }
+
+  // ─── 对话模式 ─────────────────────────────────────────────────────────────
   return (
-    <div className="flex h-full">
-      {/* 左侧：任务列表（侧边栏已显示，这里不重复） */}
-      <div className="flex-1 flex items-center justify-center" style={{ display: selectedTaskId || isNewMode ? 'none' : 'flex' }}>
-        <p className="text-sm text-text-muted">从左侧任务菜单选择一个任务</p>
+    <div className="flex-1 flex flex-col" style={{ height: '100%', overflow: 'hidden' }}>
+      {/* Header */}
+      <div className="flex-shrink-0 flex items-center justify-between px-6"
+        style={{ height: 'var(--header-height)', borderBottom: '1px solid var(--color-border)' }}>
+        <h3 className="text-sm font-semibold truncate max-w-[300px]"
+          style={{ color: 'var(--color-text-primary)' }}>
+          {conversation?.title ?? '新任务'}
+        </h3>
+        <div className="flex items-center gap-2">
+          <AgentSelector currentAgent={currentAgent} onSelect={handleAgentChange} disabled={sending} />
+          <button onClick={startNewDraft} className="px-2.5 py-1 rounded-md text-xs transition-colors"
+            style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-text-primary)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
+            + 新任务
+          </button>
+        </div>
       </div>
 
-      {/* AI: v7 新建任务模式 - 欢迎界面 */}
-      {isNewMode && !selectedTaskId && (
-        <div className="flex-1 flex flex-col">
-          {/* Header */}
-          <div className="flex-shrink-0 px-6 py-4 border-b border-border">
-            <h3 className="text-lg font-semibold text-text-primary mb-2">
-              新建任务
-            </h3>
-            <p className="text-sm text-text-muted">
-              告诉我你的需求，我会帮你创建任务
-            </p>
+      {/* 消息区 */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-5">
+        {(!conversation || conversation.messages.length === 0) && (
+          <div className="flex flex-col items-center justify-center h-full gap-3">
+            <div className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold"
+              style={{ background: 'var(--color-accent)', color: '#000', opacity: 0.8 }}>M</div>
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>发送消息开始任务</p>
           </div>
+        )}
+        {conversation?.messages.map((msg) => (
+          <MsgRow
+            key={msg.id}
+            msg={msg}
+            onDelete={(msgId) => conversation && handleDeleteMessage(conversation.id, msgId, false)}
+          />
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
 
-          {/* 欢迎消息区 */}
-          <div className="flex-1 flex items-center justify-center p-6">
-            <div className="text-center max-w-md">
-              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mx-auto mb-4">
-                <span style={{ fontSize: '32px' }}>✏️</span>
-              </div>
-              <h4 className="text-lg font-medium text-text-primary mb-2">
-                开始新任务
-              </h4>
-              <p className="text-sm text-text-muted">
-                在下方输入框中描述你的需求，我会立即为你创建任务并开始处理
-              </p>
-            </div>
-          </div>
-
-          {/* 输入栏 */}
-          <div className="flex-shrink-0 p-4 border-t border-border">
-            <div className="flex gap-3">
-              <textarea
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleSend()
-                  }
-                }}
-                placeholder="描述你的任务需求...（Shift+Enter 换行）"
-                className="flex-1 px-4 py-3 text-sm border border-border rounded-lg bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
-                rows={3}
-                autoFocus
-              />
-              <button
-                onClick={handleSend}
-                disabled={!inputText.trim() || sending}
-                className="px-4 bg-accent text-text-inverse rounded-lg hover:bg-accent-hover transition-colors disabled:opacity-50 text-sm self-end"
-              >
-                {sending ? '...' : '创建'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 右侧：聊天面板 */}
-      {selectedTaskId && (
-        <div className="flex-1 flex flex-col">
-          {loading ? (
-            <div className="flex-1 flex items-center justify-center">
-              <p className="text-xs text-text-muted">加载中...</p>
-            </div>
-          ) : !selectedTask ? (
-            <div className="flex-1 flex items-center justify-center">
-              <p className="text-xs text-text-muted">任务不存在</p>
-            </div>
-          ) : (
-            <>
-              {/* Header */}
-              <div className="flex-shrink-0 px-6 py-4 border-b border-border">
-                <h3 className="text-lg font-semibold text-text-primary mb-2">
-                  {selectedTask.title}
-                </h3>
-                <div className="flex items-center gap-2">
-                  <span
-                    className="px-2 py-0.5 text-xs rounded"
-                    style={{
-                      background: `${STATUS_COLORS[selectedTask.status]}18`,
-                      color: STATUS_COLORS[selectedTask.status],
-                      border: `1px solid ${STATUS_COLORS[selectedTask.status]}40`,
-                    }}
-                  >
-                    {STATUS_LABELS[selectedTask.status]}
-                  </span>
-                  <span className="text-xs text-text-muted font-mono">
-                    {selectedTask.agentName || selectedTask.workflowId || '未指定'}
-                  </span>
-                </div>
-              </div>
-
-              {/* 消息区 */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                {logs.map((log, idx) => (
-                  <div key={idx}>
-                    {log.type === 'user' ? (
-                      <div className="flex gap-3">
-                        <div className="w-8 h-8 rounded-full bg-blue-500/20 flex-shrink-0 flex items-center justify-center text-xs">
-                          U
-                        </div>
-                        <div className="flex-1 bg-surface border border-border rounded-lg px-4 py-3">
-                          <p className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
-                            {log.content}
-                          </p>
-                        </div>
-                      </div>
-                    ) : log.type === 'system' ? (
-                      <div className="flex justify-center">
-                        <span className="text-xs text-text-muted bg-surface px-4 py-1.5 rounded-full border border-border">
-                          {log.content}
-                        </span>
-                      </div>
-                    ) : log.type === 'log' ? (
-                      <div className="pl-11">
-                        <p className="text-xs font-mono text-text-muted leading-relaxed">
-                          {log.content}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="flex gap-3">
-                        <div
-                          className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs"
-                          style={{ background: 'var(--color-accent)', color: '#000' }}
-                        >
-                          M
-                        </div>
-                        <div className="flex-1 bg-accent/10 border border-accent/20 rounded-lg px-4 py-3">
-                          <pre className="text-sm text-text-primary whitespace-pre-wrap font-mono leading-relaxed">
-                            {log.content}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-                <div ref={messagesEndRef} />
-              </div>
-
-              {/* 输入栏 */}
-              <div className="flex-shrink-0 p-4 border-t border-border">
-                <div className="flex gap-3">
-                  <textarea
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        handleSend()
-                      }
-                    }}
-                    placeholder="继续对话...（Shift+Enter 换行）"
-                    className="flex-1 px-4 py-3 text-sm border border-border rounded-lg bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent resize-none"
-                    rows={2}
-                  />
-                  <button
-                    onClick={handleSend}
-                    disabled={!inputText.trim() || sending}
-                    className="px-4 bg-accent text-text-inverse rounded-lg hover:bg-accent-hover transition-colors disabled:opacity-50 text-sm self-end"
-                  >
-                    {sending ? '...' : '发送'}
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      )}
+      <InputBar
+        value={inputText}
+        onChange={setInputText}
+        onSend={handleSend}
+        onInterrupt={() => handleInterrupt(false)}
+        sending={sending}
+        placeholder={`发送给 ${currentAgent}…（Shift+Enter 换行）`}
+      />
     </div>
   )
 }
