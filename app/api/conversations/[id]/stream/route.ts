@@ -4,7 +4,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { dataStore } from '@/core/workflow-engine'
-import { getConversation, updateLastAssistantMessage } from '@/core/conversation/store'
+import { getConversation, updateAssistantMessageByTaskId } from '@/core/conversation/store'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -106,9 +106,9 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
             finalContent = accumulatedContent
           }
 
-          // AI: 更新会话中的 assistant 消息
+          // AI: 按 taskId 精确更新对应的 assistant 消息（避免多轮对话写错位置）
           if (finalContent) {
-            updateLastAssistantMessage(id, finalContent)
+            updateAssistantMessageByTaskId(id, taskId, finalContent)
           }
 
           send('done', {

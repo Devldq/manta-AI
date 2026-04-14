@@ -134,7 +134,21 @@ export function deleteMessage(convId: string, messageId: string): boolean {
   return true
 }
 
-/** 更新最后一条 assistant 消息的内容（流式追加用）*/
+/** 按 taskId 更新对应 assistant 消息的内容（精确匹配，避免多轮对话写错位置）*/
+export function updateAssistantMessageByTaskId(convId: string, taskId: string, content: string): boolean {
+  const conv = readConv(convId)
+  if (!conv) return false
+
+  const msg = conv.messages.find((m) => m.role === 'assistant' && m.taskId === taskId)
+  if (!msg) return false
+
+  msg.content = content
+  conv.updatedAt = new Date().toISOString()
+  writeConv(conv)
+  return true
+}
+
+/** 更新最后一条 assistant 消息的内容（兜底用，优先使用 updateAssistantMessageByTaskId）*/
 export function updateLastAssistantMessage(convId: string, content: string): boolean {
   const conv = readConv(convId)
   if (!conv) return false
