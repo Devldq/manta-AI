@@ -167,7 +167,7 @@ export default function HomePage() {
           <QuickAction href="/kanban" title="任务看板" description="查看并管理所有任务的执行状态" icon="▦" />
           <QuickAction href="/workflows" title="工作流编排" description="查看步骤流、执行记录和人工审批" icon="⟳" />
           <QuickAction href="/processing" title="处理中心" description="审批、打分、查看 Agent 输出" icon="◈" />
-          <QuickAction href="/agents" title="Agent 管理" description="注册和配置 Agent 执行驱动" icon="◉" />
+          <QuickAction href="/agents" title="Agent" description="注册和配置 Agent 执行驱动" icon="◉" />
         </div>
       </div>
 
