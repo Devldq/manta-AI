@@ -70,8 +70,8 @@ AI_MODEL=gpt-4o-mini
 
 ## 工作流
 
-- `dev-standard`：标准前端开发流（需求→架构→审批→开发→QA+Review→打分）
-- `quick-fix`：快速修复流（开发→Review→打分）
+- `dev-standard`：标准前端开发流（需求→架构→审批→开发→QA+Review）
+- `quick-fix`：快速修复流（开发→Review）
 
 ## Git 提交敏感信息检查
 

@@ -186,8 +186,9 @@ export function SidebarNav() {
         </div>
 
         {/* 导航 */}
-        <nav className="flex-1 px-3 py-4 overflow-y-auto">
-          <div className="space-y-0.5">
+        <nav className="flex-1 px-3 py-4 flex flex-col overflow-hidden">
+          {/* 固定导航项 */}
+          <div className="space-y-0.5 flex-shrink-0">
             {NAV_ITEMS.map((item) => {
               const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href)
               return (
@@ -210,82 +211,82 @@ export function SidebarNav() {
                 </Link>
               )
             })}
+          </div>
 
-            {/* 任务列表 */}
-            <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--color-border)' }}>
-              {/* 标题行：任务 + 归档开关 */}
-              <div className="flex items-center justify-between px-3 py-1.5">
+          {/* 任务列表（可滚动区域）*/}
+          <div className="mt-3 pt-3 flex-1 flex flex-col overflow-hidden" style={{ borderTop: '1px solid var(--color-border)' }}>
+            {/* 标题行：任务 + 归档开关 */}
+            <div className="flex items-center justify-between px-3 py-1.5 flex-shrink-0">
+              <button
+                onClick={() => setTasksExpanded(!tasksExpanded)}
+                className="flex items-center gap-1.5"
+              >
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>任务</span>
+                <span style={{ fontSize: '10px', transition: 'transform 150ms', transform: tasksExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', color: 'var(--color-text-muted)' }}>▾</span>
+              </button>
+              {/* 归档开关 */}
+              {archivedCount > 0 && (
                 <button
-                  onClick={() => setTasksExpanded(!tasksExpanded)}
-                  className="flex items-center gap-1.5"
+                  onClick={() => setShowArchived((v) => !v)}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors"
+                  style={{
+                    fontSize: '10px',
+                    color: showArchived ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                    border: `1px solid ${showArchived ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                  }}
+                  title={showArchived ? '隐藏已归档' : `显示已归档 (${archivedCount})`}
                 >
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>任务</span>
-                  <span style={{ fontSize: '10px', transition: 'transform 150ms', transform: tasksExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', color: 'var(--color-text-muted)' }}>▾</span>
+                  📦 {archivedCount}
                 </button>
-                {/* 归档开关 */}
-                {archivedCount > 0 && (
-                  <button
-                    onClick={() => setShowArchived((v) => !v)}
-                    className="flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors"
-                    style={{
-                      fontSize: '10px',
-                      color: showArchived ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                      border: `1px solid ${showArchived ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                    }}
-                    title={showArchived ? '隐藏已归档' : `显示已归档 (${archivedCount})`}
-                  >
-                    📦 {archivedCount}
-                  </button>
-                )}
-              </div>
-
-              {tasksExpanded && (
-                <div className="mt-1 space-y-0.5">
-                  {filteredTasks.length === 0 ? (
-                    <div className="px-3 py-2 text-[11px] text-center" style={{ color: 'var(--color-text-muted)' }}>
-                      {searchQuery ? '无匹配任务' : '暂无任务'}
-                    </div>
-                  ) : (
-                    filteredTasks.map((task) => {
-                      const isActive = pathname.startsWith('/tasks') && selectedId === task.id
-                      return (
-                        <button
-                          key={task.id}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (isActive) return
-                            setSelectedId(task.id)
-                            router.replace(`/tasks?taskId=${task.id}`, { scroll: false })
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-all"
-                          style={{
-                            color: isActive ? 'var(--color-text-inverse)' : task.status === 'archived' ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
-                            background: isActive ? 'var(--color-accent)' : 'transparent',
-                            cursor: isActive ? 'default' : 'pointer',
-                            opacity: task.status === 'archived' ? 0.7 : 1,
-                          }}
-                          onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-text-primary)' } }}
-                          onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = task.status === 'archived' ? 'var(--color-text-muted)' : 'var(--color-text-secondary)' } }}
-                        >
-                          <span style={{ fontSize: '12px', width: '14px', flexShrink: 0, textAlign: 'center' }}>
-                            {STATUS_ICONS[task.status]}
-                          </span>
-                          <span
-                            style={{ fontSize: '11px', fontWeight: isActive ? 500 : 400, flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                            title={task.title}
-                          >
-                            {task.title}
-                          </span>
-                          <span style={{ fontSize: '10px', color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)', flexShrink: 0 }}>
-                            {formatRelativeTime(task.updatedAt || task.createdAt)}
-                          </span>
-                        </button>
-                      )
-                    })
-                  )}
-                </div>
               )}
             </div>
+
+            {tasksExpanded && (
+              <div className="mt-1 flex-1 overflow-y-auto space-y-0.5 scrollbar-none">
+                {filteredTasks.length === 0 ? (
+                  <div className="px-3 py-2 text-[11px] text-center" style={{ color: 'var(--color-text-muted)' }}>
+                    {searchQuery ? '无匹配任务' : '暂无任务'}
+                  </div>
+                ) : (
+                  filteredTasks.map((task) => {
+                    const isActive = pathname.startsWith('/tasks') && selectedId === task.id
+                    return (
+                      <button
+                        key={task.id}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (isActive) return
+                          setSelectedId(task.id)
+                          router.replace(`/tasks?taskId=${task.id}`, { scroll: false })
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-all"
+                        style={{
+                          color: isActive ? 'var(--color-text-inverse)' : task.status === 'archived' ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
+                          background: isActive ? 'var(--color-accent)' : 'transparent',
+                          cursor: isActive ? 'default' : 'pointer',
+                          opacity: task.status === 'archived' ? 0.7 : 1,
+                        }}
+                        onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-text-primary)' } }}
+                        onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = task.status === 'archived' ? 'var(--color-text-muted)' : 'var(--color-text-secondary)' } }}
+                      >
+                        <span style={{ fontSize: '12px', width: '14px', flexShrink: 0, textAlign: 'center' }}>
+                          {STATUS_ICONS[task.status]}
+                        </span>
+                        <span
+                          style={{ fontSize: '11px', fontWeight: isActive ? 500 : 400, flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={task.title}
+                        >
+                          {task.title}
+                        </span>
+                        <span style={{ fontSize: '10px', color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)', flexShrink: 0 }}>
+                          {formatRelativeTime(task.updatedAt || task.createdAt)}
+                        </span>
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            )}
           </div>
         </nav>
       </aside>

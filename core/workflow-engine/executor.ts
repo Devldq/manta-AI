@@ -427,7 +427,7 @@ function getNextStepId(current: WorkflowStep, allSteps: WorkflowStep[]): string 
 
 /**
  * AI: human_in_loop 步骤人工操作
- * - action: 操作 key（如 'approve'、'reject'、'score'）
+ * - action: 操作 key（如 'approve'、'reject'）
  * - 返回推进后的执行状态
  */
 export async function applyHumanAction(

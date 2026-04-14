@@ -33,16 +33,11 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
   const { id } = await params
   try {
     const body = await req.json()
-    const { status, title, description, score } = body
+    const { status, title, description } = body
 
     const patch: Record<string, unknown> = {}
     if (title) patch.title = title
     if (description !== undefined) patch.description = description
-    // AI: 支持保存评分（1-10 整数）
-    if (score !== undefined) {
-      const s = Number(score)
-      if (!isNaN(s) && s >= 1 && s <= 10) patch.score = Math.round(s)
-    }
     if (status) {
       // AI: 验证状态值合法性
       const validStatuses: TaskStatus[] = ['inbox', 'planning', 'running', 'done', 'failed', 'archived']

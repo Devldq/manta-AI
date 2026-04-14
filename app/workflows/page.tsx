@@ -289,6 +289,12 @@ export default function WorkflowsPage() {
   const [executions, setExecutions] = useState<WorkflowExecution[]>([])
   const [selected, setSelected] = useState<WorkflowDef | null>(null)
   const [selectedExec, setSelectedExec] = useState<WorkflowExecution | null>(null)
+  const selectedExecRef = useRef<WorkflowExecution | null>(null)
+
+  function selectExec(exec: WorkflowExecution | null) {
+    selectedExecRef.current = exec
+    setSelectedExec(exec)
+  }
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
 
@@ -336,14 +342,14 @@ export default function WorkflowsPage() {
       const data = await res.json()
       const all: WorkflowExecution[] = data.executions ?? []
       setExecutions(all)
-      if (selectedExec) {
-        const updated = all.find((e) => e.taskId === selectedExec.taskId)
-        if (updated) setSelectedExec(updated)
+      if (selectedExecRef.current) {
+        const updated = all.find((e) => e.taskId === selectedExecRef.current!.taskId)
+        if (updated) selectExec(updated)
       }
     } catch {
       console.error('获取执行实例失败')
     }
-  }, [selectedExec])
+  }, [])
 
   useEffect(() => { fetchWorkflows() }, [fetchWorkflows])
   useEffect(() => {
@@ -448,6 +454,7 @@ export default function WorkflowsPage() {
       const data = await res.json()
       if (!res.ok) { alert(`操作失败: ${data.error}`); return }
       setSelectedExec(data.execution)
+      selectedExecRef.current = data.execution
       fetchExecutions()
     } catch {
       alert('网络错误')
@@ -522,7 +529,7 @@ export default function WorkflowsPage() {
                   key={wf.id}
                   onClick={() => {
                     setSelected(wf)
-                    setSelectedExec(execs[0] ?? null)
+                    selectExec(execs[0] ?? null)
                     exitEditMode()
                   }}
                   className={`w-full text-left px-4 py-3 border-b border-border-subtle transition-colors ${
@@ -723,9 +730,9 @@ export default function WorkflowsPage() {
                   key={exec.taskId}
                   exec={exec}
                   selected={selectedExec?.taskId === exec.taskId}
-                  onClick={() => setSelectedExec(exec)}
+                  onClick={() => selectExec(exec)}
                   onDeleted={() => {
-                    if (selectedExec?.taskId === exec.taskId) setSelectedExec(null)
+                    if (selectedExec?.taskId === exec.taskId) selectExec(null)
                     fetchExecutions()
                   }}
                   stepStatusStyle={STEP_STATUS_STYLE}
@@ -1352,14 +1359,14 @@ function ViewStepCard({
               onClick={() => onAction(key)}
               disabled={actionLoading}
               className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${
-                key === 'approve' || key === 'score'
+                key === 'approve'
                   ? 'bg-accent text-text-inverse hover:bg-accent-hover'
                   : key === 'reject'
                   ? 'bg-status-failed/10 text-status-failed border border-status-failed/30 hover:bg-status-failed/20'
                   : 'bg-surface text-text-secondary border border-border hover:bg-accent-subtle'
               } disabled:opacity-50`}
             >
-              {actionLoading ? '处理中...' : key === 'approve' ? '✓ 批准' : key === 'reject' ? '✗ 拒绝' : key === 'score' ? '★ 打分' : key}
+              {actionLoading ? '处理中...' : key === 'approve' ? '✓ 批准' : key === 'reject' ? '✗ 拒绝' : key}
               <span className="ml-1 text-xs opacity-60 font-mono">→ {targetStep}</span>
             </button>
           ))}

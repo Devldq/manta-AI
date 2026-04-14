@@ -1,6 +1,6 @@
 name: 需求开发流
 id: dev-standard
-description: 需求 → 架构方案 → 人工审批 → 开发 → QA+Review 并行 → 打分
+description: 需求 → 架构方案 → 人工审批 → 开发 → QA+Review 并行
 
 steps:
   - id: architecting
@@ -24,8 +24,3 @@ steps:
         name: 功能测试
       - agent: arm-review
         name: 代码评审
-    after_all: pending_score
-  - id: pending_score
-    type: human_in_loop
-    name: 打分评价
-    notify: mac_notification

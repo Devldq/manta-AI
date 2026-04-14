@@ -120,6 +120,15 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+/* ─── 隐藏滚动条（保留滚动功能）─── */
+.scrollbar-none {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
 /* ─── 滚动条样式 ─── */
 ::-webkit-scrollbar {
   width: 6px;

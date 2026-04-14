@@ -537,7 +537,6 @@ function ProcessingPanel({
   const [outputLoading, setOutputLoading] = useState(false)
   const [viewMode, setViewMode] = useState<'inbox' | 'all'>('all')
   const [note, setNote] = useState('')
-  const [score, setScore] = useState(8)
   const [actionLoading, setActionLoading] = useState(false)
   // AI: 工作流执行实例 + 定义
   const [wfExec, setWfExec] = useState<WorkflowExecution | null>(null)
@@ -701,25 +700,6 @@ function ProcessingPanel({
         const data = await res.json()
         setSelected(data.task)
         await fetchTasks()
-      }
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  // AI: 保存任务评分
-  async function handleSaveScore() {
-    if (!selected) return
-    setActionLoading(true)
-    try {
-      const res = await fetch(`/api/tasks/${selected.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ score }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setSelected(data.task)
       }
     } finally {
       setActionLoading(false)
@@ -919,9 +899,6 @@ function ProcessingPanel({
                 loading={actionLoading}
               />
             )}
-            {selected.status === 'done' && (
-              <ScorePanel score={score} onScore={setScore} onSave={handleSaveScore} saving={actionLoading} />
-            )}
             {selected.status === 'running' && (
               <div className="flex items-center gap-2 text-sm text-text-muted">
                 <div className="w-2 h-2 rounded-full bg-status-running animate-pulse" />
@@ -1048,44 +1025,6 @@ function QuickActionPanel({
           className="px-4 py-2 text-sm text-text-muted border border-border rounded-md hover:bg-surface transition-colors disabled:opacity-50"
         >
           归档
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// AI: 打分面板（done 任务）
-function ScorePanel({
-  score,
-  onScore,
-  onSave,
-  saving,
-}: {
-  score: number
-  onScore: (s: number) => void
-  onSave: () => void
-  saving: boolean
-}) {
-  return (
-    <div className="space-y-2">
-      <p className="text-xs font-medium text-text-muted uppercase tracking-wider">任务评分</p>
-      <div className="flex items-center gap-3">
-        <input
-          type="range"
-          min={1}
-          max={10}
-          value={score}
-          onChange={(e) => onScore(Number(e.target.value))}
-          className="flex-1"
-        />
-        <span className="text-2xl font-semibold text-text-primary w-8 text-right">{score}</span>
-        <span className="text-sm text-text-muted">/ 10</span>
-        <button
-          onClick={onSave}
-          disabled={saving}
-          className="px-3 py-1.5 text-xs bg-accent text-text-inverse rounded hover:bg-accent-hover transition-colors disabled:opacity-50 flex-shrink-0"
-        >
-          {saving ? '保存中...' : '保存评分'}
         </button>
       </div>
     </div>
@@ -1328,7 +1267,7 @@ function WorkflowTimeline({
                         onClick={() => onAction(key)}
                         disabled={actionLoading}
                         className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${
-                          key === 'approve' || key === 'score'
+                          key === 'approve'
                             ? 'bg-accent text-text-inverse hover:bg-accent-hover'
                             : key === 'reject'
                             ? 'bg-red-50 text-status-failed border border-status-failed/30 hover:bg-red-100'
@@ -1338,7 +1277,6 @@ function WorkflowTimeline({
                         {actionLoading ? '处理中...' : (
                           key === 'approve' ? '✓ 批准'
                           : key === 'reject'  ? '✗ 拒绝'
-                          : key === 'score'   ? '★ 打分'
                           : key
                         )}
                         <span className="ml-1 text-xs opacity-60 font-mono">→ {targetStep}</span>

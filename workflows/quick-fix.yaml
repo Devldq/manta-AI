@@ -1,26 +1,12 @@
-name: "快速修复流"
-id: "quick-fix"
-description: "直接开发 → 代码审查 → 打分（适用于小改动/hotfix）"
+name: 快速修复流
+id: quick-fix
+description: 直接开发 → 代码审查（适用于小改动/hotfix）
+
 steps:
   - id: developing
-    agent: dev
-    name: "快速修复"
-    inputs:
-      - requirement_doc
+    name: 快速修复
+    agent: arm-dev
     next: review_only
-
   - id: review_only
-    agent: review
-    name: "代码审查"
-    next: pending_score
-
-  - id: pending_score
-    agent: you
-    name: "打分评价"
-    type: human_in_loop
-    notify: mac_notification
-
-notifications:
-  on_pending_score:
-    type: mac
-    message: "快速修复CR报告已生成，待打分：{task.title}"
+    name: 代码审查
+    agent: arm-qa
