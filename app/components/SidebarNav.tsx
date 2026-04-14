@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { href: '/kanban',     label: '看板',   icon: '▦' },
   { href: '/workflows',  label: '编排',   icon: '⟳' },
   { href: '/agents',     label: 'Agent', icon: '◉' },
+  { href: '/skills',     label: 'Skills', icon: '⚡' },
 ]
 
 // AI: 任务状态类型
