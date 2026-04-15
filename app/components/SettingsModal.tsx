@@ -42,7 +42,7 @@ interface PluginManifest {
 }
 /* AI end: 类型定义 */
 
-type TabType = 'theme' | 'settings'
+type TabType = 'theme' | 'settings' | 'llm'
 type FilterMode = 'all' | 'light' | 'dark'
 
 interface SettingsModalProps {
@@ -118,6 +118,7 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
             {([
               { key: 'theme', label: '◐ 主题' },
               { key: 'settings', label: '◌ 设置' },
+              { key: 'llm', label: '⬡ AI 模型' },
             ] as { key: TabType; label: string }[]).map(({ key, label }) => (
               <button
                 key={key}
@@ -219,6 +220,7 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
             <ThemeTab colorMode={colorMode} onColorModeChange={onColorModeChange} />
           )}
           {activeTab === 'settings' && <SettingsTab />}
+          {activeTab === 'llm' && <LLMTab />}
         </div>
       </div>
     </div>
@@ -1391,5 +1393,372 @@ function getDesignDocUrl(theme: DesignTheme): string {
   return `https://getdesign.md/${slug}/design-md`
 }
 /* AI end: 辅助函数 */
+
+/*  start: LLM 配置 Tab — 支持 OpenAI / 兼容 API / Ollama / LM Studio */
+function LLMTab() {
+  type LLMProvider = 'openai' | 'openai-compatible' | 'ollama' | 'lm-studio'
+
+  interface LLMConfig {
+    provider: LLMProvider
+    apiKey?: string
+    baseUrl?: string
+    model: string
+    temperature?: number
+    maxTokens?: number
+  }
+
+  // AI: Provider 配置元数据
+  const PROVIDERS: { value: LLMProvider; label: string; desc: string }[] = [
+    { value: 'openai', label: 'OpenAI', desc: 'api.openai.com — GPT-4o、GPT-3.5 等' },
+    { value: 'openai-compatible', label: 'OpenAI 兼容 API', desc: 'DeepSeek、通义千问、Moonshot 等' },
+    { value: 'ollama', label: 'Ollama（本地）', desc: 'localhost:11434 — 本地运行的 Ollama 服务' },
+    { value: 'lm-studio', label: 'LM Studio（本地）', desc: 'localhost:1234 — LM Studio 本地服务' },
+  ]
+
+  const MODEL_SUGGESTIONS: Record<LLMProvider, string[]> = {
+    'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+    'openai-compatible': ['deepseek-chat', 'deepseek-reasoner', 'qwen-turbo', 'qwen-plus', 'moonshot-v1-8k', 'glm-4'],
+    'ollama': ['llama3.2', 'llama3.1', 'qwen2.5', 'deepseek-r1', 'mistral', 'phi4'],
+    'lm-studio': ['local-model'],
+  }
+
+  const DEFAULT_BASE_URLS: Partial<Record<LLMProvider, string>> = {
+    'openai': 'https://api.openai.com/v1',
+    'ollama': 'http://localhost:11434',
+    'lm-studio': 'http://localhost:1234/v1',
+  }
+
+  const [config, setConfig] = useState<LLMConfig>({
+    provider: 'openai',
+    apiKey: '',
+    baseUrl: '',
+    model: 'gpt-4o-mini',
+    temperature: 0.7,
+  })
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [testMsg, setTestMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [apiKeyMasked, setApiKeyMasked] = useState<string | undefined>()
+
+  useEffect(() => {
+    fetch('/api/chat/config')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.config) {
+          setConfig({
+            provider: data.config.provider ?? 'openai',
+            apiKey: '',  // AI: apiKey 已脱敏，不回显
+            baseUrl: data.config.baseUrl ?? '',
+            model: data.config.model ?? 'gpt-4o-mini',
+            temperature: data.config.temperature ?? 0.7,
+            maxTokens: data.config.maxTokens,
+          })
+          setApiKeyMasked(data.config.apiKeyMasked)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  function handleProviderChange(provider: LLMProvider) {
+    setConfig((prev) => ({
+      ...prev,
+      provider,
+      baseUrl: DEFAULT_BASE_URLS[provider] ?? '',
+      model: MODEL_SUGGESTIONS[provider][0] ?? '',
+    }))
+    setSaveMsg(null)
+    setTestMsg(null)
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setSaveMsg(null)
+    try {
+      // AI: 如果 apiKey 为空（用户没有输入新的），保留服务器端存储的值
+      const payload: LLMConfig = { ...config }
+      if (!payload.apiKey?.trim()) delete payload.apiKey
+
+      const res = await fetch('/api/chat/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (res.ok) {
+        setSaveMsg({ type: 'success', text: '配置已保存' })
+        if (config.apiKey?.trim()) setApiKeyMasked(undefined)
+      } else {
+        const data = await res.json()
+        setSaveMsg({ type: 'error', text: data.error ?? '保存失败' })
+      }
+    } catch {
+      setSaveMsg({ type: 'error', text: '请求失败' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true)
+    setTestMsg(null)
+    try {
+      const payload: LLMConfig = { ...config }
+      if (!payload.apiKey?.trim()) delete payload.apiKey
+
+      const res = await fetch('/api/chat/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setTestMsg({ type: 'success', text: '✓ 连接成功' })
+      } else {
+        setTestMsg({ type: 'error', text: `✕ ${data.error ?? '连接失败'}` })
+      }
+    } catch (err) {
+      setTestMsg({ type: 'error', text: `✕ ${String(err)}` })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const needsApiKey = config.provider === 'openai' || config.provider === 'openai-compatible'
+  const needsBaseUrl = config.provider !== 'openai'
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+        <p style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>加载中...</p>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ height: '100%', overflowY: 'auto', padding: '24px 28px' }}>
+      <div style={{ maxWidth: '560px' }}>
+        <h2 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '4px' }}>
+          AI 模型配置
+        </h2>
+        <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: '24px' }}>
+          配置 LangChain 驱动的 AI 对话模型，支持 OpenAI API、兼容接口及本地模型服务
+        </p>
+
+        {/* Provider 选择 */}
+        <div style={{ marginBottom: '20px' }}>
+          <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
+            模型来源
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            {PROVIDERS.map(({ value, label, desc }) => (
+              <button
+                key={value}
+                onClick={() => handleProviderChange(value)}
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  textAlign: 'left',
+                  border: `1px solid ${config.provider === value ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                  background: config.provider === value ? 'var(--color-accent)10' : 'var(--color-surface)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ fontSize: '13px', fontWeight: config.provider === value ? 600 : 400, color: config.provider === value ? 'var(--color-accent)' : 'var(--color-text-primary)' }}>
+                  {label}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                  {desc}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* API Key */}
+        {needsApiKey && (
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
+              API Key {apiKeyMasked && <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>（当前：{apiKeyMasked}）</span>}
+            </label>
+            <input
+              type="password"
+              value={config.apiKey ?? ''}
+              onChange={(e) => setConfig((p) => ({ ...p, apiKey: e.target.value }))}
+              placeholder={apiKeyMasked ? '留空则保持不变' : '输入 API Key'}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-surface)',
+                color: 'var(--color-text-primary)',
+                fontSize: '13px',
+                outline: 'none',
+                fontFamily: 'monospace',
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+        )}
+
+        {/* Base URL */}
+        {needsBaseUrl && (
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
+              API 地址（Base URL）
+            </label>
+            <input
+              type="text"
+              value={config.baseUrl ?? ''}
+              onChange={(e) => setConfig((p) => ({ ...p, baseUrl: e.target.value }))}
+              placeholder={DEFAULT_BASE_URLS[config.provider] ?? 'http://localhost:11434'}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-surface)',
+                color: 'var(--color-text-primary)',
+                fontSize: '13px',
+                outline: 'none',
+                fontFamily: 'monospace',
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+        )}
+
+        {/* 模型名称 */}
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
+            模型名称
+          </label>
+          <input
+            type="text"
+            value={config.model}
+            onChange={(e) => setConfig((p) => ({ ...p, model: e.target.value }))}
+            placeholder="输入模型名称"
+            style={{
+              width: '100%',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-surface)',
+              color: 'var(--color-text-primary)',
+              fontSize: '13px',
+              outline: 'none',
+              fontFamily: 'monospace',
+              boxSizing: 'border-box',
+            }}
+          />
+          {/* AI: 常用模型快捷选择 */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+            {MODEL_SUGGESTIONS[config.provider].map((m) => (
+              <button
+                key={m}
+                onClick={() => setConfig((p) => ({ ...p, model: m }))}
+                style={{
+                  padding: '3px 8px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  fontFamily: 'monospace',
+                  border: `1px solid ${config.model === m ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                  background: config.model === m ? 'var(--color-accent)15' : 'transparent',
+                  color: config.model === m ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Temperature */}
+        <div style={{ marginBottom: '24px' }}>
+          <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
+            <span>Temperature（随机性）</span>
+            <span style={{ fontFamily: 'monospace', color: 'var(--color-text-primary)' }}>{config.temperature?.toFixed(1) ?? '0.7'}</span>
+          </label>
+          <input
+            type="range"
+            min="0"
+            max="2"
+            step="0.1"
+            value={config.temperature ?? 0.7}
+            onChange={(e) => setConfig((p) => ({ ...p, temperature: parseFloat(e.target.value) }))}
+            style={{ width: '100%', accentColor: 'var(--color-accent)' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+            <span>0 — 确定性</span>
+            <span>2 — 高随机</span>
+          </div>
+        </div>
+
+        {/* 操作按钮 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            style={{
+              padding: '8px 20px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              fontWeight: 500,
+              background: 'var(--color-accent)',
+              color: 'var(--color-text-inverse)',
+              border: 'none',
+              cursor: saving ? 'not-allowed' : 'pointer',
+              opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {saving ? '保存中...' : '保存配置'}
+          </button>
+          <button
+            onClick={handleTest}
+            disabled={testing || saving}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              fontWeight: 400,
+              background: 'var(--color-surface)',
+              color: 'var(--color-text-primary)',
+              border: '1px solid var(--color-border)',
+              cursor: testing ? 'not-allowed' : 'pointer',
+              opacity: testing ? 0.6 : 1,
+            }}
+          >
+            {testing ? '测试中...' : '测试连接'}
+          </button>
+          {saveMsg && (
+            <span style={{ fontSize: '12px', color: saveMsg.type === 'success' ? '#22c55e' : '#ef4444' }}>
+              {saveMsg.text}
+            </span>
+          )}
+          {testMsg && (
+            <span style={{ fontSize: '12px', color: testMsg.type === 'success' ? '#22c55e' : '#ef4444' }}>
+              {testMsg.text}
+            </span>
+          )}
+        </div>
+
+        {/* AI: 提示信息 */}
+        <div style={{ marginTop: '24px', padding: '12px 16px', borderRadius: '8px', background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+          <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', lineHeight: '1.6', margin: 0 }}>
+            💡 配置保存后，在任务页使用 <strong>「新对话」</strong> 按钮创建的会话将使用 LangChain AI 直接对话模式；
+            <br />使用 <strong>「新任务」</strong> 按钮创建的会话仍走 OpenClaw Task 执行引擎。
+            <br /><br />
+            环境变量 <code>AI_API_KEY</code>、<code>AI_BASE_URL</code>、<code>AI_MODEL</code> 也可作为默认配置，UI 设置优先级更高。
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+/*  end: LLM 配置 Tab */
 
 /* AI end: 设置弹窗 */

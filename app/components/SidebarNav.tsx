@@ -152,7 +152,7 @@ export function SidebarNav() {
               <span style={{ color: 'var(--color-text-muted)', fontSize: '13px', flexShrink: 0 }}>🔍</span>
               <input
                 type="text"
-                placeholder="搜索任务"
+                placeholder="检索"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="flex-1 bg-transparent text-sm outline-none"
@@ -181,7 +181,7 @@ export function SidebarNav() {
             onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-text-primary)' }}
           >
             <span style={{ fontSize: '13px' }}>✏️</span>
-            <span style={{ fontSize: '13px', fontWeight: 500 }}>新建任务</span>
+            <span style={{ fontSize: '13px', fontWeight: 500 }}>新建会话</span>
           </button>
         </div>
 
@@ -221,7 +221,7 @@ export function SidebarNav() {
                 onClick={() => setTasksExpanded(!tasksExpanded)}
                 className="flex items-center gap-1.5"
               >
-                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>任务</span>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>会话</span>
                 <span style={{ fontSize: '10px', transition: 'transform 150ms', transform: tasksExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', color: 'var(--color-text-muted)' }}>▾</span>
               </button>
               {/* 归档开关 */}

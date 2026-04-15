@@ -14,13 +14,13 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { agentName, title } = body
+    const { agentName, title, mode } = body
 
     if (!agentName?.trim()) {
       return NextResponse.json({ error: 'agentName 不能为空' }, { status: 400 })
     }
 
-    const conv = createConversation(agentName.trim(), title?.trim())
+    const conv = createConversation(agentName.trim(), title?.trim(), mode)
     return NextResponse.json({ conversation: conv }, { status: 201 })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

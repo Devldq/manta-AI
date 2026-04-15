@@ -146,7 +146,7 @@ export default function KanbanPage() {
           className="flex items-center gap-2 px-3 py-1.5 bg-accent text-text-inverse text-sm rounded-md hover:bg-accent-hover transition-colors"
         >
           <span>+</span>
-          <span>新建任务</span>
+          <span>新建工作流任务</span>
         </button>
       </div>
 

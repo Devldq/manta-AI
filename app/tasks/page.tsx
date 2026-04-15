@@ -9,11 +9,13 @@ import { AgentSelector } from '../components/AgentSelector'
 
 interface Message {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system-notice'
   content: string
   timestamp: string
   taskId?: string
   streaming?: boolean
+  /** AI: chat 模式下回复本条消息的 agent 名称 */
+  agentName?: string
 }
 
 interface Conversation {
@@ -23,6 +25,8 @@ interface Conversation {
   messages: Message[]
   createdAt: string
   updatedAt: string
+  /** chat = LangChain 直接对话；task = OpenClaw Task 执行（默认）*/
+  mode?: 'chat' | 'task'
 }
 
 type TaskStatus = 'inbox' | 'planning' | 'running' | 'done' | 'failed' | 'archived'
@@ -51,8 +55,29 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
 const DEFAULT_AGENT = 'manta-main'
 
 // ─── 消息行组件 ────────────────────────────────────────────────────────────────
-function MsgRow({ msg, onDelete }: { msg: Message; onDelete: (id: string) => void }) {
+function MsgRow({ msg, currentAgentName, onDelete }: {
+  msg: Message
+  currentAgentName: string
+  onDelete: (id: string) => void
+}) {
   const [hovered, setHovered] = useState(false)
+
+  // AI: 系统通知（agent 切换提示）
+  if (msg.role === 'system-notice') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '4px 0' }}>
+        <div style={{ flex: 1, height: '1px', background: 'var(--color-border)' }} />
+        <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', whiteSpace: 'nowrap', padding: '0 8px' }}>
+          {msg.content}
+        </span>
+        <div style={{ flex: 1, height: '1px', background: 'var(--color-border)' }} />
+      </div>
+    )
+  }
+
+  // AI: assistant 头像首字母（优先用 agentName，否则用当前 agent）
+  const avatarLabel = (msg.agentName || currentAgentName || 'M').slice(0, 1).toUpperCase()
+  const agentLabel = msg.agentName || currentAgentName
 
   return (
     <div
@@ -119,8 +144,12 @@ function MsgRow({ msg, onDelete }: { msg: Message; onDelete: (id: string) => voi
               color: '#000',
               marginTop: '2px',
             }}
-          >M</div>
+          >{avatarLabel}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
+            {/* AI: 显示 agent 名称 */}
+            <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', marginBottom: '3px', fontFamily: 'monospace' }}>
+              {agentLabel}
+            </div>
             <div
               style={{
                 padding: '10px 16px',
@@ -271,6 +300,8 @@ export default function TasksPage() {
   const [conversation, setConversation] = useState<Conversation | null>(null)
   const [convLoading, setConvLoading] = useState(false)
   const [draftAgent, setDraftAgent] = useState(DEFAULT_AGENT)
+  // AI: 新建对话的草稿模式（chat 直接对话 / task 创建任务）
+  const [draftMode, setDraftMode] = useState<'chat' | 'task'>('chat')
 
   // ── 任务日志模式 ──
   const [taskView, setTaskView] = useState<{ task: Task; logs: string; output: string } | null>(null)
@@ -283,12 +314,19 @@ export default function TasksPage() {
   const [sending, setSending] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  // AI: 跳过 convId 变化时的 loadConversation（防止覆盖乐观渲染的消息）
+  const skipLoadRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (taskIdParam) {
       setConversation(null)
       loadTaskView(taskIdParam, convIdParam)
     } else if (convIdParam) {
+      // AI: 如果是 ensureConversation 刚创建并写入 URL 的会话，跳过加载（防止覆盖乐观消息）
+      if (skipLoadRef.current === convIdParam) {
+        skipLoadRef.current = null
+        return
+      }
       setTaskView(null)
       setTaskConv(null)
       loadConversation(convIdParam)
@@ -351,17 +389,19 @@ export default function TasksPage() {
     router.replace('/tasks', { scroll: false })
   }
 
-  async function ensureConversation(): Promise<Conversation | null> {
+  async function ensureConversation(mode: 'chat' | 'task' = 'task'): Promise<Conversation | null> {
     if (conversation) return conversation
     try {
       const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentName: draftAgent }),
+        body: JSON.stringify({ agentName: draftAgent, mode }),
       })
       const data = await res.json()
       const newConv: Conversation = data.conversation
       setConversation(newConv)
+      // AI: 用 skipLoad ref 阻止 URL 变化触发 loadConversation 覆盖乐观渲染的消息
+      skipLoadRef.current = newConv.id
       router.replace(`/tasks?convId=${newConv.id}`, { scroll: false })
       return newConv
     } catch {
@@ -369,12 +409,87 @@ export default function TasksPage() {
     }
   }
 
-  function startNewDraft() {
+  function startNewDraft(mode: 'chat' | 'task' = 'chat') {
     setConversation(null)
     setTaskView(null)
     setTaskConv(null)
     setDraftAgent(DEFAULT_AGENT)
+    setDraftMode(mode)
     router.replace('/tasks', { scroll: false })
+  }
+
+  // ── LangChain Chat 模式流式输出 ────────────────────────────────────────────
+  async function streamChatOutput(
+    convId: string,
+    message: string,
+    assistantMsgId: string,
+    signal: AbortSignal,
+    setConv: React.Dispatch<React.SetStateAction<Conversation | null>>,
+    agentName: string
+  ) {
+    return new Promise<void>((resolve, reject) => {
+      fetch(`/api/conversations/${convId}/chat-stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, agentName }),
+        signal,
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const errText = await res.text()
+            let errMsg = 'LangChain 连接失败'
+            try { errMsg = JSON.parse(errText).error ?? errMsg } catch {}
+            reject(new Error(errMsg))
+            return
+          }
+          if (!res.body) { reject(new Error('SSE 响应为空')); return }
+          const reader = res.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ''
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() ?? ''
+            let event = '', dataStr = ''
+            for (const line of lines) {
+              if (line.startsWith('event: ')) event = line.slice(7).trim()
+              else if (line.startsWith('data: ')) dataStr = line.slice(6).trim()
+              else if (line === '') {
+                if (event && dataStr) {
+                  try {
+                    const payload = JSON.parse(dataStr)
+                    if (event === 'chunk') {
+                      const text: string = payload.text ?? ''
+                      setConv((prev) => prev ? {
+                        ...prev,
+                        messages: prev.messages.map((m) =>
+                          m.id === assistantMsgId ? { ...m, content: m.content + text, streaming: true } : m
+                        ),
+                      } : prev)
+                    } else if (event === 'done') {
+                      const finalContent = payload.content ?? ''
+                      setConv((prev) => prev ? {
+                        ...prev,
+                        messages: prev.messages.map((m) =>
+                          m.id === assistantMsgId ? { ...m, content: finalContent, streaming: false } : m
+                        ),
+                      } : prev)
+                      resolve(); return
+                    } else if (event === 'error') {
+                      reject(new Error(payload.message ?? 'LangChain 错误')); return
+                    }
+                  } catch {}
+                }
+                event = ''; dataStr = ''
+              }
+            }
+          }
+          resolve()
+        })
+        .catch((err) => err?.name === 'AbortError' ? resolve() : reject(err))
+    })
   }
 
   // ── SSE 流式输出（通用，传入 setter）────────────────────────────────────────
@@ -430,14 +545,16 @@ export default function TasksPage() {
     })
   }
 
-  // ── 对话模式发消息 ────────────────────────────────────────────────────────
+  // ── 对话模式发消息（根据 mode 走不同通道）──────────────────────────────────
   async function handleSend() {
     const userMsg = inputText.trim()
     if (!userMsg || sending) return
     setSending(true)
     setInputText('')
 
-    const conv = await ensureConversation()
+    // AI: chat 模式新建会话时使用 chat mode
+    const isChatMode = conversation?.mode === 'chat' || draftMode === 'chat'
+    const conv = await ensureConversation(isChatMode ? 'chat' : 'task')
     if (!conv) { setSending(false); return }
 
     const tempUserId = `tmp-user-${Date.now()}`
@@ -448,23 +565,31 @@ export default function TasksPage() {
       messages: [
         ...prev.messages,
         { id: tempUserId, role: 'user', content: userMsg, timestamp: new Date().toISOString() },
-        { id: tempAssistantId, role: 'assistant', content: '', timestamp: new Date().toISOString(), streaming: true },
+        { id: tempAssistantId, role: 'assistant', content: '', timestamp: new Date().toISOString(), streaming: true, agentName: currentAgent },
       ],
     } : prev)
 
     try {
-      const msgRes = await fetch(`/api/conversations/${conv.id}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: userMsg }),
-      })
-      if (!msgRes.ok) { const e = await msgRes.json(); throw new Error(e.error ?? '发送失败') }
-      const msgData = await msgRes.json()
-      const taskId: string = msgData.task?.id
-      if (!taskId) throw new Error('未获取到 taskId')
-      const abort = new AbortController()
-      abortRef.current = abort
-      await streamOutput(conv.id, taskId, tempAssistantId, abort.signal, setConversation)
+      // AI: chat 模式走 LangChain 直接对话
+      if (conv.mode === 'chat' || isChatMode) {
+        const abort = new AbortController()
+        abortRef.current = abort
+        await streamChatOutput(conv.id, userMsg, tempAssistantId, abort.signal, setConversation, currentAgent)
+      } else {
+        // AI: task 模式走原有 OpenClaw Task 执行通道
+        const msgRes = await fetch(`/api/conversations/${conv.id}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: userMsg }),
+        })
+        if (!msgRes.ok) { const e = await msgRes.json(); throw new Error(e.error ?? '发送失败') }
+        const msgData = await msgRes.json()
+        const taskId: string = msgData.task?.id
+        if (!taskId) throw new Error('未获取到 taskId')
+        const abort = new AbortController()
+        abortRef.current = abort
+        await streamOutput(conv.id, taskId, tempAssistantId, abort.signal, setConversation)
+      }
     } catch (err) {
       setConversation((prev) => prev ? {
         ...prev,
@@ -552,6 +677,7 @@ export default function TasksPage() {
 
   // ── Agent 切换 ────────────────────────────────────────────────────────────
   async function handleAgentChange(agentName: string) {
+    const prevAgent = currentAgent
     setDraftAgent(agentName)
     if (!conversation) return
     try {
@@ -562,6 +688,21 @@ export default function TasksPage() {
       })
       if (res.ok) setConversation((await res.json()).conversation)
     } catch {}
+    // AI: chat 模式下切换 agent，插入系统通知消息作为视觉分隔
+    if (conversation.mode === 'chat' || draftMode === 'chat') {
+      setConversation((prev) => prev ? {
+        ...prev,
+        messages: [
+          ...prev.messages,
+          {
+            id: `sys-${Date.now()}`,
+            role: 'system-notice' as const,
+            content: `已切换为 ${agentName} 角色`,
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      } : prev)
+    }
   }
 
   function handleInterrupt(isTaskConv = false) {
@@ -671,6 +812,7 @@ export default function TasksPage() {
             <MsgRow
               key={msg.id}
               msg={msg}
+              currentAgentName={task.agentName || DEFAULT_AGENT}
               onDelete={(msgId) => taskConvId && handleDeleteMessage(taskConvId, msgId, true)}
             />
           ))}
@@ -690,18 +832,39 @@ export default function TasksPage() {
   }
 
   // ─── 对话模式 ─────────────────────────────────────────────────────────────
+  // AI: 当前会话的实际模式（已建立会话取 conv.mode，新建草稿取 draftMode）
+  const activeMode = conversation?.mode ?? draftMode
+
   return (
     <div className="flex-1 flex flex-col" style={{ height: '100%', overflow: 'hidden' }}>
       {/* Header */}
       <div className="flex-shrink-0 flex items-center justify-between px-6"
         style={{ height: 'var(--header-height)', borderBottom: '1px solid var(--color-border)' }}>
-        <h3 className="text-sm font-semibold truncate max-w-[300px]"
-          style={{ color: 'var(--color-text-primary)' }}>
-          {conversation?.title ?? '新任务'}
-        </h3>
+        <div className="flex items-center gap-2 min-w-0">
+          <h3 className="text-sm font-semibold truncate max-w-[200px]"
+            style={{ color: 'var(--color-text-primary)' }}>
+            {conversation?.title ?? (activeMode === 'chat' ? '新对话' : '新任务')}
+          </h3>
+          {/* AI: 模式标签 */}
+          <span className="text-xs px-1.5 py-0.5 rounded flex-shrink-0" style={{
+            background: activeMode === 'chat' ? 'var(--color-accent)18' : 'var(--color-status-running)18',
+            color: activeMode === 'chat' ? 'var(--color-accent)' : 'var(--color-status-running)',
+            border: `1px solid ${activeMode === 'chat' ? 'var(--color-accent)40' : 'var(--color-status-running)40'}`,
+          }}>
+            {activeMode === 'chat' ? '💬 AI 对话' : '⚙️ Task 模式'}
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           <AgentSelector currentAgent={currentAgent} onSelect={handleAgentChange} disabled={sending} />
-          <button onClick={startNewDraft} className="px-2.5 py-1 rounded-md text-xs transition-colors"
+          {/* AI: 新建对话（LangChain chat 模式）*/}
+          <button onClick={() => startNewDraft('chat')} className="px-2.5 py-1 rounded-md text-xs transition-colors"
+            style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-text-primary)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
+            + 新对话
+          </button>
+          {/* AI: 新建任务（OpenClaw task 模式）*/}
+          <button onClick={() => startNewDraft('task')} className="px-2.5 py-1 rounded-md text-xs transition-colors"
             style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
             onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-text-primary)' }}
             onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
@@ -716,13 +879,24 @@ export default function TasksPage() {
           <div className="flex flex-col items-center justify-center h-full gap-3">
             <div className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold"
               style={{ background: 'var(--color-accent)', color: '#000', opacity: 0.8 }}>M</div>
-            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>发送消息开始任务</p>
+            {activeMode === 'chat' ? (
+              <>
+                <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>AI 对话模式</p>
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>直接与 LLM 对话，支持多轮上下文</p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>Task 模式</p>
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>消息将创建任务交由 Agent 执行</p>
+              </>
+            )}
           </div>
         )}
         {conversation?.messages.map((msg) => (
           <MsgRow
             key={msg.id}
             msg={msg}
+            currentAgentName={currentAgent}
             onDelete={(msgId) => conversation && handleDeleteMessage(conversation.id, msgId, false)}
           />
         ))}
@@ -735,7 +909,9 @@ export default function TasksPage() {
         onSend={handleSend}
         onInterrupt={() => handleInterrupt(false)}
         sending={sending}
-        placeholder={`发送给 ${currentAgent}…（Shift+Enter 换行）`}
+        placeholder={activeMode === 'chat'
+          ? `和 ${currentAgent} 聊天…（Shift+Enter 换行）`
+          : `发送给 ${currentAgent} 创建任务…（Shift+Enter 换行）`}
       />
     </div>
   )

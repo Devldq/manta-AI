@@ -12,6 +12,12 @@ const nextConfig: NextConfig = {
     'path',
     'os',
     'child_process',
+    // AI: LangChain 相关包
+    '@langchain/core',
+    '@langchain/openai',
+    '@langchain/ollama',
+    'langchain',
+    'openai',
   ],
   // AI: 禁用图片优化（Electron 环境）
   images: {

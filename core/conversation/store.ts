@@ -39,7 +39,7 @@ function writeConv(conv: Conversation): void {
 // ─── 公共 API ───────────────────────────────────────────────────────────────
 
 /** 创建新会话 */
-export function createConversation(agentName: string, title?: string): Conversation {
+export function createConversation(agentName: string, title?: string, mode?: 'chat' | 'task'): Conversation {
   ensureDir()
   const now = new Date().toISOString()
   const conv: Conversation = {
@@ -50,6 +50,7 @@ export function createConversation(agentName: string, title?: string): Conversat
     context: {},
     createdAt: now,
     updatedAt: now,
+    mode: mode ?? 'task',
   }
   writeConv(conv)
   return conv

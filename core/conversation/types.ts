@@ -5,7 +5,7 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
-  taskId?: string  // 关联的 Task ID
+  taskId?: string  // 关联的 Task ID（task 模式专用）
 }
 
 export interface ConversationContext {
@@ -20,4 +20,6 @@ export interface Conversation {
   context: ConversationContext
   createdAt: string
   updatedAt: string
+  /** 会话模式：chat = 直接走 LangChain；task = 创建 Task 经 OpenClaw 执行（默认）*/
+  mode?: 'chat' | 'task'
 }
