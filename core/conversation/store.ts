@@ -56,11 +56,11 @@ export function createConversation(agentName: string, title?: string, mode?: 'ch
   return conv
 }
 
-/** 获取会话列表（按 updatedAt 倒序）*/
-export function listConversations(): Conversation[] {
+/** 获取会话列表（按 updatedAt 倒序），支持按 mode 筛选 */
+export function listConversations(mode?: 'chat' | 'task'): Conversation[] {
   ensureDir()
   try {
-    return fs
+    const conversations = fs
       .readdirSync(DATA_DIR)
       .filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
       .map((f) => {
@@ -73,7 +73,12 @@ export function listConversations(): Conversation[] {
         }
       })
       .filter((c): c is Conversation => c !== null)
-      .sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
+    
+    // AI: 按 mode 筛选
+    const filtered = mode ? conversations.filter((c) => c.mode === mode) : conversations
+    
+    // AI: 按 updatedAt 倒序
+    return filtered.sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
   } catch {
     return []
   }

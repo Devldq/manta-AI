@@ -61,6 +61,19 @@ function MsgRow({ msg, currentAgentName, onDelete }: {
   onDelete: (id: string) => void
 }) {
   const [hovered, setHovered] = useState(false)
+  // AI: copy 按钮状态
+  const [copied, setCopied] = useState(false)
+
+  // AI: 复制消息内容到剪贴板
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(msg.content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // ignore
+    }
+  }
 
   // AI: 系统通知（agent 切换提示）
   if (msg.role === 'system-notice') {
@@ -162,8 +175,39 @@ function MsgRow({ msg, currentAgentName, onDelete }: {
                 color: 'var(--color-text-primary)',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
+                position: 'relative',
               }}
             >
+              {/* AI: copy 按钮（放在气泡内容右上角） */}
+              {msg.content && !msg.streaming && (
+                <button
+                  onClick={handleCopy}
+                  style={{
+                    position: 'absolute',
+                    top: '8px',
+                    right: '8px',
+                    opacity: hovered ? 0.6 : 0,
+                    transition: 'opacity 0.15s',
+                    width: '24px',
+                    height: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '12px',
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: 'transparent',
+                    color: 'var(--color-text-muted)',
+                    cursor: 'pointer',
+                    zIndex: 1,
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.color = 'var(--color-text-primary)'; e.currentTarget.style.background = 'var(--color-border)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.background = 'transparent' }}
+                  title={copied ? '已复制' : '复制内容'}
+                >
+                  {copied ? '✓' : '📋'}
+                </button>
+              )}
               {msg.content
                 ? <>
                     {msg.content}
@@ -300,8 +344,6 @@ export default function TasksPage() {
   const [conversation, setConversation] = useState<Conversation | null>(null)
   const [convLoading, setConvLoading] = useState(false)
   const [draftAgent, setDraftAgent] = useState(DEFAULT_AGENT)
-  // AI: 新建对话的草稿模式（chat 直接对话 / task 创建任务）
-  const [draftMode, setDraftMode] = useState<'chat' | 'task'>('chat')
 
   // ── 任务日志模式 ──
   const [taskView, setTaskView] = useState<{ task: Task; logs: string; output: string } | null>(null)
@@ -389,13 +431,13 @@ export default function TasksPage() {
     router.replace('/tasks', { scroll: false })
   }
 
-  async function ensureConversation(mode: 'chat' | 'task' = 'task'): Promise<Conversation | null> {
+  async function ensureConversation(): Promise<Conversation | null> {
     if (conversation) return conversation
     try {
       const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentName: draftAgent, mode }),
+        body: JSON.stringify({ agentName: draftAgent, mode: 'chat' }),
       })
       const data = await res.json()
       const newConv: Conversation = data.conversation
@@ -409,12 +451,11 @@ export default function TasksPage() {
     }
   }
 
-  function startNewDraft(mode: 'chat' | 'task' = 'chat') {
+  function startNewDraft() {
     setConversation(null)
     setTaskView(null)
     setTaskConv(null)
     setDraftAgent(DEFAULT_AGENT)
-    setDraftMode(mode)
     router.replace('/tasks', { scroll: false })
   }
 
@@ -545,16 +586,14 @@ export default function TasksPage() {
     })
   }
 
-  // ── 对话模式发消息（根据 mode 走不同通道）──────────────────────────────────
+  // ── 对话模式发消息（LangChain 直接聊天）──────────────────────────────────
   async function handleSend() {
     const userMsg = inputText.trim()
     if (!userMsg || sending) return
     setSending(true)
     setInputText('')
 
-    // AI: chat 模式新建会话时使用 chat mode
-    const isChatMode = conversation?.mode === 'chat' || draftMode === 'chat'
-    const conv = await ensureConversation(isChatMode ? 'chat' : 'task')
+    const conv = await ensureConversation()
     if (!conv) { setSending(false); return }
 
     const tempUserId = `tmp-user-${Date.now()}`
@@ -570,26 +609,9 @@ export default function TasksPage() {
     } : prev)
 
     try {
-      // AI: chat 模式走 LangChain 直接对话
-      if (conv.mode === 'chat' || isChatMode) {
-        const abort = new AbortController()
-        abortRef.current = abort
-        await streamChatOutput(conv.id, userMsg, tempAssistantId, abort.signal, setConversation, currentAgent)
-      } else {
-        // AI: task 模式走原有 OpenClaw Task 执行通道
-        const msgRes = await fetch(`/api/conversations/${conv.id}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: userMsg }),
-        })
-        if (!msgRes.ok) { const e = await msgRes.json(); throw new Error(e.error ?? '发送失败') }
-        const msgData = await msgRes.json()
-        const taskId: string = msgData.task?.id
-        if (!taskId) throw new Error('未获取到 taskId')
-        const abort = new AbortController()
-        abortRef.current = abort
-        await streamOutput(conv.id, taskId, tempAssistantId, abort.signal, setConversation)
-      }
+      const abort = new AbortController()
+      abortRef.current = abort
+      await streamChatOutput(conv.id, userMsg, tempAssistantId, abort.signal, setConversation, currentAgent)
     } catch (err) {
       setConversation((prev) => prev ? {
         ...prev,
@@ -832,8 +854,7 @@ export default function TasksPage() {
   }
 
   // ─── 对话模式 ─────────────────────────────────────────────────────────────
-  // AI: 当前会话的实际模式（已建立会话取 conv.mode，新建草稿取 draftMode）
-  const activeMode = conversation?.mode ?? draftMode
+  // AI: /tasks 页面现在只支持 chat 模式（LLM 直接对话）
 
   return (
     <div className="flex-1 flex flex-col" style={{ height: '100%', overflow: 'hidden' }}>
@@ -843,32 +864,25 @@ export default function TasksPage() {
         <div className="flex items-center gap-2 min-w-0">
           <h3 className="text-sm font-semibold truncate max-w-[200px]"
             style={{ color: 'var(--color-text-primary)' }}>
-            {conversation?.title ?? (activeMode === 'chat' ? '新对话' : '新任务')}
+            {conversation?.title ?? '新对话'}
           </h3>
-          {/* AI: 模式标签 */}
+          {/* AI: 模式标签 — 固定为 AI 对话 */}
           <span className="text-xs px-1.5 py-0.5 rounded flex-shrink-0" style={{
-            background: activeMode === 'chat' ? 'var(--color-accent)18' : 'var(--color-status-running)18',
-            color: activeMode === 'chat' ? 'var(--color-accent)' : 'var(--color-status-running)',
-            border: `1px solid ${activeMode === 'chat' ? 'var(--color-accent)40' : 'var(--color-status-running)40'}`,
+            background: 'var(--color-accent)18',
+            color: 'var(--color-accent)',
+            border: '1px solid var(--color-accent)40',
           }}>
-            {activeMode === 'chat' ? '💬 AI 对话' : '⚙️ Task 模式'}
+            💬 AI 对话
           </span>
         </div>
         <div className="flex items-center gap-2">
           <AgentSelector currentAgent={currentAgent} onSelect={handleAgentChange} disabled={sending} />
-          {/* AI: 新建对话（LangChain chat 模式）*/}
-          <button onClick={() => startNewDraft('chat')} className="px-2.5 py-1 rounded-md text-xs transition-colors"
+          {/* AI: 新建对话按钮 */}
+          <button onClick={startNewDraft} className="px-2.5 py-1 rounded-md text-xs transition-colors"
             style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
             onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-text-primary)' }}
             onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
             + 新对话
-          </button>
-          {/* AI: 新建任务（OpenClaw task 模式）*/}
-          <button onClick={() => startNewDraft('task')} className="px-2.5 py-1 rounded-md text-xs transition-colors"
-            style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-text-primary)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
-            + 新任务
           </button>
         </div>
       </div>
@@ -879,17 +893,8 @@ export default function TasksPage() {
           <div className="flex flex-col items-center justify-center h-full gap-3">
             <div className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold"
               style={{ background: 'var(--color-accent)', color: '#000', opacity: 0.8 }}>M</div>
-            {activeMode === 'chat' ? (
-              <>
-                <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>AI 对话模式</p>
-                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>直接与 LLM 对话，支持多轮上下文</p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>Task 模式</p>
-                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>消息将创建任务交由 Agent 执行</p>
-              </>
-            )}
+            <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>AI 对话</p>
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>与 LLM 直接对话，支持多轮上下文和 Agent 角色切换</p>
           </div>
         )}
         {conversation?.messages.map((msg) => (
@@ -909,9 +914,7 @@ export default function TasksPage() {
         onSend={handleSend}
         onInterrupt={() => handleInterrupt(false)}
         sending={sending}
-        placeholder={activeMode === 'chat'
-          ? `和 ${currentAgent} 聊天…（Shift+Enter 换行）`
-          : `发送给 ${currentAgent} 创建任务…（Shift+Enter 换行）`}
+        placeholder={`和 ${currentAgent} 聊天…（Shift+Enter 换行）`}
       />
     </div>
   )

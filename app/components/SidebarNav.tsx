@@ -18,23 +18,14 @@ const NAV_ITEMS = [
   { href: '/skills',     label: 'Skills', icon: '⚡' },
 ]
 
-type TaskStatus = 'inbox' | 'planning' | 'running' | 'done' | 'failed' | 'archived'
-
-const STATUS_ICONS: Record<TaskStatus, string> = {
-  done: '✓',
-  running: '⏳',
-  planning: '⚡',
-  inbox: '⭕',
-  failed: '❌',
-  archived: '📦',
-}
-
-interface Task {
+// AI: LLM 聊天会话类型
+interface Conversation {
   id: string
   title: string
-  status: TaskStatus
-  createdAt?: string
-  updatedAt?: string
+  agentName: string
+  mode?: 'chat' | 'task'
+  createdAt: string
+  updatedAt: string
 }
 
 export function SidebarNav() {
@@ -43,9 +34,9 @@ export function SidebarNav() {
   const [colorMode, setColorMode] = useState<'light' | 'dark'>('dark')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [tasksExpanded, setTasksExpanded] = useState(true)
-  const [allTasks, setAllTasks] = useState<Task[]>([])
-  const [showArchived, setShowArchived] = useState(false)
+  const [conversationsExpanded, setConversationsExpanded] = useState(true)
+  // AI: LLM 聊天会话列表（只展示 chat 模式）
+  const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -54,31 +45,32 @@ export function SidebarNav() {
 
     if (pathname.startsWith('/tasks') && typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search)
-      setSelectedId(params.get('taskId') ?? params.get('convId'))
+      setSelectedId(params.get('convId'))
     } else {
       setSelectedId(null)
     }
   }, [pathname])
 
+  // AI: 获取 LLM 聊天会话列表（只展示 chat 模式）
   useEffect(() => {
-    if (!tasksExpanded) return
+    if (!conversationsExpanded) return
 
-    async function fetchTasks() {
+    async function fetchConversations() {
       try {
-        const res = await fetch('/api/tasks')
+        const res = await fetch('/api/conversations?mode=chat')
         const data = await res.json()
-        setAllTasks(data.tasks ?? [])
+        setConversations(data.conversations ?? [])
       } catch {
-        setAllTasks([])
+        setConversations([])
       }
     }
 
-    fetchTasks()
-    const timer = setInterval(fetchTasks, 5000)
+    fetchConversations()
+    const timer = setInterval(fetchConversations, 5000)
     return () => clearInterval(timer)
-  }, [tasksExpanded])
+  }, [conversationsExpanded])
 
-  function openNewTask() {
+  function openNewConversation() {
     router.push('/tasks')
   }
 
@@ -93,17 +85,11 @@ export function SidebarNav() {
     }
   }
 
-  const filteredTasks = useMemo(() => {
-    const base = showArchived ? allTasks : allTasks.filter((t) => t.status !== 'archived')
-    if (!searchQuery.trim()) return base
+  const filteredConversations = useMemo(() => {
+    if (!searchQuery.trim()) return conversations
     const q = searchQuery.toLowerCase()
-    return base.filter((t) => t.title.toLowerCase().includes(q))
-  }, [allTasks, searchQuery, showArchived])
-
-  const archivedCount = useMemo(
-    () => allTasks.filter((t) => t.status === 'archived').length,
-    [allTasks]
-  )
+    return conversations.filter((c) => c.title.toLowerCase().includes(q))
+  }, [conversations, searchQuery])
 
   function handleColorModeChange(newMode: 'light' | 'dark') {
     setColorMode(newMode)
@@ -171,10 +157,10 @@ export function SidebarNav() {
           </div>
         </div>
 
-        {/* 新建任务 */}
+        {/* 新建会话 */}
         <div className="px-3 pb-2 flex-shrink-0">
           <button
-            onClick={openNewTask}
+            onClick={openNewConversation}
             className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-all"
             style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent)', color: 'var(--color-text-primary)' }}
             onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-text-inverse)' }}
@@ -213,73 +199,57 @@ export function SidebarNav() {
             })}
           </div>
 
-          {/* 任务列表（可滚动区域）*/}
+          {/* 会话列表（可滚动区域）*/}
           <div className="mt-3 pt-3 flex-1 flex flex-col overflow-hidden" style={{ borderTop: '1px solid var(--color-border)' }}>
-            {/* 标题行：任务 + 归档开关 */}
+            {/* 标题行：会话 + 展开/折叠 */}
             <div className="flex items-center justify-between px-3 py-1.5 flex-shrink-0">
               <button
-                onClick={() => setTasksExpanded(!tasksExpanded)}
+                onClick={() => setConversationsExpanded(!conversationsExpanded)}
                 className="flex items-center gap-1.5"
               >
                 <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>会话</span>
-                <span style={{ fontSize: '10px', transition: 'transform 150ms', transform: tasksExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', color: 'var(--color-text-muted)' }}>▾</span>
+                <span style={{ fontSize: '10px', transition: 'transform 150ms', transform: conversationsExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', color: 'var(--color-text-muted)' }}>▾</span>
               </button>
-              {/* 归档开关 */}
-              {archivedCount > 0 && (
-                <button
-                  onClick={() => setShowArchived((v) => !v)}
-                  className="flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors"
-                  style={{
-                    fontSize: '10px',
-                    color: showArchived ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                    border: `1px solid ${showArchived ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                  }}
-                  title={showArchived ? '隐藏已归档' : `显示已归档 (${archivedCount})`}
-                >
-                  📦 {archivedCount}
-                </button>
-              )}
             </div>
 
-            {tasksExpanded && (
+            {conversationsExpanded && (
               <div className="mt-1 flex-1 overflow-y-auto space-y-0.5 scrollbar-none">
-                {filteredTasks.length === 0 ? (
+                {filteredConversations.length === 0 ? (
                   <div className="px-3 py-2 text-[11px] text-center" style={{ color: 'var(--color-text-muted)' }}>
-                    {searchQuery ? '无匹配任务' : '暂无任务'}
+                    {searchQuery ? '无匹配会话' : '暂无会话'}
                   </div>
                 ) : (
-                  filteredTasks.map((task) => {
-                    const isActive = pathname.startsWith('/tasks') && selectedId === task.id
+                  filteredConversations.map((conv) => {
+                    const isActive = pathname.startsWith('/tasks') && selectedId === conv.id
                     return (
                       <button
-                        key={task.id}
+                        key={conv.id}
                         onClick={(e) => {
                           e.stopPropagation()
                           if (isActive) return
-                          setSelectedId(task.id)
-                          router.replace(`/tasks?taskId=${task.id}`, { scroll: false })
+                          setSelectedId(conv.id)
+                          router.replace(`/tasks?convId=${conv.id}`, { scroll: false })
                         }}
                         className="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-all"
                         style={{
-                          color: isActive ? 'var(--color-text-inverse)' : task.status === 'archived' ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
+                          color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)',
                           background: isActive ? 'var(--color-accent)' : 'transparent',
                           cursor: isActive ? 'default' : 'pointer',
-                          opacity: task.status === 'archived' ? 0.7 : 1,
                         }}
                         onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-text-primary)' } }}
-                        onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = task.status === 'archived' ? 'var(--color-text-muted)' : 'var(--color-text-secondary)' } }}
+                        onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-secondary)' } }}
                       >
                         <span style={{ fontSize: '12px', width: '14px', flexShrink: 0, textAlign: 'center' }}>
-                          {STATUS_ICONS[task.status]}
+                          💬
                         </span>
                         <span
                           style={{ fontSize: '11px', fontWeight: isActive ? 500 : 400, flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                          title={task.title}
+                          title={conv.title}
                         >
-                          {task.title}
+                          {conv.title}
                         </span>
                         <span style={{ fontSize: '10px', color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)', flexShrink: 0 }}>
-                          {formatRelativeTime(task.updatedAt || task.createdAt)}
+                          {formatRelativeTime(conv.updatedAt)}
                         </span>
                       </button>
                     )

@@ -2,9 +2,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createConversation, listConversations } from '@/core/conversation/store'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const conversations = listConversations()
+    const { searchParams } = new URL(req.url)
+    const mode = searchParams.get('mode') as 'chat' | 'task' | null
+    
+    // AI: 按 mode 筛选（如果指定了 mode 参数）
+    const conversations = listConversations(mode ?? undefined)
     return NextResponse.json({ conversations })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
