@@ -18,12 +18,12 @@ export function ThemeInitializer() {
         applyTheme(saved.config)
         setColorModeClass(saved.mode)
       } else {
-        // AI: 首次加载 — 默认使用 CLI Pixel 主题
+        // AI: 首次加载 — 默认使用 CLI Pixel 暗色主题
         const defaultTheme = getThemeById('cli-pixel') ?? DESIGN_THEMES[0]
-        const systemMode = getSystemColorMode()
-        const config = getThemeConfig(defaultTheme, systemMode)
+        const defaultMode: 'dark' = 'dark'
+        const config = getThemeConfig(defaultTheme, defaultMode)
         applyTheme(config)
-        setColorModeClass(systemMode)
+        setColorModeClass(defaultMode)
       }
     }
 

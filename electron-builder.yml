@@ -6,15 +6,70 @@ directories:
   output: "dist"
   buildResources: "build"
 
-# 包含的文件（极简版：打包完整的项目）
+# 包含的文件（生产环境优化版：只包含运行时必需文件）
 files:
+  # 必需的应用文件
   - "electron/**/*"
   - "package.json"
   - ".next/**/*"
   - "public/**/*"
+  
+  # AI: 内置工作流定义（默认工作流，只读）
+  - "workflows/**/*"
+  
+  # AI: 只打包生产依赖（通过 npm prune 自动处理）
+  # electron-builder 会自动处理 node_modules，只包含 dependencies 中的包
   - "node_modules/**/*"
+  
+  # 排除开发工具和缓存
   - "!node_modules/.cache/**/*"
   - "!node_modules/.pnpm/**/*"
+  - "!node_modules/.bin/**/*"
+  
+  # 排除 TypeScript 类型定义（生产环境不需要）
+  - "!**/*.d.ts"
+  - "!**/*.d.cts"
+  - "!**/*.d.mts"
+  
+  # 排除 Source Maps（生产环境不需要，可通过错误监控服务收集）
+  - "!**/*.map"
+  
+  # 排除文档文件
+  - "!**/README.md"
+  - "!**/README"
+  - "!**/CHANGELOG.md"
+  - "!**/CHANGELOG"
+  - "!**/HISTORY.md"
+  - "!**/HISTORY"
+  - "!**/LICENSE"
+  - "!**/LICENSE.md"
+  - "!**/LICENSE.txt"
+  - "!**/AUTHORS"
+  - "!**/CONTRIBUTORS"
+  - "!**/NOTICE"
+  
+  # 排除 .next 缓存和临时文件
+  - "!.next/cache/**/*"
+  - "!.next/types/**/*"
+  - "!.next/trace"
+  - "!.next/package.json"
+  - "!.next/diagnostics/**/*"
+  
+  # 排除示例和测试文件
+  - "!**/__tests__/**/*"
+  - "!**/__mocks__/**/*"
+  - "!**/*.test.js"
+  - "!**/*.test.ts"
+  - "!**/*.test.jsx"
+  - "!**/*.test.tsx"
+  - "!**/*.spec.js"
+  - "!**/*.spec.ts"
+  - "!**/*.spec.jsx"
+  - "!**/*.spec.tsx"
+  - "!**/test/**/*"
+  - "!**/tests/**/*"
+  - "!**/example/**/*"
+  - "!**/examples/**/*"
 
 # 发布配置（GitHub Releases）
 publish:
@@ -30,7 +85,8 @@ mac:
       arch: ["arm64"]
   icon: "build/icon.icns"
   category: "public.app-category.developer-tools"
-  hardenedRuntime: true
+  # AI: 开发阶段禁用 hardened runtime（否则需要签名才能运行）
+  hardenedRuntime: false
   gatekeeperAssess: false
   # 自动更新需要签名（开发阶段使用 ad-hoc 签名）
   identity: null
@@ -47,8 +103,8 @@ dmg:
       type: link
       path: "/Applications"
 
-# 禁用 asar（最简单方案）
+# 禁用 asar（避免 .next 被打包进 asar 导致找不到文件）
 asar: false
-compression: "normal"
+compression: "maximum"
 
 # 自动更新配置

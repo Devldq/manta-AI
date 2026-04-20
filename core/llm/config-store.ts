@@ -6,7 +6,7 @@ import type { LLMConfig } from './types'
 import { getDefaultLLMConfig } from './types'
 
 // AI: 配置文件路径
-const DATA_DIR = path.join(os.homedir(), 'manta-data')
+const DATA_DIR = path.join(os.homedir(), '.manta-data')
 const CONFIG_FILE = path.join(DATA_DIR, 'llm-config.json')
 
 function ensureDir(): void {

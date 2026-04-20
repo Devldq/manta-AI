@@ -1,10 +1,22 @@
 /*  start: 工作流 YAML 加载器 — 解析 workflows/*.yaml，返回 WorkflowDef */
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 import type { WorkflowDef, WorkflowStep, WorkflowStepType } from '../types'
 
-// AI: workflows 目录路径（项目根目录下的 workflows/）
-const WORKFLOWS_DIR = path.join(process.cwd(), 'workflows')
+// AI: 内置工作流目录（打包在应用内，只读）
+const BUILTIN_WORKFLOWS_DIR = path.join(process.cwd(), 'workflows')
+
+// AI: 用户工作流目录（保存在用户数据目录，可读写）
+const DATA_DIR = path.join(os.homedir(), '.manta-data')
+const USER_WORKFLOWS_DIR = path.join(DATA_DIR, 'workflows')
+
+// AI: 确保用户工作流目录存在
+function ensureUserWorkflowsDir(): void {
+  if (!fs.existsSync(USER_WORKFLOWS_DIR)) {
+    fs.mkdirSync(USER_WORKFLOWS_DIR, { recursive: true })
+  }
+}
 
 // AI: 极简 YAML 解析 — 只解析工作流定义所需的结构
 // 不引入 js-yaml 等库，手动解析 key: value 格式
@@ -295,26 +307,56 @@ export function loadWorkflowFile(filePath: string): WorkflowDef | null {
   }
 }
 
-// AI: 加载所有工作流（扫描 workflows/ 目录下所有 .yaml 文件）
-export function loadAllWorkflows(): WorkflowDef[] {
-  if (!fs.existsSync(WORKFLOWS_DIR)) return []
+// AI: 从指定目录加载工作流
+function loadWorkflowsFromDir(dir: string): WorkflowDef[] {
+  if (!fs.existsSync(dir)) return []
   
   try {
-    const files = fs.readdirSync(WORKFLOWS_DIR)
+    const files = fs.readdirSync(dir)
       .filter((f) => f.endsWith('.yaml') || f.endsWith('.yml'))
     
     return files
-      .map((f) => loadWorkflowFile(path.join(WORKFLOWS_DIR, f)))
+      .map((f) => loadWorkflowFile(path.join(dir, f)))
       .filter((w): w is WorkflowDef => w !== null)
   } catch (err) {
-    console.error('[workflow-loader] 扫描工作流目录失败:', err)
+    console.error(`[workflow-loader] 扫描工作流目录失败 (${dir}):`, err)
     return []
   }
+}
+
+// AI: 加载所有工作流（合并内置工作流和用户工作流，用户工作流优先）
+export function loadAllWorkflows(): WorkflowDef[] {
+  ensureUserWorkflowsDir()
+  
+  // 先加载内置工作流
+  const builtinWorkflows = loadWorkflowsFromDir(BUILTIN_WORKFLOWS_DIR)
+  
+  // 再加载用户工作流（用户工作流可以覆盖内置工作流）
+  const userWorkflows = loadWorkflowsFromDir(USER_WORKFLOWS_DIR)
+  
+  // 合并，用户工作流优先
+  const workflowMap = new Map<string, WorkflowDef>()
+  builtinWorkflows.forEach(wf => workflowMap.set(wf.id, wf))
+  userWorkflows.forEach(wf => workflowMap.set(wf.id, wf))
+  
+  return Array.from(workflowMap.values())
 }
 
 // AI: 根据 ID 查找单个工作流
 export function findWorkflow(id: string): WorkflowDef | null {
   const all = loadAllWorkflows()
   return all.find((w) => w.id === id) ?? null
+}
+
+// AI: 获取用户工作流目录路径（用于新建、删除等操作）
+export function getUserWorkflowsDir(): string {
+  ensureUserWorkflowsDir()
+  return USER_WORKFLOWS_DIR
+}
+
+// AI: 检查某个工作流是否是内置工作流（只读，不可删除/修改）
+export function isBuiltinWorkflow(workflowId: string): boolean {
+  const builtinWorkflows = loadWorkflowsFromDir(BUILTIN_WORKFLOWS_DIR)
+  return builtinWorkflows.some(wf => wf.id === workflowId)
 }
 /*  end: 工作流 YAML 加载器结束 */

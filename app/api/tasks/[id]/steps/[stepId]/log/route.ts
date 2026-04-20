@@ -6,7 +6,7 @@ import * as os from 'os'
 import { getExecution } from '@/core/workflow-engine/executor'
 
 // AI: 数据目录（与 executor.ts 保持一致）
-const DATA_DIR = path.join(os.homedir(), 'manta-data')
+const DATA_DIR = path.join(os.homedir(), '.manta-data')
 
 interface RouteContext {
   params: Promise<{ id: string; stepId: string }>

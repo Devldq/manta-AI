@@ -18,7 +18,7 @@ import { getRunner } from '../runner'
 import { channelManager } from '../channel'
 
 // AI: 工作流执行状态持久化目录
-const DATA_DIR = path.join(os.homedir(), 'manta-data')
+const DATA_DIR = path.join(os.homedir(), '.manta-data')
 const EXECUTIONS_FILE = path.join(DATA_DIR, 'workflow-executions.json')
 
 // ─── 执行状态持久化 ───────────────────────────────────────────────

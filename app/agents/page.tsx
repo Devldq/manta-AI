@@ -833,20 +833,32 @@ function ExternalDetailPanel({ agent, onDeleted }: { agent: ExternalAgent; onDel
   const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
+    // AI: 取消标志，防止快速切换 Agent 时的竞态条件
+    let cancelled = false
+    const currentAgentName = agent.name
+
     // AI: 并行加载 summary 和 definition
     setSummary(null)
     setLoadingDef(true)
     setShowPolishHelper(false)
     setPolishInput({ responsibilities: '', workflow: '' })
+    
     Promise.all([
       fetch(`/api/agents/summary?name=${encodeURIComponent(agent.name)}&pluginId=${encodeURIComponent(agent.pluginId ?? '')}`)
         .then(r => r.json()).then(d => d.summary ?? null).catch(() => null),
       fetch(`/api/agents/definition?name=${encodeURIComponent(agent.name)}`)
         .then((r) => r.json()).then((d) => d.content ?? null).catch(() => null),
     ]).then(([sum, def]) => {
-      setSummary(sum)
-      setContent(def)
-    }).finally(() => setLoadingDef(false))
+      // AI: 只有当前请求仍然有效时才更新状态
+      if (!cancelled && currentAgentName === agent.name) {
+        setSummary(sum)
+        setContent(def)
+      }
+    }).finally(() => {
+      if (!cancelled && currentAgentName === agent.name) {
+        setLoadingDef(false)
+      }
+    })
 
     // AI: 如果支持编辑 SOUL，加载 SOUL.md
     if (agent.soulEditable && agent.pluginId === 'openclaw') {
@@ -854,13 +866,23 @@ function ExternalDetailPanel({ agent, onDeleted }: { agent: ExternalAgent; onDel
       fetch(`/api/agents/openclaw/${encodeURIComponent(agent.name)}/soul`)
         .then(r => r.json())
         .then(d => {
-          if (d.soul) {
+          // AI: 只有当前请求仍然有效时才更新状态
+          if (!cancelled && currentAgentName === agent.name && d.soul) {
             setSoul(d.soul)
             setEditingSoul(d.soul)
           }
         })
         .catch(() => {})
-        .finally(() => setLoadingSoul(false))
+        .finally(() => {
+          if (!cancelled && currentAgentName === agent.name) {
+            setLoadingSoul(false)
+          }
+        })
+    }
+
+    // AI: 清理函数，切换 Agent 时取消之前的请求
+    return () => {
+      cancelled = true
     }
   }, [agent.name, agent.pluginId, agent.soulEditable])
 

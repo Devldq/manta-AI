@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
       id: taskId,
       title: 'AI 润色 SOUL.md',
       description: prompt, // AI: 直接把提示词放到 description 字段
-      mode: 'agent',
+      mode: 'lightweight',
       status: 'running',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

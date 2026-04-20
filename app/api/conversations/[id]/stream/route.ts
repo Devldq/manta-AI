@@ -10,7 +10,7 @@ interface RouteContext {
   params: Promise<{ id: string }>
 }
 
-const DATA_DIR = path.join(os.homedir(), 'manta-data')
+const DATA_DIR = path.join(os.homedir(), '.manta-data')
 
 function getTaskOutputDir(taskId: string): string {
   return path.join(DATA_DIR, 'tasks', taskId)

@@ -68,6 +68,48 @@ AI_MODEL=gpt-4o-mini
 
 所有数据保存在本机 `~/arm-data/`，不纳入 git 管理。
 
+## 📦 构建和安装
+
+### 构建DMG
+```bash
+pnpm build
+```
+
+### macOS安装提示"已损坏"的解决方案
+
+如果在macOS上安装DMG时提示"已损坏，无法打开"，这是因为应用未进行代码签名。请按以下步骤解决：
+
+#### 解决方法一：系统偏好设置（推荐普通用户）
+
+1. 将 Arm.app 拖入应用程序文件夹
+2. 打开"系统偏好设置" → "安全性与隐私"
+3. 在"通用"标签页底部，会看到"Arm 已阻止使用"的提示
+4. 点击"仍要打开"按钮
+5. 之后就可以正常打开应用了
+
+#### 解决方法二：命令行解决（推荐开发者）
+
+如果上述方法无效，或者你想快速解决，可以使用命令行：
+
+```bash
+# 方法1: 使用项目自带脚本
+chmod +x scripts/fix-macos-quarantine.sh
+./scripts/fix-macos-quarantine.sh /Applications/Arm.app
+
+# 方法2: 手动执行命令
+sudo xattr -rd com.apple.quarantine /Applications/Arm.app
+```
+
+#### 解决方法三：直接打开（快速临时方案）
+
+在 Finder 中找到 Arm.app，然后：
+1. 右键点击（或 Control+点击）Arm.app
+2. 选择"打开"
+3. 在弹出的警告对话框中点击"打开"
+4. 之后就可以正常双击打开了
+
+> **注意**：当前版本未进行代码签名，因此在其他 Mac 上安装时会触发 Gatekeeper 安全提示。这是预期行为，按上述步骤操作即可正常使用。详细解决方案请参考 [macOS Gatekeeper 修复指南](docs/macos-gatekeeper-fix.md)。
+
 ## 工作流
 
 - `dev-standard`：标准前端开发流（需求→架构→审批→开发→QA+Review）

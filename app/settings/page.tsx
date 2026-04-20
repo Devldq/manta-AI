@@ -35,6 +35,7 @@ interface PluginManifest {
 // AI: 目录项
 const TOC = [
   { id: 'section-about', label: '系统介绍' },
+  { id: 'section-update', label: '自动更新' },
   { id: 'section-runner', label: 'Runner 状态' },
   { id: 'section-webhook', label: 'Webhook 通知' },
   { id: 'section-plugins', label: '插件管理' },
@@ -60,6 +61,13 @@ export default function SettingsPage() {
   const [installMsg, setInstallMsg] = useState('')
   const [isElectron, setIsElectron] = useState(false)
 
+  // AI start: 自动更新状态
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'>('idle')
+  const [updateInfo, setUpdateInfo] = useState<{ version?: string; releaseNotes?: string }>({})
+  const [downloadProgress, setDownloadProgress] = useState(0)
+  const [updateError, setUpdateError] = useState('')
+  // AI end: 自动更新状态
+
   useEffect(() => {
     const api = (window as Window & { electronAPI?: { selectDirectory?: unknown } }).electronAPI
     setIsElectron(typeof api?.selectDirectory === 'function')
@@ -75,6 +83,33 @@ export default function SettingsPage() {
       .then((d) => setReadme(d.content ?? ''))
       .catch(() => setReadme('README.md 加载失败'))
       .finally(() => setReadmeLoading(false))
+
+    // AI start: 注册自动更新事件监听
+    const electronAPI = (window as Window & { electronAPI?: {
+      onUpdateAvailable?: (cb: (data: { version: string; releaseNotes: string }) => void) => void
+      onDownloadProgress?: (cb: (data: { percent: number }) => void) => void
+      onUpdateDownloaded?: (cb: (data: { version: string }) => void) => void
+    } }).electronAPI
+
+    if (electronAPI?.onUpdateAvailable) {
+      electronAPI.onUpdateAvailable((data) => {
+        setUpdateStatus('available')
+        setUpdateInfo(data)
+      })
+    }
+    if (electronAPI?.onDownloadProgress) {
+      electronAPI.onDownloadProgress((data) => {
+        setUpdateStatus('downloading')
+        setDownloadProgress(data.percent)
+      })
+    }
+    if (electronAPI?.onUpdateDownloaded) {
+      electronAPI.onUpdateDownloaded((data) => {
+        setUpdateStatus('downloaded')
+        setUpdateInfo({ version: data.version })
+      })
+    }
+    // AI end: 注册自动更新事件监听
   }, [])
 
   async function probeRunners() {
@@ -185,6 +220,65 @@ export default function SettingsPage() {
     }, 300)
   }
 
+  // AI start: 自动更新相关函数
+  async function checkForUpdates() {
+    setUpdateStatus('checking')
+    setUpdateError('')
+    const electronAPI = (window as Window & { electronAPI?: {
+      checkForUpdates?: () => Promise<{ success: boolean; error?: string; updateInfo?: { version: string } }>
+    } }).electronAPI
+
+    if (electronAPI?.checkForUpdates) {
+      try {
+        const result = await electronAPI.checkForUpdates()
+        if (!result.success) {
+          setUpdateStatus('error')
+          setUpdateError(result.error || '检查更新失败')
+        } else if (!result.updateInfo) {
+          setUpdateStatus('idle')
+        }
+      } catch (err) {
+        setUpdateStatus('error')
+        setUpdateError(String(err))
+      }
+    } else {
+      setUpdateStatus('error')
+      setUpdateError('自动更新仅在 Electron 桌面应用中可用')
+    }
+  }
+
+  async function downloadUpdate() {
+    setUpdateStatus('downloading')
+    setUpdateError('')
+    const electronAPI = (window as Window & { electronAPI?: {
+      downloadUpdate?: () => Promise<{ success: boolean; error?: string }>
+    } }).electronAPI
+
+    if (electronAPI?.downloadUpdate) {
+      try {
+        const result = await electronAPI.downloadUpdate()
+        if (!result.success) {
+          setUpdateStatus('error')
+          setUpdateError(result.error || '下载更新失败')
+        }
+      } catch (err) {
+        setUpdateStatus('error')
+        setUpdateError(String(err))
+      }
+    }
+  }
+
+  function installUpdate() {
+    const electronAPI = (window as Window & { electronAPI?: {
+      installUpdate?: () => void
+    } }).electronAPI
+
+    if (electronAPI?.installUpdate) {
+      electronAPI.installUpdate()
+    }
+  }
+  // AI end: 自动更新相关函数
+
   return (
     <div className="flex min-h-full" style={{ background: 'var(--color-background)' }}>
       {/* AI: 左侧目录导航 */}
@@ -253,6 +347,148 @@ export default function SettingsPage() {
             )}
           </div>
         </section>
+
+        {/* AI start: 自动更新 ─── */}
+        <section id="section-update" className="mb-10 scroll-mt-8">
+          <h2 style={{ fontSize: '14px', fontWeight: 500, color: 'var(--color-text-primary)', margin: '0 0 16px' }}>
+            自动更新
+          </h2>
+          <div
+            className="rounded-lg p-5"
+            style={{ border: '1px solid var(--color-border)' }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <p style={{ fontSize: '14px', fontWeight: 500, color: 'var(--color-text-primary)', margin: 0 }}>
+                  应用版本
+                </p>
+                <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                  当前版本: v2.0.0
+                </p>
+              </div>
+              <button
+                onClick={checkForUpdates}
+                disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  background: 'var(--color-accent)',
+                  color: 'var(--color-text-inverse)',
+                  borderRadius: 'var(--radius-md)',
+                  border: 'none',
+                  cursor: 'pointer',
+                  opacity: (updateStatus === 'checking' || updateStatus === 'downloading') ? 0.5 : 1,
+                }}
+              >
+                {updateStatus === 'checking' ? '检查中...' : '检查更新'}
+              </button>
+            </div>
+
+            {updateStatus === 'available' && (
+              <div
+                className="rounded-lg p-4 mb-4"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-primary)', margin: 0 }}>
+                      发现新版本: v{updateInfo.version}
+                    </p>
+                    {updateInfo.releaseNotes && (
+                      <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '4px' }}>
+                        {updateInfo.releaseNotes}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={downloadUpdate}
+                    style={{
+                      padding: '8px 16px',
+                      fontSize: '13px',
+                      background: 'var(--color-accent)',
+                      color: 'var(--color-text-inverse)',
+                      borderRadius: 'var(--radius-md)',
+                      border: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    下载更新
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {updateStatus === 'downloading' && (
+              <div className="mb-4">
+                <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
+                  正在下载更新... {downloadProgress}%
+                </p>
+                <div
+                  style={{
+                    width: '100%',
+                    height: '6px',
+                    background: 'var(--color-border)',
+                    borderRadius: '3px',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${downloadProgress}%`,
+                      height: '100%',
+                      background: 'var(--color-accent)',
+                      transition: 'width 0.3s ease',
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {updateStatus === 'downloaded' && (
+              <div
+                className="rounded-lg p-4 mb-4"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-primary)', margin: 0 }}>
+                      更新已下载完成
+                    </p>
+                    <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '4px' }}>
+                      版本: v{updateInfo.version}，重启应用后生效
+                    </p>
+                  </div>
+                  <button
+                    onClick={installUpdate}
+                    style={{
+                      padding: '8px 16px',
+                      fontSize: '13px',
+                      background: 'var(--color-status-done)',
+                      color: 'var(--color-text-inverse)',
+                      borderRadius: 'var(--radius-md)',
+                      border: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    立即安装并重启
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {updateStatus === 'error' && (
+              <div
+                className="rounded-lg p-4"
+                style={{ background: 'var(--color-status-failed)', opacity: 0.1, border: '1px solid var(--color-status-failed)' }}
+              >
+                <p style={{ fontSize: '13px', color: 'var(--color-status-failed)', margin: 0 }}>
+                  更新出错: {updateError}
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+        {/* AI end: 自动更新 ─── */}
 
         {/* ─── Runner 状态 ─── */}
         <section id="section-runner" className="mb-10 scroll-mt-8">

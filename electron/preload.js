@@ -17,5 +17,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // AI: 文件夹选择对话框（用于插件安装）
   selectDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
+
+  // AI start: 自动更新相关 API
+  // 检查更新
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  // 下载更新
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  // 安装更新并重启
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  // 监听更新事件
+  onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (_, data) => callback(data)),
+  onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (_, data) => callback(data)),
+  onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (_, data) => callback(data)),
+  // 移除事件监听
+  removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel),
+  // AI end: 自动更新相关 API
 });
 // AI end: Preload 脚本

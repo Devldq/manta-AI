@@ -1,7 +1,7 @@
 /*  start: 任务页面 — 支持 convId（对话模式）和 taskId（任务日志模式）*/
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { AgentSelector } from '../components/AgentSelector'
 
@@ -333,7 +333,7 @@ function InputBar({
 }
 
 // ─── 主页面 ────────────────────────────────────────────────────────────────────
-export default function TasksPage() {
+function TasksPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
 
@@ -711,7 +711,7 @@ export default function TasksPage() {
       if (res.ok) setConversation((await res.json()).conversation)
     } catch {}
     // AI: chat 模式下切换 agent，插入系统通知消息作为视觉分隔
-    if (conversation.mode === 'chat' || draftMode === 'chat') {
+    if (conversation.mode === 'chat') {
       setConversation((prev) => prev ? {
         ...prev,
         messages: [
@@ -919,4 +919,15 @@ export default function TasksPage() {
     </div>
   )
 }
+
+// 包装组件，添加 Suspense 边界
+function TasksPageWrapper() {
+  return (
+    <Suspense fallback={<div>加载中...</div>}>
+      <TasksPage />
+    </Suspense>
+  )
+}
+
+export default TasksPageWrapper
 /*  end: 任务页面结束 */

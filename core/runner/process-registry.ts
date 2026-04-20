@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 
 // AI: 进程注册表文件路径
-const DATA_DIR = path.join(os.homedir(), 'manta-data')
+const DATA_DIR = path.join(os.homedir(), '.manta-data')
 const REGISTRY_FILE = path.join(DATA_DIR, 'process-registry.json')
 
 interface ProcessRecord {

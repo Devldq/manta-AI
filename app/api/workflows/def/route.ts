@@ -1,11 +1,22 @@
 /* AI start: 新建工作流 API — POST /api/workflows/def
- * 接收工作流 ID + 初始 YAML 内容，写入 workflows/<id>.yaml 文件
+ * 接收工作流 ID + 初始 YAML 内容，写入用户工作流目录
  */
 import { NextRequest, NextResponse } from 'next/server'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
+import { isBuiltinWorkflow } from '@/core/workflow-engine/loader'
 
-const WORKFLOWS_DIR = path.join(process.cwd(), 'workflows')
+// AI: 用户工作流目录（保存在用户数据目录，可读写）
+const DATA_DIR = path.join(os.homedir(), '.manta-data')
+const USER_WORKFLOWS_DIR = path.join(DATA_DIR, 'workflows')
+
+// AI: 确保用户工作流目录存在
+function ensureUserWorkflowsDir(): void {
+  if (!fs.existsSync(USER_WORKFLOWS_DIR)) {
+    fs.mkdirSync(USER_WORKFLOWS_DIR, { recursive: true })
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -23,7 +34,15 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const filePath = path.join(WORKFLOWS_DIR, `${id.trim()}.yaml`)
+    // AI: 检查是否与内置工作流 ID 冲突
+    if (isBuiltinWorkflow(id.trim())) {
+      return NextResponse.json(
+        { error: `工作流 "${id}" 是内置工作流，不能使用此 ID` },
+        { status: 409 }
+      )
+    }
+
+    const filePath = path.join(USER_WORKFLOWS_DIR, `${id.trim()}.yaml`)
 
     // AI: 不允许覆盖已有文件
     if (fs.existsSync(filePath)) {
@@ -33,9 +52,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    if (!fs.existsSync(WORKFLOWS_DIR)) {
-      fs.mkdirSync(WORKFLOWS_DIR, { recursive: true })
-    }
+    ensureUserWorkflowsDir()
 
     const content = typeof yaml === 'string' && yaml.trim()
       ? yaml

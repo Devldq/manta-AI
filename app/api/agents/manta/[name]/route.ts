@@ -6,7 +6,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { getAgentOps } from '@/plugins/loader'
 
-const MANTA_AGENTS_DIR = path.join(os.homedir(), 'manta-data', 'agents')
+const MANTA_AGENTS_DIR = path.join(os.homedir(), '.manta-data', 'agents')
 
 interface AgentMeta {
   name: string

@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid'
 import type { Conversation, Message } from './types'
 
 // AI: 会话数据目录
-const DATA_DIR = path.join(os.homedir(), 'manta-data', 'conversations')
+const DATA_DIR = path.join(os.homedir(), '.manta-data', 'conversations')
 
 function ensureDir(): void {
   if (!fs.existsSync(DATA_DIR)) {

@@ -3,10 +3,12 @@
 try {
   const { app, BrowserWindow, ipcMain, dialog } = require('electron');
   const path = require('path');
+  const http = require('http');
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
   let mainWindow = null;
   let _autoUpdater = null;
+  let nextServerPort = null; // 动态端口
 
   // 懒加载 electron-updater（仅在真实 Electron 运行时初始化，避免构建时崩溃）
   function getAutoUpdater() {
@@ -142,8 +144,14 @@ try {
       mainWindow.loadURL('http://localhost:3000');
       mainWindow.webContents.openDevTools();
     } else {
-      const port = 3000;
-      mainWindow.loadURL(`http://localhost:${port}`);
+      // 生产模式：使用动态端口
+      if (nextServerPort) {
+        mainWindow.loadURL(`http://localhost:${nextServerPort}`);
+      } else {
+        console.error('❌ Next.js server port not available');
+        dialog.showErrorBox('启动失败', '无法启动 Next.js 服务器');
+        app.quit();
+      }
     }
 
     mainWindow.on('closed', () => {
@@ -151,7 +159,7 @@ try {
     });
   }
 
-  // 生产模式：在 Electron 进程中直接启动 Next.js
+  // 生产模式：在 Electron 进程中直接启动 Next.js（支持动态端口）
   if (!isDev) {
     app.whenReady().then(async () => {
       try {
@@ -165,14 +173,19 @@ try {
         await nextApp.prepare();
         const handle = nextApp.getRequestHandler();
 
-        const http = require('http');
         const server = http.createServer((req, res) => {
           handle(req, res);
         });
 
-        const port = 3000;
-        server.listen(port, 'localhost', () => {
-          console.log(`✅ Next.js server ready on http://localhost:${port}`);
+        // 从环境变量读取端口，如果未设置则使用 0（随机端口）
+        const configuredPort = process.env.ELECTRON_NEXT_PORT
+          ? parseInt(process.env.ELECTRON_NEXT_PORT, 10)
+          : 0;
+
+        server.listen(configuredPort, 'localhost', () => {
+          const address = server.address();
+          nextServerPort = address.port;
+          console.log(`✅ Next.js server ready on http://localhost:${nextServerPort}`);
           createWindow();
 
           setTimeout(() => {

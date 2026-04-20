@@ -34,7 +34,7 @@ export interface Task {
   workDir?: string
 
   // 执行结果
-  outputDir?: string  // ~/arm-data/tasks/{id}/
+  outputDir?: string  // ~/.manta-data/tasks/{id}/
   error?: string
 
   // 时间戳

@@ -14,8 +14,8 @@ import { findAgent } from '../../registry'
 
 // ─── 数据存储（JSON 文件实现）───────────────────────────────────────────────
 
-// AI: 数据目录改为 manta-data（v2 起统一使用新目录，与 v1 arm-data 区分）
-const DATA_DIR = path.join(os.homedir(), 'manta-data')
+// AI: 数据目录使用 .manta-data（隐藏目录，符合 Unix/Linux 惯例）
+const DATA_DIR = path.join(os.homedir(), '.manta-data')
 const TASKS_FILE = path.join(DATA_DIR, 'tasks.json')
 
 // AI: 确保数据目录存在

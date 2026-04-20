@@ -10,24 +10,65 @@ function expandPath(p: string): string {
   return p
 }
 
-// AI: 读取 openclaw.json 获取 agent workspace
-function getAgentWorkspace(name: string): string | null {
+// AI: 读取 openclaw.json 获取 agent 目录信息
+function getAgentDirs(name: string): { workspace?: string; agentDir?: string } | null {
   const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json')
   if (!fs.existsSync(configPath)) return null
 
   try {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-    const list: Array<{ id?: string; workspace?: string }> = config?.agents?.list ?? []
+    const list: Array<{ id?: string; workspace?: string; agentDir?: string }> = config?.agents?.list ?? []
     const entry = list.find((a) => a.id === name)
     
-    if (entry?.workspace) {
-      return expandPath(entry.workspace)
+    if (!entry) return null
+    
+    const result: { workspace?: string; agentDir?: string } = {}
+    
+    if (entry.workspace) {
+      result.workspace = expandPath(entry.workspace)
+    } else {
+      // 降级到默认 workspace 路径
+      result.workspace = path.join(os.homedir(), '.openclaw', `workspace-${name}`)
     }
-    // AI: 降级到默认路径
-    return path.join(os.homedir(), '.openclaw', `workspace-${name}`)
+    
+    if (entry.agentDir) {
+      result.agentDir = expandPath(entry.agentDir)
+    }
+    
+    return result
   } catch {
     return null
   }
+}
+
+// AI: 查找 SOUL.md 的实际路径（优先 agentDir，其次 workspace）
+function findSoulPath(name: string): string | null {
+  const dirs = getAgentDirs(name)
+  if (!dirs) return null
+
+  // 优先检查 agentDir/SOUL.md（OpenClaw 的标准位置）
+  if (dirs.agentDir) {
+    const agentDirSoul = path.join(dirs.agentDir, 'SOUL.md')
+    if (fs.existsSync(agentDirSoul)) {
+      return agentDirSoul
+    }
+  }
+
+  // 其次检查 workspace/SOUL.md（兼容旧位置）
+  if (dirs.workspace) {
+    const workspaceSoul = path.join(dirs.workspace, 'SOUL.md')
+    if (fs.existsSync(workspaceSoul)) {
+      return workspaceSoul
+    }
+  }
+
+  // 最后尝试默认 agent 路径：~/.openclaw/agents/{name}/SOUL.md
+  const defaultAgentPath = path.join(os.homedir(), '.openclaw', 'agents', name, 'SOUL.md')
+  if (fs.existsSync(defaultAgentPath)) {
+    return defaultAgentPath
+  }
+
+  return null
 }
 
 // AI: GET /api/agents/openclaw/[name]/soul — 读取 SOUL.md
@@ -42,13 +83,8 @@ export async function GET(
   }
 
   try {
-    const workspace = getAgentWorkspace(name)
-    if (!workspace) {
-      return NextResponse.json({ error: 'Agent 未找到' }, { status: 404 })
-    }
-
-    const soulPath = path.join(workspace, 'SOUL.md')
-    if (!fs.existsSync(soulPath)) {
+    const soulPath = findSoulPath(name)
+    if (!soulPath) {
       return NextResponse.json({ error: 'SOUL.md 文件不存在' }, { status: 404 })
     }
 
@@ -78,12 +114,19 @@ export async function PUT(
       return NextResponse.json({ error: 'soul 必须是字符串' }, { status: 400 })
     }
 
-    const workspace = getAgentWorkspace(name)
-    if (!workspace) {
-      return NextResponse.json({ error: 'Agent 未找到' }, { status: 404 })
+    // AI: 查找 SOUL.md 路径
+    let soulPath = findSoulPath(name)
+    
+    // 如果文件不存在，使用默认路径
+    if (!soulPath) {
+      const dirs = getAgentDirs(name)
+      if (!dirs) {
+        return NextResponse.json({ error: 'Agent 未找到' }, { status: 404 })
+      }
+      // 优先使用 agentDir，否则使用 workspace
+      const baseDir = dirs.agentDir || dirs.workspace || path.join(os.homedir(), '.openclaw', 'agents', name)
+      soulPath = path.join(baseDir, 'SOUL.md')
     }
-
-    const soulPath = path.join(workspace, 'SOUL.md')
     
     // AI: 备份旧文件（如果存在）
     if (fs.existsSync(soulPath)) {
@@ -92,8 +135,8 @@ export async function PUT(
       fs.copyFileSync(soulPath, backupPath)
     }
 
-    // AI: 确保 workspace 目录存在
-    fs.mkdirSync(workspace, { recursive: true })
+    // AI: 确保目录存在
+    fs.mkdirSync(path.dirname(soulPath), { recursive: true })
 
     // AI: 写入新内容
     fs.writeFileSync(soulPath, soul, 'utf-8')
