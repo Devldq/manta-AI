@@ -37,3 +37,6 @@ next-env.d.ts
 
 
 .ai-api-key-configuration.md
+
+# Takumi CLI local data
+.takumi/

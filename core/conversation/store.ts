@@ -1,17 +1,14 @@
-/* 会话存储层 — JSON 文件实现，对应 ~/arm-data/conversations/ */
+/* 会话存储层 — JSON 文件实现 */
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { v4 as uuidv4 } from 'uuid'
 import type { Conversation, Message } from './types'
 
-// AI: 会话数据目录
 const DATA_DIR = path.join(os.homedir(), '.manta-data', 'conversations')
 
 function ensureDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
-  }
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
 }
 
 function convFilePath(id: string): string {
@@ -21,11 +18,7 @@ function convFilePath(id: string): string {
 function readConv(id: string): Conversation | null {
   const fp = convFilePath(id)
   if (!fs.existsSync(fp)) return null
-  try {
-    return JSON.parse(fs.readFileSync(fp, 'utf-8')) as Conversation
-  } catch {
-    return null
-  }
+  try { return JSON.parse(fs.readFileSync(fp, 'utf-8')) as Conversation } catch { return null }
 }
 
 function writeConv(conv: Conversation): void {
@@ -36,52 +29,37 @@ function writeConv(conv: Conversation): void {
   fs.renameSync(tmp, fp)
 }
 
-// ─── 公共 API ───────────────────────────────────────────────────────────────
-
 /** 创建新会话 */
-export function createConversation(agentName: string, title?: string, mode?: 'chat' | 'task'): Conversation {
+export function createConversation(agentName: string, title?: string): Conversation {
   ensureDir()
   const now = new Date().toISOString()
   const conv: Conversation = {
     id: uuidv4(),
-    title: title ?? '新任务',
+    title: title ?? '新对话',
     agentName,
     messages: [],
     context: {},
     createdAt: now,
     updatedAt: now,
-    mode: mode ?? 'task',
   }
   writeConv(conv)
   return conv
 }
 
-/** 获取会话列表（按 updatedAt 倒序），支持按 mode 筛选 */
-export function listConversations(mode?: 'chat' | 'task'): Conversation[] {
+/** 获取会话列表（按 updatedAt 倒序） */
+export function listConversations(): Conversation[] {
   ensureDir()
   try {
-    const conversations = fs
+    return fs
       .readdirSync(DATA_DIR)
       .filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
       .map((f) => {
-        try {
-          return JSON.parse(
-            fs.readFileSync(path.join(DATA_DIR, f), 'utf-8')
-          ) as Conversation
-        } catch {
-          return null
-        }
+        try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf-8')) as Conversation }
+        catch { return null }
       })
       .filter((c): c is Conversation => c !== null)
-    
-    // AI: 按 mode 筛选
-    const filtered = mode ? conversations.filter((c) => c.mode === mode) : conversations
-    
-    // AI: 按 updatedAt 倒序
-    return filtered.sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
-  } catch {
-    return []
-  }
+      .sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
+  } catch { return [] }
 }
 
 /** 获取单个会话 */
@@ -99,12 +77,11 @@ export function updateConversationAgent(id: string, agentName: string): Conversa
   return conv
 }
 
-/** 追加消息到会话 */
+/** 追加消息到会话，首条用户消息自动设为标题 */
 export function appendMessage(
   convId: string,
   role: 'user' | 'assistant',
   content: string,
-  taskId?: string
 ): { conv: Conversation; message: Message } | null {
   const conv = readConv(convId)
   if (!conv) return null
@@ -114,13 +91,11 @@ export function appendMessage(
     role,
     content,
     timestamp: new Date().toISOString(),
-    taskId,
   }
   conv.messages.push(msg)
   conv.updatedAt = new Date().toISOString()
 
-  // AI: 首条用户消息作为会话标题（截取前30字符）
-  if (role === 'user' && conv.title === '新任务') {
+  if (role === 'user' && conv.title === '新对话') {
     conv.title = content.slice(0, 30) + (content.length > 30 ? '…' : '')
   }
 
@@ -128,42 +103,9 @@ export function appendMessage(
   return { conv, message: msg }
 }
 
-/** 删除会话中的某条消息 */
-export function deleteMessage(convId: string, messageId: string): boolean {
-  const conv = readConv(convId)
-  if (!conv) return false
-  const idx = conv.messages.findIndex((m) => m.id === messageId)
-  if (idx < 0) return false
-  conv.messages.splice(idx, 1)
-  conv.updatedAt = new Date().toISOString()
-  writeConv(conv)
-  return true
-}
-
-/** 按 taskId 更新对应 assistant 消息的内容（精确匹配，避免多轮对话写错位置）*/
-export function updateAssistantMessageByTaskId(convId: string, taskId: string, content: string): boolean {
-  const conv = readConv(convId)
-  if (!conv) return false
-
-  const msg = conv.messages.find((m) => m.role === 'assistant' && m.taskId === taskId)
-  if (!msg) return false
-
-  msg.content = content
-  conv.updatedAt = new Date().toISOString()
-  writeConv(conv)
-  return true
-}
-
-/** 更新最后一条 assistant 消息的内容（兜底用，优先使用 updateAssistantMessageByTaskId）*/
-export function updateLastAssistantMessage(convId: string, content: string): boolean {
-  const conv = readConv(convId)
-  if (!conv) return false
-
-  const last = [...conv.messages].reverse().find((m) => m.role === 'assistant')
-  if (!last) return false
-
-  last.content = content
-  conv.updatedAt = new Date().toISOString()
-  writeConv(conv)
-  return true
+/** 删除会话 */
+export function deleteConversation(id: string): boolean {
+  const fp = convFilePath(id)
+  if (!fs.existsSync(fp)) return false
+  try { fs.unlinkSync(fp); return true } catch { return false }
 }

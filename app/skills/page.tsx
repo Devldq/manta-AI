@@ -1,8 +1,8 @@
-/* AI start: Skills 页面 — 展示所有可用的 CodeFlicker Skills */
+/* AI start: Skills 页面 — 展示所有可用的 CodeFlicker Skills（从本地动态加载）*/
 'use client'
 
-import { useState, useMemo } from 'react'
-import { SKILLS, SKILL_CATEGORIES, searchSkills, type Skill } from '../lib/skills-data'
+import { useState, useMemo, useEffect } from 'react'
+import { SKILL_CATEGORIES, searchSkills, getSkillsByCategory, fetchSkills, type Skill } from '../lib/skills-data'
 
 // AI: 分类图标和颜色映射
 const CATEGORY_STYLES: Record<Skill['category'], { bgColor: string; borderColor: string }> = {
@@ -13,6 +13,9 @@ const CATEGORY_STYLES: Record<Skill['category'], { bgColor: string; borderColor:
 }
 
 export default function SkillsPage() {
+  // AI: 从 API 加载 skills
+  const [skills, setSkills] = useState<Skill[]>([])
+  const [loading, setLoading] = useState(true)
   // AI: 搜索查询状态
   const [searchQuery, setSearchQuery] = useState('')
   // AI: 选中的分类筛选（null 表示全部）
@@ -20,17 +23,42 @@ export default function SkillsPage() {
   // AI: 展开的 skill 详情
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null)
 
+  // AI: 页面加载时从 API 读取本地 skills
+  useEffect(() => {
+    fetchSkills().then((data) => {
+      setSkills(data)
+      setLoading(false)
+    })
+  }, [])
+
   // AI: 过滤后的 skills 列表
   const filteredSkills = useMemo(() => {
-    let result = SKILLS
+    let result = skills
     if (searchQuery.trim()) {
-      result = searchSkills(searchQuery)
+      result = searchSkills(result, searchQuery)
     }
     if (selectedCategory) {
-      result = result.filter((s) => s.category === selectedCategory)
+      result = getSkillsByCategory(result, selectedCategory)
     }
     return result
-  }, [searchQuery, selectedCategory])
+  }, [skills, searchQuery, selectedCategory])
+
+  // AI: 加载中状态
+  if (loading) {
+    return (
+      <div className="p-8 max-w-6xl">
+        <div className="mb-8">
+          <h1 className="text-2xl font-semibold text-text-primary tracking-tight flex items-center gap-3">
+            <span className="text-2xl">⚡</span>
+            Skills
+          </h1>
+        </div>
+        <div className="text-center py-10 text-text-muted text-sm">
+          正在加载 Skills...
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-8 max-w-6xl">
@@ -41,7 +69,7 @@ export default function SkillsPage() {
           Skills
         </h1>
         <p className="mt-1 text-sm text-text-muted">
-          探索 CodeFlicker 的技能模块，扩展 AI 助手的能力
+          探索 CodeFlicker 的技能模块，扩展 AI 助手的能力（共 {skills.length} 个）
         </p>
       </div>
 
@@ -98,7 +126,11 @@ export default function SkillsPage() {
       {/* Skills 卡片网格 */}
       {filteredSkills.length === 0 ? (
         <div className="border border-dashed border-border-subtle rounded-lg p-10 text-center">
-          <p className="text-text-muted text-sm">没有找到匹配的 skills</p>
+          <p className="text-text-muted text-sm">
+            {skills.length === 0
+              ? '本地尚未安装任何 skill，请在 ~/.codex/skills/ 目录下安装'
+              : '没有找到匹配的 skills'}
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

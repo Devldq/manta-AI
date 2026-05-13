@@ -71,6 +71,9 @@ files:
   - "!**/example/**/*"
   - "!**/examples/**/*"
 
+  # AI: 排除 Takumi CLI 本地数据目录
+  - "!.takumi/**/*"
+
 # 发布配置（GitHub Releases）
 publish:
   provider: github

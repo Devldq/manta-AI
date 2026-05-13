@@ -23,7 +23,6 @@ interface Conversation {
   id: string
   title: string
   agentName: string
-  mode?: 'chat' | 'task'
   createdAt: string
   updatedAt: string
 }
@@ -57,7 +56,7 @@ export function SidebarNav() {
 
     async function fetchConversations() {
       try {
-        const res = await fetch('/api/conversations?mode=chat')
+        const res = await fetch('/api/conversations')
         const data = await res.json()
         setConversations(data.conversations ?? [])
       } catch {
