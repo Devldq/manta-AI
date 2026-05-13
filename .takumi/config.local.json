@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Write(/Users/link/.openclaw/workspace-main/**)"
-    ]
-  }
-}
