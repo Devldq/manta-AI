@@ -82,6 +82,8 @@ export function appendMessage(
   convId: string,
   role: 'user' | 'assistant',
   content: string,
+  toolCalls?: import('./types').ToolCallRecord[],
+  usage?: { inputTokens?: number; outputTokens?: number },
 ): { conv: Conversation; message: Message } | null {
   const conv = readConv(convId)
   if (!conv) return null
@@ -91,6 +93,8 @@ export function appendMessage(
     role,
     content,
     timestamp: new Date().toISOString(),
+    ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(usage ? { usage } : {}),
   }
   conv.messages.push(msg)
   conv.updatedAt = new Date().toISOString()

@@ -1,6 +1,6 @@
 # ARM · 前端研发工作流多 Agent 控制台
 
-三省制多 Agent 协作系统，参照 edict 架构设计，基于 Next.js 14 全栈实现。
+多 Agent 协作调度系统，基于 Next.js 全栈实现。
 
 ## 快速开始
 
@@ -57,12 +57,12 @@ AI_MODEL=gpt-4o-mini
 
 ## Agent 角色
 
-| Agent | 对应古制 | 职责 |
-|---|---|---|
-| architect | 中书省 | 拆解需求，编写前端技术方案 |
-| dev | 兵部 | 功能开发 |
-| qa | 刑部 | 测试检查 |
-| review | 御史台 | 代码审查 |
+| Agent | 职责 |
+|---|---|
+| architect | 拆解需求，编写前端技术方案 |
+| dev | 功能开发 |
+| qa | 测试检查 |
+| review | 代码审查 |
 
 ## 数据存储
 

@@ -11,11 +11,22 @@ import remarkGfm from 'remark-gfm'
 
 // ─── 类型 ──────────────────────────────────────────────────────────────────────
 
+interface StoredToolCall {
+  toolCallId: string
+  toolName: string
+  input: unknown
+  output: unknown
+  isError: boolean
+  errorText?: string
+}
+
 interface StoredMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  toolCalls?: StoredToolCall[]
+  usage?: { inputTokens?: number; outputTokens?: number }
 }
 
 interface Conversation {
@@ -34,7 +45,81 @@ interface AgentEntry {
   enabled: boolean
 }
 
+interface AccessRequest {
+  id: string
+  path: string
+  status: 'pending' | 'granted' | 'denied'
+  requestedAt: number
+}
+
 const DEFAULT_AGENT = 'main'
+
+// ─── 文件访问授权 Banner ───────────────────────────────────────────────────────
+
+function useFsAccessRequests() {
+  const [requests, setRequests] = useState<AccessRequest[]>([])
+
+  useEffect(() => {
+    const poll = () =>
+      fetch('/api/fs/request-access')
+        .then((r) => r.json())
+        .then((data: AccessRequest[]) => setRequests(data))
+        .catch(() => {})
+
+    poll()
+    const timer = setInterval(poll, 1500)
+    return () => clearInterval(timer)
+  }, [])
+
+  async function respond(requestId: string, action: 'grant' | 'deny') {
+    await fetch('/api/fs/grant-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId, action }),
+    })
+    setRequests((prev) => prev.filter((r) => r.id !== requestId))
+  }
+
+  return { requests, respond }
+}
+
+function FsAccessBanner() {
+  const { requests, respond } = useFsAccessRequests()
+  if (requests.length === 0) return null
+
+  return (
+    <div style={{ padding: '0 20px 8px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {requests.map((req) => (
+        <div key={req.id} style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          padding: '10px 14px', borderRadius: '10px',
+          background: 'var(--color-surface)', border: '1px solid var(--color-border)',
+          fontSize: '13px',
+        }}>
+          <span style={{ fontSize: '16px' }}>🔒</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '2px' }}>
+              Agent 申请访问目录
+            </div>
+            <div style={{ color: 'var(--color-text-muted)', fontFamily: 'monospace', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {req.path}
+            </div>
+          </div>
+          <button
+            onClick={() => respond(req.id, 'grant')}
+            style={{ padding: '5px 14px', borderRadius: '7px', border: 'none', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', fontSize: '12px', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
+            批准
+          </button>
+          <button
+            onClick={() => respond(req.id, 'deny')}
+            style={{ padding: '5px 14px', borderRadius: '7px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', fontSize: '12px', cursor: 'pointer', flexShrink: 0 }}>
+            拒绝
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 // 快捷能力标签
 const CAPABILITY_TAGS = [
@@ -121,12 +206,218 @@ const MarkdownContent = memo(function MarkdownContent({ content, streaming }: { 
   )
 })
 
+// ─── 工具调用日志 ──────────────────────────────────────────────────────────────
+
+interface ToolCallEntry {
+  toolCallId: string
+  toolName: string
+  state: string          // input-streaming | input-available | output-available | output-error
+  input: unknown
+  output: unknown
+  errorText?: string
+}
+
+function extractToolCalls(parts: UIMessage['parts']): ToolCallEntry[] {
+  if (!parts) return []
+  const entries: ToolCallEntry[] = []
+  for (const p of parts) {
+    if (typeof p.type !== 'string') continue
+    const isStaticTool = p.type.startsWith('tool-') && p.type !== 'tool-invocation'
+    const isDynamic = p.type === 'dynamic-tool'
+    if (!isStaticTool && !isDynamic) continue
+
+    const cast = p as {
+      type: string; toolName?: string; toolCallId: string
+      state: string; input?: unknown; output?: unknown; errorText?: string
+    }
+    const toolName = isDynamic ? (cast.toolName ?? 'unknown') : p.type.replace(/^tool-/, '')
+    entries.push({
+      toolCallId: cast.toolCallId,
+      toolName,
+      state: cast.state,
+      input: cast.input,
+      output: cast.output,
+      errorText: cast.errorText,
+    })
+  }
+  return entries
+}
+
+/** 格式化工具输入/输出为可读字符串，截断过长内容 */
+function formatValue(v: unknown, maxLen = 400): string {
+  if (v === undefined || v === null) return ''
+  const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2)
+  return s.length > maxLen ? s.slice(0, maxLen) + '\n…（已截断）' : s
+}
+
+/** 把工具调用转成一句人读的动作描述 */
+function describeToolCall(entry: ToolCallEntry): string {
+  const input = entry.input as Record<string, unknown> | null | undefined
+  switch (entry.toolName) {
+    case 'lsDir': {
+      const p = String(input?.dir_path ?? '')
+      return `列出目录 ${p}`
+    }
+    case 'readFile': {
+      const p = String(input?.file_path ?? '')
+      return `读取文件 ${p}`
+    }
+    case 'glob': {
+      const pat = String(input?.pattern ?? '')
+      const root = input?.path ? ` (${input.path})` : ''
+      return `匹配文件 ${pat}${root}`
+    }
+    case 'grep': {
+      const pat = String(input?.pattern ?? '')
+      const sp = input?.search_path ? ` 在 ${input.search_path}` : ''
+      return `搜索 "${pat}"${sp}`
+    }
+    default:
+      return entry.toolName
+  }
+}
+
+const TOOL_LOG_MAX = 5   // 超过此数量折叠
+
+const ToolCallLog = memo(function ToolCallLog({
+  toolCalls,
+}: {
+  toolCalls: ToolCallEntry[]
+  isStreaming: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+  if (toolCalls.length === 0) return null
+
+  const hasActive = toolCalls.some(
+    (t) => t.state === 'input-streaming' || t.state === 'input-available'
+  )
+  const errorCount = toolCalls.filter((t) => t.state === 'output-error').length
+  const needFold = toolCalls.length > TOOL_LOG_MAX
+  const visible = needFold && !expanded ? toolCalls.slice(-TOOL_LOG_MAX) : toolCalls
+  const hiddenCount = toolCalls.length - TOOL_LOG_MAX
+
+  return (
+    <div style={{ marginBottom: '10px', display: 'flex', flexDirection: 'column', gap: '1px' }}>
+      {/* 折叠提示行 */}
+      {needFold && !expanded && (
+        <button
+          onClick={() => setExpanded(true)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '5px',
+            padding: '3px 6px', border: 'none', background: 'transparent',
+            cursor: 'pointer', textAlign: 'left', borderRadius: '4px',
+            color: 'var(--color-text-muted)', fontSize: '11px',
+            transition: 'color 0.12s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = 'var(--color-text-secondary)'}
+          onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text-muted)'}
+        >
+          <span style={{ fontFamily: 'var(--font-mono)' }}>↑ 还有 {hiddenCount} 条</span>
+        </button>
+      )}
+
+      {/* 日志行 */}
+      {visible.map((t, i) => (
+        <ToolCallItem key={t.toolCallId ?? i} entry={t} />
+      ))}
+
+      {/* 折叠收起 */}
+      {needFold && expanded && (
+        <button
+          onClick={() => setExpanded(false)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '5px',
+            padding: '3px 6px', border: 'none', background: 'transparent',
+            cursor: 'pointer', textAlign: 'left', borderRadius: '4px',
+            color: 'var(--color-text-muted)', fontSize: '11px',
+            transition: 'color 0.12s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = 'var(--color-text-secondary)'}
+          onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text-muted)'}
+        >
+          <span style={{ fontFamily: 'var(--font-mono)' }}>↑ 收起</span>
+        </button>
+      )}
+
+      {/* 执行中尾行汇总（仅在折叠时展示当前动作） */}
+      {hasActive && needFold && !expanded && (() => {
+        const active = toolCalls.find(t => t.state === 'input-streaming' || t.state === 'input-available')
+        if (!active) return null
+        return null // visible 里已包含最新的
+      })()}
+
+      {/* 无错时无需额外状态行；有错时在最后加一行 */}
+      {!hasActive && errorCount > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 6px' }}>
+          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-status-failed)', display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ fontSize: '11px', color: 'var(--color-status-failed)', fontFamily: 'var(--font-mono)' }}>{errorCount} 个调用失败</span>
+        </div>
+      )}
+    </div>
+  )
+})
+
+const ToolCallItem = memo(function ToolCallItem({ entry }: { entry: ToolCallEntry }) {
+  const isActive = entry.state === 'input-streaming' || entry.state === 'input-available'
+  const isDone = entry.state === 'output-available'
+  const isError = entry.state === 'output-error'
+  const desc = describeToolCall(entry)
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '7px',
+      padding: '2px 6px', borderRadius: '4px',
+      minHeight: '22px',
+    }}>
+      {/* 状态点 */}
+      {isActive ? (
+        <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0, border: '1.5px solid var(--color-accent)', borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite', display: 'inline-block' }} />
+      ) : (
+        <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0, display: 'inline-block', background: isDone ? 'var(--color-status-done)' : isError ? 'var(--color-status-failed)' : 'var(--color-border)' }} />
+      )}
+
+      {/* 动作描述 */}
+      <span style={{
+        fontSize: '12px', fontFamily: 'var(--font-mono)',
+        color: isActive ? 'var(--color-text-secondary)' : isError ? 'var(--color-status-failed)' : 'var(--color-text-muted)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+      }}>
+        {desc}
+      </span>
+    </div>
+  )
+})
+
 // ─── 消息行 ────────────────────────────────────────────────────────────────────
+
+/** 格式化 token 数：≥10000 显示为 x.xw */
+function fmtTokens(n: number): string {
+  if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + 'w'
+  return String(n)
+}
+
+/** 格式化时间戳为 HH:mm */
+function formatTime(ts: string | undefined): string {
+  if (!ts) return ''
+  try {
+    const d = new Date(ts)
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  } catch { return '' }
+}
+
+/** 内容字符数超过此阈值时加滚动窗口 */
+const CONTENT_SCROLL_THRESHOLD = 1200
 
 const MessageRow = memo(function MessageRow({ message, agentName, isStreaming }: { message: UIMessage; agentName: string; isStreaming: boolean }) {
   const [hovered, setHovered] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const content = getTextContent(message)
+  const toolCalls = extractToolCalls(message.parts)
+  const meta = message.metadata as { timestamp?: string; usage?: { inputTokens?: number; outputTokens?: number } | null } | undefined
+  const timestamp = formatTime(meta?.timestamp)
+  const usage = meta?.usage
+  const isLong = content.length > CONTENT_SCROLL_THRESHOLD
 
   async function handleCopy() {
     try { await navigator.clipboard.writeText(content); setCopied(true); setTimeout(() => setCopied(false), 2000) } catch { }
@@ -134,21 +425,27 @@ const MessageRow = memo(function MessageRow({ message, agentName, isStreaming }:
 
   if (message.role === 'user') {
     return (
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', alignItems: 'flex-start' }}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}
         onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-        <div style={{ maxWidth: '72%', padding: '10px 16px', borderRadius: '18px 18px 4px 18px', fontSize: '14px', lineHeight: '1.65', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-          {content}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', justifyContent: 'flex-end', width: '100%' }}>
+          <button onClick={handleCopy} style={{ opacity: hovered ? 0.5 : 0, transition: 'opacity 0.15s', width: '22px', height: '22px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '11px', flexShrink: 0 }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}>
+            {copied ? '✓' : '⧉'}
+          </button>
+          <div style={{ maxWidth: '72%', padding: '10px 16px', borderRadius: '18px 18px 4px 18px', fontSize: '14px', lineHeight: '1.65', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {content}
+          </div>
         </div>
-        <button onClick={handleCopy} style={{ opacity: hovered ? 0.5 : 0, transition: 'opacity 0.15s', width: '22px', height: '22px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '11px', flexShrink: 0 }}
-          onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
-          onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}>
-          {copied ? '✓' : '⧉'}
-        </button>
+        {timestamp && (
+          <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', paddingRight: '30px' }}>{timestamp}</span>
+        )}
       </div>
     )
   }
 
   const avatarLabel = (agentName || 'A').slice(0, 1).toUpperCase()
+
   return (
     <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
@@ -156,22 +453,91 @@ const MessageRow = memo(function MessageRow({ message, agentName, isStreaming }:
         {avatarLabel}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', marginBottom: '4px', fontFamily: 'monospace' }}>{agentName}</div>
-        <div style={{ fontSize: '14px', lineHeight: '1.65', color: 'var(--color-text-primary)', wordBreak: 'break-word', position: 'relative' }}>
-          {content && !isStreaming && (
-            <button onClick={handleCopy} style={{ position: 'absolute', top: 0, right: 0, opacity: hovered ? 0.5 : 0, transition: 'opacity 0.15s', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', zIndex: 1 }}
-              onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
-              onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}>
-              {copied ? '✓' : '⧉'}
-            </button>
-          )}
-          {content
-            ? <MarkdownContent content={content} streaming={isStreaming} />
-            : <span style={{ color: 'var(--color-text-muted)' }}>
-              {isStreaming ? <span style={{ display: 'inline-block', width: '2px', height: '14px', background: 'var(--color-accent)', animation: 'blink 1s step-end infinite', verticalAlign: 'middle' }} /> : '（无输出）'}
-            </span>
-          }
+        {/* 顶部：agent 名 + 时间 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+          <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>{agentName}</span>
+          {timestamp && <span style={{ fontSize: '10px', color: 'var(--color-text-muted)' }}>{timestamp}</span>}
         </div>
+
+        {/* 工具调用日志 */}
+        {toolCalls.length > 0 && (
+          <ToolCallLog toolCalls={toolCalls} isStreaming={isStreaming} />
+        )}
+
+        {/* 主内容区 */}
+        {content
+          ? (
+            <div style={{ position: 'relative' }}>
+              {/* 复制按钮 */}
+              {!isStreaming && (
+                <button onClick={handleCopy} style={{ position: 'absolute', top: 0, right: 0, opacity: hovered ? 0.5 : 0, transition: 'opacity 0.15s', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', zIndex: 2 }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}>
+                  {copied ? '✓' : '⧉'}
+                </button>
+              )}
+
+              {/* 内容：超长且已结束时折叠 */}
+              <div
+                className={isLong && !isStreaming && !expanded ? 'msg-content-collapsed' : undefined}
+                style={{ fontSize: '14px', lineHeight: '1.65', color: 'var(--color-text-primary)', wordBreak: 'break-word' }}
+              >
+                <MarkdownContent content={content} streaming={isStreaming} />
+              </div>
+
+              {/* 展开/收起按钮 */}
+              {isLong && !isStreaming && (
+                <div style={{ marginTop: expanded ? '10px' : '2px', display: 'flex', justifyContent: 'center' }}>
+                  <button
+                    onClick={() => setExpanded(v => !v)}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '5px',
+                      padding: '5px 14px', borderRadius: '20px', fontSize: '12px',
+                      border: '1px solid var(--color-border)',
+                      background: 'var(--color-surface)',
+                      color: 'var(--color-text-secondary)',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.background = 'var(--color-border)'
+                      e.currentTarget.style.color = 'var(--color-text-primary)'
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.background = 'var(--color-surface)'
+                      e.currentTarget.style.color = 'var(--color-text-secondary)'
+                    }}
+                  >
+                    <span style={{ display: 'inline-block', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s cubic-bezier(0.4,0,0.2,1)', fontSize: '10px', lineHeight: 1 }}>▼</span>
+                    {expanded ? '收起' : '展开全文'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+          : (
+            <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>
+              {isStreaming
+                ? <span style={{ display: 'inline-block', width: '2px', height: '14px', background: 'var(--color-accent)', animation: 'blink 1s step-end infinite', verticalAlign: 'middle' }} />
+                : toolCalls.length > 0 ? null : '（无输出）'}
+            </span>
+          )
+        }
+
+        {/* 底部：token 消耗 */}
+        {!isStreaming && usage && (usage.inputTokens != null || usage.outputTokens != null) && (
+          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {usage.inputTokens != null && (
+              <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>in {fmtTokens(usage.inputTokens)}</span>
+            )}
+            {usage.outputTokens != null && (
+              <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>out {fmtTokens(usage.outputTokens)}</span>
+            )}
+            {usage.inputTokens != null && usage.outputTokens != null && (
+              <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>· {fmtTokens(usage.inputTokens + usage.outputTokens)} total</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -378,32 +744,76 @@ function WelcomeScreen({
 }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 20px 20px', minHeight: 0 }}>
-      {/* 机器人图标 */}
+      {/* 蝠鲼图标 */}
       <div style={{ marginBottom: '24px' }}>
-        <div style={{ width: '120px', height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {/* SVG 线框机器人风格图标 */}
-          <svg width="110" height="110" viewBox="0 0 110 110" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ opacity: 0.75 }}>
-            {/* 天线 */}
-            <line x1="55" y1="8" x2="55" y2="22" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-            <circle cx="55" cy="6" r="3" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-            {/* 耳机/侧面 */}
-            <rect x="12" y="32" width="12" height="20" rx="6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-            <rect x="86" y="32" width="12" height="20" rx="6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-            {/* 头部 */}
-            <rect x="24" y="22" width="62" height="42" rx="14" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-            {/* 眼睛 */}
-            <circle cx="41" cy="42" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-            <circle cx="69" cy="42" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-            <circle cx="41" cy="42" r="2" fill="currentColor"/>
-            <circle cx="69" cy="42" r="2" fill="currentColor"/>
-            {/* 身体 */}
-            <rect x="30" y="68" width="50" height="30" rx="10" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-            {/* 腿 */}
-            <rect x="36" y="98" width="14" height="10" rx="5" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-            <rect x="60" y="98" width="14" height="10" rx="5" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-            {/* 身体格子纹 */}
-            <line x1="30" y1="80" x2="80" y2="80" stroke="currentColor" strokeWidth="1" opacity="0.3"/>
-            <line x1="55" y1="68" x2="55" y2="98" stroke="currentColor" strokeWidth="1" opacity="0.3"/>
+        <div style={{ width: '160px', height: '130px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {/* SVG 动漫风蝠鲼 — 仰视角，右翼上翻，嘴大张，带海浪 */}
+          <svg width="160" height="130" viewBox="0 0 160 130" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ opacity: 0.85 }}>
+
+            {/* ── 海浪（底部）── */}
+            <path d="M0 114 C22 107, 40 121, 62 114 C84 107, 104 121, 130 114 C142 110, 152 117, 160 114"
+              stroke="currentColor" strokeWidth="1.4" opacity="0.35" fill="none" strokeLinecap="round"/>
+            <path d="M0 123 C18 117, 34 128, 55 122 C66 119, 72 124, 80 121 C96 116, 118 127, 140 121 C150 118, 156 124, 160 122"
+              stroke="currentColor" strokeWidth="1.8" opacity="0.5" fill="none" strokeLinecap="round"/>
+
+            {/* ── 身体主轮廓（仰视，菱形腹面）── */}
+            <path d="M80 38 C92 42, 102 52, 104 64 C106 76, 98 86, 82 90 C66 94, 52 88, 46 76 C40 64, 46 50, 58 44 C64 41, 72 38, 80 38Z"
+              stroke="currentColor" strokeWidth="1.8" fill="none"/>
+
+            {/* ── 右翼（向右上大幅翻卷，动感强）── */}
+            <path d="M100 52 C114 40, 130 24, 148 14 C153 11, 156 15, 152 20 C140 34, 120 48, 108 58"
+              stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            {/* 右翼下缘回线 */}
+            <path d="M104 68 C118 62, 136 54, 148 46 C152 44, 153 48, 150 52 C138 62, 118 70, 104 72"
+              stroke="currentColor" strokeWidth="1.3" opacity="0.55" fill="none" strokeLinecap="round"/>
+
+            {/* ── 左翼（平展向左，略向上）── */}
+            <path d="M56 50 C42 44, 24 38, 8 36 C4 35, 4 39, 8 42 C22 48, 42 54, 56 58"
+              stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            {/* 左翼下缘 */}
+            <path d="M50 70 C36 66, 20 62, 8 60 C4 59, 4 63, 8 65 C20 68, 36 72, 50 74"
+              stroke="currentColor" strokeWidth="1.3" opacity="0.55" fill="none" strokeLinecap="round"/>
+
+            {/* ── 头鳍（两根标志性卷角，向前张开）── */}
+            {/* 左头鳍 */}
+            <path d="M66 42 C60 32, 56 22, 58 14 C59 10, 63 11, 64 16 C65 22, 66 32, 68 40"
+              stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+            {/* 右头鳍 */}
+            <path d="M92 44 C98 34, 102 22, 100 14 C99 10, 95 11, 94 16 C93 22, 91 32, 90 42"
+              stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+
+            {/* ── 嘴巴大张（半圆形，仰视看到内部）── */}
+            <path d="M64 72 C66 80, 72 84, 80 84 C88 84, 94 80, 96 72"
+              stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round"/>
+            {/* 嘴巴上缘 */}
+            <path d="M64 72 C68 68, 74 66, 80 66 C86 66, 92 68, 96 72"
+              stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/>
+            {/* 嘴内腮弧 */}
+            <path d="M68 76 C72 80, 78 82, 80 82 C82 82, 88 80, 92 76"
+              stroke="currentColor" strokeWidth="0.9" opacity="0.4" fill="none" strokeLinecap="round"/>
+
+            {/* ── 眼睛（腹面两侧，偏上）── */}
+            <circle cx="66" cy="58" r="3" stroke="currentColor" strokeWidth="1.4" fill="none"/>
+            <circle cx="66" cy="58" r="1.2" fill="currentColor"/>
+            <circle cx="94" cy="58" r="3" stroke="currentColor" strokeWidth="1.4" fill="none"/>
+            <circle cx="94" cy="58" r="1.2" fill="currentColor"/>
+            {/* 高光 */}
+            <circle cx="67" cy="57" r="0.7" fill="currentColor" opacity="0.5"/>
+            <circle cx="95" cy="57" r="0.7" fill="currentColor" opacity="0.5"/>
+
+            {/* ── 尾巴（向左下细长甩出）── */}
+            <path d="M50 80 C40 88, 28 96, 18 104 C14 107, 12 104, 16 101 C24 96, 36 88, 46 80"
+              stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/>
+
+            {/* ── 腹面纹路（中线 + 弧线）── */}
+            <path d="M80 42 L80 86" stroke="currentColor" strokeWidth="0.8" opacity="0.2" strokeLinecap="round"/>
+            <path d="M60 56 C68 60, 74 62, 80 62 C86 62, 92 60, 100 56"
+              stroke="currentColor" strokeWidth="0.8" opacity="0.2" fill="none"/>
+
+            {/* ── 水花（从身体周围溅起）── */}
+            <path d="M106 74 C110 68, 114 66, 114 72" stroke="currentColor" strokeWidth="1" opacity="0.4" fill="none" strokeLinecap="round"/>
+            <path d="M112 80 C118 76, 122 76, 120 82" stroke="currentColor" strokeWidth="0.9" opacity="0.35" fill="none" strokeLinecap="round"/>
+            <path d="M44 76 C40 70, 36 70, 38 76" stroke="currentColor" strokeWidth="1" opacity="0.4" fill="none" strokeLinecap="round"/>
           </svg>
         </div>
       </div>
@@ -503,7 +913,7 @@ function ChatView({
   const [inputText, setInputText] = useState('')
   const pendingMsgKey = `manta:pending-msg:${convId}`
 
-  const { messages, sendMessage, stop, status, error } = useChat({
+  const { messages, setMessages, sendMessage, stop, status, error } = useChat({
     transport: new DefaultChatTransport({
       api: `/api/conversations/${convId}/ai-stream`,
       body: { agentName },
@@ -513,6 +923,48 @@ function ChatView({
   })
 
   const isLoading = status === 'submitted' || status === 'streaming'
+
+  // 流结束后从服务端重新加载消息（以获取 metadata：timestamp、usage）
+  const prevStatusRef = useRef(status)
+  useEffect(() => {
+    const prev = prevStatusRef.current
+    prevStatusRef.current = status
+    if ((prev === 'streaming' || prev === 'submitted') && status === 'ready') {
+      fetch(`/api/conversations/${convId}`)
+        .then((r) => r.json())
+        .then((data) => {
+          const conv = data.conversation
+          if (!conv) return
+          const refreshed: UIMessage[] = conv.messages
+            .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
+            .map((m: { id: string; role: string; content: string; timestamp: string; toolCalls?: unknown[]; usage?: { inputTokens?: number; outputTokens?: number } | null }) => {
+              const parts: UIMessage['parts'] = []
+              if (m.toolCalls && m.toolCalls.length > 0) {
+                for (const tc of m.toolCalls as { toolCallId: string; toolName: string; isError: boolean; input: unknown; output: unknown; errorText?: string }[]) {
+                  parts.push({
+                    type: 'dynamic-tool',
+                    toolCallId: tc.toolCallId,
+                    toolName: tc.toolName,
+                    state: tc.isError ? 'output-error' : 'output-available',
+                    input: tc.input,
+                    output: tc.isError ? undefined : tc.output,
+                    errorText: tc.errorText,
+                  } as unknown as NonNullable<UIMessage['parts']>[number])
+                }
+              }
+              if (m.content) parts.push({ type: 'text' as const, text: m.content })
+              return {
+                id: m.id,
+                role: m.role as 'user' | 'assistant',
+                parts,
+                metadata: { timestamp: m.timestamp, usage: m.usage ?? null },
+              }
+            })
+          setMessages(refreshed)
+        })
+        .catch(() => { })
+    }
+  }, [status, convId, setMessages])
 
   useEffect(() => {
     const pendingMsg = sessionStorage.getItem(pendingMsgKey)
@@ -553,7 +1005,7 @@ function ChatView({
       <div style={{ flex: 1, overflowY: 'auto', padding: '8px 24px 16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {messages.map((msg, idx) => {
           const isLastAssistant = msg.role === 'assistant' && idx === messages.length - 1
-          return <MessageRow key={msg.id} message={msg} agentName={agentName} isStreaming={isLoading && isLastAssistant} />
+          return <div key={msg.id} style={{ width: '100%' }}><MessageRow message={msg} agentName={agentName} isStreaming={isLoading && isLastAssistant} /></div>
         })}
         {error && (
           <div style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '13px', background: '#ef444410', border: '1px solid #ef444440', color: '#ef4444' }}>
@@ -565,6 +1017,9 @@ function ChatView({
 
       {/* 能力标签 */}
       {messages.length === 0 && <CapabilityTags onSelect={(label) => setInputText(label + ' ')} />}
+
+      {/* 文件访问授权 */}
+      <FsAccessBanner />
 
       {/* 输入框 */}
       <KimInputBar
@@ -624,6 +1079,9 @@ function NewChatDraft({
 
       {/* 能力标签 */}
       <CapabilityTags onSelect={(label) => setInput(label + ' ')} />
+
+      {/* 文件访问授权 */}
+      <FsAccessBanner />
 
       {/* 输入框 */}
       <KimInputBar
@@ -712,12 +1170,36 @@ function TasksPage() {
   if (conv) {
     const initialMessages: UIMessage[] = conv.messages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => ({
-        id: m.id,
-        role: m.role as 'user' | 'assistant',
-        parts: [{ type: 'text' as const, text: m.content }],
-        metadata: undefined,
-      }))
+      .map((m) => {
+        const parts: UIMessage['parts'] = []
+
+        // 把持久化的工具调用记录还原为 dynamic-tool parts（output-available 状态）
+        if (m.toolCalls && m.toolCalls.length > 0) {
+          for (const tc of m.toolCalls) {
+            parts.push({
+              type: 'dynamic-tool',
+              toolCallId: tc.toolCallId,
+              toolName: tc.toolName,
+              state: tc.isError ? 'output-error' : 'output-available',
+              input: tc.input,
+              output: tc.isError ? undefined : tc.output,
+              errorText: tc.errorText,
+            } as unknown as NonNullable<UIMessage['parts']>[number])
+          }
+        }
+
+        // 文本内容
+        if (m.content) {
+          parts.push({ type: 'text' as const, text: m.content })
+        }
+
+        return {
+          id: m.id,
+          role: m.role as 'user' | 'assistant',
+          parts,
+          metadata: { timestamp: m.timestamp, usage: m.usage ?? null },
+        }
+      })
 
     return (
       <ChatView

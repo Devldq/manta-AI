@@ -1,18 +1,41 @@
 /* 文件系统工具集 — 供 AI 模型通过 function calling 使用
- * 安全限制：所有路径访问必须在 process.cwd() 下 */
+ * 安全限制：CWD 内自由访问；CWD 外需用户授权 */
 import { tool, jsonSchema } from 'ai'
 import * as fs from 'fs'
 import * as path from 'path'
+import { isApproved, requestAccess, listPendingRequests } from '@/core/fs/access-store'
 
-const CWD = process.cwd()
-
-/** 安全校验：确保目标路径在 CWD 内 */
-function assertSafe(targetPath: string): string {
+/**
+ * 解析路径并检查授权：
+ * - 已授权 → 返回 resolved 路径
+ * - 未授权 → 发起授权请求，轮询等待（最多 120s），授权后继续；超时或拒绝返回 error
+ */
+async function checkAccess(targetPath: string): Promise<{ resolved: string } | { error: string }> {
   const resolved = path.resolve(targetPath)
-  if (!resolved.startsWith(CWD + path.sep) && resolved !== CWD) {
-    throw new Error(`访问被拒绝：路径 "${resolved}" 超出工作目录范围 "${CWD}"`)
+  if (isApproved(resolved)) {
+    return { resolved }
   }
-  return resolved
+
+  const req = requestAccess(resolved)
+
+  // 轮询等待用户授权，每 500ms 检查一次，最多等 120s
+  const timeout = 120_000
+  const interval = 500
+  const start = Date.now()
+
+  while (Date.now() - start < timeout) {
+    await new Promise((r) => setTimeout(r, interval))
+    if (isApproved(resolved)) {
+      return { resolved }
+    }
+    // 检查是否被拒绝（请求已从 pending 中移除但未被批准）
+    const stillPending = listPendingRequests().some((r) => r.id === req.id)
+    if (!stillPending && !isApproved(resolved)) {
+      return { error: `用户拒绝了对 "${resolved}" 的访问请求` }
+    }
+  }
+
+  return { error: `等待授权超时（120s），无法访问 "${resolved}"` }
 }
 
 /** 递归收集目录下所有文件（供 glob/grep 使用） */
@@ -51,7 +74,7 @@ function globToRegExp(pattern: string): RegExp {
 /** 读取文件内容 */
 export const readFileTool = tool({
   description:
-    '读取指定路径的文件内容。支持按行号范围截取，适合读取大文件的局部内容。路径必须在当前工作目录下。',
+    '读取指定路径的文件内容。支持按行号范围截取，适合读取大文件的局部内容。CWD 外的路径需用户授权。',
   // AI: parameters → inputSchema（AI SDK v6 API 变更）
   inputSchema: jsonSchema<{ file_path: string; offset?: number; limit?: number }>({
     type: 'object',
@@ -63,12 +86,10 @@ export const readFileTool = tool({
     required: ['file_path'],
   }),
   execute: async ({ file_path, offset, limit }) => {
-    let resolved: string
-    try {
-      resolved = assertSafe(file_path)
-    } catch (e) {
-      return { error: (e as Error).message }
-    }
+    const access = await checkAccess(file_path)
+    if ('error' in access) return { error: access.error }
+    const { resolved } = access
+
     if (!fs.existsSync(resolved)) {
       return { error: `文件不存在：${resolved}` }
     }
@@ -98,7 +119,7 @@ export const readFileTool = tool({
 /** 列出目录内容 */
 export const lsDirTool = tool({
   description:
-    '列出指定目录下的文件和子目录。路径必须在当前工作目录下。',
+    '列出指定目录下的文件和子目录。CWD 外的路径需用户授权。',
   // AI: parameters → inputSchema（AI SDK v6 API 变更）
   inputSchema: jsonSchema<{ dir_path: string }>({
     type: 'object',
@@ -108,12 +129,10 @@ export const lsDirTool = tool({
     required: ['dir_path'],
   }),
   execute: async ({ dir_path }) => {
-    let resolved: string
-    try {
-      resolved = assertSafe(dir_path)
-    } catch (e) {
-      return { error: (e as Error).message }
-    }
+    const access = await checkAccess(dir_path)
+    if ('error' in access) return { error: access.error }
+    const { resolved } = access
+
     if (!fs.existsSync(resolved)) {
       return { error: `目录不存在：${resolved}` }
     }
@@ -135,7 +154,7 @@ export const lsDirTool = tool({
 /** 按 glob 模式匹配文件 */
 export const globTool = tool({
   description:
-    '按 glob 模式匹配文件，支持 * ** ? 通配符（如 "**/*.ts"、"src/**/*.tsx"）。搜索根目录必须在当前工作目录下。',
+    '按 glob 模式匹配文件，支持 * ** ? 通配符（如 "**/*.ts"、"src/**/*.tsx"）。CWD 外的搜索根目录需用户授权。',
   // AI: parameters → inputSchema（AI SDK v6 API 变更）
   inputSchema: jsonSchema<{ pattern: string; path?: string }>({
     type: 'object',
@@ -146,13 +165,10 @@ export const globTool = tool({
     required: ['pattern'],
   }),
   execute: async ({ pattern, path: searchPath }) => {
-    const rootRaw = searchPath ?? CWD
-    let root: string
-    try {
-      root = assertSafe(rootRaw)
-    } catch (e) {
-      return { error: (e as Error).message }
-    }
+    const rootRaw = searchPath ?? process.cwd()
+    const access = await checkAccess(rootRaw)
+    if ('error' in access) return { error: access.error }
+    const { resolved: root } = access
     if (!fs.existsSync(root)) {
       return { error: `目录不存在：${root}` }
     }
@@ -176,7 +192,7 @@ export const globTool = tool({
 /** 在文件内容中搜索正则模式 */
 export const grepTool = tool({
   description:
-    '在指定目录的文件中搜索匹配正则表达式的行，支持文件类型过滤。返回匹配行的文件路径、行号和内容（最多 250 条）。搜索路径必须在当前工作目录下。',
+    '在指定目录的文件中搜索匹配正则表达式的行，支持文件类型过滤。返回匹配行的文件路径、行号和内容（最多 250 条）。CWD 外的搜索路径需用户授权。',
   // AI: parameters → inputSchema（AI SDK v6 API 变更）
   inputSchema: jsonSchema<{
     pattern: string
@@ -194,13 +210,10 @@ export const grepTool = tool({
     required: ['pattern'],
   }),
   execute: async ({ pattern, search_path, include, ignore_case }) => {
-    const rootRaw = search_path ?? CWD
-    let root: string
-    try {
-      root = assertSafe(rootRaw)
-    } catch (e) {
-      return { error: (e as Error).message }
-    }
+    const rootRaw = search_path ?? process.cwd()
+    const access = await checkAccess(rootRaw)
+    if ('error' in access) return { error: access.error }
+    const { resolved: root } = access
     if (!fs.existsSync(root)) {
       return { error: `目录不存在：${root}` }
     }

@@ -45,11 +45,12 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
   const effectiveAgentName = bodyAgentName || conv.agentName
 
   try {
-    // 调用拆分出的流式处理逻辑
+    // 调用拆分出的流式处理逻辑，透传 abortSignal 以支持用户中断
     return await streamChat({
       messages,
       agentName: effectiveAgentName,
       conversationId: id,
+      abortSignal: req.signal,
     })
   } catch (err) {
     console.error('[ai-stream] fatal error:', err)

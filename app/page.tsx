@@ -92,7 +92,7 @@ export default function HomePage() {
           {greeting}
         </h1>
         <p className="mt-1 text-sm text-text-muted">
-          Manta · Humans steer. Agents execute. Drivers are pluggable.
+          Manta · 多 Agent 调度控制台
         </p>
       </div>
 

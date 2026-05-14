@@ -261,4 +261,58 @@ pre {
   50% { opacity: 0; }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── 工具调用日志动画 ─── */
+@keyframes tool-log-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.tool-log-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tool-log-panel.open {
+  grid-template-rows: 1fr;
+}
+.tool-log-panel-inner {
+  overflow: hidden;
+}
+
+.tool-call-item {
+  animation: tool-log-in 0.18s ease both;
+}
+
+.tool-log-header {
+  transition: background 0.12s ease;
+}
+.tool-log-header:hover {
+  background: var(--color-background) !important;
+}
+
+/* ─── 长内容折叠 ─── */
+.msg-content-collapsed {
+  position: relative;
+  max-height: 320px;
+  overflow: hidden;
+}
+.msg-content-collapsed::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  background: linear-gradient(to bottom, transparent, var(--color-background));
+  pointer-events: none;
+}
+/* 暗色模式下渐变色跟随背景 */
+.dark .msg-content-collapsed::after {
+  background: linear-gradient(to bottom, transparent, var(--color-background));
+}
+
 /* AI end: 全局样式结束 */

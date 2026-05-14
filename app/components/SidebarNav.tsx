@@ -37,6 +37,7 @@ export function SidebarNav() {
   // AI: LLM 聊天会话列表（只展示 chat 模式）
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   useEffect(() => {
     const stored = localStorage.getItem('manta:color-mode') as 'light' | 'dark' | null
@@ -71,6 +72,24 @@ export function SidebarNav() {
 
   function openNewConversation() {
     router.push('/tasks')
+  }
+
+  async function handleDeleteConversation(e: React.MouseEvent, convId: string) {
+    e.stopPropagation()
+    setDeletingId(convId)
+    try {
+      await fetch(`/api/conversations/${convId}`, { method: 'DELETE' })
+      setConversations((prev) => prev.filter((c) => c.id !== convId))
+      // 若删除的是当前选中会话，跳回 /tasks
+      if (selectedId === convId) {
+        setSelectedId(null)
+        router.replace('/tasks', { scroll: false })
+      }
+    } catch {
+      // ignore
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   function formatRelativeTime(date?: string) {
@@ -221,15 +240,9 @@ export function SidebarNav() {
                   filteredConversations.map((conv) => {
                     const isActive = pathname.startsWith('/tasks') && selectedId === conv.id
                     return (
-                      <button
+                      <div
                         key={conv.id}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (isActive) return
-                          setSelectedId(conv.id)
-                          router.replace(`/tasks?convId=${conv.id}`, { scroll: false })
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-all"
+                        className="group relative flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-all"
                         style={{
                           color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)',
                           background: isActive ? 'var(--color-accent)' : 'transparent',
@@ -237,6 +250,11 @@ export function SidebarNav() {
                         }}
                         onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-text-primary)' } }}
                         onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-secondary)' } }}
+                        onClick={() => {
+                          if (isActive) return
+                          setSelectedId(conv.id)
+                          router.replace(`/tasks?convId=${conv.id}`, { scroll: false })
+                        }}
                       >
                         <span style={{ fontSize: '12px', width: '14px', flexShrink: 0, textAlign: 'center' }}>
                           💬
@@ -247,10 +265,21 @@ export function SidebarNav() {
                         >
                           {conv.title}
                         </span>
-                        <span style={{ fontSize: '10px', color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)', flexShrink: 0 }}>
+                        <span style={{ fontSize: '10px', color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)', flexShrink: 0 }} className="group-hover:hidden">
                           {formatRelativeTime(conv.updatedAt)}
                         </span>
-                      </button>
+                        <button
+                          className="hidden group-hover:flex items-center justify-center w-4 h-4 rounded flex-shrink-0 transition-colors"
+                          style={{ color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)' }}
+                          onClick={(e) => handleDeleteConversation(e, conv.id)}
+                          disabled={deletingId === conv.id}
+                          title="删除会话"
+                        >
+                          <span style={{ fontSize: '11px' }}>{deletingId === conv.id ? '…' : '×'}</span>
+                        </button>
+                      </div>
                     )
                   })
                 )}
