@@ -63,8 +63,8 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
   // 解析消息格式
   const coreMessages = parseMessagesToCore(messages)
 
-  // 执行 Agent Loop
-  const result = await runAgentLoop({
+  // 执行 Agent Loop（返回 Response 对象）
+  const response = await runAgentLoop({
     messages: coreMessages,
     systemPrompt,
     abortSignal,
@@ -97,15 +97,16 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
         appendMessage(conversationId, 'user', userText)
       }
       if (text || toolCalls.length > 0) {
-        const usage = event.totalUsage
-          ? { inputTokens: event.totalUsage.inputTokens ?? undefined, outputTokens: event.totalUsage.outputTokens ?? undefined }
+        // AI: 使用 event.usage 而非 event.totalUsage（P1-3 修复）
+        const usage = event.usage
+          ? { inputTokens: event.usage.inputTokens ?? undefined, outputTokens: event.usage.outputTokens ?? undefined }
           : undefined
         appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage)
       }
     },
   })
 
-  // 返回流式响应
-  return result.toUIMessageStreamResponse()
+  // 直接返回 Response（runAgentLoop 已构建好 SSE 流）
+  return response
 }
 /* AI end: 流式聊天核心处理逻辑结束 */

@@ -433,7 +433,7 @@ const MessageRow = memo(function MessageRow({ message, agentName, isStreaming }:
             onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}>
             {copied ? '✓' : '⧉'}
           </button>
-          <div style={{ maxWidth: '72%', padding: '10px 16px', borderRadius: '18px 18px 4px 18px', fontSize: '14px', lineHeight: '1.65', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          <div style={{ maxWidth: '72%', padding: '10px 16px', borderRadius: '16px', fontSize: '14px', lineHeight: '1.65', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {content}
           </div>
         </div>
