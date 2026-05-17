@@ -4,20 +4,21 @@
    POST /api/chat/config/active — 切换激活配置 */
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  getLLMProfiles,
-  getLLMProfilesMasked,
-  saveLLMProfiles,
-  addProfile,
-  updateProfile,
-  deleteProfile,
-  setActiveProfile,
-  setDefaultProfile,
-  getLLMConfig,
-  getActiveProfile,
+ getLLMProfiles,
+ getLLMProfilesMasked,
+ saveLLMProfiles,
+ addProfile,
+ updateProfile,
+ deleteProfile,
+ setActiveProfile,
+ setDefaultProfile,
+ getLLMConfig,
+ getActiveProfile,
 } from '@/core/llm/config-store'
 import { testLLMConnection } from '@/core/llm/factory'
 import type { ModelProfile, LLMProfilesConfig } from '@/core/llm/types'
 import { profileToLLMConfig } from '@/core/llm/types'
+import { v4 as uuidv4 } from 'uuid'
 
 /** GET — 读取多模型配置列表（脱敏） */
 export async function GET() {
@@ -67,6 +68,12 @@ export async function PUT(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const action = req.nextUrl.searchParams.get('action') || 'test'
+
+    // export 不需要解析 body，直接处理
+    if (action === 'export') {
+      return await handleExportFull()
+    }
+
     const body = await req.json()
 
     switch (action) {
@@ -85,6 +92,10 @@ export async function POST(req: NextRequest) {
       case 'default': {
         // 设置默认配置
         return await handleSetDefault(body)
+      }
+      case 'import': {
+        // 导入配置
+        return await handleImport(body)
       }
       default:
         return NextResponse.json({ error: `不支持的操作: ${action}` }, { status: 400 })
@@ -180,4 +191,88 @@ async function handleSetDefault(body: { profileId: string }) {
   }
   setDefaultProfile(body.profileId)
   return NextResponse.json({ success: true })
+}
+
+/** 导入配置：合并到现有配置 */
+async function handleImport(body: { profiles: ModelProfile[]; merge?: boolean }) {
+  try {
+    const { profiles: incomingProfiles, merge = true } = body
+
+    if (!incomingProfiles || !Array.isArray(incomingProfiles) || incomingProfiles.length === 0) {
+      return NextResponse.json({ error: 'profiles 列表不能为空' }, { status: 400 })
+    }
+
+    // 验证每个 profile 的必要字段
+    for (const p of incomingProfiles) {
+      if (!p.name || !p.provider || !p.model) {
+        return NextResponse.json({ error: '每个配置必须包含 name、provider 和 model 字段' }, { status: 400 })
+      }
+    }
+
+    const existing = getLLMProfiles()
+
+    if (merge) {
+      // 合并模式：添加新配置，如果 id 冲突则跳过或更新
+      const existingIds = new Set(existing.profiles.map(p => p.id))
+      let addedCount = 0
+      let skippedCount = 0
+
+      for (const p of incomingProfiles) {
+        if (existingIds.has(p.id)) {
+          // id 已存在，跳过（或可以选择更新，这里选择跳过）
+          skippedCount++
+          continue
+        }
+        // 确保有 id（如果没有则生成新的）
+        const profileToAdd = {
+          ...p,
+          id: p.id || uuidv4(),
+        }
+        existing.profiles.push(profileToAdd)
+        addedCount++
+      }
+
+      // 如果原来没有激活的配置，设置第一个为激活
+      if (!existing.activeProfileId && existing.profiles.length > 0) {
+        existing.activeProfileId = existing.profiles[0].id
+      }
+
+      saveLLMProfiles(existing)
+      return NextResponse.json({
+        success: true,
+        added: addedCount,
+        skipped: skippedCount,
+        total: existing.profiles.length,
+      })
+    } else {
+      // 替换模式：用导入的配置替换现有配置
+      const profilesWithIds = incomingProfiles.map(p => ({
+        ...p,
+        id: p.id || uuidv4(),
+      }))
+      const newConfig: LLMProfilesConfig = {
+        profiles: profilesWithIds,
+        activeProfileId: profilesWithIds[0]?.id,
+      }
+      saveLLMProfiles(newConfig)
+      return NextResponse.json({
+        success: true,
+        added: profilesWithIds.length,
+        skipped: 0,
+        total: profilesWithIds.length,
+      })
+    }
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
+}
+
+/** 导出完整配置（含 apiKey） */
+async function handleExportFull() {
+  try {
+    const data = getLLMProfiles()
+    return NextResponse.json(data)
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 })
+  }
 }

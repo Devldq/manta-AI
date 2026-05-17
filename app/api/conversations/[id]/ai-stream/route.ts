@@ -2,6 +2,7 @@
 import { NextRequest } from 'next/server'
 import { getConversation } from '@/core/conversation/store'
 import { streamChat } from '@/core/chat/stream-handler'
+import { formatAIError, formatErrorForSSE } from '@/core/chat/error-formatter'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -54,8 +55,10 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     })
   } catch (err) {
     console.error('[ai-stream] fatal error:', err)
+    const errorInfo = formatAIError(err)
+    const friendlyMessage = formatErrorForSSE(errorInfo)
     return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
+      JSON.stringify({ error: friendlyMessage }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     )
   }

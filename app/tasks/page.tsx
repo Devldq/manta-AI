@@ -275,6 +275,13 @@ function getToolIcon(toolName: string) {
 function describeToolCall(entry: ToolCallEntry): string {
   const input = entry.input as Record<string, unknown> | null | undefined
   switch (entry.toolName) {
+    case 'bash': {
+      const cmd = String(input?.command ?? '')
+      const desc = input?.description ? ` (${input.description})` : ''
+      // 显示命令，如果命令太长则截断
+      const displayCmd = cmd.length > 80 ? cmd.slice(0, 80) + '...' : cmd
+      return `执行命令: ${displayCmd}${desc}`
+    }
     case 'lsDir': {
       const p = String(input?.dir_path ?? '')
       return `列出目录 ${p}`

@@ -1,8 +1,7 @@
-/* Claude Code (CC) 工具集 — 模拟 Claude Code 原生工具，供 AI 模型通过 function calling 使用
+/* Claude Code (CC) 工具集 — 使用 ToolDefinition 接口定义，供 ToolRegistry 管理
  * 工具列表参考：https://code.claude.com/docs/zh-CN/tools-reference
- * 包含：Bash / Read / Write / Edit / MultiEdit / Glob / Grep / WebFetch / WebSearch / TodoRead / TodoWrite / Task
- */
-import { tool, jsonSchema } from 'ai'
+ * 包含：Bash / Read / Write / Edit / MultiEdit / Glob / Grep / WebFetch / WebSearch / TodoRead / TodoWrite */
+import type { ToolDefinition } from '@/core/tool-registry'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as child_process from 'child_process'
@@ -55,19 +54,11 @@ let bashTaskCounter = 0
 
 // ─── 工具定义 ────────────────────────────────────────────────────────────────
 
-/**
- * Bash — 在持久 Shell 会话中执行命令
- * 参考：CC Bash tool
- */
-export const bashTool = tool({
-  description:
-    '在 shell 中执行命令。支持超时设置和后台运行。避免使用 find、grep、cat、head、tail、sed、awk 等命令，优先使用专用工具（Read/Grep/Glob）。',
-  inputSchema: jsonSchema<{
-    command: string
-    description?: string
-    timeout?: number
-    run_in_background?: boolean
-  }>({
+/** Bash — 在持久 Shell 会话中执行命令 */
+const bashDef: ToolDefinition = {
+  name: 'bash',
+  description: '在 shell 中执行命令。支持超时设置和后台运行。避免使用 find、grep、cat、head、tail、sed、awk 等命令，优先使用专用工具（Read/Grep/Glob）。',
+  parameters: {
     type: 'object',
     properties: {
       command: { type: 'string', description: '要执行的 shell 命令' },
@@ -84,8 +75,9 @@ export const bashTool = tool({
       },
     },
     required: ['command'],
-  }),
-  execute: async ({ command, timeout = 120000, run_in_background = false }) => {
+  },
+  execute: async (input: any) => {
+    const { command, timeout = 120000, run_in_background = false } = input
     if (run_in_background) {
       const task_id = `bash_${++bashTaskCounter}_${Date.now()}`
       const task: BashTask = {
@@ -110,29 +102,28 @@ export const bashTool = tool({
       return { task_id, status: 'running', message: `命令已在后台启动，task_id: ${task_id}` }
     }
 
-    return new Promise<{ stdout: string; stderr: string; exitCode: number | null; error?: string }>((resolve) => {
+    return new Promise<{ command: string; stdout: string; stderr: string; exitCode: number | null; error?: string }>((resolve) => {
       child_process.exec(command, { timeout }, (err, stdout, stderr) => {
         if (err && (err as NodeJS.ErrnoException & { killed?: boolean }).killed) {
-          resolve({ stdout, stderr, exitCode: null, error: `命令超时（${timeout}ms）` })
+          resolve({ command, stdout, stderr, exitCode: null, error: `命令超时（${timeout}ms）` })
           return
         }
         resolve({
-          stdout: stdout.slice(0, 50000), // 限制输出大小
+          command,
+          stdout: stdout.slice(0, 50000),
           stderr: stderr.slice(0, 10000),
           exitCode: err?.code ?? 0,
         })
       })
     })
   },
-})
+}
 
-/**
- * BashOutput — 获取后台 Bash 任务的输出
- * 参考：CC BashOutput / TaskOutput tool
- */
-export const bashOutputTool = tool({
+/** BashOutput — 获取后台 Bash 任务的输出 */
+const bashOutputDef: ToolDefinition = {
+  name: 'bashOutput',
   description: '获取后台运行的 Bash 任务的当前输出和状态。',
-  inputSchema: jsonSchema<{ task_id: string; block?: boolean }>({
+  parameters: {
     type: 'object',
     properties: {
       task_id: { type: 'string', description: '后台任务 ID（由 Bash 工具返回）' },
@@ -142,15 +133,15 @@ export const bashOutputTool = tool({
       },
     },
     required: ['task_id'],
-  }),
-  execute: async ({ task_id, block = false }) => {
+  },
+  execute: async (input: any) => {
+    const { task_id, block = false } = input
     const task = bashTaskRegistry.get(task_id)
     if (!task) {
       return { error: `任务 ${task_id} 不存在` }
     }
 
     if (block && task.status === 'running') {
-      // 等待最多 30s
       const start = Date.now()
       while (task.status === 'running' && Date.now() - start < 30000) {
         await new Promise((r) => setTimeout(r, 300))
@@ -167,16 +158,13 @@ export const bashOutputTool = tool({
       elapsedMs: Date.now() - task.startedAt,
     }
   },
-})
+}
 
-/**
- * Read — 读取文件内容
- * 参考：CC Read tool
- */
-export const readTool = tool({
-  description:
-    '读取指定路径的文件内容。支持按行号范围截取（适合大文件局部读取）。图片文件会以视觉形式呈现。',
-  inputSchema: jsonSchema<{ file_path: string; offset?: number; limit?: number }>({
+/** Read — 读取文件内容 */
+const readDef: ToolDefinition = {
+  name: 'read',
+  description: '读取指定路径的文件内容。支持按行号范围截取（适合大文件局部读取）。图片文件会以视觉形式呈现。',
+  parameters: {
     type: 'object',
     properties: {
       file_path: { type: 'string', description: '文件绝对路径或相对路径' },
@@ -184,8 +172,9 @@ export const readTool = tool({
       limit: { type: 'integer', minimum: 1, description: '最多读取的行数' },
     },
     required: ['file_path'],
-  }),
-  execute: async ({ file_path, offset, limit }) => {
+  },
+  execute: async (input: any) => {
+    const { file_path, offset, limit } = input
     const resolved = path.resolve(file_path)
     if (!fs.existsSync(resolved)) {
       return { error: `文件不存在：${resolved}` }
@@ -211,24 +200,22 @@ export const readTool = tool({
       content: sliced.join('\n'),
     }
   },
-})
+}
 
-/**
- * Write — 写入/覆盖文件
- * 参考：CC Write tool
- */
-export const writeTool = tool({
-  description:
-    '将内容写入文件（覆盖）。若文件不存在则创建，若父目录不存在也会自动创建。写入前应先用 Read 读取现有内容以避免意外覆盖。',
-  inputSchema: jsonSchema<{ file_path: string; content: string }>({
+/** Write — 写入/覆盖文件 */
+const writeDef: ToolDefinition = {
+  name: 'write',
+  description: '将内容写入文件（覆盖）。若文件不存在则创建，若父目录不存在也会自动创建。写入前应先用 Read 读取现有内容以避免意外覆盖。',
+  parameters: {
     type: 'object',
     properties: {
       file_path: { type: 'string', description: '文件绝对路径或相对路径' },
       content: { type: 'string', description: '要写入的完整文件内容' },
     },
     required: ['file_path', 'content'],
-  }),
-  execute: async ({ file_path, content }) => {
+  },
+  execute: async (input: any) => {
+    const { file_path, content } = input
     const resolved = path.resolve(file_path)
     const dir = path.dirname(resolved)
     if (!fs.existsSync(dir)) {
@@ -238,21 +225,13 @@ export const writeTool = tool({
     const lines = content.split('\n').length
     return { success: true, file_path: resolved, linesWritten: lines }
   },
-})
+}
 
-/**
- * Edit — 精确字符串替换
- * 参考：CC Edit tool
- */
-export const editTool = tool({
-  description:
-    '对文件做精确的字符串替换。old_string 必须在文件中唯一存在（否则失败）。若需替换所有匹配项，设 replace_all: true。',
-  inputSchema: jsonSchema<{
-    file_path: string
-    old_string: string
-    new_string: string
-    replace_all?: boolean
-  }>({
+/** Edit — 精确字符串替换 */
+const editDef: ToolDefinition = {
+  name: 'edit',
+  description: '对文件做精确的字符串替换。old_string 必须在文件中唯一存在（否则失败）。若需替换所有匹配项，设 replace_all: true。',
+  parameters: {
     type: 'object',
     properties: {
       file_path: { type: 'string', description: '要修改的文件路径' },
@@ -264,8 +243,9 @@ export const editTool = tool({
       },
     },
     required: ['file_path', 'old_string', 'new_string'],
-  }),
-  execute: async ({ file_path, old_string, new_string, replace_all = false }) => {
+  },
+  execute: async (input: any) => {
+    const { file_path, old_string, new_string, replace_all = false } = input
     const resolved = path.resolve(file_path)
     if (!fs.existsSync(resolved)) {
       return { error: `文件不存在：${resolved}` }
@@ -276,7 +256,7 @@ export const editTool = tool({
     if (!replace_all) {
       const count = content.split(old_string).length - 1
       if (count === 0) {
-        return { error: `未找到目标字符串，请检查 old_string 是否与文件内容精确匹配` }
+        return { error: '未找到目标字符串，请检查 old_string 是否与文件内容精确匹配' }
       }
       if (count > 1) {
         return {
@@ -294,19 +274,13 @@ export const editTool = tool({
     const replacedCount = replace_all ? content.split(old_string).length - 1 : 1
     return { success: true, file_path: resolved, replacedCount }
   },
-})
+}
 
-/**
- * MultiEdit — 批量字符串替换（单次调用）
- * 参考：CC MultiEdit tool
- */
-export const multiEditTool = tool({
-  description:
-    '对同一文件进行多处字符串替换（原子操作，按顺序执行）。适合需要一次性修改多处的场景，比多次调用 Edit 更高效。',
-  inputSchema: jsonSchema<{
-    file_path: string
-    edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }>
-  }>({
+/** MultiEdit — 批量字符串替换（单次调用） */
+const multiEditDef: ToolDefinition = {
+  name: 'multiEdit',
+  description: '对同一文件进行多处字符串替换（原子操作，按顺序执行）。适合需要一次性修改多处的场景，比多次调用 Edit 更高效。',
+  parameters: {
     type: 'object',
     properties: {
       file_path: { type: 'string', description: '要修改的文件路径' },
@@ -325,8 +299,9 @@ export const multiEditTool = tool({
       },
     },
     required: ['file_path', 'edits'],
-  }),
-  execute: async ({ file_path, edits }) => {
+  },
+  execute: async (input: any) => {
+    const { file_path, edits } = input
     const resolved = path.resolve(file_path)
     if (!fs.existsSync(resolved)) {
       return { error: `文件不存在：${resolved}` }
@@ -367,24 +342,22 @@ export const multiEditTool = tool({
       ...(hasError ? { error: '部分替换失败，文件未修改' } : {}),
     }
   },
-})
+}
 
-/**
- * Glob — 按文件名模式匹配文件
- * 参考：CC Glob tool
- */
-export const globTool = tool({
-  description:
-    '按 glob 模式匹配文件名（如 "**/*.ts"、"src/**/*.tsx"）。结果按修改时间排序。适合按名称查找文件，不查找文件内容（内容搜索用 Grep）。',
-  inputSchema: jsonSchema<{ pattern: string; path?: string }>({
+/** Glob — 按文件名模式匹配文件 */
+const globDef: ToolDefinition = {
+  name: 'glob',
+  description: '按 glob 模式匹配文件名（如 "**/*.ts"、"src/**/*.tsx"）。结果按修改时间排序。适合按名称查找文件，不查找文件内容（内容搜索用 Grep）。',
+  parameters: {
     type: 'object',
     properties: {
       pattern: { type: 'string', description: 'Glob 模式，如 **/*.ts 或 src/**/*.tsx' },
       path: { type: 'string', description: '搜索根目录，默认为当前工作目录' },
     },
     required: ['pattern'],
-  }),
-  execute: async ({ pattern, path: searchPath }) => {
+  },
+  execute: async (input: any) => {
+    const { pattern, path: searchPath } = input
     const root = path.resolve(searchPath ?? process.cwd())
     if (!fs.existsSync(root)) {
       return { error: `目录不存在：${root}` }
@@ -396,7 +369,6 @@ export const globTool = tool({
       .map((f) => ({ rel: path.relative(root, f), abs: f }))
       .filter(({ rel }) => re.test(rel))
       .sort((a, b) => {
-        // 按修改时间降序
         const tA = fs.statSync(a.abs).mtimeMs
         const tB = fs.statSync(b.abs).mtimeMs
         return tB - tA
@@ -405,29 +377,13 @@ export const globTool = tool({
 
     return { pattern, root, count: matched.length, files: matched }
   },
-})
+}
 
-/**
- * Grep — 在文件内容中搜索正则模式
- * 参考：CC Grep tool（基于 ripgrep）
- */
-export const grepTool = tool({
-  description:
-    '在文件内容中搜索匹配正则模式的行。支持文件类型过滤、大小写忽略、上下文行显示。返回匹配行的文件路径、行号和内容。',
-  inputSchema: jsonSchema<{
-    pattern: string
-    path?: string
-    include?: string
-    type?: string
-    output_mode?: 'content' | 'files_with_matches' | 'count'
-    ignore_case?: boolean
-    line_numbers?: boolean
-    context?: number
-    before_context?: number
-    after_context?: number
-    multiline?: boolean
-    limit?: number
-  }>({
+/** Grep — 在文件内容中搜索正则模式 */
+const grepDef: ToolDefinition = {
+  name: 'grep',
+  description: '在文件内容中搜索匹配正则模式的行。支持文件类型过滤、大小写忽略、上下文行显示。返回匹配行的文件路径、行号和内容。',
+  parameters: {
     type: 'object',
     properties: {
       pattern: { type: 'string', description: '正则表达式，如 "function\\s+\\w+" 或 "import.*from"' },
@@ -448,19 +404,20 @@ export const grepTool = tool({
       limit: { type: 'integer', minimum: 1, description: '最大返回结果数，默认 250' },
     },
     required: ['pattern'],
-  }),
-  execute: async ({
-    pattern,
-    path: searchPath,
-    include,
-    type: fileType,
-    output_mode = 'content',
-    ignore_case = false,
-    context = 0,
-    before_context,
-    after_context,
-    limit = 250,
-  }) => {
+  },
+  execute: async (input: any) => {
+    const {
+      pattern,
+      path: searchPath,
+      include,
+      type: fileType,
+      output_mode = 'content',
+      ignore_case = false,
+      context = 0,
+      before_context,
+      after_context,
+      limit = 250,
+    } = input
     const root = path.resolve(searchPath ?? process.cwd())
     if (!fs.existsSync(root)) {
       return { error: `目录不存在：${root}` }
@@ -522,7 +479,7 @@ export const grepTool = tool({
         let text: string
         try { text = fs.readFileSync(file, 'utf-8') } catch { continue }
         const lines = text.split('\n')
-        total += lines.filter((l) => re.test(l)).length
+        total += lines.filter((l: string) => re.test(l)).length
       }
       return { pattern, root, output_mode, total }
     }
@@ -568,28 +525,26 @@ export const grepTool = tool({
       results,
     }
   },
-})
+}
 
-/**
- * WebFetch — 抓取网页内容
- * 参考：CC WebFetch tool
- */
-export const webFetchTool = tool({
+/** WebFetch — 抓取网页内容 */
+const webFetchDef: ToolDefinition = {
+  name: 'webFetch',
   description: '抓取指定 URL 的网页内容，并根据 prompt 提取关键信息。适合查阅文档、获取网页数据。',
-  inputSchema: jsonSchema<{ url: string; prompt: string }>({
+  parameters: {
     type: 'object',
     properties: {
       url: { type: 'string', description: '要抓取的网页 URL' },
       prompt: { type: 'string', description: '描述需要从页面中提取的信息' },
     },
     required: ['url', 'prompt'],
-  }),
-  execute: async ({ url, prompt: _prompt }) => {
+  },
+  execute: async (input: any) => {
+    const { url, prompt: _prompt } = input
     try {
       const res = await fetch(url, {
         headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         },
         signal: AbortSignal.timeout(30000),
@@ -598,7 +553,6 @@ export const webFetchTool = tool({
       const contentType = res.headers.get('content-type') ?? ''
       const text = await res.text()
 
-      // 简单剥离 HTML 标签
       const stripped = contentType.includes('text/html')
         ? text
             .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -612,26 +566,20 @@ export const webFetchTool = tool({
         url,
         status: res.status,
         contentType,
-        content: stripped.slice(0, 100000), // 限制返回大小
+        content: stripped.slice(0, 100000),
         truncated: stripped.length > 100000,
       }
     } catch (err) {
       return { error: `抓取失败：${String(err)}`, url }
     }
   },
-})
+}
 
-/**
- * WebSearch — 网页搜索（调用 DuckDuckGo 搜索）
- * 参考：CC WebSearch tool
- */
-export const webSearchTool = tool({
+/** WebSearch — 网页搜索（调用 DuckDuckGo 搜索） */
+const webSearchDef: ToolDefinition = {
+  name: 'webSearch',
   description: '通过 DuckDuckGo 搜索互联网，返回搜索结果列表（标题、URL、摘要）。',
-  inputSchema: jsonSchema<{
-    query: string
-    allowed_domains?: string[]
-    blocked_domains?: string[]
-  }>({
+  parameters: {
     type: 'object',
     properties: {
       query: { type: 'string', description: '搜索查询词' },
@@ -647,10 +595,10 @@ export const webSearchTool = tool({
       },
     },
     required: ['query'],
-  }),
-  execute: async ({ query, allowed_domains, blocked_domains }) => {
+  },
+  execute: async (input: any) => {
+    const { query, allowed_domains, blocked_domains } = input
     try {
-      // 使用 DuckDuckGo Instant Answer API
       const params = new URLSearchParams({ q: query, format: 'json', no_html: '1', skip_disambig: '1' })
       const res = await fetch(`https://api.duckduckgo.com/?${params}`, {
         headers: { 'User-Agent': 'Manta-Agent/1.0' },
@@ -677,8 +625,8 @@ export const webSearchTool = tool({
           if (topic.Text && topic.FirstURL) {
             const url = topic.FirstURL
             const hostname = new URL(url).hostname
-            if (allowed_domains && !allowed_domains.some((d) => hostname.includes(d))) continue
-            if (blocked_domains && blocked_domains.some((d) => hostname.includes(d))) continue
+            if (allowed_domains && !allowed_domains.some((d: string) => hostname.includes(d))) continue
+            if (blocked_domains && blocked_domains.some((d: string) => hostname.includes(d))) continue
             results.push({ title: topic.Text.split(' - ')[0] ?? topic.Text, url, snippet: topic.Text })
           }
           if (results.length >= 10) break
@@ -690,40 +638,28 @@ export const webSearchTool = tool({
       return { error: `搜索失败：${String(err)}`, query }
     }
   },
-})
+}
 
-/**
- * TodoRead — 读取待办事项列表
- * 参考：CC TodoRead tool
- */
-export const todoReadTool = tool({
+/** TodoRead — 读取待办事项列表 */
+const todoReadDef: ToolDefinition = {
+  name: 'todoRead',
   description: '读取当前任务的待办事项列表，了解任务进度和待完成项目。',
-  inputSchema: jsonSchema<Record<string, never>>({
+  parameters: {
     type: 'object',
     properties: {},
     required: [],
-  }),
-  execute: async () => {
+  },
+  execute: async (_input: any) => {
     const todos = readTodos()
     return { todos, count: todos.length }
   },
-})
+}
 
-/**
- * TodoWrite — 写入待办事项列表
- * 参考：CC TodoWrite tool
- */
-export const todoWriteTool = tool({
-  description:
-    '更新待办事项列表（覆盖写入）。适合追踪复杂多步任务的进度。每次更新都要包含完整的 todos 列表。',
-  inputSchema: jsonSchema<{
-    todos: Array<{
-      id: string
-      content: string
-      status: 'pending' | 'in_progress' | 'completed'
-      priority: 'low' | 'medium' | 'high'
-    }>
-  }>({
+/** TodoWrite — 写入待办事项列表 */
+const todoWriteDef: ToolDefinition = {
+  name: 'todoWrite',
+  description: '更新待办事项列表（覆盖写入）。适合追踪复杂多步任务的进度。每次更新都要包含完整的 todos 列表。',
+  parameters: {
     type: 'object',
     properties: {
       todos: {
@@ -750,17 +686,18 @@ export const todoWriteTool = tool({
       },
     },
     required: ['todos'],
-  }),
-  execute: async ({ todos }) => {
+  },
+  execute: async (input: any) => {
+    const { todos } = input
     writeTodos(todos)
     const byStatus = {
-      pending: todos.filter((t) => t.status === 'pending').length,
-      in_progress: todos.filter((t) => t.status === 'in_progress').length,
-      completed: todos.filter((t) => t.status === 'completed').length,
+      pending: todos.filter((t: any) => t.status === 'pending').length,
+      in_progress: todos.filter((t: any) => t.status === 'in_progress').length,
+      completed: todos.filter((t: any) => t.status === 'completed').length,
     }
     return { success: true, total: todos.length, byStatus }
   },
-})
+}
 
 // ─── 内部工具函数 ─────────────────────────────────────────────────────────────
 
@@ -795,19 +732,19 @@ function walkFiles(dir: string, result: string[] = []): string[] {
   return result
 }
 
-// ─── 导出所有 CC 工具 ─────────────────────────────────────────────────────────
+// ─── 导出所有 CC 工具定义，供 ToolRegistry 注册 ─────────────────────────────
 
-export const ccTools = {
-  bash: bashTool,
-  bashOutput: bashOutputTool,
-  read: readTool,
-  write: writeTool,
-  edit: editTool,
-  multiEdit: multiEditTool,
-  glob: globTool,
-  grep: grepTool,
-  webFetch: webFetchTool,
-  webSearch: webSearchTool,
-  todoRead: todoReadTool,
-  todoWrite: todoWriteTool,
-}
+export const ccToolDefs: ToolDefinition[] = [
+  bashDef,
+  bashOutputDef,
+  readDef,
+  writeDef,
+  editDef,
+  multiEditDef,
+  globDef,
+  grepDef,
+  webFetchDef,
+  webSearchDef,
+  todoReadDef,
+  todoWriteDef,
+]

@@ -1450,6 +1450,11 @@ function LLMTab() {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [showPasteDialog, setShowPasteDialog] = useState(false)
+  const [pasteText, setPasteText] = useState('')
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   // ─── 加载配置 ───
   useEffect(() => {
@@ -1650,6 +1655,191 @@ function LLMTab() {
     }
   }
 
+  // ─── 导出配置 ───
+  async function handleExport() {
+    try {
+      setExporting(true)
+      // 使用 export action 获取完整配置（含 apiKey）
+      const res = await fetch('/api/chat/config?action=export', { method: 'POST' })
+      const data = await res.json()
+
+      // 创建导出数据
+      const exportData = {
+        version: '1.0',
+        exportTime: new Date().toISOString(),
+        source: 'Manta AI Models Config',
+        ...data,
+      }
+
+      // 创建 Blob 并下载
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `manta-ai-models-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      setMsg({ type: 'success', text: '配置已导出（含完整 API Key）' })
+      setTimeout(() => setMsg(null), 3000)
+    } catch {
+      setMsg({ type: 'error', text: '导出失败' })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  // ─── 复制单个模型配置 ───
+  async function handleCopyProfile(profile: ModelProfileLocal) {
+    try {
+      setCopiedId(profile.id)
+      // 从后端获取完整配置（含 apiKey）
+      const res = await fetch('/api/chat/config?action=export', { method: 'POST' })
+      const data = await res.json()
+      const fullProfile = data.profiles?.find((p: any) => p.id === profile.id)
+      if (!fullProfile) {
+        setMsg({ type: 'error', text: '获取配置失败' })
+        setCopiedId(null)
+        return
+      }
+      // 去掉前端特有的字段
+      const { isDefault, ...profileToCopy } = fullProfile
+      const jsonStr = JSON.stringify([profileToCopy], null, 2)
+      // 写入剪贴板（带降级方案）
+      await copyToClipboard(jsonStr)
+      setMsg({ type: 'success', text: '配置已复制，可粘贴导入' })
+      setTimeout(() => setMsg(null), 3000)
+      // 2秒后恢复按钮状态
+      setTimeout(() => setCopiedId(null), 2000)
+    } catch (err) {
+      setMsg({ type: 'error', text: `复制失败: ${String(err)}` })
+      setCopiedId(null)
+    }
+  }
+
+  // ─── 剪贴板写入（带降级） ───
+  async function copyToClipboard(text: string): Promise<void> {
+    // 优先使用现代 API
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text)
+        return
+      } catch {
+        // fallback
+      }
+    }
+    // 降级：使用隐藏 textarea
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.left = '-9999px'
+    ta.style.top = '-9999px'
+    document.body.appendChild(ta)
+    ta.focus()
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    if (!ok) throw new Error('复制失败，请手动复制')
+  }
+
+  // ─── 触发文件选择 ───
+  function triggerImport() {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json,application/json'
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+
+      try {
+        setImporting(true)
+        const text = await file.text()
+        const imported = JSON.parse(text)
+
+        // 验证导入的数据格式
+        let profilesToImport: ModelProfileLocal[] = []
+        if (imported.profiles && Array.isArray(imported.profiles)) {
+          profilesToImport = imported.profiles
+        } else if (Array.isArray(imported)) {
+          profilesToImport = imported
+        } else {
+          setMsg({ type: 'error', text: '无效的配置文件格式' })
+          return
+        }
+
+        // 发送到后端导入
+        const res = await fetch('/api/chat/config?action=import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profiles: profilesToImport, merge: true }),
+        })
+        const data = await res.json()
+        if (data.success) {
+          setMsg({
+            type: 'success',
+            text: `导入成功：新增 ${data.added} 个，跳过 ${data.skipped} 个，共 ${data.total} 个配置`,
+          })
+          await reloadProfiles()
+        } else {
+          setMsg({ type: 'error', text: data.error ?? '导入失败' })
+        }
+      } catch {
+        setMsg({ type: 'error', text: '解析文件失败，请检查 JSON 格式' })
+      } finally {
+        setImporting(false)
+      }
+    }
+    input.click()
+  }
+
+  // ─── 粘贴导入 ───
+  async function handlePasteImport() {
+    if (!pasteText.trim()) {
+      setMsg({ type: 'error', text: '请先粘贴 JSON 配置内容' })
+      return
+    }
+    try {
+      setImporting(true)
+      const imported = JSON.parse(pasteText)
+
+      // 验证导入的数据格式
+      let profilesToImport: ModelProfileLocal[] = []
+      if (imported.profiles && Array.isArray(imported.profiles)) {
+        profilesToImport = imported.profiles
+      } else if (Array.isArray(imported)) {
+        profilesToImport = imported
+      } else {
+        setMsg({ type: 'error', text: '无效的配置格式' })
+        return
+      }
+
+      // 发送到后端导入
+      const res = await fetch('/api/chat/config?action=import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profiles: profilesToImport, merge: true }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setMsg({
+          type: 'success',
+          text: `导入成功：新增 ${data.added} 个，跳过 ${data.skipped} 个，共 ${data.total} 个配置`,
+        })
+        setShowPasteDialog(false)
+        setPasteText('')
+        await reloadProfiles()
+      } else {
+        setMsg({ type: 'error', text: data.error ?? '导入失败' })
+      }
+    } catch {
+      setMsg({ type: 'error', text: '解析 JSON 失败，请检查格式' })
+    } finally {
+      setImporting(false)
+    }
+  }
+
   // ─── 重新加载 profiles ───
   async function reloadProfiles() {
     try {
@@ -1698,9 +1888,61 @@ function LLMTab() {
 
         {/* ── 模型配置列表 ── */}
         <div style={{ marginBottom: '20px' }}>
-          <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '10px' }}>
-            已配置的模型
-          </label>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <label style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>
+              已配置的模型
+            </label>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                onClick={triggerImport}
+                disabled={importing}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '11px',
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: 'var(--color-text-secondary)',
+                  cursor: importing ? 'not-allowed' : 'pointer',
+                  opacity: importing ? 0.5 : 1,
+                }}
+              >
+                {importing ? '导入中...' : '📁 导入'}
+              </button>
+              <button
+                onClick={() => setShowPasteDialog(true)}
+                disabled={importing}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '11px',
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: 'var(--color-text-secondary)',
+                  cursor: importing ? 'not-allowed' : 'pointer',
+                  opacity: importing ? 0.5 : 1,
+                }}
+              >
+                📋 粘贴
+              </button>
+              <button
+                onClick={handleExport}
+                disabled={exporting || profiles.length === 0}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '11px',
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: 'var(--color-text-secondary)',
+                  cursor: (exporting || profiles.length === 0) ? 'not-allowed' : 'pointer',
+                  opacity: (exporting || profiles.length === 0) ? 0.5 : 1,
+                }}
+              >
+                {exporting ? '导出中...' : '📥 导出'}
+              </button>
+            </div>
+          </div>
           {profiles.map((profile) => (
             <div
               key={profile.id}
@@ -1774,6 +2016,22 @@ function LLMTab() {
                 >
                   编辑
                 </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleCopyProfile(profile) }}
+                  style={{
+                    padding: '4px 6px',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    border: copiedId === profile.id ? '1px solid #22c55e' : '1px solid var(--color-border)',
+                    background: copiedId === profile.id ? '#22c55e20' : 'transparent',
+                    color: copiedId === profile.id ? '#22c55e' : 'var(--color-text-muted)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  title="复制配置（含 API Key）"
+                >
+                  {copiedId === profile.id ? '✓ 已复制' : '📋'}
+                </button>
                 {profiles.length > 1 && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDelete(profile.id) }}
@@ -1813,6 +2071,92 @@ function LLMTab() {
             + 添加模型配置
           </button>
         </div>
+
+        {/* ── 粘贴导入对话框 ── */}
+        {showPasteDialog && (
+          <div style={{
+            padding: '16px',
+            borderRadius: '8px',
+            border: '1px solid var(--color-accent)',
+            background: 'var(--color-surface)',
+            marginBottom: '20px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                粘贴导入配置
+              </h3>
+              <button
+                onClick={() => { setShowPasteDialog(false); setPasteText('') }}
+                style={{
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: 'var(--color-text-muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                取消
+              </button>
+            </div>
+            <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginBottom: '10px' }}>
+              粘贴 JSON 配置内容（支持导出文件内容或配置文件中的 profiles 数组）
+            </p>
+            <textarea
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              placeholder='粘贴 JSON，如：\n{\n  "profiles": [...]\n}\n或直接粘贴数组：\n[...]'
+              style={{
+                width: '100%',
+                minHeight: '120px',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-bg)',
+                color: 'var(--color-text-primary)',
+                fontSize: '12px',
+                fontFamily: 'monospace',
+                outline: 'none',
+                resize: 'vertical',
+                boxSizing: 'border-box',
+                marginBottom: '12px',
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button
+                onClick={() => { setShowPasteDialog(false); setPasteText('') }}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: 'var(--color-text-secondary)',
+                  cursor: 'pointer',
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={handlePasteImport}
+                disabled={importing || !pasteText.trim()}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  border: 'none',
+                  background: (importing || !pasteText.trim()) ? 'var(--color-border)' : 'var(--color-accent)',
+                  color: '#fff',
+                  cursor: (importing || !pasteText.trim()) ? 'not-allowed' : 'pointer',
+                  opacity: (importing || !pasteText.trim()) ? 0.5 : 1,
+                }}
+              >
+                {importing ? '导入中...' : '导入'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── 编辑/新建表单 ── */}
         {(editingId || isCreating) && editForm && (

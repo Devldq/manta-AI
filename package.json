@@ -6,8 +6,8 @@
   "author": "lidaqing",
   "description": "Manta — Agent 调度操作系统 · Humans steer. Agents execute. Drivers are pluggable.",
   "scripts": {
-    "dev": "concurrently -n \"NEXT,ELECTRON\" -c \"yellow,blue\" --kill-others \"next dev -p 3000\" \"wait-on http://localhost:3000 && electron .\"",
-    "dev:next": "next dev -p 3000",
+    "dev": "concurrently -n \"NEXT,ELECTRON\" -c \"yellow,blue\" --kill-others \"node node_modules/next/dist/bin/next dev -p 3000\" \"wait-on http://localhost:3000 && electron .\"",
+    "dev:next": "node node_modules/next/dist/bin/next dev -p 3000",
     "dev:electron": "electron .",
     "build": "sh scripts/build-prod.sh",
     "build:next": "next build",

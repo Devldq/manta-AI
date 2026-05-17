@@ -3,19 +3,19 @@ import { streamText, type ModelMessage, stepCountIs } from 'ai'
 import { transformChunk } from './stream-transformer'
 import { getAISDKModel } from '@/core/llm/ai-sdk-provider'
 import { getLLMConfig } from '@/core/llm/config-store'
-import { conversationTools } from '@/core/conversation/tools'
-import { fsTools } from '@/core/conversation/fs-tools'
-import { ccTools } from '@/core/conversation/cc-tools'
+import { ToolRegistry } from '@/core/tool-registry'
+import { conversationToolDefs } from '@/core/conversation/tools'
+import { fsToolDefs } from '@/core/conversation/fs-tools'
+import { ccToolDefs } from '@/core/conversation/cc-tools'
 import { LoopDetector } from './loop-detector'
 import type { LoopDetectionResult } from './loop-detector'
+import { formatAIError, formatErrorForSSE } from './error-formatter'
 
 /** Token 预算上限（累计输出 token 超过此值则停止） */
 const MAX_OUTPUT_TOKENS = 8000
 
 /** 安全兜底步数上限（极高值，仅在循环检测和 token 预算都未触发时生效） */
 const SAFETY_MAX_STEPS = 100
-
-const ALL_TOOLS = { ...conversationTools, ...fsTools, ...ccTools }
 
 /** Agent Loop 选项 */
 export interface AgentLoopOptions {
@@ -145,7 +145,7 @@ function appendStepToMessages(
             type: 'tool-result' as const,
             toolCallId: result.toolCallId,
             toolName,
-            output: formatToolOutput(result.output, result.isError),
+            output: formatToolOutput(result.output, result.isError ?? false),
           },
         ],
       } as ModelMessage)
@@ -187,6 +187,11 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
     // 生成统一的 messageId，整个 agent loop 共享（确保前端合并为一个消息气泡）
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
+    // 创建 ToolRegistry 并注册所有工具
+    const toolRegistry = new ToolRegistry()
+    toolRegistry.register(...conversationToolDefs, ...fsToolDefs, ...ccToolDefs)
+    const allTools = toolRegistry.toAISDKFormat()
+
     try {
       // 发送统一的 start 事件（只发一次，整个 loop 共享 messageId）
       streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'start', messageId })}\n\n`))
@@ -205,7 +210,7 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
         const result = streamText({
           model,
           system: effectiveSystemPrompt,
-          tools: ALL_TOOLS,
+          tools: allTools,
           temperature: effectiveTemperature,
           messages: currentMessages,
           abortSignal,
@@ -231,6 +236,20 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
 
           // 同时收集到 stepCollect
           switch (chunk.type) {
+            case 'error':
+              // AI SDK v5+ 通过 fullStream 发射 error chunk，而不是抛异常
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const errorFromChunk = (chunk as any).error ?? chunk
+              const errorInfo = formatAIError(errorFromChunk)
+              const friendlyMessage = formatErrorForSSE(errorInfo)
+              const errorChunk = { type: 'error', errorText: friendlyMessage }
+              try {
+                streamController.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`))
+              } catch { /* ignore */ }
+              // 直接关闭流并退出，不 throw（避免外层 catch 重复处理）
+              try { streamController.close() } catch { /* ignore */ }
+              return
+
             case 'text-delta':
               stepCollect.text += chunk.text
               break
@@ -243,12 +262,13 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
               break
             case 'tool-result':
               // AI SDK v6: tool-result chunk 使用 result 字段存储执行结果
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const toolResult = (chunk as any).result
               stepCollect.toolResults.push({
                 toolCallId: chunk.toolCallId,
                 toolName: chunk.toolName,
-                output: chunk.result,
+                output: toolResult,
                 // AI SDK v6 不在 fullStream tool-result chunk 中暴露 isError
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 isError: (chunk as any).isError ?? false,
               })
               break
@@ -325,8 +345,10 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
       streamController.close()
     } catch (err) {
       console.error('[AgentLoop] Error:', err)
-      // 向客户端发送错误事件
-      const errorChunk = { type: 'error', errorText: err instanceof Error ? err.message : String(err) }
+      // 将技术错误转换为用户友好的提示
+      const errorInfo = formatAIError(err)
+      const friendlyMessage = formatErrorForSSE(errorInfo)
+      const errorChunk = { type: 'error', errorText: friendlyMessage }
       try {
         streamController.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`))
       } catch { /* controller 可能已关闭 */ }

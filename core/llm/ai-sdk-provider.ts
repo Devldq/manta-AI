@@ -12,21 +12,15 @@ import type { LLMConfig } from './types'
 
 // ─── MiMo reasoning_content 共享存储 ─────────────────────────────────────────────
 //
-// 自定义 fetch 在响应侧直接从 MiMo 原始 SSE 流中提取 reasoning_content 存入此队列。
-// 请求侧按 assistant 消息顺序从队列中取出注入。
-// FIFO 队列保证每个 assistant 消息拿到正确的 reasoning，不依赖 AI SDK 是否解析 reasoning_content。
+// 策略：保存最近一次的 reasoning_content，在请求时注入到所有缺少该字段的 assistant 消息中。
+// 这样无论 agent loop 产生多少轮对话，每条 assistant 消息都有 reasoning_content。
 
-/** reasoning 内容 FIFO 队列 */
-const reasoningQueue: string[] = []
-
-/** 取出队列头部 reasoning（由自定义 fetch 内部调用） */
-function dequeueReasoning(): string | undefined {
-  return reasoningQueue.shift()
-}
+/** 最近一次收到的 reasoning_content */
+let lastReasoning: string | null = null
 
 /** 清除所有 reasoning 存储（新对话开始时调用） */
 export function clearAllReasoning(): void {
-  reasoningQueue.length = 0
+  lastReasoning = null
 }
 
 // ─── MiMo 检测 ────────────────────────────────────────────────────────────────────
@@ -35,12 +29,8 @@ export function clearAllReasoning(): void {
 function needsReasoningPassthrough(cfg: LLMConfig): boolean {
   if (cfg.provider === 'openai-compatible' && cfg.baseUrl) {
     const url = cfg.baseUrl.toLowerCase()
-    // 精确匹配 MiMo API 端点（避免误判）
     if (url.includes('xiaomimimo.com')) {
-      const model = cfg.model.toLowerCase()
-      if (model.startsWith('mimo-v2.5') || model.startsWith('mimo-v2-pro') || model.startsWith('mimo-v2-omni')) {
-        return true
-      }
+      return true
     }
   }
   return false
@@ -52,8 +42,8 @@ function needsReasoningPassthrough(cfg: LLMConfig): boolean {
  * 在 AI SDK 层面处理 MiMo 输出结构差异的自定义 fetch 函数
  *
  * 双向拦截：
- * 【请求侧】扫描 assistant 消息，从 FIFO 队列中取出 reasoning 注入 reasoning_content
- * 【响应侧】从 MiMo 的原始 SSE 流中直接提取 reasoning_content 存入队列
+ * 【请求侧】扫描所有缺少 reasoning_content 的 assistant 消息，注入最近一次 reasoning
+ * 【响应侧】从 MiMo 的原始 SSE 流中直接提取 reasoning_content 保存起来
  *          （不依赖 AI SDK 是否解析 reasoning_content）
  */
 function createReasoningPassthroughFetch(originalFetch: typeof globalThis.fetch): typeof globalThis.fetch {
@@ -65,10 +55,9 @@ function createReasoningPassthroughFetch(originalFetch: typeof globalThis.fetch)
         const body = JSON.parse(init.body as string)
         if (body.messages && Array.isArray(body.messages)) {
           for (const msg of body.messages) {
-            if (msg.role === 'assistant') {
-              if (msg.reasoning_content) continue
-              const reasoning = dequeueReasoning()
-              if (reasoning) msg.reasoning_content = reasoning
+            // 给所有缺少 reasoning_content 的 assistant 消息注入最近一次 reasoning
+            if (msg.role === 'assistant' && !msg.reasoning_content && lastReasoning) {
+              msg.reasoning_content = lastReasoning
             }
           }
         }
@@ -108,8 +97,8 @@ function createReasoningPassthroughFetch(originalFetch: typeof globalThis.fetch)
             }
           },
           flush() {
-            // 流结束时，将收集的 reasoning 存入 FIFO 队列
-            if (collected) reasoningQueue.push(collected)
+            // 流结束时，保存收集的 reasoning
+            if (collected) lastReasoning = collected
           },
         })
 
@@ -123,7 +112,7 @@ function createReasoningPassthroughFetch(originalFetch: typeof globalThis.fetch)
         try {
           const json = await response.json()
           const reasoning = json?.choices?.[0]?.message?.reasoning_content
-          if (reasoning) reasoningQueue.push(reasoning)
+          if (reasoning) lastReasoning = reasoning
           return new Response(JSON.stringify(json), {
             status: response.status,
             statusText: response.statusText,

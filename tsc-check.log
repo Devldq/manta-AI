@@ -1,0 +1,7 @@
+app/tasks/page.tsx(404,34): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: { size?: number | undefined; className?: string | undefined; }, context?: any): string | number | bigint | boolean | ReactElement<unknown, string | JSXElementConstructor<any>> | ... 4 more ... | undefined', gave the following error.
+    Type '{ size: number; style: { flexShrink: number; color: string; }; }' is not assignable to type 'IntrinsicAttributes & { size?: number | undefined; className?: string | undefined; }'.
+      Property 'style' does not exist on type 'IntrinsicAttributes & { size?: number | undefined; className?: string | undefined; }'.
+  Overload 2 of 2, '(props: { size?: number | undefined; className?: string | undefined; }): string | number | bigint | boolean | ReactElement<unknown, string | JSXElementConstructor<any>> | ... 4 more ... | undefined', gave the following error.
+    Type '{ size: number; style: { flexShrink: number; color: string; }; }' is not assignable to type 'IntrinsicAttributes & { size?: number | undefined; className?: string | undefined; }'.
+      Property 'style' does not exist on type 'IntrinsicAttributes & { size?: number | undefined; className?: string | undefined; }'.

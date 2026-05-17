@@ -1,6 +1,6 @@
-/* 文件系统工具集 — 供 AI 模型通过 function calling 使用
+/* 文件系统工具集 — 使用 ToolDefinition 接口定义，供 ToolRegistry 管理
  * 安全限制：CWD 内自由访问；CWD 外需用户授权 */
-import { tool, jsonSchema } from 'ai'
+import type { ToolDefinition } from '@/core/tool-registry'
 import * as fs from 'fs'
 import * as path from 'path'
 import { isApproved, requestAccess, listPendingRequests } from '@/core/fs/access-store'
@@ -72,11 +72,11 @@ function globToRegExp(pattern: string): RegExp {
 // ─── 工具定义 ────────────────────────────────────────────────────────────────
 
 /** 读取文件内容 */
-export const readFileTool = tool({
+const readFileDef: ToolDefinition = {
+  name: 'readFile',
   description:
     '读取指定路径的文件内容。支持按行号范围截取，适合读取大文件的局部内容。CWD 外的路径需用户授权。',
-  // 兼容别名：path / file / filename
-  inputSchema: jsonSchema<{ file_path?: string; path?: string; file?: string; filename?: string; offset?: number; limit?: number }>({
+  parameters: {
     type: 'object',
     properties: {
       file_path: { type: 'string', description: '文件绝对路径或相对于 CWD 的路径' },
@@ -87,11 +87,11 @@ export const readFileTool = tool({
       limit: { type: 'integer', minimum: 1, description: '最多读取的行数，默认读取全部' },
     },
     additionalProperties: true,
-  }),
-  execute: async ({ file_path, path: pathParam, file, filename, offset, limit, ...rest }) => {
+  },
+  execute: async (input: any) => {
+    const { file_path, path: pathParam, file, filename, offset, limit } = input
     const filePath = file_path || pathParam || file || filename || ''
     if (!filePath) return { error: '缺少文件路径参数' }
-    void rest
     const access = await checkAccess(filePath)
     if ('error' in access) return { error: access.error }
     const { resolved } = access
@@ -120,15 +120,14 @@ export const readFileTool = tool({
       content: sliced.join('\n'),
     }
   },
-})
+}
 
 /** 列出目录内容 */
-export const lsDirTool = tool({
+const lsDirDef: ToolDefinition = {
+  name: 'lsDir',
   description:
     '列出指定目录下的文件和子目录。CWD 外的路径需用户授权。',
-  // AI: parameters → inputSchema（AI SDK v6 API 变更）
-  // 兼容别名：path / dir / directory（不同模型可能用不同参数名）
-  inputSchema: jsonSchema<{ dir_path?: string; path?: string; dir?: string; directory?: string }>({
+  parameters: {
     type: 'object',
     properties: {
       dir_path: { type: 'string', description: '目录绝对路径或相对于 CWD 的路径' },
@@ -136,15 +135,13 @@ export const lsDirTool = tool({
       dir: { type: 'string', description: '目录路径（同 dir_path）' },
       directory: { type: 'string', description: '目录路径（同 dir_path）' },
     },
-    // 不设 required，让模型可以只用别名
     additionalProperties: true,
-  }),
-  execute: async ({ dir_path, path: pathParam, dir, directory, ...rest }) => {
+  },
+  execute: async (input: any) => {
+    const { dir_path, path: pathParam, dir, directory } = input
     // 容错：取第一个非空值作为目录路径
     const targetPath = dir_path || pathParam || dir || directory || ''
     if (!targetPath) return { error: '缺少目录路径参数' }
-    // 忽略多余参数
-    void rest
     const access = await checkAccess(targetPath)
     if ('error' in access) return { error: access.error }
     const { resolved } = access
@@ -165,14 +162,14 @@ export const lsDirTool = tool({
 
     return { dir_path: resolved, count: items.length, items }
   },
-})
+}
 
 /** 按 glob 模式匹配文件 */
-export const globTool = tool({
+const globDef: ToolDefinition = {
+  name: 'glob',
   description:
     '按 glob 模式匹配文件，支持 * ** ? 通配符（如 "**/*.ts"、"src/**/*.tsx"）。CWD 外的搜索根目录需用户授权。',
-  // AI: parameters → inputSchema（AI SDK v6 API 变更）
-  inputSchema: jsonSchema<{ pattern: string; path?: string; search_path?: string; root?: string }>({
+  parameters: {
     type: 'object',
     properties: {
       pattern: { type: 'string', description: 'Glob 模式，如 **/*.ts 或 src/**/*.tsx' },
@@ -182,10 +179,10 @@ export const globTool = tool({
     },
     required: ['pattern'],
     additionalProperties: true,
-  }),
-  execute: async ({ pattern, path: searchPath, search_path, root: rootParam, ...rest }) => {
+  },
+  execute: async (input: any) => {
+    const { pattern, path: searchPath, search_path, root: rootParam } = input
     const effectivePath = searchPath ?? search_path ?? rootParam ?? undefined
-    void rest
     const rootRaw = searchPath ?? process.cwd()
     const access = await checkAccess(rootRaw)
     if ('error' in access) return { error: access.error }
@@ -208,22 +205,14 @@ export const globTool = tool({
       files: matched,
     }
   },
-})
+}
 
 /** 在文件内容中搜索正则模式 */
-export const grepTool = tool({
+const grepDef: ToolDefinition = {
+  name: 'grep',
   description:
     '在指定目录的文件中搜索匹配正则表达式的行，支持文件类型过滤。返回匹配行的文件路径、行号和内容（最多 250 条）。CWD 外的搜索路径需用户授权。',
-  // AI: parameters → inputSchema（AI SDK v6 API 变更）
-  inputSchema: jsonSchema<{
-    pattern: string
-    search_path?: string
-    path?: string
-    root?: string
-    include?: string
-    ignore_case?: boolean
-    case_insensitive?: boolean
-  }>({
+  parameters: {
     type: 'object',
     properties: {
       pattern: { type: 'string', description: '正则表达式，如 "function\\s+\\w+" 或 "import.*from"' },
@@ -236,11 +225,11 @@ export const grepTool = tool({
     },
     required: ['pattern'],
     additionalProperties: true,
-  }),
-  execute: async ({ pattern, search_path, path: pathParam, root: rootParam, include, ignore_case, case_insensitive, ...rest }) => {
+  },
+  execute: async (input: any) => {
+    const { pattern, search_path, path: pathParam, root: rootParam, include, ignore_case, case_insensitive } = input
     const rootRaw = search_path ?? pathParam ?? rootParam ?? process.cwd()
     const ignoreCaseFinal = ignore_case ?? case_insensitive ?? false
-    void rest
     const access = await checkAccess(rootRaw)
     if ('error' in access) return { error: access.error }
     const { resolved: root } = access
@@ -250,7 +239,7 @@ export const grepTool = tool({
 
     let re: RegExp
     try {
-      re = new RegExp(pattern, ignore_case ? 'i' : undefined)
+      re = new RegExp(pattern, ignoreCaseFinal ? 'i' : undefined)
     } catch {
       return { error: `正则表达式无效：${pattern}` }
     }
@@ -297,12 +286,12 @@ export const grepTool = tool({
       results,
     }
   },
-})
-
-/** 导出所有文件系统工具，便于批量注入 streamText */
-export const fsTools = {
-  readFile: readFileTool,
-  lsDir: lsDirTool,
-  glob: globTool,
-  grep: grepTool,
 }
+
+/** 导出所有文件系统工具定义，供 ToolRegistry 注册 */
+export const fsToolDefs: ToolDefinition[] = [
+  readFileDef,
+  lsDirDef,
+  globDef,
+  grepDef,
+]
