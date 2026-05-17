@@ -2,6 +2,10 @@
 'use client'
 
 import { useState, useEffect, useRef, Suspense, useCallback, memo } from 'react'
+import {
+  Folder, FileText, FileSearch, Search, Terminal, Pencil,
+  Wrench, Loader2, Check, AlertCircle, ChevronDown,
+} from 'lucide-react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
@@ -250,6 +254,23 @@ function formatValue(v: unknown, maxLen = 400): string {
   return s.length > maxLen ? s.slice(0, maxLen) + '\n…（已截断）' : s
 }
 
+/** 工具名 → lucide icon 映射 */
+const TOOL_ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+  lsDir: Folder,
+  readFile: FileText,
+  glob: FileSearch,
+  grep: Search,
+  bash: Terminal,
+  write: Pencil,
+  edit: Pencil,
+  multiEdit: Pencil,
+}
+
+/** 获取工具图标 */
+function getToolIcon(toolName: string) {
+  return TOOL_ICON_MAP[toolName] ?? Wrench
+}
+
 /** 把工具调用转成一句人读的动作描述 */
 function describeToolCall(entry: ToolCallEntry): string {
   const input = entry.input as Record<string, unknown> | null | undefined
@@ -312,7 +333,8 @@ const ToolCallLog = memo(function ToolCallLog({
           onMouseEnter={e => e.currentTarget.style.color = 'var(--color-text-secondary)'}
           onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text-muted)'}
         >
-          <span style={{ fontFamily: 'var(--font-mono)' }}>↑ 还有 {hiddenCount} 条</span>
+          <ChevronDown size={12} />
+          <span style={{ fontFamily: 'var(--font-mono)' }}>还有 {hiddenCount} 条工具调用</span>
         </button>
       )}
 
@@ -335,7 +357,8 @@ const ToolCallLog = memo(function ToolCallLog({
           onMouseEnter={e => e.currentTarget.style.color = 'var(--color-text-secondary)'}
           onMouseLeave={e => e.currentTarget.style.color = 'var(--color-text-muted)'}
         >
-          <span style={{ fontFamily: 'var(--font-mono)' }}>↑ 收起</span>
+          <ChevronDown size={12} style={{ transform: 'rotate(180deg)' }} />
+          <span style={{ fontFamily: 'var(--font-mono)' }}>收起</span>
         </button>
       )}
 
@@ -362,18 +385,23 @@ const ToolCallItem = memo(function ToolCallItem({ entry }: { entry: ToolCallEntr
   const isDone = entry.state === 'output-available'
   const isError = entry.state === 'output-error'
   const desc = describeToolCall(entry)
+  const IconComponent = getToolIcon(entry.toolName)
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: '7px',
+      display: 'flex', alignItems: 'center', gap: '6px',
       padding: '2px 6px', borderRadius: '4px',
       minHeight: '22px',
     }}>
-      {/* 状态点 */}
+      {/* 状态图标 */}
       {isActive ? (
-        <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0, border: '1.5px solid var(--color-accent)', borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite', display: 'inline-block' }} />
+        <Loader2 size={13} className="tool-spinner" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
+      ) : isDone ? (
+        <Check size={13} style={{ flexShrink: 0, color: 'var(--color-status-done)' }} />
+      ) : isError ? (
+        <AlertCircle size={13} style={{ flexShrink: 0, color: 'var(--color-status-failed)' }} />
       ) : (
-        <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0, display: 'inline-block', background: isDone ? 'var(--color-status-done)' : isError ? 'var(--color-status-failed)' : 'var(--color-border)' }} />
+        <IconComponent size={13} style={{ flexShrink: 0, color: 'var(--color-text-muted)' }} />
       )}
 
       {/* 动作描述 */}
@@ -569,6 +597,42 @@ function KimInputBar({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [agentOpen, setAgentOpen] = useState(false)
   const agentDropRef = useRef<HTMLDivElement>(null)
+  const [modelOpen, setModelOpen] = useState(false)
+  const modelDropRef = useRef<HTMLDivElement>(null)
+  const [profiles, setProfiles] = useState<Array<{ id: string; name: string }>>([])
+  const [activeProfileId, setActiveProfileId] = useState<string>('')
+
+  // 获取模型配置列表
+  useEffect(() => {
+    async function fetchProfiles() {
+      try {
+        const res = await fetch('/api/chat/config')
+        const data = await res.json()
+        if (data.profiles) {
+          setProfiles(data.profiles.map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })))
+          setActiveProfileId(data.activeProfileId || data.profiles[0]?.id || '')
+        }
+      } catch (err) {
+        console.error('Failed to fetch profiles:', err)
+      }
+    }
+    fetchProfiles()
+  }, [])
+
+  // 切换模型
+  async function handleModelChange(profileId: string) {
+    try {
+      await fetch('/api/chat/config?action=active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId }),
+      })
+      setActiveProfileId(profileId)
+      setModelOpen(false)
+    } catch (err) {
+      console.error('Failed to switch model:', err)
+    }
+  }
 
   useEffect(() => {
     const ta = textareaRef.current
@@ -585,6 +649,15 @@ function KimInputBar({
     document.addEventListener('mousedown', outside)
     return () => document.removeEventListener('mousedown', outside)
   }, [agentOpen])
+
+  useEffect(() => {
+    if (!modelOpen) return
+    function outside(e: MouseEvent) {
+      if (modelDropRef.current && !modelDropRef.current.contains(e.target as Node)) setModelOpen(false)
+    }
+    document.addEventListener('mousedown', outside)
+    return () => document.removeEventListener('mousedown', outside)
+  }, [modelOpen])
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     // isComposing=true 时说明输入法正在组字（中文选词），不触发提交
@@ -649,12 +722,12 @@ function KimInputBar({
 
         {/* 底部工具栏 */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderTop: '1px solid var(--color-border-subtle)' }}>
-          {/* 左侧：Agent / Auto / Skills */}
+          {/* 左侧：模型 / Auto / Skills */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            {/* Agent 选择器 */}
-            <div ref={agentDropRef} style={{ position: 'relative' }}>
+            {/* 模型选择器 */}
+            <div ref={modelDropRef} style={{ position: 'relative' }}>
               <button
-                onClick={() => !disabled && setAgentOpen((o) => !o)}
+                onClick={() => !disabled && setModelOpen((o) => !o)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '5px',
                   padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)',
@@ -665,21 +738,21 @@ function KimInputBar({
                 onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = 'var(--color-border)' }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
               >
-                <span style={{ fontSize: '12px' }}>◻</span>
-                <span>{agentName}</span>
+                <span style={{ fontSize: '12px' }}>◎</span>
+                <span>{profiles.find(p => p.id === activeProfileId)?.name || '选择模型'}</span>
                 <span style={{ fontSize: '9px', opacity: 0.6 }}>▾</span>
               </button>
-              {agentOpen && (
+              {modelOpen && (
                 <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 100, minWidth: '180px', background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
-                  {agents.length === 0
-                    ? <div style={{ padding: '10px 12px', fontSize: '12px', color: 'var(--color-text-muted)' }}>暂无 Agent</div>
-                    : agents.map((a) => (
-                      <button key={a.name} onClick={() => { onAgentChange(a.name); setAgentOpen(false) }}
-                        style={{ width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: a.name === agentName ? 'var(--color-accent-subtle)' : 'transparent', color: 'var(--color-text-primary)', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-                        onMouseEnter={(e) => { if (a.name !== agentName) e.currentTarget.style.background = 'var(--color-border)' }}
-                        onMouseLeave={(e) => { if (a.name !== agentName) e.currentTarget.style.background = 'transparent' }}>
-                        {a.name === agentName && <span style={{ color: 'var(--color-accent)', fontSize: '10px' }}>✓</span>}
-                        <span style={{ fontFamily: 'monospace' }}>{a.name}</span>
+                  {profiles.length === 0
+                    ? <div style={{ padding: '10px 12px', fontSize: '12px', color: 'var(--color-text-muted)' }}>暂无模型</div>
+                    : profiles.map((p) => (
+                      <button key={p.id} onClick={() => handleModelChange(p.id)}
+                        style={{ width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: p.id === activeProfileId ? 'var(--color-accent-subtle)' : 'transparent', color: 'var(--color-text-primary)', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                        onMouseEnter={(e) => { if (p.id !== activeProfileId) e.currentTarget.style.background = 'var(--color-border)' }}
+                        onMouseLeave={(e) => { if (p.id !== activeProfileId) e.currentTarget.style.background = 'transparent' }}>
+                        {p.id === activeProfileId && <span style={{ color: 'var(--color-accent)', fontSize: '10px' }}>✓</span>}
+                        <span style={{ fontFamily: 'monospace' }}>{p.name}</span>
                       </button>
                     ))}
                 </div>

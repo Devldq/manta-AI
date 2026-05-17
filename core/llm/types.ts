@@ -2,6 +2,7 @@
 
 export type LLMProvider = 'openai' | 'openai-compatible' | 'ollama' | 'lm-studio'
 
+/** 单次 LLM 调用配置（下游使用方接口，保持不变） */
 export interface LLMConfig {
   provider: LLMProvider
   /** OpenAI / 兼容 API 的密钥 */
@@ -14,6 +15,42 @@ export interface LLMConfig {
   temperature?: number
   /** 最大输出 token 数 */
   maxTokens?: number
+}
+
+/** 单个模型配置 Profile — 带有 id、name、isDefault 等元信息 */
+export interface ModelProfile {
+  /** 配置的唯一标识（uuid） */
+  id: string
+  /** 用户给这个配置取的名字，如 "GPT-4o 日常对话"、"DeepSeek 代码助手" */
+  name: string
+  /** 是否为默认配置（同一时刻只允许一个 default） */
+  isDefault?: boolean
+  provider: LLMProvider
+  apiKey?: string
+  baseUrl?: string
+  model: string
+  temperature?: number
+  maxTokens?: number
+}
+
+/** 多模型配置列表（新存储格式） */
+export interface LLMProfilesConfig {
+  /** 所有模型配置列表 */
+  profiles: ModelProfile[]
+  /** 当前激活使用的配置 id（若未指定则使用 isDefault 的配置） */
+  activeProfileId?: string
+}
+
+/** 将 ModelProfile 转换为 LLMConfig（去除 profile 特有字段） */
+export function profileToLLMConfig(profile: ModelProfile): LLMConfig {
+  return {
+    provider: profile.provider,
+    apiKey: profile.apiKey,
+    baseUrl: profile.baseUrl,
+    model: profile.model,
+    temperature: profile.temperature,
+    maxTokens: profile.maxTokens,
+  }
 }
 
 /** 各 provider 的默认模型建议列表 */
@@ -30,6 +67,14 @@ export const PROVIDER_DEFAULT_BASE_URLS: Partial<Record<LLMProvider, string>> = 
   'ollama': 'http://localhost:11434',
   'lm-studio': 'http://localhost:1234/v1',
 }
+
+/** Provider 配置元数据（UI 展示用） */
+export const PROVIDER_META: { value: LLMProvider; label: string; desc: string }[] = [
+  { value: 'openai', label: 'OpenAI', desc: 'api.openai.com — GPT-4o、GPT-3.5 等' },
+  { value: 'openai-compatible', label: 'OpenAI 兼容 API', desc: 'DeepSeek、通义千问、Moonshot 等' },
+  { value: 'ollama', label: 'Ollama（本地）', desc: 'localhost:11434 — 本地运行的 Ollama 服务' },
+  { value: 'lm-studio', label: 'LM Studio（本地）', desc: 'localhost:1234 — LM Studio 本地服务' },
+]
 
 /** 默认配置（使用环境变量兜底）*/
 export function getDefaultLLMConfig(): LLMConfig {

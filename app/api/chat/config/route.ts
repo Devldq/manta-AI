@@ -1,62 +1,183 @@
-/* GET /api/chat/config — 读取 LLM 配置（apiKey 脱敏）
-   PUT /api/chat/config — 保存 LLM 配置
-   POST /api/chat/config/test — 测试连通性 */
+/* GET  /api/chat/config        — 读取多模型配置列表（apiKey 脱敏）
+   PUT  /api/chat/config        — 保存完整的多模型配置列表（全量更新）
+   POST /api/chat/config/test   — 测试连通性（支持 profileId 或临时配置）
+   POST /api/chat/config/active — 切换激活配置 */
 import { NextRequest, NextResponse } from 'next/server'
-import { getLLMConfig, getLLMConfigMasked, saveLLMConfig } from '@/core/llm/config-store'
+import {
+  getLLMProfiles,
+  getLLMProfilesMasked,
+  saveLLMProfiles,
+  addProfile,
+  updateProfile,
+  deleteProfile,
+  setActiveProfile,
+  setDefaultProfile,
+  getLLMConfig,
+  getActiveProfile,
+} from '@/core/llm/config-store'
 import { testLLMConnection } from '@/core/llm/factory'
-import type { LLMConfig } from '@/core/llm/types'
+import type { ModelProfile, LLMProfilesConfig } from '@/core/llm/types'
+import { profileToLLMConfig } from '@/core/llm/types'
 
+/** GET — 读取多模型配置列表（脱敏） */
 export async function GET() {
   try {
-    const config = getLLMConfigMasked()
-    return NextResponse.json({ config })
+    const data = getLLMProfilesMasked()
+    return NextResponse.json(data)
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
 
+/** PUT — 保存完整的多模型配置列表 */
 export async function PUT(req: NextRequest) {
   try {
     const body = await req.json()
-    const incoming = body as LLMConfig
+    const incoming = body as LLMProfilesConfig
 
-    if (!incoming.provider || !incoming.model) {
-      return NextResponse.json({ error: 'provider 和 model 为必填项' }, { status: 400 })
+    if (!incoming.profiles || incoming.profiles.length === 0) {
+      return NextResponse.json({ error: 'profiles 列表不能为空' }, { status: 400 })
     }
 
-    // AI: 合并保存 — 如果本次请求没有传入 apiKey（UI 里未输入新 Key），
-    //     则保留之前已存储的 apiKey，避免脱敏显示时的"空覆盖"问题
-    if (!incoming.apiKey?.trim()) {
-      const existing = getLLMConfig()
-      incoming.apiKey = existing.apiKey
-    }
+    // apiKey 合并：如果某个 profile 的 apiKey 为空（UI 里未输入新 Key），则保留之前存储的 apiKey
+    const existing = getLLMProfiles()
+    incoming.profiles = incoming.profiles.map((p) => {
+      if (!p.apiKey?.trim()) {
+        const existingProfile = existing.profiles.find((ep) => ep.id === p.id)
+        if (existingProfile) {
+          return { ...p, apiKey: existingProfile.apiKey }
+        }
+      }
+      return p
+    })
 
-    saveLLMConfig(incoming)
+    saveLLMProfiles(incoming)
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
 
+/** POST — 两种用途：
+ *  1. /api/chat/config?action=test — 测试连通性
+ *  2. /api/chat/config?action=profile — 添加/更新/删除单个 profile
+ *  3. /api/chat/config?action=active — 切换激活配置
+ *  4. /api/chat/config?action=default — 设置默认配置
+ */
 export async function POST(req: NextRequest) {
-  // AI: POST /api/chat/config — 测试 LLM 连通性
   try {
+    const action = req.nextUrl.searchParams.get('action') || 'test'
     const body = await req.json()
-    const incoming = body as LLMConfig
 
-    if (!incoming.provider || !incoming.model) {
-      return NextResponse.json({ error: 'provider 和 model 为必填项' }, { status: 400 })
+    switch (action) {
+      case 'test': {
+        // 测试连通性：支持传入 profileId（使用已存储的配置）或临时 LLMConfig
+        return await handleTest(body)
+      }
+      case 'profile': {
+        // Profile CRUD：add / update / delete
+        return await handleProfileCRUD(body)
+      }
+      case 'active': {
+        // 切换激活配置
+        return await handleSetActive(body)
+      }
+      case 'default': {
+        // 设置默认配置
+        return await handleSetDefault(body)
+      }
+      default:
+        return NextResponse.json({ error: `不支持的操作: ${action}` }, { status: 400 })
     }
-
-    // AI: 测试时同样合并已存储的 apiKey，保证测试结果真实反映实际配置
-    if (!incoming.apiKey?.trim()) {
-      const existing = getLLMConfig()
-      incoming.apiKey = existing.apiKey
-    }
-
-    const result = await testLLMConnection(incoming)
-    return NextResponse.json(result)
   } catch (err) {
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 })
   }
+}
+
+/** 测试连通性：支持 profileId 或临时配置 */
+async function handleTest(body: { profileId?: string; config?: ModelProfile }) {
+  let configToTest: ModelProfile
+
+  if (body.profileId) {
+    // 使用已存储的配置测试
+    const profilesConfig = getLLMProfiles()
+    const found = profilesConfig.profiles.find((p) => p.id === body.profileId)
+    if (!found) {
+      return NextResponse.json({ ok: false, error: `找不到配置: ${body.profileId}` }, { status: 404 })
+    }
+    configToTest = found
+  } else if (body.config) {
+    // 使用临时传入的配置测试
+    configToTest = body.config
+    // apiKey 合并：如果临时配置的 apiKey 为空，合并已存储的值
+    if (!configToTest.apiKey?.trim() && configToTest.id) {
+      const existing = getLLMProfiles()
+      const existingProfile = existing.profiles.find((p) => p.id === configToTest.id)
+      if (existingProfile) {
+        configToTest = { ...configToTest, apiKey: existingProfile.apiKey }
+      }
+    }
+  } else {
+    // 使用当前激活配置测试
+    configToTest = getActiveProfile()
+  }
+
+  const result = await testLLMConnection(profileToLLMConfig(configToTest))
+  return NextResponse.json(result)
+}
+
+/** Profile CRUD 操作 */
+async function handleProfileCRUD(body: { operation: 'add' | 'update' | 'delete'; profile?: ModelProfile; profileId?: string }) {
+  switch (body.operation) {
+    case 'add': {
+      if (!body.profile) {
+        return NextResponse.json({ error: '缺少 profile 数据' }, { status: 400 })
+      }
+      // apiKey 合并：如果新 profile 的 apiKey 为空，不传入（让存储层使用环境变量）
+      const profileData = { ...body.profile }
+      if (!profileData.apiKey?.trim()) {
+        // 新增时没有 apiKey，尝试从环境变量获取
+        const envConfig = getLLMConfig()
+        if (envConfig.apiKey && (profileData.provider === envConfig.provider)) {
+          profileData.apiKey = envConfig.apiKey
+        }
+      }
+      const newProfile = addProfile(profileData)
+      return NextResponse.json({ success: true, profile: newProfile })
+    }
+    case 'update': {
+      if (!body.profileId || !body.profile) {
+        return NextResponse.json({ error: '缺少 profileId 或 profile 数据' }, { status: 400 })
+      }
+      const updated = updateProfile(body.profileId, body.profile)
+      return NextResponse.json({ success: true, profile: updated })
+    }
+    case 'delete': {
+      if (!body.profileId) {
+        return NextResponse.json({ error: '缺少 profileId' }, { status: 400 })
+      }
+      deleteProfile(body.profileId)
+      return NextResponse.json({ success: true })
+    }
+    default:
+      return NextResponse.json({ error: `不支持的操作: ${body.operation}` }, { status: 400 })
+  }
+}
+
+/** 切换激活配置 */
+async function handleSetActive(body: { profileId: string }) {
+  if (!body.profileId) {
+    return NextResponse.json({ error: '缺少 profileId' }, { status: 400 })
+  }
+  setActiveProfile(body.profileId)
+  return NextResponse.json({ success: true })
+}
+
+/** 设置默认配置 */
+async function handleSetDefault(body: { profileId: string }) {
+  if (!body.profileId) {
+    return NextResponse.json({ error: '缺少 profileId' }, { status: 400 })
+  }
+  setDefaultProfile(body.profileId)
+  return NextResponse.json({ success: true })
 }

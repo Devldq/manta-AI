@@ -1,5 +1,6 @@
 /* Agent 执行循环 — 手动实现 while 循环，每步调用 streamText 保持真流式 */
 import { streamText, type ModelMessage, stepCountIs } from 'ai'
+import { transformChunk } from './stream-transformer'
 import { getAISDKModel } from '@/core/llm/ai-sdk-provider'
 import { getLLMConfig } from '@/core/llm/config-store'
 import { conversationTools } from '@/core/conversation/tools'
@@ -87,6 +88,21 @@ function decideStop(
 }
 
 /**
+ * 将工具输出转换为 AI SDK v6 outputSchema 格式
+ * outputSchema 是 discriminatedUnion，不接受原始值
+ */
+function formatToolOutput(output: unknown, isError: boolean): { type: string; value: unknown } {
+  if (isError) {
+    return { type: 'error-text', value: String(output ?? 'Unknown error') }
+  }
+  // JSON 对象 → json 格式，字符串 → text 格式
+  if (typeof output === 'object' && output !== null) {
+    return { type: 'json', value: output }
+  }
+  return { type: 'text', value: String(output ?? '') }
+}
+
+/**
  * 将步骤结果追加到消息列表（toolName 从 toolCalls 中查找）
  */
 function appendStepToMessages(
@@ -124,17 +140,15 @@ function appendStepToMessages(
 
       newMessages.push({
         role: 'tool' as const,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         content: [
           {
             type: 'tool-result' as const,
             toolCallId: result.toolCallId,
             toolName,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            output: result.output as any,
+            output: formatToolOutput(result.output, result.isError),
           },
         ],
-      } as any)
+      } as ModelMessage)
     }
   }
 
@@ -142,163 +156,185 @@ function appendStepToMessages(
 }
 
 /**
- * 执行 Agent Loop：
- * - 手动 while 循环，每步调一次 streamText(maxSteps=1)
- * - 遍历 fullStream 收集结果 + 转发给客户端
+ * 执行 Agent Loop（真流式）：
+ * - 先创建 ReadableStream + Response 并立即返回
+ * - 在后台异步循环中逐个 enqueue chunk 到 controller
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户中断
  */
 export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFinish }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
 
-  const loopDetector = new LoopDetector()
-  let totalOutputTokens = 0
-  const allStepCollects: StepCollect[] = []
-  let currentMessages: ModelMessage[] = [...messages]
-  let stepIndex = 0
-  let warningMessage: string | null = null
-
-  // 创建合并流：将多步的 SSE 事件统一转发给客户端
   const encoder = new TextEncoder()
-  const streamChunks: string[] = []  // 收集所有 SSE chunk
+  let streamController!: ReadableStreamDefaultController<Uint8Array>
 
-  while (true) {
-    console.log(`[AgentLoop] Step ${stepIndex + 1}...`)
-
-    // 注入警告消息到 systemPrompt
-    const effectiveSystemPrompt = warningMessage
-      ? `${systemPrompt ?? ''}\n\n[系统提醒] ${warningMessage}`
-      : systemPrompt ?? undefined
-    warningMessage = null
-
-    // 每步调一次 streamText，stopWhen=[stepCountIs(1)] 强制单步执行
-    const result = streamText({
-      model,
-      system: effectiveSystemPrompt,
-      tools: ALL_TOOLS,
-      temperature: llmConfig.temperature ?? 0.7,
-      messages: currentMessages,
-      abortSignal,
-      stopWhen: stepCountIs(1),
-    })
-
-    // 收集本步结果
-    const stepCollect: StepCollect = {
-      text: '',
-      toolCalls: [],
-      toolResults: [],
-      usage: { inputTokens: 0, outputTokens: 0 },
-      finishReason: '',
-    }
-
-    // 遍历 fullStream：收集数据 + 转发给客户端
-    for await (const chunk of result.fullStream) {
-      // 转发 SSE 事件给客户端
-      const sseLine = `data: ${JSON.stringify(chunk)}\n\n`
-      streamChunks.push(sseLine)
-
-      // 同时收集到 stepCollect
-      switch (chunk.type) {
-        case 'text-delta':
-          stepCollect.text += chunk.text
-          break
-        case 'tool-call':
-          stepCollect.toolCalls.push({
-            toolCallId: chunk.toolCallId,
-            toolName: chunk.toolName,
-            input: chunk.input,
-          })
-          break
-        case 'tool-result':
-          stepCollect.toolResults.push({
-            toolCallId: chunk.toolCallId,
-            toolName: chunk.toolName,
-            output: chunk.output,
-        // AI SDK v6 不在 fullStream tool-result chunk 中暴露 isError
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          isError: (chunk as any).isError ?? false,
-          })
-          break
-        case 'finish':
-          stepCollect.finishReason = chunk.finishReason
-          if (chunk.totalUsage) {
-            stepCollect.usage = {
-              inputTokens: chunk.totalUsage.inputTokens ?? 0,
-              outputTokens: chunk.totalUsage.outputTokens ?? 0,
-            }
-          }
-          break
-      }
-    }
-
-    // 记录工具调用到循环检测器
-    for (const call of stepCollect.toolCalls) {
-      const toolResult = stepCollect.toolResults.find(
-        (r) => r.toolCallId === call.toolCallId
-      )
-      loopDetector.recordCall(call.toolName, call.input, toolResult?.output ?? null, stepIndex)
-    }
-
-    // 更新累计 token
-    totalOutputTokens += stepCollect.usage.outputTokens
-
-    // 记录步骤
-    allStepCollects.push(stepCollect)
-
-    // 判断退出条件（一次调用，包含 warning 检测）
-    const decision = decideStop(stepCollect, loopDetector, totalOutputTokens, stepIndex)
-    if (decision.shouldStop) {
-      console.log(`[AgentLoop] Stopping: ${decision.reason}`)
-      break
-    }
-    if (decision.warningToInject) {
-      warningMessage = decision.warningToInject
-      console.warn(`[LoopDetector] Warning：${warningMessage}`)
-    }
-
-    // 将步骤结果追加到消息列表
-    currentMessages = appendStepToMessages(currentMessages, stepCollect)
-    stepIndex++
-  }
-
-  // 调用 onFinish 回调
-  if (onFinish) {
-    const totalUsage = allStepCollects.reduce(
-      (acc, step) => ({
-        inputTokens: acc.inputTokens + step.usage.inputTokens,
-        outputTokens: acc.outputTokens + step.usage.outputTokens,
-      }),
-      { inputTokens: 0, outputTokens: 0 }
-    )
-    const finalText = allStepCollects.map((s) => s.text).join('')
-
-    // 构造与 AI SDK OnFinishEvent 兼容的结构
-    const stepsForCallback = allStepCollects.map((s) => ({
-      finishReason: s.finishReason,
-      toolCalls: s.toolCalls,
-      toolResults: s.toolResults,
-      usage: s.usage,
-    }))
-
-    await onFinish({
-      text: finalText,
-      steps: stepsForCallback,
-      totalUsage,
-      usage: totalUsage,
-      finishReason: allStepCollects[allStepCollects.length - 1]?.finishReason ?? 'stop',
-    })
-  }
-
-  // 返回真流式响应（合并所有步骤的 SSE 事件）
-  const mergedStream = new ReadableStream({
+  // 1. 先创建 ReadableStream，立即返回 Response（真流式）
+  const mergedStream = new ReadableStream<Uint8Array>({
     start(controller) {
-      for (const chunk of streamChunks) {
-        controller.enqueue(encoder.encode(chunk))
-      }
-      controller.close()
+      streamController = controller
     },
   })
 
+  // 2. 在后台异步执行 agent loop，边产生边 enqueue
+  ;(async () => {
+    const loopDetector = new LoopDetector()
+    let totalOutputTokens = 0
+    const allStepCollects: StepCollect[] = []
+    let currentMessages: ModelMessage[] = [...messages]
+    let stepIndex = 0
+    let warningMessage: string | null = null
+
+    // 生成统一的 messageId，整个 agent loop 共享（确保前端合并为一个消息气泡）
+    const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    try {
+      // 发送统一的 start 事件（只发一次，整个 loop 共享 messageId）
+      streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'start', messageId })}\n\n`))
+
+      while (true) {
+        console.log(`[AgentLoop] Step ${stepIndex + 1}...`)
+
+        // 注入警告消息到 systemPrompt
+        const effectiveSystemPrompt = warningMessage
+          ? `${systemPrompt ?? ''}\n\n[系统提醒] ${warningMessage}`
+          : systemPrompt ?? undefined
+        warningMessage = null
+
+        // 每步调一次 streamText，stopWhen=[stepCountIs(1)] 强制单步执行
+        const effectiveTemperature = llmConfig.temperature ?? 0.7
+        const result = streamText({
+          model,
+          system: effectiveSystemPrompt,
+          tools: ALL_TOOLS,
+          temperature: effectiveTemperature,
+          messages: currentMessages,
+          abortSignal,
+          stopWhen: stepCountIs(1),
+        })
+
+        // 收集本步结果
+        const stepCollect: StepCollect = {
+          text: '',
+          toolCalls: [],
+          toolResults: [],
+          usage: { inputTokens: 0, outputTokens: 0 },
+          finishReason: '',
+        }
+
+        // 遍历 fullStream：收集数据 + 逐个 enqueue 到流式 controller
+        for await (const chunk of result.fullStream) {
+          // 将 fullStream chunk 转换为 UIMessageChunk 格式并立即 enqueue
+          const transformed = transformChunk(chunk as { type: string; [key: string]: unknown })
+          if (transformed) {
+            streamController.enqueue(encoder.encode(`data: ${JSON.stringify(transformed)}\n\n`))
+          }
+
+          // 同时收集到 stepCollect
+          switch (chunk.type) {
+            case 'text-delta':
+              stepCollect.text += chunk.text
+              break
+            case 'tool-call':
+              stepCollect.toolCalls.push({
+                toolCallId: chunk.toolCallId,
+                toolName: chunk.toolName,
+                input: chunk.input,
+              })
+              break
+            case 'tool-result':
+              // AI SDK v6: tool-result chunk 使用 result 字段存储执行结果
+              stepCollect.toolResults.push({
+                toolCallId: chunk.toolCallId,
+                toolName: chunk.toolName,
+                output: chunk.result,
+                // AI SDK v6 不在 fullStream tool-result chunk 中暴露 isError
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                isError: (chunk as any).isError ?? false,
+              })
+              break
+            case 'finish':
+              stepCollect.finishReason = chunk.finishReason
+              if (chunk.totalUsage) {
+                stepCollect.usage = {
+                  inputTokens: chunk.totalUsage.inputTokens ?? 0,
+                  outputTokens: chunk.totalUsage.outputTokens ?? 0,
+                }
+              }
+              break
+          }
+        }
+
+        // 记录工具调用到循环检测器
+        for (const call of stepCollect.toolCalls) {
+          const toolResult = stepCollect.toolResults.find(
+            (r) => r.toolCallId === call.toolCallId
+          )
+          loopDetector.recordCall(call.toolName, call.input, toolResult?.output ?? null, stepIndex)
+        }
+
+        // 更新累计 token
+        totalOutputTokens += stepCollect.usage.outputTokens
+
+        // 记录步骤
+        allStepCollects.push(stepCollect)
+
+        // 判断退出条件（一次调用，包含 warning 检测）
+        const decision = decideStop(stepCollect, loopDetector, totalOutputTokens, stepIndex)
+        if (decision.shouldStop) {
+          console.log(`[AgentLoop] Stopping: ${decision.reason}`)
+          break
+        }
+        if (decision.warningToInject) {
+          warningMessage = decision.warningToInject
+          console.warn(`[LoopDetector] Warning：${warningMessage}`)
+        }
+
+        // 将步骤结果追加到消息列表
+        currentMessages = appendStepToMessages(currentMessages, stepCollect)
+        stepIndex++
+      }
+
+      // 调用 onFinish 回调（流结束后持久化消息）
+      if (onFinish) {
+        const totalUsage = allStepCollects.reduce(
+          (acc, step) => ({
+            inputTokens: acc.inputTokens + step.usage.inputTokens,
+            outputTokens: acc.outputTokens + step.usage.outputTokens,
+          }),
+          { inputTokens: 0, outputTokens: 0 }
+        )
+        const finalText = allStepCollects.map((s) => s.text).join('')
+
+        const stepsForCallback = allStepCollects.map((s) => ({
+          finishReason: s.finishReason,
+          toolCalls: s.toolCalls,
+          toolResults: s.toolResults,
+          usage: s.usage,
+        }))
+
+        await onFinish({
+          text: finalText,
+          steps: stepsForCallback,
+          totalUsage,
+          usage: totalUsage,
+          finishReason: allStepCollects[allStepCollects.length - 1]?.finishReason ?? 'stop',
+        })
+      }
+
+      // 流结束，关闭 controller
+      streamController.close()
+    } catch (err) {
+      console.error('[AgentLoop] Error:', err)
+      // 向客户端发送错误事件
+      const errorChunk = { type: 'error', errorText: err instanceof Error ? err.message : String(err) }
+      try {
+        streamController.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`))
+      } catch { /* controller 可能已关闭 */ }
+      try { streamController.close() } catch { /* 忽略 */ }
+    }
+  })()
+
+  // 3. 立即返回 Response（流数据将在后台异步填充）
   return new Response(mergedStream, {
     headers: {
       'Content-Type': 'text/event-stream',

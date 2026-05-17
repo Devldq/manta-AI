@@ -1396,18 +1396,23 @@ function getDesignDocUrl(theme: DesignTheme): string {
 
 /*  start: LLM 配置 Tab — 支持 OpenAI / 兼容 API / Ollama / LM Studio */
 function LLMTab() {
+  // ─── 类型定义 ───
   type LLMProvider = 'openai' | 'openai-compatible' | 'ollama' | 'lm-studio'
 
-  interface LLMConfig {
+  interface ModelProfileLocal {
+    id: string
+    name: string
+    isDefault?: boolean
     provider: LLMProvider
     apiKey?: string
     baseUrl?: string
     model: string
     temperature?: number
     maxTokens?: number
+    apiKeyMasked?: string
   }
 
-  // AI: Provider 配置元数据
+  // ─── 常量 ───
   const PROVIDERS: { value: LLMProvider; label: string; desc: string }[] = [
     { value: 'openai', label: 'OpenAI', desc: 'api.openai.com — GPT-4o、GPT-3.5 等' },
     { value: 'openai-compatible', label: 'OpenAI 兼容 API', desc: 'DeepSeek、通义千问、Moonshot 等' },
@@ -1428,106 +1433,248 @@ function LLMTab() {
     'lm-studio': 'http://localhost:1234/v1',
   }
 
-  const [config, setConfig] = useState<LLMConfig>({
-    provider: 'openai',
-    apiKey: '',
-    baseUrl: '',
-    model: 'gpt-4o-mini',
-    temperature: 0.7,
-  })
+  const PROVIDER_ICON: Record<LLMProvider, string> = {
+    'openai': '🟢',
+    'openai-compatible': '🔵',
+    'ollama': '🦙',
+    'lm-studio': '🏠',
+  }
+
+  // ─── 状态 ───
+  const [profiles, setProfiles] = useState<ModelProfileLocal[]>([])
+  const [activeProfileId, setActiveProfileId] = useState<string>('')
   const [loading, setLoading] = useState(true)
+  const [editingId, setEditingId] = useState<string | null>(null)  // 正在编辑的 profile id
+  const [isCreating, setIsCreating] = useState(false)  // 是否正在新建
+  const [editForm, setEditForm] = useState<ModelProfileLocal | null>(null)  // 编辑表单临时数据
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [saveMsg, setSaveMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [testMsg, setTestMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [apiKeyMasked, setApiKeyMasked] = useState<string | undefined>()
+  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
+  // ─── 加载配置 ───
   useEffect(() => {
     fetch('/api/chat/config')
       .then((r) => r.json())
       .then((data) => {
-        if (data.config) {
-          setConfig({
-            provider: data.config.provider ?? 'openai',
-            apiKey: '',  // AI: apiKey 已脱敏，不回显
-            baseUrl: data.config.baseUrl ?? '',
-            model: data.config.model ?? 'gpt-4o-mini',
-            temperature: data.config.temperature ?? 0.7,
-            maxTokens: data.config.maxTokens,
-          })
-          setApiKeyMasked(data.config.apiKeyMasked)
-        }
+        const maskedProfiles = data.profilesMasked || []
+        setProfiles(maskedProfiles.map((p: ModelProfileLocal) => ({
+          id: p.id,
+          name: p.name,
+          isDefault: p.isDefault,
+          provider: p.provider ?? 'openai',
+          apiKey: '',  // apiKey 脱敏，不回显
+          baseUrl: p.baseUrl ?? '',
+          model: p.model ?? 'gpt-4o-mini',
+          temperature: p.temperature ?? 0.7,
+          maxTokens: p.maxTokens,
+          apiKeyMasked: p.apiKeyMasked ?? (p.apiKey === '****' ? '****' : undefined),
+        })))
+        setActiveProfileId(data.activeProfileId || '')
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
 
+  // ─── Provider 切换（编辑表单） ───
   function handleProviderChange(provider: LLMProvider) {
-    setConfig((prev) => ({
-      ...prev,
+    if (!editForm) return
+    setEditForm({
+      ...editForm,
       provider,
       baseUrl: DEFAULT_BASE_URLS[provider] ?? '',
       model: MODEL_SUGGESTIONS[provider][0] ?? '',
-    }))
-    setSaveMsg(null)
-    setTestMsg(null)
+    })
+    setMsg(null)
   }
 
+  // ─── 进入编辑模式 ───
+  function startEdit(profile: ModelProfileLocal) {
+    setEditingId(profile.id)
+    setIsCreating(false)
+    setEditForm({ ...profile })
+    setMsg(null)
+  }
+
+  // ─── 进入新建模式 ───
+  function startCreate() {
+    setIsCreating(true)
+    setEditingId(null)
+    setEditForm({
+      id: '',  // 新建时 id 为空，后端会生成
+      name: '',
+      provider: 'openai',
+      apiKey: '',
+      baseUrl: DEFAULT_BASE_URLS['openai'] ?? '',
+      model: 'gpt-4o-mini',
+      temperature: 0.7,
+    })
+    setMsg(null)
+  }
+
+  // ─── 取消编辑 ───
+  function cancelEdit() {
+    setEditingId(null)
+    setIsCreating(false)
+    setEditForm(null)
+    setMsg(null)
+  }
+
+  // ─── 保存编辑 ───
   async function handleSave() {
+    if (!editForm) return
     setSaving(true)
-    setSaveMsg(null)
+    setMsg(null)
+
     try {
-      // AI: 如果 apiKey 为空（用户没有输入新的），保留服务器端存储的值
-      const payload: LLMConfig = { ...config }
+      const payload = { ...editForm }
       if (!payload.apiKey?.trim()) delete payload.apiKey
 
-      const res = await fetch('/api/chat/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (res.ok) {
-        setSaveMsg({ type: 'success', text: '配置已保存' })
-        if (config.apiKey?.trim()) setApiKeyMasked(undefined)
-      } else {
+      if (isCreating) {
+        // 新建 profile
+        const res = await fetch('/api/chat/config?action=profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operation: 'add', profile: payload }),
+        })
         const data = await res.json()
-        setSaveMsg({ type: 'error', text: data.error ?? '保存失败' })
+        if (data.success) {
+          setMsg({ type: 'success', text: '配置已添加' })
+          // 重新加载列表
+          await reloadProfiles()
+          cancelEdit()
+        } else {
+          setMsg({ type: 'error', text: data.error ?? '添加失败' })
+        }
+      } else {
+        // 更新已有 profile
+        const res = await fetch('/api/chat/config?action=profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operation: 'update', profileId: editingId, profile: payload }),
+        })
+        const data = await res.json()
+        if (data.success) {
+          setMsg({ type: 'success', text: '配置已保存' })
+          await reloadProfiles()
+          cancelEdit()
+        } else {
+          setMsg({ type: 'error', text: data.error ?? '保存失败' })
+        }
       }
     } catch {
-      setSaveMsg({ type: 'error', text: '请求失败' })
+      setMsg({ type: 'error', text: '请求失败' })
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleTest() {
-    setTesting(true)
-    setTestMsg(null)
+  // ─── 删除配置 ───
+  async function handleDelete(id: string) {
     try {
-      const payload: LLMConfig = { ...config }
-      if (!payload.apiKey?.trim()) delete payload.apiKey
-
-      const res = await fetch('/api/chat/config', {
+      const res = await fetch('/api/chat/config?action=profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ operation: 'delete', profileId: id }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        await reloadProfiles()
+      } else {
+        setMsg({ type: 'error', text: data.error ?? '删除失败' })
+      }
+    } catch {
+      setMsg({ type: 'error', text: '请求失败' })
+    }
+  }
+
+  // ─── 切换激活配置 ───
+  async function handleSetActive(id: string) {
+    try {
+      const res = await fetch('/api/chat/config?action=active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: id }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setActiveProfileId(id)
+        await reloadProfiles()
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // ─── 设为默认 ───
+  async function handleSetDefault(id: string) {
+    try {
+      const res = await fetch('/api/chat/config?action=default', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: id }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        await reloadProfiles()
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // ─── 测试连通性 ───
+  async function handleTest() {
+    if (!editForm) return
+    setTesting(true)
+    setMsg(null)
+
+    try {
+      const payload = { ...editForm }
+      if (!payload.apiKey?.trim()) delete payload.apiKey
+
+      const res = await fetch('/api/chat/config?action=test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: payload }),
       })
       const data = await res.json()
       if (data.ok) {
-        setTestMsg({ type: 'success', text: '✓ 连接成功' })
+        setMsg({ type: 'success', text: '✓ 连接成功' })
       } else {
-        setTestMsg({ type: 'error', text: `✕ ${data.error ?? '连接失败'}` })
+        setMsg({ type: 'error', text: `✕ ${data.error ?? '连接失败'}` })
       }
     } catch (err) {
-      setTestMsg({ type: 'error', text: `✕ ${String(err)}` })
+      setMsg({ type: 'error', text: `✕ ${String(err)}` })
     } finally {
       setTesting(false)
     }
   }
 
-  const needsApiKey = config.provider === 'openai' || config.provider === 'openai-compatible'
-  const needsBaseUrl = config.provider !== 'openai'
+  // ─── 重新加载 profiles ───
+  async function reloadProfiles() {
+    try {
+      const res = await fetch('/api/chat/config')
+      const data = await res.json()
+      const maskedProfiles = data.profilesMasked || []
+      setProfiles(maskedProfiles.map((p: ModelProfileLocal) => ({
+        id: p.id,
+        name: p.name,
+        isDefault: p.isDefault,
+        provider: p.provider ?? 'openai',
+        apiKey: '',
+        baseUrl: p.baseUrl ?? '',
+        model: p.model ?? 'gpt-4o-mini',
+        temperature: p.temperature ?? 0.7,
+        maxTokens: p.maxTokens,
+        apiKeyMasked: p.apiKeyMasked ?? (p.apiKey === '****' ? '****' : undefined),
+      })))
+      setActiveProfileId(data.activeProfileId || '')
+    } catch {
+      // ignore
+    }
+  }
 
+  // ─── 渲染 ───
   if (loading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
@@ -1536,223 +1683,408 @@ function LLMTab() {
     )
   }
 
+  const needsApiKey = editForm?.provider === 'openai' || editForm?.provider === 'openai-compatible'
+  const needsBaseUrl = editForm?.provider !== 'openai'
+
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: '24px 28px' }}>
-      <div style={{ maxWidth: '560px' }}>
+      <div style={{ maxWidth: '600px' }}>
         <h2 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '4px' }}>
           AI 模型配置
         </h2>
         <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: '24px' }}>
-          配置 LangChain 驱动的 AI 对话模型，支持 OpenAI API、兼容接口及本地模型服务
+          配置多个 AI 模型，支持 OpenAI API、兼容接口及本地模型服务，可随时切换使用
         </p>
 
-        {/* Provider 选择 */}
+        {/* ── 模型配置列表 ── */}
         <div style={{ marginBottom: '20px' }}>
-          <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
-            模型来源
+          <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '10px' }}>
+            已配置的模型
           </label>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-            {PROVIDERS.map(({ value, label, desc }) => (
-              <button
-                key={value}
-                onClick={() => handleProviderChange(value)}
-                style={{
-                  padding: '10px 12px',
-                  borderRadius: '8px',
-                  textAlign: 'left',
-                  border: `1px solid ${config.provider === value ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                  background: config.provider === value ? 'var(--color-accent)10' : 'var(--color-surface)',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-              >
-                <div style={{ fontSize: '13px', fontWeight: config.provider === value ? 600 : 400, color: config.provider === value ? 'var(--color-accent)' : 'var(--color-text-primary)' }}>
-                  {label}
-                </div>
-                <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
-                  {desc}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* API Key */}
-        {needsApiKey && (
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
-              API Key {apiKeyMasked && <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>（当前：{apiKeyMasked}）</span>}
-            </label>
-            <input
-              type="password"
-              value={config.apiKey ?? ''}
-              onChange={(e) => setConfig((p) => ({ ...p, apiKey: e.target.value }))}
-              placeholder={apiKeyMasked ? '留空则保持不变' : '输入 API Key'}
+          {profiles.map((profile) => (
+            <div
+              key={profile.id}
               style={{
-                width: '100%',
-                padding: '8px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 14px',
+                marginBottom: '8px',
                 borderRadius: '8px',
-                border: '1px solid var(--color-border)',
-                background: 'var(--color-surface)',
-                color: 'var(--color-text-primary)',
-                fontSize: '13px',
-                outline: 'none',
-                fontFamily: 'monospace',
-                boxSizing: 'border-box',
+                border: `1px solid ${activeProfileId === profile.id ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                background: activeProfileId === profile.id ? 'var(--color-accent)10' : 'var(--color-surface)',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
               }}
-            />
-          </div>
-        )}
+              onClick={() => handleSetActive(profile.id)}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: '16px' }}>{PROVIDER_ICON[profile.provider]}</span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 500, color: activeProfileId === profile.id ? 'var(--color-accent)' : 'var(--color-text-primary)' }}>
+                      {profile.name || profile.model}
+                    </span>
+                    {profile.isDefault && (
+                      <span style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '3px', background: 'var(--color-accent)20', color: 'var(--color-accent)', fontWeight: 600 }}>
+                        默认
+                      </span>
+                    )}
+                    {activeProfileId === profile.id && (
+                      <span style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '3px', background: '#22c55e20', color: '#22c55e', fontWeight: 600 }}>
+                        使用中
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {PROVIDERS.find(p => p.value === profile.provider)?.label ?? profile.provider} · {profile.model}
+                    {profile.apiKeyMasked && ` · Key: ${profile.apiKeyMasked}`}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {!profile.isDefault && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleSetDefault(profile.id) }}
+                    style={{
+                      padding: '4px 6px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      border: '1px solid var(--color-border)',
+                      background: 'transparent',
+                      color: 'var(--color-text-muted)',
+                      cursor: 'pointer',
+                    }}
+                    title="设为默认"
+                  >
+                    ★
+                  </button>
+                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); startEdit(profile) }}
+                  style={{
+                    padding: '4px 6px',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    border: '1px solid var(--color-border)',
+                    background: 'transparent',
+                    color: 'var(--color-text-muted)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  编辑
+                </button>
+                {profiles.length > 1 && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDelete(profile.id) }}
+                    style={{
+                      padding: '4px 6px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      border: '1px solid #ef444440',
+                      background: 'transparent',
+                      color: '#ef4444',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    删除
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
 
-        {/* Base URL */}
-        {needsBaseUrl && (
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
-              API 地址（Base URL）
-            </label>
-            <input
-              type="text"
-              value={config.baseUrl ?? ''}
-              onChange={(e) => setConfig((p) => ({ ...p, baseUrl: e.target.value }))}
-              placeholder={DEFAULT_BASE_URLS[config.provider] ?? 'http://localhost:11434'}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                border: '1px solid var(--color-border)',
-                background: 'var(--color-surface)',
-                color: 'var(--color-text-primary)',
-                fontSize: '13px',
-                outline: 'none',
-                fontFamily: 'monospace',
-                boxSizing: 'border-box',
-              }}
-            />
-          </div>
-        )}
-
-        {/* 模型名称 */}
-        <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
-            模型名称
-          </label>
-          <input
-            type="text"
-            value={config.model}
-            onChange={(e) => setConfig((p) => ({ ...p, model: e.target.value }))}
-            placeholder="输入模型名称"
+          {/* 添加按钮 */}
+          <button
+            onClick={startCreate}
             style={{
               width: '100%',
-              padding: '8px 12px',
+              padding: '10px',
               borderRadius: '8px',
-              border: '1px solid var(--color-border)',
-              background: 'var(--color-surface)',
-              color: 'var(--color-text-primary)',
+              border: '1px dashed var(--color-border)',
+              background: 'transparent',
+              color: 'var(--color-text-muted)',
               fontSize: '13px',
-              outline: 'none',
-              fontFamily: 'monospace',
-              boxSizing: 'border-box',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              marginTop: '4px',
             }}
-          />
-          {/* AI: 常用模型快捷选择 */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
-            {MODEL_SUGGESTIONS[config.provider].map((m) => (
+          >
+            + 添加模型配置
+          </button>
+        </div>
+
+        {/* ── 编辑/新建表单 ── */}
+        {(editingId || isCreating) && editForm && (
+          <div style={{
+            padding: '16px',
+            borderRadius: '8px',
+            border: '1px solid var(--color-accent)',
+            background: 'var(--color-surface)',
+            marginBottom: '20px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                {isCreating ? '添加模型配置' : `编辑: ${profiles.find(p => p.id === editingId)?.name || editForm.model}`}
+              </h3>
               <button
-                key={m}
-                onClick={() => setConfig((p) => ({ ...p, model: m }))}
+                onClick={cancelEdit}
                 style={{
-                  padding: '3px 8px',
+                  padding: '4px 8px',
                   borderRadius: '4px',
                   fontSize: '11px',
-                  fontFamily: 'monospace',
-                  border: `1px solid ${config.model === m ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                  background: config.model === m ? 'var(--color-accent)15' : 'transparent',
-                  color: config.model === m ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: 'var(--color-text-muted)',
                   cursor: 'pointer',
                 }}
               >
-                {m}
+                取消
               </button>
-            ))}
+            </div>
+
+            {/* 配置名称 */}
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
+                配置名称
+              </label>
+              <input
+                type="text"
+                value={editForm.name}
+                onChange={(e) => setEditForm((p) => p ? { ...p, name: e.target.value } : p)}
+                placeholder="如：GPT-4o 日常对话、DeepSeek 代码助手"
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-text-primary)',
+                  fontSize: '13px',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            {/* Provider 选择 */}
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
+                模型来源
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                {PROVIDERS.map(({ value, label, desc }) => (
+                  <button
+                    key={value}
+                    onClick={() => handleProviderChange(value)}
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      textAlign: 'left',
+                      border: `1px solid ${editForm.provider === value ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                      background: editForm.provider === value ? 'var(--color-accent)10' : 'var(--color-surface)',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    <div style={{ fontSize: '13px', fontWeight: editForm.provider === value ? 600 : 400, color: editForm.provider === value ? 'var(--color-accent)' : 'var(--color-text-primary)' }}>
+                      {label}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                      {desc}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* API Key */}
+            {needsApiKey && (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
+                  API Key
+                  {editForm.apiKeyMasked && <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>（当前：{editForm.apiKeyMasked}）</span>}
+                </label>
+                <input
+                  type="password"
+                  value={editForm.apiKey ?? ''}
+                  onChange={(e) => setEditForm((p) => p ? { ...p, apiKey: e.target.value } : p)}
+                  placeholder={editForm.apiKeyMasked ? '留空则保持不变' : '输入 API Key'}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-text-primary)',
+                    fontSize: '13px',
+                    outline: 'none',
+                    fontFamily: 'monospace',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Base URL */}
+            {needsBaseUrl && (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
+                  API 地址（Base URL）
+                </label>
+                <input
+                  type="text"
+                  value={editForm.baseUrl ?? ''}
+                  onChange={(e) => setEditForm((p) => p ? { ...p, baseUrl: e.target.value } : p)}
+                  placeholder={DEFAULT_BASE_URLS[editForm.provider] ?? 'http://localhost:11434'}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-text-primary)',
+                    fontSize: '13px',
+                    outline: 'none',
+                    fontFamily: 'monospace',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+            )}
+
+            {/* 模型名称 */}
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
+                模型名称
+              </label>
+              <input
+                type="text"
+                value={editForm.model}
+                onChange={(e) => setEditForm((p) => p ? { ...p, model: e.target.value } : p)}
+                placeholder="输入模型名称"
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-text-primary)',
+                  fontSize: '13px',
+                  outline: 'none',
+                  fontFamily: 'monospace',
+                  boxSizing: 'border-box',
+                }}
+              />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                {MODEL_SUGGESTIONS[editForm.provider].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setEditForm((p) => p ? { ...p, model: m } : p)}
+                    style={{
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      fontFamily: 'monospace',
+                      border: `1px solid ${editForm.model === m ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                      background: editForm.model === m ? 'var(--color-accent)15' : 'transparent',
+                      color: editForm.model === m ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Temperature */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
+                <span>Temperature（随机性）</span>
+                <span style={{ fontFamily: 'monospace', color: 'var(--color-text-primary)' }}>{editForm.temperature?.toFixed(1) ?? '0.7'}</span>
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="2"
+                step="0.1"
+                value={editForm.temperature ?? 0.7}
+                onChange={(e) => setEditForm((p) => p ? { ...p, temperature: parseFloat(e.target.value) } : p)}
+                style={{ width: '100%', accentColor: 'var(--color-accent)' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                <span>0 — 确定性</span>
+                <span>2 — 高随机</span>
+              </div>
+            </div>
+
+            {/* 操作按钮 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                style={{
+                  padding: '8px 20px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  background: 'var(--color-accent)',
+                  color: 'var(--color-text-inverse)',
+                  border: 'none',
+                  cursor: saving ? 'not-allowed' : 'pointer',
+                  opacity: saving ? 0.6 : 1,
+                }}
+              >
+                {saving ? '保存中...' : (isCreating ? '添加配置' : '保存修改')}
+              </button>
+              <button
+                onClick={handleTest}
+                disabled={testing || saving}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 400,
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-text-primary)',
+                  border: '1px solid var(--color-border)',
+                  cursor: testing ? 'not-allowed' : 'pointer',
+                  opacity: testing ? 0.6 : 1,
+                }}
+              >
+                {testing ? '测试中...' : '测试连接'}
+              </button>
+              <button
+                onClick={cancelEdit}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 400,
+                  background: 'var(--color-surface)',
+                  color: 'var(--color-text-muted)',
+                  border: '1px solid var(--color-border)',
+                  cursor: 'pointer',
+                }}
+              >
+                取消
+              </button>
+              {msg && (
+                <span style={{ fontSize: '12px', color: msg.type === 'success' ? '#22c55e' : '#ef4444' }}>
+                  {msg.text}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Temperature */}
-        <div style={{ marginBottom: '24px' }}>
-          <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
-            <span>Temperature（随机性）</span>
-            <span style={{ fontFamily: 'monospace', color: 'var(--color-text-primary)' }}>{config.temperature?.toFixed(1) ?? '0.7'}</span>
-          </label>
-          <input
-            type="range"
-            min="0"
-            max="2"
-            step="0.1"
-            value={config.temperature ?? 0.7}
-            onChange={(e) => setConfig((p) => ({ ...p, temperature: parseFloat(e.target.value) }))}
-            style={{ width: '100%', accentColor: 'var(--color-accent)' }}
-          />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
-            <span>0 — 确定性</span>
-            <span>2 — 高随机</span>
-          </div>
-        </div>
-
-        {/* 操作按钮 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            style={{
-              padding: '8px 20px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              fontWeight: 500,
-              background: 'var(--color-accent)',
-              color: 'var(--color-text-inverse)',
-              border: 'none',
-              cursor: saving ? 'not-allowed' : 'pointer',
-              opacity: saving ? 0.6 : 1,
-            }}
-          >
-            {saving ? '保存中...' : '保存配置'}
-          </button>
-          <button
-            onClick={handleTest}
-            disabled={testing || saving}
-            style={{
-              padding: '8px 16px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              fontWeight: 400,
-              background: 'var(--color-surface)',
-              color: 'var(--color-text-primary)',
-              border: '1px solid var(--color-border)',
-              cursor: testing ? 'not-allowed' : 'pointer',
-              opacity: testing ? 0.6 : 1,
-            }}
-          >
-            {testing ? '测试中...' : '测试连接'}
-          </button>
-          {saveMsg && (
-            <span style={{ fontSize: '12px', color: saveMsg.type === 'success' ? '#22c55e' : '#ef4444' }}>
-              {saveMsg.text}
-            </span>
-          )}
-          {testMsg && (
-            <span style={{ fontSize: '12px', color: testMsg.type === 'success' ? '#22c55e' : '#ef4444' }}>
-              {testMsg.text}
-            </span>
-          )}
-        </div>
-
-        {/* AI: 提示信息 */}
-        <div style={{ marginTop: '24px', padding: '12px 16px', borderRadius: '8px', background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+        {/* ── 提示信息 ── */}
+        <div style={{ marginTop: '8px', padding: '12px 16px', borderRadius: '8px', background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
           <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', lineHeight: '1.6', margin: 0 }}>
-            💡 配置保存后，在任务页使用 <strong>「新对话」</strong> 按钮创建的会话将使用 LangChain AI 直接对话模式；
-            <br />使用 <strong>「新任务」</strong> 按钮创建的会话仍走 OpenClaw Task 执行引擎。
-            <br /><br />
-            环境变量 <code>AI_API_KEY</code>、<code>AI_BASE_URL</code>、<code>AI_MODEL</code> 也可作为默认配置，UI 设置优先级更高。
+            💡 点击模型卡片即可切换当前使用的模型。点击「使用中」标签旁的配置也可切换。
+            <br />配置保存后，在任务页使用 <strong>「新对话」</strong> 按钮创建的会话将使用当前激活的模型；
+            <br />环境变量 <code>AI_API_KEY</code>、<code>AI_BASE_URL</code>、<code>AI_MODEL</code> 也可作为默认配置，UI 设置优先级更高。
           </p>
         </div>
       </div>

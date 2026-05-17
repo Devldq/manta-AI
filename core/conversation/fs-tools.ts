@@ -75,18 +75,24 @@ function globToRegExp(pattern: string): RegExp {
 export const readFileTool = tool({
   description:
     '读取指定路径的文件内容。支持按行号范围截取，适合读取大文件的局部内容。CWD 外的路径需用户授权。',
-  // AI: parameters → inputSchema（AI SDK v6 API 变更）
-  inputSchema: jsonSchema<{ file_path: string; offset?: number; limit?: number }>({
+  // 兼容别名：path / file / filename
+  inputSchema: jsonSchema<{ file_path?: string; path?: string; file?: string; filename?: string; offset?: number; limit?: number }>({
     type: 'object',
     properties: {
       file_path: { type: 'string', description: '文件绝对路径或相对于 CWD 的路径' },
+      path: { type: 'string', description: '文件路径（同 file_path）' },
+      file: { type: 'string', description: '文件路径（同 file_path）' },
+      filename: { type: 'string', description: '文件路径（同 file_path）' },
       offset: { type: 'integer', minimum: 1, description: '起始行号（从 1 开始），默认从第 1 行开始' },
       limit: { type: 'integer', minimum: 1, description: '最多读取的行数，默认读取全部' },
     },
-    required: ['file_path'],
+    additionalProperties: true,
   }),
-  execute: async ({ file_path, offset, limit }) => {
-    const access = await checkAccess(file_path)
+  execute: async ({ file_path, path: pathParam, file, filename, offset, limit, ...rest }) => {
+    const filePath = file_path || pathParam || file || filename || ''
+    if (!filePath) return { error: '缺少文件路径参数' }
+    void rest
+    const access = await checkAccess(filePath)
     if ('error' in access) return { error: access.error }
     const { resolved } = access
 
@@ -121,15 +127,25 @@ export const lsDirTool = tool({
   description:
     '列出指定目录下的文件和子目录。CWD 外的路径需用户授权。',
   // AI: parameters → inputSchema（AI SDK v6 API 变更）
-  inputSchema: jsonSchema<{ dir_path: string }>({
+  // 兼容别名：path / dir / directory（不同模型可能用不同参数名）
+  inputSchema: jsonSchema<{ dir_path?: string; path?: string; dir?: string; directory?: string }>({
     type: 'object',
     properties: {
       dir_path: { type: 'string', description: '目录绝对路径或相对于 CWD 的路径' },
+      path: { type: 'string', description: '目录路径（同 dir_path）' },
+      dir: { type: 'string', description: '目录路径（同 dir_path）' },
+      directory: { type: 'string', description: '目录路径（同 dir_path）' },
     },
-    required: ['dir_path'],
+    // 不设 required，让模型可以只用别名
+    additionalProperties: true,
   }),
-  execute: async ({ dir_path }) => {
-    const access = await checkAccess(dir_path)
+  execute: async ({ dir_path, path: pathParam, dir, directory, ...rest }) => {
+    // 容错：取第一个非空值作为目录路径
+    const targetPath = dir_path || pathParam || dir || directory || ''
+    if (!targetPath) return { error: '缺少目录路径参数' }
+    // 忽略多余参数
+    void rest
+    const access = await checkAccess(targetPath)
     if ('error' in access) return { error: access.error }
     const { resolved } = access
 
@@ -156,15 +172,20 @@ export const globTool = tool({
   description:
     '按 glob 模式匹配文件，支持 * ** ? 通配符（如 "**/*.ts"、"src/**/*.tsx"）。CWD 外的搜索根目录需用户授权。',
   // AI: parameters → inputSchema（AI SDK v6 API 变更）
-  inputSchema: jsonSchema<{ pattern: string; path?: string }>({
+  inputSchema: jsonSchema<{ pattern: string; path?: string; search_path?: string; root?: string }>({
     type: 'object',
     properties: {
       pattern: { type: 'string', description: 'Glob 模式，如 **/*.ts 或 src/**/*.tsx' },
       path: { type: 'string', description: '搜索根目录，默认为当前工作目录' },
+      search_path: { type: 'string', description: '搜索根目录（同 path）' },
+      root: { type: 'string', description: '搜索根目录（同 path）' },
     },
     required: ['pattern'],
+    additionalProperties: true,
   }),
-  execute: async ({ pattern, path: searchPath }) => {
+  execute: async ({ pattern, path: searchPath, search_path, root: rootParam, ...rest }) => {
+    const effectivePath = searchPath ?? search_path ?? rootParam ?? undefined
+    void rest
     const rootRaw = searchPath ?? process.cwd()
     const access = await checkAccess(rootRaw)
     if ('error' in access) return { error: access.error }
@@ -197,20 +218,29 @@ export const grepTool = tool({
   inputSchema: jsonSchema<{
     pattern: string
     search_path?: string
+    path?: string
+    root?: string
     include?: string
     ignore_case?: boolean
+    case_insensitive?: boolean
   }>({
     type: 'object',
     properties: {
       pattern: { type: 'string', description: '正则表达式，如 "function\\s+\\w+" 或 "import.*from"' },
       search_path: { type: 'string', description: '搜索根目录，默认为当前工作目录' },
+      path: { type: 'string', description: '搜索根目录（同 search_path）' },
+      root: { type: 'string', description: '搜索根目录（同 search_path）' },
       include: { type: 'string', description: '文件名过滤 glob，如 "*.ts" 或 "**/*.tsx"' },
       ignore_case: { type: 'boolean', description: '是否忽略大小写，默认 false' },
+      case_insensitive: { type: 'boolean', description: '是否忽略大小写（同 ignore_case）' },
     },
     required: ['pattern'],
+    additionalProperties: true,
   }),
-  execute: async ({ pattern, search_path, include, ignore_case }) => {
-    const rootRaw = search_path ?? process.cwd()
+  execute: async ({ pattern, search_path, path: pathParam, root: rootParam, include, ignore_case, case_insensitive, ...rest }) => {
+    const rootRaw = search_path ?? pathParam ?? rootParam ?? process.cwd()
+    const ignoreCaseFinal = ignore_case ?? case_insensitive ?? false
+    void rest
     const access = await checkAccess(rootRaw)
     if ('error' in access) return { error: access.error }
     const { resolved: root } = access
