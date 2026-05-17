@@ -136,11 +136,9 @@ export function transformChunk(chunk: FullStreamChunk): UIMessageChunkOutput | n
       return { type: 'abort', reason: chunk.reason as string | undefined }
 
     case 'error':
-      // fullStream: { type, error } → UIMessageChunk: { type: "error", errorText }
-      return {
-        type: 'error',
-        errorText: chunk.error instanceof Error ? chunk.error.message : String(chunk.error ?? 'Unknown error'),
-      }
+      // error chunk 由 agent-loop.ts 统一格式化处理（formatAIError）后再发送
+      // 此处返回 null 避免重复转发未格式化的原始错误
+      return null
 
     // ---- source / file 需要判断子类型 ----
 
