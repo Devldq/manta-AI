@@ -88,6 +88,7 @@ const readFileDef: ToolDefinition = {
     },
     additionalProperties: true,
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
     const { file_path, path: pathParam, file, filename, offset, limit } = input
     const filePath = file_path || pathParam || file || filename || ''
@@ -137,6 +138,7 @@ const lsDirDef: ToolDefinition = {
     },
     additionalProperties: true,
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
     const { dir_path, path: pathParam, dir, directory } = input
     // 容错：取第一个非空值作为目录路径
@@ -180,10 +182,10 @@ const globDef: ToolDefinition = {
     required: ['pattern'],
     additionalProperties: true,
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
     const { pattern, path: searchPath, search_path, root: rootParam } = input
-    const effectivePath = searchPath ?? search_path ?? rootParam ?? undefined
-    const rootRaw = searchPath ?? process.cwd()
+    const rootRaw = searchPath ?? search_path ?? rootParam ?? process.cwd()
     const access = await checkAccess(rootRaw)
     if ('error' in access) return { error: access.error }
     const { resolved: root } = access
@@ -226,6 +228,7 @@ const grepDef: ToolDefinition = {
     required: ['pattern'],
     additionalProperties: true,
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
     const { pattern, search_path, path: pathParam, root: rootParam, include, ignore_case, case_insensitive } = input
     const rootRaw = search_path ?? pathParam ?? rootParam ?? process.cwd()

@@ -76,6 +76,7 @@ const bashDef: ToolDefinition = {
     },
     required: ['command'],
   },
+  isConcurrencySafe: false, // bash 可能修改任何文件，需要串行执行
   execute: async (input: any) => {
     const { command, timeout = 120000, run_in_background = false } = input
     if (run_in_background) {
@@ -134,6 +135,7 @@ const bashOutputDef: ToolDefinition = {
     },
     required: ['task_id'],
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
     const { task_id, block = false } = input
     const task = bashTaskRegistry.get(task_id)
@@ -173,6 +175,7 @@ const readDef: ToolDefinition = {
     },
     required: ['file_path'],
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
     const { file_path, offset, limit } = input
     const resolved = path.resolve(file_path)
@@ -214,6 +217,7 @@ const writeDef: ToolDefinition = {
     },
     required: ['file_path', 'content'],
   },
+  isConcurrencySafe: false, // 写操作，需要独占锁
   execute: async (input: any) => {
     const { file_path, content } = input
     const resolved = path.resolve(file_path)
@@ -244,6 +248,7 @@ const editDef: ToolDefinition = {
     },
     required: ['file_path', 'old_string', 'new_string'],
   },
+  isConcurrencySafe: false, // 写操作，需要独占锁
   execute: async (input: any) => {
     const { file_path, old_string, new_string, replace_all = false } = input
     const resolved = path.resolve(file_path)
@@ -300,6 +305,7 @@ const multiEditDef: ToolDefinition = {
     },
     required: ['file_path', 'edits'],
   },
+  isConcurrencySafe: false, // 写操作，需要独占锁
   execute: async (input: any) => {
     const { file_path, edits } = input
     const resolved = path.resolve(file_path)
@@ -356,6 +362,7 @@ const globDef: ToolDefinition = {
     },
     required: ['pattern'],
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
     const { pattern, path: searchPath } = input
     const root = path.resolve(searchPath ?? process.cwd())
@@ -405,6 +412,7 @@ const grepDef: ToolDefinition = {
     },
     required: ['pattern'],
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
     const {
       pattern,
@@ -539,6 +547,7 @@ const webFetchDef: ToolDefinition = {
     },
     required: ['url', 'prompt'],
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
     const { url, prompt: _prompt } = input
     try {
@@ -596,6 +605,7 @@ const webSearchDef: ToolDefinition = {
     },
     required: ['query'],
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
     const { query, allowed_domains, blocked_domains } = input
     try {
@@ -649,6 +659,7 @@ const todoReadDef: ToolDefinition = {
     properties: {},
     required: [],
   },
+  isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (_input: any) => {
     const todos = readTodos()
     return { todos, count: todos.length }
@@ -687,6 +698,7 @@ const todoWriteDef: ToolDefinition = {
     },
     required: ['todos'],
   },
+  isConcurrencySafe: false, // 写操作，需要独占锁
   execute: async (input: any) => {
     const { todos } = input
     writeTodos(todos)
