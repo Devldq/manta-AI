@@ -71,6 +71,17 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
         appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage)
       }
     },
+    /** 错误时回调：保存用户消息和错误信息到对话历史 */
+    onError: async (errorText: string) => {
+      // 保存用户消息
+      const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
+      const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
+      if (userText) {
+        appendMessage(conversationId, 'user', userText)
+      }
+      // 保存错误回复
+      appendMessage(conversationId, 'assistant', errorText)
+    },
   })
 
   // 直接返回 Response（runAgentLoop 已构建好 SSE 流）

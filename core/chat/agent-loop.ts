@@ -24,6 +24,8 @@ export interface AgentLoopOptions {
   abortSignal?: AbortSignal
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onFinish?: (event: any) => Promise<void> | void
+  /** 错误时回调，用于持久化错误信息到对话历史 */
+  onError?: (errorText: string) => Promise<void> | void
 }
 
 /** 单步收集的结果 */
@@ -161,7 +163,7 @@ function appendStepToMessages(
  * - 在后台异步循环中逐个 enqueue chunk 到 controller
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户中断
  */
-export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFinish }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFinish, onError }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
 
@@ -248,6 +250,10 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
               } catch { /* ignore */ }
               // 直接关闭流并退出，不 throw（避免外层 catch 重复处理）
               try { streamController.close() } catch { /* ignore */ }
+              // 保存错误信息到对话历史
+              if (onError) {
+                await onError(friendlyMessage)
+              }
               return
 
             case 'text-delta':
@@ -353,6 +359,10 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
         streamController.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`))
       } catch { /* controller 可能已关闭 */ }
       try { streamController.close() } catch { /* 忽略 */ }
+      // 保存错误信息到对话历史
+      if (onError) {
+        await onError(friendlyMessage)
+      }
     }
   })()
 
