@@ -6,6 +6,8 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as child_process from 'child_process'
 import * as os from 'os'
+import fg from 'fast-glob'
+import { isApproved, requestAccess, listPendingRequests } from '@/core/fs/access-store'
 
 // ─── 类型定义 ────────────────────────────────────────────────────────────────
 
@@ -42,11 +44,13 @@ function writeTodos(todos: TodoItem[]): void {
 interface BashTask {
   task_id: string
   command: string
+  cwd: string
   startedAt: number
-  status: 'running' | 'completed' | 'failed'
+  status: 'running' | 'completed' | 'failed' | 'killed'
   stdout: string
   stderr: string
   exitCode: number | null
+  proc?: child_process.ChildProcess
 }
 
 const bashTaskRegistry = new Map<string, BashTask>()
@@ -54,20 +58,54 @@ let bashTaskCounter = 0
 
 // ─── 工具定义 ────────────────────────────────────────────────────────────────
 
-/** Bash — 在持久 Shell 会话中执行命令 */
+// ─── Bash 安全检查 ──────────────────────────────────────────────────────────
+
+const DANGEROUS_PATTERNS = [
+  { pattern: /rm\s+-rf\s+[\/\*]/, message: '禁止执行 rm -rf / 或 rm -rf /*' },
+  { pattern: /:\!\s*rm\s+-rf/, message: '禁止执行 shell 历史中的 rm -rf' },
+]
+
+const DELETE_FILE_PATTERNS = [
+  { pattern: /^\s*rm\s+-/i, message: '删除文件需要审批' },
+  { pattern: /^\s*unlink\s*\(/i, message: '删除文件需要审批' },
+  { pattern: /^\s*del\s+/i, message: '删除文件需要审批' },
+]
+
+const DELETE_DIR_PATTERNS = [
+  { pattern: /^\s*rmdir\s+/i, message: '删除文件夹需要审批' },
+  { pattern: /^\s*rm\s+-r\s/i, message: '删除文件夹需要审批' },
+]
+
+function checkCommand(command: string): string | null {
+  for (const { pattern, message } of DANGEROUS_PATTERNS) {
+    if (pattern.test(command)) return message
+  }
+  for (const { pattern, message } of DELETE_FILE_PATTERNS) {
+    if (pattern.test(command)) return message
+  }
+  for (const { pattern, message } of DELETE_DIR_PATTERNS) {
+    if (pattern.test(command)) return message
+  }
+  return null
+}
+
+// ─── Bash 工具定义 ───────────────────────────────────────────────────────────
+
+/** Bash — 在 shell 中执行命令 */
 const bashDef: ToolDefinition = {
   name: 'bash',
-  description: '在 shell 中执行命令。支持超时设置和后台运行。避免使用 find、grep、cat、head、tail、sed、awk 等命令，优先使用专用工具（Read/Grep/Glob）。',
+  description: '在 shell 中执行命令。支持 cwd、timeout、后台运行。危险操作（删除文件/文件夹）需要审批。避免使用 find、grep、cat 等命令，优先使用专用工具（Read/Grep/Glob）。',
   parameters: {
     type: 'object',
     properties: {
       command: { type: 'string', description: '要执行的 shell 命令' },
       description: { type: 'string', description: '命令的简短描述（3-10 个词）' },
+      cwd: { type: 'string', description: '工作目录，默认为当前目录' },
       timeout: {
         type: 'integer',
-        minimum: 0,
+        minimum: 1000,
         maximum: 600000,
-        description: '超时时间（毫秒），默认 120000ms，最大 600000ms',
+        description: '超时时间（毫秒），默认 10000ms，最大 600000ms',
       },
       run_in_background: {
         type: 'boolean',
@@ -75,15 +113,24 @@ const bashDef: ToolDefinition = {
       },
     },
     required: ['command'],
+    additionalProperties: false,
   },
-  isConcurrencySafe: false, // bash 可能修改任何文件，需要串行执行
+  isConcurrencySafe: false,
   execute: async (input: any) => {
-    const { command, timeout = 120000, run_in_background = false } = input
+    const { command, cwd: targetCwd = process.cwd(), timeout = 10000, run_in_background = false } = input
+
+    // 安全检查
+    const unsafe = checkCommand(command)
+    if (unsafe) {
+      return { command, error: unsafe }
+    }
+
     if (run_in_background) {
       const task_id = `bash_${++bashTaskCounter}_${Date.now()}`
       const task: BashTask = {
         task_id,
         command,
+        cwd: targetCwd,
         startedAt: Date.now(),
         status: 'running',
         stdout: '',
@@ -92,7 +139,8 @@ const bashDef: ToolDefinition = {
       }
       bashTaskRegistry.set(task_id, task)
 
-      const proc = child_process.exec(command, { timeout })
+      const proc = child_process.exec(command, { cwd: targetCwd, timeout })
+      task.proc = proc
       proc.stdout?.on('data', (d: string) => { task.stdout += d })
       proc.stderr?.on('data', (d: string) => { task.stderr += d })
       proc.on('close', (code: number | null) => {
@@ -104,7 +152,7 @@ const bashDef: ToolDefinition = {
     }
 
     return new Promise<{ command: string; stdout: string; stderr: string; exitCode: number | null; error?: string }>((resolve) => {
-      child_process.exec(command, { timeout }, (err, stdout, stderr) => {
+      child_process.exec(command, { cwd: targetCwd, timeout }, (err, stdout, stderr) => {
         if (err && (err as NodeJS.ErrnoException & { killed?: boolean }).killed) {
           resolve({ command, stdout, stderr, exitCode: null, error: `命令超时（${timeout}ms）` })
           return
@@ -117,6 +165,35 @@ const bashDef: ToolDefinition = {
         })
       })
     })
+  },
+}
+
+/** BashKill — 终止后台运行的 Bash 任务 */
+const bashKillDef: ToolDefinition = {
+  name: 'bashKill',
+  description: '终止后台运行的 Bash 任务',
+  parameters: {
+    type: 'object',
+    properties: {
+      task_id: { type: 'string', description: '后台任务 ID' },
+    },
+    required: ['task_id'],
+    additionalProperties: false,
+  },
+  isConcurrencySafe: true,
+  execute: async (input: any) => {
+    const { task_id } = input
+    const task = bashTaskRegistry.get(task_id)
+    if (!task) {
+      return { error: `任务 ${task_id} 不存在` }
+    }
+    if (task.status !== 'running') {
+      return { task_id, status: task.status, message: `任务已结束，无法终止` }
+    }
+    task.proc?.kill()
+    task.status = 'killed'
+    task.exitCode = null
+    return { task_id, status: 'killed', message: `任务已终止` }
   },
 }
 
@@ -134,8 +211,9 @@ const bashOutputDef: ToolDefinition = {
       },
     },
     required: ['task_id'],
+    additionalProperties: false,
   },
-  isConcurrencySafe: true, // 只读操作，可以并发
+  isConcurrencySafe: true,
   execute: async (input: any) => {
     const { task_id, block = false } = input
     const task = bashTaskRegistry.get(task_id)
@@ -350,39 +428,94 @@ const multiEditDef: ToolDefinition = {
   },
 }
 
+/**
+ * 解析路径并检查授权：
+ * - 已授权 → 返回 resolved 路径
+ * - 未授权 → 发起授权请求，轮询等待（最多 120s），授权后继续；超时或拒绝返回 error
+ */
+async function checkAccess(targetPath: string): Promise<{ resolved: string } | { error: string }> {
+  const resolved = path.resolve(targetPath)
+  console.log(`[cc-tools:glob] checkAccess: ${targetPath} → ${resolved}`)
+  console.log(`[cc-tools:glob] isApproved: ${isApproved(resolved)}`)
+
+  if (isApproved(resolved)) {
+    console.log(`[cc-tools:glob] ✓ 已授权，直接访问`)
+    return { resolved }
+  }
+
+  console.log(`[cc-tools:glob] 需要授权，发起请求...`)
+  const req = requestAccess(resolved)
+  console.log(`[cc-tools:glob] 授权请求已创建: ${req.id}`)
+
+  // 轮询等待用户授权，每 500ms 检查一次，最多等 120s
+  const timeout = 120_000
+  const interval = 500
+  const start = Date.now()
+
+  while (Date.now() - start < timeout) {
+    await new Promise((r) => setTimeout(r, interval))
+    if (isApproved(resolved)) {
+      console.log(`[cc-tools:glob] ✓ 授权已批准`)
+      return { resolved }
+    }
+    // 检查是否被拒绝（请求已从 pending 中移除但未被批准）
+    const stillPending = listPendingRequests().some((r) => r.id === req.id)
+    if (!stillPending && !isApproved(resolved)) {
+      console.log(`[cc-tools:glob] ✗ 用户拒绝访问`)
+      return { error: `用户拒绝了对 "${resolved}" 的访问请求` }
+    }
+  }
+
+  console.log(`[cc-tools:glob] ✗ 授权超时`)
+  return { error: `等待授权超时（120s），无法访问 "${resolved}"` }
+}
+
 /** Glob — 按文件名模式匹配文件 */
-const globDef: ToolDefinition = {
+export const globTool: ToolDefinition = {
   name: 'glob',
-  description: '按 glob 模式匹配文件名（如 "**/*.ts"、"src/**/*.tsx"）。结果按修改时间排序。适合按名称查找文件，不查找文件内容（内容搜索用 Grep）。',
+  description: '按模式搜索文件。支持 * 和 ** 通配符，如 "src/**/*.ts" 匹配 src 下所有 TypeScript 文件',
   parameters: {
     type: 'object',
     properties: {
-      pattern: { type: 'string', description: 'Glob 模式，如 **/*.ts 或 src/**/*.tsx' },
-      path: { type: 'string', description: '搜索根目录，默认为当前工作目录' },
+      pattern: { type: 'string', description: '搜索模式，如 "**/*.ts"、"src/*.json"' },
+      path: { type: 'string', description: '搜索起始目录，默认当前目录' },
     },
     required: ['pattern'],
+    additionalProperties: false,
   },
-  isConcurrencySafe: true, // 只读操作，可以并发
-  execute: async (input: any) => {
-    const { pattern, path: searchPath } = input
-    const root = path.resolve(searchPath ?? process.cwd())
+  isConcurrencySafe: true,
+  execute: async ({ pattern, path: searchPath = '.' }: { pattern: string; path?: string }) => {
+    const searchRoot = path.resolve(searchPath)
+    console.log(`[cc-tools:glob] 开始执行，root: ${searchRoot}`)
+
+    // 访问控制检查（包含授权请求和等待逻辑）
+    const access = await checkAccess(searchRoot)
+    if ('error' in access) {
+      console.log(`[cc-tools:glob] ✗ ${access.error}`)
+      return { error: access.error }
+    }
+    const root = access.resolved
+    console.log(`[cc-tools:glob] ✓ 已授权，resolved: ${root}`)
+
     if (!fs.existsSync(root)) {
       return { error: `目录不存在：${root}` }
     }
 
-    const re = globToRegExp(pattern)
-    const allFiles = walkFiles(root)
-    const matched = allFiles
-      .map((f) => ({ rel: path.relative(root, f), abs: f }))
-      .filter(({ rel }) => re.test(rel))
-      .sort((a, b) => {
-        const tA = fs.statSync(a.abs).mtimeMs
-        const tB = fs.statSync(b.abs).mtimeMs
-        return tB - tA
-      })
-      .map(({ rel }) => rel)
+    console.log(`[cc-tools:glob] 开始搜索 pattern: ${pattern}`)
+    const results = await fg(pattern, {
+      cwd: root,
+      ignore: ['node_modules/**', '.git/**'],
+      dot: false,
+      onlyFiles: true,
+      followSymbolicLinks: false,
+    })
+    console.log(`[cc-tools:glob] 搜索完成，找到 ${results.length} 个文件`)
 
-    return { pattern, root, count: matched.length, files: matched }
+    if (results.length === 0) {
+      return { pattern, root, count: 0, files: [], message: `没有找到匹配 "${pattern}" 的文件` }
+    }
+
+    return { pattern, root, count: results.length, files: results.sort() }
   },
 }
 
@@ -749,11 +882,12 @@ function walkFiles(dir: string, result: string[] = []): string[] {
 export const ccToolDefs: ToolDefinition[] = [
   bashDef,
   bashOutputDef,
+  bashKillDef,
   readDef,
   writeDef,
   editDef,
   multiEditDef,
-  globDef,
+  globTool,
   grepDef,
   webFetchDef,
   webSearchDef,

@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef, Suspense, useCallback, memo } from 'react'
 import {
   Folder, FileText, FileSearch, Search, Terminal, Pencil,
-  Wrench, Loader2, Check, AlertCircle, ChevronDown,
+  Wrench, Loader2, Check, AlertCircle, ChevronDown, PanelRight,
 } from 'lucide-react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useChat } from '@ai-sdk/react'
@@ -12,6 +12,8 @@ import { DefaultChatTransport } from 'ai'
 import type { UIMessage, TextUIPart } from 'ai'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { SessionSidebar } from '@/app/components/SessionSidebar'
+import type { StoredMessage } from '@/app/components/SessionSidebar'
 
 // ─── 类型 ──────────────────────────────────────────────────────────────────────
 
@@ -906,29 +908,7 @@ function WelcomeScreen({
         Triggered Anywhere, Completed Locally
       </p>
 
-      {/* Agent 切换 tab */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '32px' }}>
-        <span style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginRight: '4px' }}>开始</span>
-        <div style={{ display: 'flex', background: 'var(--color-border)', borderRadius: '24px', padding: '3px', gap: '2px' }}>
-          {agents.slice(0, 4).map((a) => (
-            <button
-              key={a.name}
-              onClick={() => onAgentChange(a.name)}
-              style={{
-                padding: '7px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 500,
-                border: 'none', cursor: 'pointer', transition: 'all 0.15s',
-                background: a.name === agentName ? 'var(--color-text-primary)' : 'transparent',
-                color: a.name === agentName ? 'var(--color-background)' : 'var(--color-text-secondary)',
-                display: 'flex', alignItems: 'center', gap: '6px',
-              }}
-            >
-              <span style={{ fontSize: '12px' }}>{a.name === agentName ? '◻' : '◻'}</span>
-              {a.name}
-            </button>
-          ))}
-        </div>
-        <span style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginLeft: '4px' }}>任务</span>
-      </div>
+
     </div>
   )
 }
@@ -984,13 +964,15 @@ function CapabilityTags({ onSelect }: { onSelect: (label: string) => void }) {
 // ─── ChatView（有会话时） ─────────────────────────────────────────────────────
 
 function ChatView({
-  convId, agentName, initialMessages, onAgentChange, onNewChat, title, agents,
+  convId, agentName, initialMessages, onAgentChange, onNewChat, title, agents, conversation,
 }: {
   convId: string; agentName: string; initialMessages: UIMessage[]
   onAgentChange: (name: string) => void; onNewChat: () => void; title: string; agents: AgentEntry[]
+  conversation: Conversation | null
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [inputText, setInputText] = useState('')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const pendingMsgKey = `manta:pending-msg:${convId}`
 
   const { messages, setMessages, sendMessage, stop, status, error } = useChat({
@@ -1067,50 +1049,96 @@ function ChatView({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* 极简 Header */}
-      <div style={{ height: 'var(--header-height)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', flexShrink: 0 }}>
-        <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px' }} title={title}>
-          {title}
-        </h3>
-        <button onClick={onNewChat}
-          style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)' }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
-          + 新对话
-        </button>
-      </div>
-
-      {/* 消息列表 */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 24px 16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        {messages.map((msg, idx) => {
-          const isLastAssistant = msg.role === 'assistant' && idx === messages.length - 1
-          return <div key={msg.id} style={{ width: '100%' }}><MessageRow message={msg} agentName={agentName} isStreaming={isLoading && isLastAssistant} /></div>
-        })}
-        {error && (
-          <div style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '13px', background: '#ef444410', border: '1px solid #ef444440', color: '#ef4444' }}>
-            ❌ {error.message}
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden', position: 'relative' }}>
+      {/* 主内容区 */}
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minWidth: 0 }}>
+        {/* 极简 Header */}
+        <div style={{ height: 'var(--header-height)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', flexShrink: 0 }}>
+          <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px' }} title={title}>
+            {title}
+          </h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: sidebarOpen ? 'var(--color-border)' : 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}
+              title={sidebarOpen ? '关闭会话详情' : '打开会话详情'}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)' }}
+              onMouseLeave={(e) => { if (!sidebarOpen) e.currentTarget.style.background = 'transparent' }}>
+              <PanelRight size={14} />
+              <span>{sidebarOpen ? '隐藏' : '详情'}</span>
+            </button>
+            <button onClick={onNewChat}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+              + 新对话
+            </button>
           </div>
-        )}
-        <div ref={messagesEndRef} />
+        </div>
+
+        {/* 消息列表 */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 24px 16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {messages.map((msg, idx) => {
+            const isLastAssistant = msg.role === 'assistant' && idx === messages.length - 1
+            return <div key={msg.id} style={{ width: '100%' }}><MessageRow message={msg} agentName={agentName} isStreaming={isLoading && isLastAssistant} /></div>
+          })}
+          {error && (
+            <div style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '13px', background: '#ef444410', border: '1px solid #ef444440', color: '#ef4444' }}>
+              ❌ {error.message}
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* 能力标签 */}
+        {messages.length === 0 && <CapabilityTags onSelect={(label) => setInputText(label + ' ')} />}
+
+        {/* 文件访问授权 */}
+        <FsAccessBanner />
+
+        {/* 输入框 */}
+        <KimInputBar
+          value={inputText}
+          onChange={setInputText}
+          onSubmit={handleSend}
+          onStop={stop}
+          isLoading={isLoading}
+          agentName={agentName}
+          agents={agents}
+          onAgentChange={onAgentChange}
+        />
       </div>
 
-      {/* 能力标签 */}
-      {messages.length === 0 && <CapabilityTags onSelect={(label) => setInputText(label + ' ')} />}
-
-      {/* 文件访问授权 */}
-      <FsAccessBanner />
-
-      {/* 输入框 */}
-      <KimInputBar
-        value={inputText}
-        onChange={setInputText}
-        onSubmit={handleSend}
-        onStop={stop}
-        isLoading={isLoading}
-        agentName={agentName}
-        agents={agents}
-        onAgentChange={onAgentChange}
+      {/* 会话侧边栏 */}
+      <SessionSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        conversation={conversation}
+        liveMessages={messages.map((m) => {
+          const toolCalls: StoredMessage['toolCalls'] = []
+          for (const p of m.parts) {
+            if (p.type === 'dynamic-tool') {
+              const cast = p as { toolCallId: string; toolName?: string; input?: unknown; output?: unknown; state: string }
+              toolCalls.push({
+                toolCallId: cast.toolCallId,
+                toolName: cast.toolName ?? 'unknown',
+                input: cast.input,
+                output: cast.state === 'output-error' ? undefined : cast.output,
+                isError: cast.state === 'output-error',
+              })
+            }
+          }
+          const textParts = m.parts.filter((p): p is TextUIPart => p.type === 'text')
+          const content = textParts.map((p) => p.text).join('')
+          return {
+            id: m.id,
+            role: m.role,
+            content,
+            timestamp: (m.metadata as { timestamp?: string })?.timestamp ?? new Date().toISOString(),
+            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            usage: (m.metadata as { usage?: StoredMessage['usage'] })?.usage,
+          }
+        })}
       />
     </div>
   )
@@ -1291,6 +1319,7 @@ function TasksPage() {
         onAgentChange={handleAgentChange}
         onNewChat={() => { setConv(null); router.replace('/tasks', { scroll: false }) }}
         agents={agents}
+        conversation={conv}
       />
     )
   }

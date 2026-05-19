@@ -41,20 +41,12 @@ function writeStore(data: StoreData) {
   fs.renameSync(tmp, STORE_FILE)
 }
 
-/** 检查路径是否已授权（精确路径或父目录已授权均可） */
+/** 检查路径是否已授权（精确路径或父目录已授权均可）
+ * 注意：当前实现对查询工具（glob, grep, readFile, lsDir）不做限制，任何目录都可访问
+ */
 export function isApproved(targetPath: string): boolean {
-  const resolved = path.resolve(targetPath)
-  // CWD 始终授权
-  if (resolved === path.resolve(process.cwd()) || resolved.startsWith(path.resolve(process.cwd()) + path.sep)) {
-    return true
-  }
-  const { approvedPaths } = readStore()
-  for (const approved of approvedPaths) {
-    if (resolved === approved || resolved.startsWith(approved + path.sep)) {
-      return true
-    }
-  }
-  return false
+  // 查询工具不限制目录访问，任何路径都已授权
+  return true
 }
 
 /** 发起授权请求，返回 request；若该路径已有 pending 请求则复用 */

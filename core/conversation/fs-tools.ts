@@ -12,11 +12,17 @@ import { isApproved, requestAccess, listPendingRequests } from '@/core/fs/access
  */
 async function checkAccess(targetPath: string): Promise<{ resolved: string } | { error: string }> {
   const resolved = path.resolve(targetPath)
+  console.log(`[fs-tools] checkAccess: ${targetPath} → ${resolved}`)
+  console.log(`[fs-tools] isApproved: ${isApproved(resolved)}`)
+
   if (isApproved(resolved)) {
+    console.log(`[fs-tools] ✓ 已授权，直接访问`)
     return { resolved }
   }
 
+  console.log(`[fs-tools] 需要授权，发起请求...`)
   const req = requestAccess(resolved)
+  console.log(`[fs-tools] 授权请求已创建: ${req.id}`)
 
   // 轮询等待用户授权，每 500ms 检查一次，最多等 120s
   const timeout = 120_000
@@ -26,15 +32,18 @@ async function checkAccess(targetPath: string): Promise<{ resolved: string } | {
   while (Date.now() - start < timeout) {
     await new Promise((r) => setTimeout(r, interval))
     if (isApproved(resolved)) {
+      console.log(`[fs-tools] ✓ 授权已批准`)
       return { resolved }
     }
     // 检查是否被拒绝（请求已从 pending 中移除但未被批准）
     const stillPending = listPendingRequests().some((r) => r.id === req.id)
     if (!stillPending && !isApproved(resolved)) {
+      console.log(`[fs-tools] ✗ 用户拒绝访问`)
       return { error: `用户拒绝了对 "${resolved}" 的访问请求` }
     }
   }
 
+  console.log(`[fs-tools] ✗ 授权超时`)
   return { error: `等待授权超时（120s），无法访问 "${resolved}"` }
 }
 
@@ -90,12 +99,15 @@ const readFileDef: ToolDefinition = {
   },
   isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
+    console.log(`[fs-tools:readFile] 开始执行`)
     const { file_path, path: pathParam, file, filename, offset, limit } = input
     const filePath = file_path || pathParam || file || filename || ''
+    console.log(`[fs-tools:readFile] filePath: ${filePath}`)
     if (!filePath) return { error: '缺少文件路径参数' }
     const access = await checkAccess(filePath)
     if ('error' in access) return { error: access.error }
     const { resolved } = access
+    console.log(`[fs-tools:readFile] resolved: ${resolved}`)
 
     if (!fs.existsSync(resolved)) {
       return { error: `文件不存在：${resolved}` }
@@ -108,10 +120,12 @@ const readFileDef: ToolDefinition = {
     const raw = fs.readFileSync(resolved, 'utf-8')
     const lines = raw.split('\n')
     const totalLines = lines.length
+    console.log(`[fs-tools:readFile] 文件总行数: ${totalLines}`)
 
     const start = Math.max((offset ?? 1) - 1, 0)
     const end = limit !== undefined ? Math.min(start + limit, totalLines) : totalLines
     const sliced = lines.slice(start, end)
+    console.log(`[fs-tools:readFile] 返回行数: ${sliced.length} (offset: ${start + 1}, limit: ${end - start})`)
 
     return {
       file_path: resolved,
@@ -140,27 +154,51 @@ const lsDirDef: ToolDefinition = {
   },
   isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
+    console.log(`[fs-tools:lsDir] 开始执行`)
     const { dir_path, path: pathParam, dir, directory } = input
     // 容错：取第一个非空值作为目录路径
     const targetPath = dir_path || pathParam || dir || directory || ''
+    console.log(`[fs-tools:lsDir] targetPath: ${targetPath}`)
     if (!targetPath) return { error: '缺少目录路径参数' }
     const access = await checkAccess(targetPath)
     if ('error' in access) return { error: access.error }
     const { resolved } = access
+    console.log(`[fs-tools:lsDir] resolved: ${resolved}`)
 
+    console.log(`[fs-tools:lsDir] existsSync: ${fs.existsSync(resolved)}`)
     if (!fs.existsSync(resolved)) {
       return { error: `目录不存在：${resolved}` }
     }
+    console.log(`[fs-tools:lsDir] 调用 statSync...`)
     const stat = fs.statSync(resolved)
+    console.log(`[fs-tools:lsDir] isDirectory: ${stat.isDirectory()}`)
     if (!stat.isDirectory()) {
       return { error: `路径不是目录：${resolved}` }
     }
 
-    const entries = fs.readdirSync(resolved, { withFileTypes: true })
+    console.log(`[fs-tools:lsDir] 调用 readdirSync...`)
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(resolved, { withFileTypes: true })
+      console.log(`[fs-tools:lsDir] readdirSync 成功，条目数: ${entries.length}`)
+    } catch (err) {
+      console.log(`[fs-tools:lsDir] readdirSync 失败: ${err}`)
+      return { error: `无法读取目录 "${resolved}"：${err instanceof Error ? err.message : String(err)}` }
+    }
+
     const items = entries.map((e) => ({
       name: e.name,
       type: e.isDirectory() ? 'directory' : e.isSymbolicLink() ? 'symlink' : 'file',
     }))
+
+    if (items.length === 0) {
+      return {
+        dir_path: resolved,
+        count: 0,
+        items: [],
+        message: `目录 "${resolved}" 是空的`,
+      }
+    }
 
     return { dir_path: resolved, count: items.length, items }
   },
@@ -184,21 +222,37 @@ const globDef: ToolDefinition = {
   },
   isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
+    console.log(`[fs-tools:glob] 开始执行`)
     const { pattern, path: searchPath, search_path, root: rootParam } = input
+    console.log(`[fs-tools:glob] pattern: ${pattern}, searchPath: ${searchPath ?? search_path ?? rootParam ?? 'cwd'}`)
     const rootRaw = searchPath ?? search_path ?? rootParam ?? process.cwd()
     const access = await checkAccess(rootRaw)
     if ('error' in access) return { error: access.error }
     const { resolved: root } = access
+    console.log(`[fs-tools:glob] resolved root: ${root}`)
     if (!fs.existsSync(root)) {
       return { error: `目录不存在：${root}` }
     }
 
     const re = globToRegExp(pattern)
+    console.log(`[fs-tools:glob] 开始 walkFiles...`)
     const allFiles = walkFiles(root)
+    console.log(`[fs-tools:glob] walkFiles 完成，总文件数: ${allFiles.length}`)
     const matched = allFiles
       .map((f) => path.relative(root, f))
       .filter((rel) => re.test(rel))
       .sort()
+    console.log(`[fs-tools:glob] 匹配结果数: ${matched.length}`)
+
+    if (matched.length === 0) {
+      return {
+        pattern,
+        root,
+        count: 0,
+        files: [],
+        message: `没有找到匹配 "${pattern}" 的文件`,
+      }
+    }
 
     return {
       pattern,
@@ -278,6 +332,17 @@ const grepDef: ToolDefinition = {
           })
           if (results.length >= MAX) break outer
         }
+      }
+    }
+
+    if (results.length === 0) {
+      return {
+        pattern,
+        root,
+        total: 0,
+        truncated: false,
+        results: [],
+        message: `没有找到匹配正则 "${pattern}" 的内容`,
       }
     }
 
