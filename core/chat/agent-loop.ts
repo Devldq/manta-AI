@@ -267,14 +267,13 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
               })
               break
             case 'tool-result':
-              // AI SDK v6: tool-result chunk 使用 result 字段存储执行结果
+              // AI SDK v6: tool-result chunk 使用 output 字段存储执行结果（不是 result）
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const toolResult = (chunk as any).result
+              const toolResult = (chunk as any).output
               stepCollect.toolResults.push({
                 toolCallId: chunk.toolCallId,
                 toolName: chunk.toolName,
                 output: toolResult,
-                // AI SDK v6 不在 fullStream tool-result chunk 中暴露 isError
                 isError: (chunk as any).isError ?? false,
               })
               break

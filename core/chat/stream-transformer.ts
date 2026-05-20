@@ -85,11 +85,11 @@ export function transformChunk(chunk: FullStreamChunk): UIMessageChunkOutput | n
 
     case 'tool-result':
       // fullStream tool-result → UIMessageChunk tool-output-available
-      // AI SDK v6: tool-result chunk 使用 result 字段存储执行结果
+      // AI SDK v6: chunk.output 是工具返回值（不是 chunk.result）
       return {
         type: 'tool-output-available',
         toolCallId: chunk.toolCallId as string,
-        output: chunk.result,
+        output: (chunk as any).output,
       }
 
     case 'tool-error':

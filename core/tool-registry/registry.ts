@@ -89,14 +89,15 @@ export class ToolRegistry {
           // 按 isConcurrencySafe 获取锁
           if (isSafe) {
             await registry.acquireConcurrent()
-            console.log(`  [并发] ${name} 获取共享锁`)
           } else {
             await registry.acquireExclusive()
-            console.log(`  [串行] ${name} 获取独占锁，等待其他工具完成`)
           }
 
           try {
             const raw = await executeFn(input)
+            if (raw === undefined) {
+              return '工具执行返回了 undefined'
+            }
             const text = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2)
             return truncateResult(text, maxChars)
           } finally {

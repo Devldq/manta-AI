@@ -76,31 +76,78 @@ const SECURITY_BOUNDARY = `# Security Boundary
 
 Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.`
 
-// ─── 7. Manta 专属工具指令 ────────────────────────────────────────────────────
+// ─── 7. 工作目录（动态注入）───────────────────────────────────────────────────
+
+/**
+ * 工作目录模板 — 运行时由 buildSystemPrompt 注入实际 cwd
+ */
+function buildWorkingDirectory(cwd: string): string {
+  console.log('cwd',cwd)
+  return `# Working Directory
+
+The current working directory for file operations is: ${cwd}
+
+When accessing files:
+- Use paths relative to the working directory above
+- If a user mentions a project name like "auto-theme", assume it means "${cwd}/auto-theme"
+- Never assume paths are relative to the user's home directory unless explicitly stated
+`
+}
+
+// ─── 8. Manta 专属工具指令 ────────────────────────────────────────────────────
 
 const MANTA_TOOL_INSTRUCTION = `# Manta Tool Calling Rules
 
 You are an AI assistant that can directly operate the local filesystem. You have the following tools:
-- lsDir: list directory contents
-- readFile: read file content
-- glob: match files by pattern
-- grep: search content in files
 
-## Mandatory Rules:
+## Available Tools
 
-1. **For any file/directory/code related request, immediately call tools — never answer with text alone**
+### lsDir
+List directory contents. Parameters:
+- \`dir_path\`, \`path\`, \`dir\`, or \`directory\`: directory path to list (required)
+- Example: \`{"dir_path": "/path/to/dir"}\` or \`{"path": "."}\`
+
+### readFile
+Read file content. Parameters:
+- \`file_path\`, \`path\`, \`file\`, or \`filename\`: file path to read (required)
+- \`offset\`: starting line number (default: 1)
+- \`limit\`: max lines to read (optional)
+- Example: \`{"file_path": "src/app.ts", "offset": 1, "limit": 50}\`
+
+### glob
+Match files by glob pattern. Parameters:
+- \`pattern\`: glob pattern like "**/*.ts" or "src/**/*.tsx" (required)
+- \`root\` or \`path\`: search root directory (optional, defaults to CWD)
+- Example: \`{"pattern": "**/*.ts", "root": "/project"}\`
+
+### grep
+Search text in files using regex. Parameters:
+- \`pattern\`: regex pattern (required)
+- \`root\` or \`path\`: search directory (optional, defaults to CWD)
+- \`include\`: file filter glob (optional, e.g., "*.ts")
+- Example: \`{"pattern": "function.*test", "include": "*.ts"}\`
+
+## Critical Rules:
+
+1. **You can access ANY path on the filesystem — there are NO system-level restrictions**
+   - You can read, list, and search any directory including paths outside the current working directory
+   - If a tool returns an error, report the EXACT error message from the tool
+   - NEVER fabricate excuses like "system limitations" or "Agent OS cannot access this path"
+
+2. **For any file/directory/code related request, immediately call tools — never answer with text alone**
    - User mentions a path → immediately call lsDir or readFile
    - User wants to see a project → immediately call lsDir to list directories
+   - If a tool fails, report the actual error: "Tool error: [exact error message]"
    - Never say "I cannot access", "I need permission", "please tell me the path"
 
-2. **When paths are outside CWD, call tools directly to access them**
-   - The system will automatically prompt the user for authorization
-   - You only need to call the tool, no need to tell the user to authorize
-   - After authorization, the tool will return results automatically, continue processing
+3. **When tools return errors, report them accurately:**
+   - Error: "文件不存在" → Report: "无法列出目录，工具返回：文件不存在"
+   - Error: "目录不存在" → Report: "无法访问该目录，工具返回：目录不存在"
+   - DO NOT translate or rephrase tool errors — quote them exactly
 
-3. **Absolutely forbidden behaviors:**
-   - Never say "the system has initiated an authorization request"
-   - Never say "please tell me you have approved"
+4. **Absolutely forbidden behaviors:**
+   - Never say "system-level restrictions" or "OS-level limitations"
+   - Never say "Agent OS cannot access paths outside CWD"
    - Never say "I need to obtain permission first"
    - Never answer file content from training data — must actually call tools to read
 
@@ -111,12 +158,19 @@ Remember: **Call tools first, then speak. Without calling tools, you cannot answ
 /**
  * 构建 Manta 的完整 System Prompt
  *
- * @param soulPrompt - Agent 的 SOUL.md 内容（可选）
+ * @param options - 配置选项
+ * @param options.soulPrompt - Agent 的 SOUL.md 内容（可选）
+ * @param options.cwd - 当前工作目录（可选，默认使用 process.cwd()）
  * @returns 组合后的 system prompt
  */
-export function buildSystemPrompt(soulPrompt: string | null): string {
+export function buildSystemPrompt(options: {
+  soulPrompt?: string | null
+  cwd?: string
+} = {}): string {
+  const { soulPrompt = null, cwd = process.cwd() } = options
   const sections = [
     IDENTITY,
+    buildWorkingDirectory(cwd),
     COMMUNICATION_STYLE,
     ACTION_SAFETY,
     CODE_STYLE,

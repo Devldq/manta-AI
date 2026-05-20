@@ -4,6 +4,7 @@ import type { ToolDefinition } from '@/core/tool-registry'
 import * as fs from 'fs'
 import * as path from 'path'
 import { isApproved, requestAccess, listPendingRequests } from '@/core/fs/access-store'
+import { getDefaultWorkDir } from '@/core/config/workspace-store'
 
 /**
  * 解析路径并检查授权：
@@ -80,6 +81,61 @@ function globToRegExp(pattern: string): RegExp {
 
 // ─── 工具定义 ────────────────────────────────────────────────────────────────
 
+/** 解析 AI SDK 可能的参数格式
+ * 处理：input 是字符串、input.args 是 JSON 字符串、input.input 是字符串等情况
+ */
+function parseInput(raw: any): Record<string, unknown> {
+  // 1. 已经是对象
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    // 2. 如果有 args 字段且是字符串，解析它
+    if (typeof raw.args === 'string') {
+      try {
+        return JSON.parse(raw.args)
+      } catch {
+        // args 不是有效 JSON，可能直接就是路径
+      }
+    }
+    // 3. 如果有 input 字段（AI SDK v6 格式）
+    if (typeof raw.input === 'string') {
+      try {
+        return JSON.parse(raw.input)
+      } catch {
+        // input 直接就是路径字符串
+        return { path: raw.input }
+      }
+    }
+    return raw
+  }
+  // 4. input 本身是字符串（直接作为路径）
+  if (typeof raw === 'string') {
+    return { path: raw }
+  }
+  return {}
+}
+
+/** 从参数对象中提取目录路径（支持多种参数名） */
+function extractDirPath(params: Record<string, unknown>): string {
+  // 支持的参数名（按优先级）
+  const keys = ['dir_path', 'path', 'dir', 'directory', 'target', 'name', 'value', 'input']
+  for (const key of keys) {
+    if (params[key] && typeof params[key] === 'string') {
+      return params[key] as string
+    }
+  }
+  return ''
+}
+
+/** 从参数对象中提取文件路径（支持多种参数名） */
+function extractFilePath(params: Record<string, unknown>): string {
+  const keys = ['file_path', 'path', 'file', 'filename', 'name', 'value', 'input', 'target']
+  for (const key of keys) {
+    if (params[key] && typeof params[key] === 'string') {
+      return params[key] as string
+    }
+  }
+  return ''
+}
+
 /** 读取文件内容 */
 const readFileDef: ToolDefinition = {
   name: 'readFile',
@@ -99,9 +155,11 @@ const readFileDef: ToolDefinition = {
   },
   isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
-    console.log(`[fs-tools:readFile] 开始执行`)
-    const { file_path, path: pathParam, file, filename, offset, limit } = input
-    const filePath = file_path || pathParam || file || filename || ''
+    console.log(`[fs-tools:readFile] 开始执行, raw input:`, input)
+    const params = parseInput(input)
+    console.log(`[fs-tools:readFile] 解析后 params:`, params)
+    const filePath = extractFilePath(params)
+    const { offset, limit } = params as any
     console.log(`[fs-tools:readFile] filePath: ${filePath}`)
     if (!filePath) return { error: '缺少文件路径参数' }
     const access = await checkAccess(filePath)
@@ -154,10 +212,10 @@ const lsDirDef: ToolDefinition = {
   },
   isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
-    console.log(`[fs-tools:lsDir] 开始执行`)
-    const { dir_path, path: pathParam, dir, directory } = input
-    // 容错：取第一个非空值作为目录路径
-    const targetPath = dir_path || pathParam || dir || directory || ''
+    console.log(`[fs-tools:lsDir] 开始执行, raw input:`, input)
+    const params = parseInput(input)
+    console.log(`[fs-tools:lsDir] 解析后 params:`, params)
+    const targetPath = extractDirPath(params)
     console.log(`[fs-tools:lsDir] targetPath: ${targetPath}`)
     if (!targetPath) return { error: '缺少目录路径参数' }
     const access = await checkAccess(targetPath)
@@ -222,10 +280,12 @@ const globDef: ToolDefinition = {
   },
   isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
-    console.log(`[fs-tools:glob] 开始执行`)
-    const { pattern, path: searchPath, search_path, root: rootParam } = input
-    console.log(`[fs-tools:glob] pattern: ${pattern}, searchPath: ${searchPath ?? search_path ?? rootParam ?? 'cwd'}`)
-    const rootRaw = searchPath ?? search_path ?? rootParam ?? process.cwd()
+    console.log(`[fs-tools:glob] 开始执行, raw input:`, input)
+    const params = parseInput(input)
+    console.log(`[fs-tools:glob] 解析后 params:`, params)
+    const { pattern, search_path, root: rootParam, path: searchPath } = params as any
+    const rootRaw = searchPath ?? search_path ?? rootParam ?? getDefaultWorkDir()
+    console.log(`[fs-tools:glob] pattern: ${pattern}, searchPath: ${rootRaw}`)
     const access = await checkAccess(rootRaw)
     if ('error' in access) return { error: access.error }
     const { resolved: root } = access
@@ -284,8 +344,11 @@ const grepDef: ToolDefinition = {
   },
   isConcurrencySafe: true, // 只读操作，可以并发
   execute: async (input: any) => {
-    const { pattern, search_path, path: pathParam, root: rootParam, include, ignore_case, case_insensitive } = input
-    const rootRaw = search_path ?? pathParam ?? rootParam ?? process.cwd()
+    console.log(`[fs-tools:grep] 开始执行, raw input:`, input)
+    const params = parseInput(input)
+    console.log(`[fs-tools:grep] 解析后 params:`, params)
+    const { pattern, search_path, path: pathParam, root: rootParam, include, ignore_case, case_insensitive } = params as any
+    const rootRaw = search_path ?? pathParam ?? rootParam ?? getDefaultWorkDir()
     const ignoreCaseFinal = ignore_case ?? case_insensitive ?? false
     const access = await checkAccess(rootRaw)
     if ('error' in access) return { error: access.error }
