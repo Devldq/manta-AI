@@ -13,7 +13,6 @@ import type { UIMessage, TextUIPart } from 'ai'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { SessionSidebar } from '@/app/components/SessionSidebar'
-import type { StoredMessage } from '@/app/components/SessionSidebar'
 
 // ─── 类型 ──────────────────────────────────────────────────────────────────────
 
@@ -1112,33 +1111,7 @@ function ChatView({
       {/* 会话侧边栏 */}
       <SessionSidebar
         open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
         conversation={conversation}
-        liveMessages={messages.map((m) => {
-          const toolCalls: StoredMessage['toolCalls'] = []
-          for (const p of m.parts) {
-            if (p.type === 'dynamic-tool') {
-              const cast = p as { toolCallId: string; toolName?: string; input?: unknown; output?: unknown; state: string }
-              toolCalls.push({
-                toolCallId: cast.toolCallId,
-                toolName: cast.toolName ?? 'unknown',
-                input: cast.input,
-                output: cast.state === 'output-error' ? undefined : cast.output,
-                isError: cast.state === 'output-error',
-              })
-            }
-          }
-          const textParts = m.parts.filter((p): p is TextUIPart => p.type === 'text')
-          const content = textParts.map((p) => p.text).join('')
-          return {
-            id: m.id,
-            role: m.role,
-            content,
-            timestamp: (m.metadata as { timestamp?: string })?.timestamp ?? new Date().toISOString(),
-            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-            usage: (m.metadata as { usage?: StoredMessage['usage'] })?.usage,
-          }
-        })}
       />
     </div>
   )

@@ -1,11 +1,8 @@
-/* 会话侧边栏 — 展示本次会话的对话日志、修改内容和变更文件 */
+/* 会话侧边栏 — 展示本次会话的修改内容和变更文件 */
 'use client'
 
 import { useState, useEffect, useRef, memo } from 'react'
-import {
-  X, ChevronDown, ChevronRight, FileEdit, FileText, Terminal,
-  MessageSquare, Clock, Hash, Copy, Check, AlertCircle, Loader2,
-} from 'lucide-react'
+import { FileEdit, FileText } from 'lucide-react'
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 
@@ -47,61 +44,16 @@ export interface FileChange {
   description?: string
 }
 
-/** 对话日志条目 */
-export interface LogEntry {
-  id: string
-  type: 'user-message' | 'assistant-message' | 'tool-call' | 'tool-result'
-  role?: 'user' | 'assistant'
-  toolName?: string
-  content?: string
-  input?: unknown
-  output?: unknown
-  isError?: boolean
-  timestamp: string
-  stepNumber?: number
-}
-
 /** 侧边栏标签页 */
-type TabId = 'logs' | 'changes' | 'files'
+type TabId = 'changes' | 'files'
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
-
-const TOOL_ICON_MAP: Record<string, string> = {
-  bash: '⌨',
-  read: '📄',
-  write: '✏',
-  edit: '✂',
-  multiEdit: '✂',
-  glob: '🔍',
-  grep: '🔎',
-  lsDir: '📁',
-  todoRead: '📋',
-  todoWrite: '📝',
-  webFetch: '🌐',
-  webSearch: '🌐',
-  createConversation: '💬',
-  appendMessage: '💬',
-}
 
 const SIDEBAR_MIN_WIDTH = 360
 const SIDEBAR_MAX_WIDTH = 600
 const SIDEBAR_WIDTH_KEY = 'manta:session-sidebar-width'
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
-
-function formatTime(ts: string): string {
-  try {
-    const d = new Date(ts)
-    return d.toLocaleTimeString('zh-CN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    })
-  } catch {
-    return ts
-  }
-}
 
 function formatRelativeTime(ts: string): string {
   try {
@@ -117,10 +69,6 @@ function formatRelativeTime(ts: string): string {
   }
 }
 
-function getToolIcon(toolName: string): string {
-  return TOOL_ICON_MAP[toolName] ?? '⚙'
-}
-
 function truncateText(text: string, maxLen: number): string {
   if (!text) return ''
   return text.length > maxLen ? text.slice(0, maxLen) + '…' : text
@@ -132,35 +80,20 @@ function extractFilePath(input: unknown): string | null {
   return (obj.file_path as string) || (obj.path as string) || null
 }
 
-function describeFileChange(change: FileChange): string {
-  switch (change.changeType) {
-    case 'create': return `创建文件`
-    case 'edit': return `编辑文件`
-    case 'delete': return `删除文件`
-    default: return `修改文件`
-  }
-}
-
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
 
 interface SessionSidebarProps {
   /** 侧边栏是否打开 */
   open: boolean
-  /** 关闭回调 */
-  onClose: () => void
   /** 会话数据 */
   conversation: ConversationData | null
-  /** 当前对话消息（用于实时日志） */
-  liveMessages?: StoredMessage[]
 }
 
 export const SessionSidebar = memo(function SessionSidebar({
   open,
-  onClose,
   conversation,
-  liveMessages = [],
 }: SessionSidebarProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('logs')
+  const [activeTab, setActiveTab] = useState<TabId>('changes')
   const [width, setWidth] = useState(420)
   const [isDragging, setIsDragging] = useState(false)
   const dragStartX = useRef(0)
@@ -245,7 +178,6 @@ export const SessionSidebar = memo(function SessionSidebar({
         {/* 标签切换 */}
         <div className="flex border-b border-border flex-shrink-0">
           {[
-            { id: 'logs' as TabId, label: '对话日志', icon: MessageSquare },
             { id: 'changes' as TabId, label: '修改内容', icon: FileEdit },
             { id: 'files' as TabId, label: '变更文件', icon: FileText },
           ].map(({ id, label, icon: Icon }) => (
@@ -266,12 +198,6 @@ export const SessionSidebar = memo(function SessionSidebar({
 
         {/* 内容区 */}
         <div className="flex-1 overflow-hidden">
-          {activeTab === 'logs' && (
-            <ConversationLogs
-              conversation={conversation}
-              liveMessages={liveMessages}
-            />
-          )}
           {activeTab === 'changes' && (
             <FileChanges conversation={conversation} />
           )}
@@ -287,234 +213,6 @@ export const SessionSidebar = memo(function SessionSidebar({
     </div>
   )
 })
-
-// ─── 对话日志面板 ─────────────────────────────────────────────────────────────
-
-function ConversationLogs({
-  conversation,
-  liveMessages = [],
-}: {
-  conversation: ConversationData | null
-  liveMessages: StoredMessage[]
-}) {
-  // 合并持久化和实时消息
-  const allMessages = conversation?.messages ?? []
-  const mergedMessages = liveMessages.length > 0
-    ? liveMessages
-    : allMessages
-
-  // 构建日志条目
-  const logEntries: LogEntry[] = []
-  let stepCounter = 0
-
-  for (const msg of mergedMessages) {
-    if (msg.role === 'user') {
-      stepCounter++
-      logEntries.push({
-        id: msg.id,
-        type: 'user-message',
-        role: 'user',
-        content: truncateText(msg.content, 200),
-        timestamp: msg.timestamp,
-        stepNumber: stepCounter,
-      })
-    } else if (msg.role === 'assistant') {
-      // 检查是否有工具调用
-      if (msg.toolCalls && msg.toolCalls.length > 0) {
-        for (const tc of msg.toolCalls) {
-          logEntries.push({
-            id: `${msg.id}-${tc.toolCallId}-call`,
-            type: 'tool-call',
-            toolName: tc.toolName,
-            content: tc.input ? truncateText(JSON.stringify(tc.input), 100) : undefined,
-            input: tc.input,
-            timestamp: msg.timestamp,
-            stepNumber: stepCounter,
-          })
-          logEntries.push({
-            id: `${msg.id}-${tc.toolCallId}-result`,
-            type: 'tool-result',
-            toolName: tc.toolName,
-            output: tc.output,
-            isError: tc.isError,
-            errorText: tc.errorText,
-            timestamp: msg.timestamp,
-            stepNumber: stepCounter,
-          })
-        }
-      }
-
-      // 检查是否有文本输出
-      if (msg.content && msg.content.trim()) {
-        stepCounter++
-        logEntries.push({
-          id: `${msg.id}-text`,
-          type: 'assistant-message',
-          role: 'assistant',
-          content: truncateText(msg.content, 300),
-          timestamp: msg.timestamp,
-          stepNumber: stepCounter,
-          usage: msg.usage,
-        })
-      }
-    }
-  }
-
-  if (logEntries.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-center p-6">
-        <MessageSquare size={32} className="text-text-muted mb-3 opacity-50" />
-        <p className="text-sm text-text-muted">暂无对话日志</p>
-        <p className="text-xs text-text-muted mt-1">开始对话后，这里将显示详细的执行步骤</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="h-full overflow-y-auto">
-      {logEntries.map((entry, idx) => (
-        <LogEntryRow key={entry.id} entry={entry} isLast={idx === logEntries.length - 1} />
-      ))}
-    </div>
-  )
-}
-
-// 单条日志行
-function LogEntryRow({ entry, isLast }: { entry: LogEntry; isLast: boolean }) {
-  const [expanded, setExpanded] = useState(false)
-  const [copied, setCopied] = useState(false)
-
-  async function handleCopy(content: string) {
-    try {
-      await navigator.clipboard.writeText(content)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {}
-  }
-
-  function getEntryIcon() {
-    switch (entry.type) {
-      case 'user-message':
-        return <div className="w-5 h-5 rounded-full bg-accent text-text-inverse flex items-center justify-center text-[10px] font-bold">U</div>
-      case 'assistant-message':
-        return <div className="w-5 h-5 rounded-full bg-accent/80 text-text-inverse flex items-center justify-center text-[10px] font-bold">A</div>
-      case 'tool-call':
-        return <div className="w-5 h-5 rounded bg-surface border border-border flex items-center justify-center text-[10px]">
-          {getToolIcon(entry.toolName ?? '')}
-        </div>
-      case 'tool-result':
-        if (entry.isError) {
-          return <AlertCircle size={14} className="text-status-failed" />
-        }
-        return <Check size={14} className="text-status-done" />
-      default:
-        return null
-    }
-  }
-
-  function getEntryColor() {
-    switch (entry.type) {
-      case 'user-message':
-        return 'border-l-accent'
-      case 'assistant-message':
-        return 'border-l-accent/60'
-      case 'tool-call':
-        return 'border-l-status-running'
-      case 'tool-result':
-        return entry.isError ? 'border-l-status-failed' : 'border-l-status-done'
-      default:
-        return 'border-l-border'
-    }
-  }
-
-  return (
-    <div className={`border-l-2 ${getEntryColor()} pl-3 pr-4 py-2 ${!isLast ? 'border-b border-border-subtle' : ''}`}>
-      {/* 头部：图标 + 内容摘要 + 时间 */}
-      <div className="flex items-start gap-2">
-        <div className="mt-0.5 flex-shrink-0">{getEntryIcon()}</div>
-        <div className="flex-1 min-w-0">
-          {/* 步骤号 + 工具名 */}
-          <div className="flex items-center gap-2 mb-0.5">
-            {entry.stepNumber && (
-              <span className="text-[10px] font-mono text-text-muted bg-surface px-1 py-0.5 rounded">
-                #{entry.stepNumber}
-              </span>
-            )}
-            {entry.toolName && (
-              <span className="text-xs font-medium text-text-secondary font-mono">
-                {entry.toolName}
-              </span>
-            )}
-            {entry.role === 'user' && (
-              <span className="text-xs text-text-muted">用户消息</span>
-            )}
-            {entry.role === 'assistant' && (
-              <span className="text-xs text-text-muted">助手回复</span>
-            )}
-          </div>
-
-          {/* 内容 */}
-          {entry.content && (
-            <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-wrap break-words">
-              {entry.content}
-            </p>
-          )}
-
-          {/* 工具输入/输出详情 */}
-          {entry.type === 'tool-call' && entry.input && (
-            <div className="mt-1.5">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[10px] text-text-muted font-mono">输入:</span>
-                <button
-                  onClick={() => handleCopy(JSON.stringify(entry.input, null, 2))}
-                  className="text-[10px] text-text-muted hover:text-accent flex items-center gap-0.5"
-                >
-                  {copied ? <Check size={10} /> : <Copy size={10} />}
-                  {copied ? '已复制' : '复制'}
-                </button>
-              </div>
-              <pre className="text-[11px] font-mono text-text-muted bg-surface p-2 rounded border border-border-subtle overflow-x-auto max-h-32 whitespace-pre-wrap break-all">
-                {JSON.stringify(entry.input, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          {entry.type === 'tool-result' && entry.output && (
-            <div className="mt-1.5">
-              <span className="text-[10px] text-status-done font-mono">✓ 输出</span>
-              <pre className="mt-1 text-[11px] font-mono text-text-secondary bg-surface p-2 rounded border border-border-subtle overflow-x-auto max-h-32 whitespace-pre-wrap break-all">
-                {typeof entry.output === 'string'
-                  ? entry.output
-                  : JSON.stringify(entry.output, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          {/* Token 消耗 */}
-          {entry.type === 'assistant-message' && entry.usage && (
-            <div className="flex items-center gap-2 mt-1.5">
-              {entry.usage.inputTokens != null && (
-                <span className="text-[10px] font-mono text-text-muted">
-                  in {entry.usage.inputTokens}
-                </span>
-              )}
-              {entry.usage.outputTokens != null && (
-                <span className="text-[10px] font-mono text-text-muted">
-                  out {entry.usage.outputTokens}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* 时间 */}
-        <span className="text-[10px] text-text-muted flex-shrink-0">
-          {formatTime(entry.timestamp)}
-        </span>
-      </div>
-    </div>
-  )
-}
 
 // ─── 修改内容面板 ──────────────────────────────────────────────────────────────
 
