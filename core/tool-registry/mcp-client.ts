@@ -217,81 +217,9 @@ export class RemoteMCPClient implements MCPClientLike {
 
 // ── Mock MCP Client ──────────────────────────────────────────────────────
 
-const MOCK_GITHUB_TOOLS: MCPTool[] = [
-  {
-    name: 'search_repositories',
-    description: 'Search for GitHub repositories',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Search query' },
-        page: { type: 'number', description: 'Page number (default: 1)' },
-        perPage: { type: 'number', description: 'Results per page (default: 30)' },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'get_file_contents',
-    description: 'Get the contents of a file or directory from a GitHub repository',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        owner: { type: 'string', description: 'Repository owner' },
-        repo: { type: 'string', description: 'Repository name' },
-        path: { type: 'string', description: 'File path in the repository' },
-        branch: { type: 'string', description: 'Branch name (optional)' },
-      },
-      required: ['owner', 'repo', 'path'],
-    },
-  },
-  {
-    name: 'create_issue',
-    description: 'Create a new issue in a GitHub repository',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        owner: { type: 'string', description: 'Repository owner' },
-        repo: { type: 'string', description: 'Repository name' },
-        title: { type: 'string', description: 'Issue title' },
-        body: { type: 'string', description: 'Issue body (optional)' },
-        labels: { type: 'array', items: { type: 'string' }, description: 'Labels (optional)' },
-      },
-      required: ['owner', 'repo', 'title'],
-    },
-  },
-  {
-    name: 'list_issues',
-    description: 'List issues in a GitHub repository',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        owner: { type: 'string', description: 'Repository owner' },
-        repo: { type: 'string', description: 'Repository name' },
-        state: { type: 'string', enum: ['open', 'closed', 'all'], description: 'Issue state (default: open)' },
-        labels: { type: 'string', description: 'Comma-separated label names (optional)' },
-      },
-      required: ['owner', 'repo'],
-    },
-  },
-  {
-    name: 'search_code',
-    description: 'Search for code across GitHub repositories',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Search query using GitHub code search syntax' },
-        page: { type: 'number', description: 'Page number (default: 1)' },
-        perPage: { type: 'number', description: 'Results per page (default: 30)' },
-      },
-      required: ['query'],
-    },
-  },
-];
-
 /**
- * Mock MCP 客户端 — 当没有 GitHub token 或无法 spawn 进程时降级使用。
- * 返回模拟的工具定义和占位结果，方便开发和测试。
+ * Mock MCP 客户端 — 当无法 spawn 进程时降级使用。
+ * 返回空工具列表，方便开发和测试。
  */
 export class MockMCPClient implements MCPClientLike {
   async connect(): Promise<void> {
@@ -299,53 +227,11 @@ export class MockMCPClient implements MCPClientLike {
   }
 
   async listTools(): Promise<MCPTool[]> {
-    return MOCK_GITHUB_TOOLS;
+    return [];
   }
 
-  async callTool(name: string, input: unknown): Promise<unknown> {
-    const inputObj = input as Record<string, unknown>;
-
-    switch (name) {
-      case 'search_repositories':
-        return `[Mock] 搜索仓库 "${inputObj.query ?? ''}" 的结果：
-- repo-1: 示例仓库 #1（Mock 数据，非真实结果）
-- repo-2: 示例仓库 #2（Mock 数据，非真实结果）
-
-提示：配置 GITHUB_PERSONAL_ACCESS_TOKEN 环境变量以连接真实 GitHub MCP Server。`;
-
-      case 'get_file_contents':
-        return `[Mock] 文件内容预览：
-路径: ${inputObj.owner ?? '?'}/${inputObj.repo ?? '?'}/${inputObj.path ?? '?'}
-内容: (Mock 占位内容 — 请配置 GitHub token 获取真实文件内容)`;
-
-      case 'create_issue':
-        return `[Mock] Issue 已模拟创建：
-标题: ${inputObj.title ?? '?'}
-仓库: ${inputObj.owner ?? '?'}/${inputObj.repo ?? '?'}
-编号: #mock-${Date.now().toString(36)}
-
-提示：这是模拟结果，真实创建需要 GITHUB_PERSONAL_ACCESS_TOKEN。`;
-
-      case 'list_issues':
-        return `[Mock] Issue 列表：
-仓库: ${inputObj.owner ?? '?'}/${inputObj.repo ?? '?'}
-状态: ${inputObj.state ?? 'open'}
-
-- #1: Mock Issue #1（模拟数据）
-- #2: Mock Issue #2（模拟数据）
-
-提示：配置 GITHUB_PERSONAL_ACCESS_TOKEN 获取真实 Issue 列表。`;
-
-      case 'search_code':
-        return `[Mock] 代码搜索结果："${inputObj.query ?? ''}"
-- file-1.ts: 匹配行示例（Mock 数据）
-- file-2.ts: 匹配行示例（Mock 数据）
-
-提示：配置 GITHUB_PERSONAL_ACCESS_TOKEN 以搜索真实代码。`;
-
-      default:
-        return `[Mock] 未知 MCP 工具 "${name}" — 该工具尚未在 Mock 中实现。`;
-    }
+  async callTool(_name: string, _input: unknown): Promise<unknown> {
+    return `[Mock] 工具 "${_name}" 不可用 — MCP Server 未连接。`;
   }
 
   async close(): Promise<void> {

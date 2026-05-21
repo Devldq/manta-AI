@@ -108,19 +108,6 @@ async function connectStdioServer(
 ): Promise<void> {
   const config = entry.config as StdioServerConfig;
 
-  // 检查 GitHub token（向后兼容）
-  if (entry.name === 'github') {
-    const githubToken = process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
-    if (!githubToken) {
-      console.log(`[ToolRegistry]   未配置 GITHUB_PERSONAL_ACCESS_TOKEN，降级为 Mock`);
-      const mockClient = new MockMCPClient();
-      const tools = await reg.registerMCPServer(entry.name, mockClient);
-      console.log(`[ToolRegistry]   ${entry.name}: ${tools.length} 个 Mock 工具`);
-      return;
-    }
-    config.env = { ...config.env, GITHUB_PERSONAL_ACCESS_TOKEN: githubToken };
-  }
-
   // 检查是否可 spawn 进程
   let canSpawn = true;
   try {
