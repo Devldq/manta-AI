@@ -3,10 +3,7 @@ import { streamText, type ModelMessage, stepCountIs } from 'ai'
 import { transformChunk } from './stream-transformer'
 import { getAISDKModel } from '@/core/llm/ai-sdk-provider'
 import { getLLMConfig } from '@/core/llm/config-store'
-import { ToolRegistry } from '@/core/tool-registry'
-import { conversationToolDefs } from '@/core/conversation/tools'
-import { fsToolDefs } from '@/core/conversation/fs-tools'
-import { ccToolDefs } from '@/core/conversation/cc-tools'
+import { getAgentTools } from '@/core/tool-registry/mcp-setup'
 import { LoopDetector } from './loop-detector'
 import type { LoopDetectionResult } from './loop-detector'
 import { formatAIError, formatErrorForSSE } from './error-formatter'
@@ -189,10 +186,8 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
     // 生成统一的 messageId，整个 agent loop 共享（确保前端合并为一个消息气泡）
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-    // 创建 ToolRegistry 并注册所有工具
-    const toolRegistry = new ToolRegistry()
-    toolRegistry.register(...conversationToolDefs, ...fsToolDefs, ...ccToolDefs)
-    const allTools = toolRegistry.toAISDKFormat()
+    // 获取共享 ToolRegistry（含 MCP 工具，首次调用时初始化 MCP 连接）
+    const allTools = await getAgentTools()
 
     try {
       // 发送统一的 start 事件（只发一次，整个 loop 共享 messageId）

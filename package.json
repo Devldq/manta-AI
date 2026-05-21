@@ -24,6 +24,7 @@
     "@langchain/core": "^1.1.40",
     "@langchain/ollama": "^1.2.6",
     "@langchain/openai": "^1.4.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/uuid": "^11.0.0",
     "ai": "^6.0.177",
     "base64-js": "^1.5.1",

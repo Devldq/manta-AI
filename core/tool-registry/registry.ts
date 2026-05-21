@@ -1,6 +1,6 @@
 import { jsonSchema } from 'ai';
 
-import type { ToolDefinition } from './types';
+import type { ToolDefinition, MCPClientLike } from './types';
 import { truncateResult, DEFAULT_MAX_RESULT_CHARS } from './utils';
 
 /**
@@ -13,6 +13,7 @@ import { truncateResult, DEFAULT_MAX_RESULT_CHARS } from './utils';
  */
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
+  private mcpClients: MCPClientLike[] = [];
 
   // ── 全局读写锁状态 ──────────────────────────────────────────────────────
   private exclusiveLock = false // 当前是否有独占锁持有者
@@ -113,5 +114,62 @@ export class ToolRegistry {
     }
 
     return result
+  }
+
+  // ── MCP 集成 ────────────────────────────────────────────────────────────
+
+  /**
+   * 连接 MCP Server，发现它暴露的工具，然后自动注册到 Registry 里。
+   * 每个 MCP 工具的 execute 函数是一个闭包，调用时通过 JSON-RPC 转发给 Server。
+   *
+   * @param serverName MCP Server 的逻辑名称（如 "github"、"slack"）
+   * @param client MCP 客户端实例（需实现 MCPClientLike 接口）
+   * @returns 成功注册的工具名前缀列表（格式：mcp__{serverName}__{toolName}）
+   */
+  async registerMCPServer(
+    serverName: string,
+    client: MCPClientLike,
+  ): Promise<string[]> {
+    await client.connect();
+    this.mcpClients.push(client);
+
+    const tools = await client.listTools();
+    const registered: string[] = [];
+
+    for (const tool of tools) {
+      const prefixedName = `mcp__${serverName}__${tool.name}`;
+      if (this.tools.has(prefixedName)) continue;
+
+      const toolClient = client;
+      const originalName = tool.name;
+
+      this.register({
+        name: prefixedName,
+        description: `[MCP:${serverName}] ${tool.description}`,
+        parameters: tool.inputSchema,
+        isConcurrencySafe: true,
+        isReadOnly: true,
+        maxResultChars: 3000,
+        execute: async (input: any) => {
+          return toolClient.callTool(originalName, input);
+        },
+      });
+
+      registered.push(prefixedName);
+    }
+
+    return registered;
+  }
+
+  /**
+   * 关闭所有已连接的 MCP 客户端并清空客户端列表。
+   * 注意：已注册的工具不会自动移除，如需完全清理，请创建新的 ToolRegistry 实例。
+   */
+  async closeAllMCP(): Promise<void> {
+    for (const client of this.mcpClients) {
+      await client.close();
+    }
+
+    this.mcpClients = [];
   }
 }
