@@ -14,6 +14,7 @@ import { truncateResult, DEFAULT_MAX_RESULT_CHARS } from './utils';
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
   private mcpClients: MCPClientLike[] = [];
+  private mcpServerMap = new Map<string, MCPClientLike>();
 
   // ── 全局读写锁状态 ──────────────────────────────────────────────────────
   private exclusiveLock = false // 当前是否有独占锁持有者
@@ -132,6 +133,7 @@ export class ToolRegistry {
   ): Promise<string[]> {
     await client.connect();
     this.mcpClients.push(client);
+    this.mcpServerMap.set(serverName, client);
 
     const tools = await client.listTools();
     const registered: string[] = [];
@@ -162,14 +164,73 @@ export class ToolRegistry {
   }
 
   /**
+   * 断开并卸载指定的 MCP Server。
+   *
+   * 1. 关闭客户端连接
+   * 2. 移除该 server 注册的所有工具（前缀: mcp__{serverName}__）
+   * 3. 从 mcpServerMap 和 mcpClients 中清理
+   *
+   * @param serverName MCP Server 名称
+   * @returns 被移除的工具数量，如果 server 未连接则返回 0
+   */
+  async unregisterMCPServer(serverName: string): Promise<number> {
+    const client = this.mcpServerMap.get(serverName);
+    if (!client) return 0;
+
+    // 关闭连接
+    try {
+      await client.close();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[ToolRegistry] 关闭 ${serverName} 连接时出错: ${msg}`);
+    }
+
+    // 移除该 server 的所有工具（前缀: mcp__{serverName}__）
+    const prefix = `mcp__${serverName}__`;
+    let removedCount = 0;
+    for (const key of this.tools.keys()) {
+      if (key.startsWith(prefix)) {
+        this.tools.delete(key);
+        removedCount++;
+      }
+    }
+
+    // 清理 client 追踪
+    this.mcpServerMap.delete(serverName);
+    const clientIndex = this.mcpClients.indexOf(client);
+    if (clientIndex >= 0) {
+      this.mcpClients.splice(clientIndex, 1);
+    }
+
+    return removedCount;
+  }
+
+  /** 检查指定 MCP Server 是否已连接注册 */
+  isMCPServerConnected(serverName: string): boolean {
+    return this.mcpServerMap.has(serverName);
+  }
+
+  /**
    * 关闭所有已连接的 MCP 客户端并清空客户端列表。
-   * 注意：已注册的工具不会自动移除，如需完全清理，请创建新的 ToolRegistry 实例。
+   * 同时移除所有 MCP 工具。
    */
   async closeAllMCP(): Promise<void> {
     for (const client of this.mcpClients) {
-      await client.close();
+      try {
+        await client.close();
+      } catch {
+        // 忽略关闭错误
+      }
+    }
+
+    // 移除所有 MCP 工具
+    for (const key of this.tools.keys()) {
+      if (key.startsWith('mcp__')) {
+        this.tools.delete(key);
+      }
     }
 
     this.mcpClients = [];
+    this.mcpServerMap.clear();
   }
 }

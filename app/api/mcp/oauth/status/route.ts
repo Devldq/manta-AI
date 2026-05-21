@@ -1,8 +1,8 @@
 /*  start: MCP OAuth 状态查询 — GET /api/mcp/oauth/status?server=xxx */
 import { NextResponse } from 'next/server';
-import { KNOWN_MCP_SERVERS } from '@/core/tool-registry/mcp-config';
-import { checkOAuthToken, loadTokens } from '@/core/tool-registry/mcp-oauth';
-import { connectRemoteServerByName } from '@/core/tool-registry/mcp-setup';
+import { getEffectiveServers } from '@/core/tool-registry/mcp-config';
+import { checkOAuthToken } from '@/core/tool-registry/mcp-oauth';
+import { connectServerByName } from '@/core/tool-registry/mcp-setup';
 import type { RemoteServerConfig } from '@/core/tool-registry/types';
 
 /**
@@ -30,7 +30,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const entry = KNOWN_MCP_SERVERS.find((s) => s.name === serverName);
+    const entry = getEffectiveServers().find((s) => s.name === serverName);
     if (!entry) {
       return NextResponse.json(
         { error: `未找到 MCP Server: ${serverName}` },
@@ -56,7 +56,7 @@ export async function GET(request: Request) {
 
     // Token 存在 — 尝试连接 MCP Server 并注册工具
     try {
-      const tools = await connectRemoteServerByName(serverName);
+      const tools = await connectServerByName(serverName);
       return NextResponse.json({
         connected: true,
         serverName,

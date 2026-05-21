@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { href: '/workflows',  label: '编排',   icon: '⟳' },
   { href: '/agents',     label: 'Agent', icon: '◉' },
   { href: '/skills',     label: 'Skills', icon: '⚡' },
+  { href: '/mcp',        label: 'MCP',   icon: '⎈' },
 ]
 
 // AI: LLM 聊天会话类型

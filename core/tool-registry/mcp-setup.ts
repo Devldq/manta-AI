@@ -9,7 +9,7 @@
  */
 import { ToolRegistry } from './registry';
 import { MCPClient, MockMCPClient, RemoteMCPClient } from './mcp-client';
-import { KNOWN_MCP_SERVERS } from './mcp-config';
+import { getEffectiveServers } from './mcp-config';
 import { getValidAccessToken } from './mcp-oauth';
 import { conversationToolDefs } from '@/core/conversation/tools';
 import { fsToolDefs } from '@/core/conversation/fs-tools';
@@ -72,7 +72,7 @@ export async function shutdownMCP(): Promise<void> {
  * 独立的 server 连接失败不影响其他 server。
  */
 async function connectAllMCPServers(reg: ToolRegistry): Promise<void> {
-  const enabledServers = KNOWN_MCP_SERVERS.filter((s) => s.enabled !== false);
+  const enabledServers = getEffectiveServers().filter((s) => s.enabled !== false);
 
   if (enabledServers.length === 0) {
     console.log('[ToolRegistry] 无启用的 MCP Server，跳过连接');
@@ -158,25 +158,101 @@ async function connectRemoteServer(
 }
 
 /**
- * 单独连接指定的 Remote MCP Server（OAuth 授权完成后调用）。
- * 用于 OAuth 流程完成后将新授权的 server 动态注册到 Registry。
+ * 单独连接指定的 MCP Server（支持 stdio 和 remote 两种模式）。
+ *
+ * 用于在运行时动态连接用户配置的 server：
+ * 1. 查找配置（从有效配置列表中）
+ * 2. 如果已连接则先断开
+ * 3. 根据类型建立连接并注册工具
+ *
+ * @param serverName MCP Server 名称
+ * @returns 注册的工具名列表
  */
-export async function connectRemoteServerByName(serverName: string): Promise<string[]> {
-  const entry = KNOWN_MCP_SERVERS.find((s) => s.name === serverName);
-  if (!entry || entry.config.type !== 'remote') {
-    throw new Error(`未找到 Remote MCP Server: ${serverName}`);
-  }
-
-  const config = entry.config as RemoteServerConfig;
-  const token = await getValidAccessToken(serverName, config.oauth);
-  if (!token) {
-    throw new Error(`${serverName} 尚未完成 OAuth 授权`);
+export async function connectServerByName(serverName: string): Promise<string[]> {
+  const entry = getEffectiveServers().find((s) => s.name === serverName);
+  if (!entry) {
+    throw new Error(`未找到 MCP Server: ${serverName}`);
   }
 
   const reg = await getToolRegistry();
-  const client = new RemoteMCPClient(config.url, () =>
-    getValidAccessToken(serverName, config.oauth),
-  );
 
-  return reg.registerMCPServer(serverName, client);
+  // 如果已连接，先断开
+  if (reg.isMCPServerConnected(serverName)) {
+    await reg.unregisterMCPServer(serverName);
+  }
+
+  if (entry.config.type === 'stdio') {
+    return connectStdioServerByName(reg, entry);
+  } else {
+    return connectRemoteServerByName(reg, entry);
+  }
+}
+
+/**
+ * 断开指定的 MCP Server 连接。
+ *
+ * 关闭客户端连接并移除该 server 注册的所有工具。
+ *
+ * @param serverName MCP Server 名称
+ * @returns 被移除的工具数量
+ */
+export async function disconnectServerByName(serverName: string): Promise<number> {
+  const reg = await getToolRegistry();
+  return reg.unregisterMCPServer(serverName);
+}
+
+/**
+ * 单独连接 Stdio 模式的 MCP Server。
+ */
+async function connectStdioServerByName(
+  reg: ToolRegistry,
+  entry: MCPServerEntry,
+): Promise<string[]> {
+  const config = entry.config as StdioServerConfig;
+
+  let canSpawn = true;
+  try {
+    const { execSync } = await import('node:child_process');
+    execSync('echo test', { stdio: 'ignore' });
+  } catch {
+    canSpawn = false;
+  }
+
+  if (!canSpawn) {
+    console.log(`[ToolRegistry]   ${entry.name}: 无法 spawn 进程，降级为 Mock`);
+    const mockClient = new MockMCPClient();
+    return reg.registerMCPServer(entry.name, mockClient);
+  }
+
+  console.log(`[ToolRegistry]   连接 ${entry.name} (stdio)...`);
+  const client = new MCPClient(config.command, config.args, config.env ?? {});
+  return reg.registerMCPServer(entry.name, client);
+}
+
+/**
+ * 单独连接 Remote HTTP + OAuth 模式的 MCP Server。
+ */
+async function connectRemoteServerByName(
+  reg: ToolRegistry,
+  entry: MCPServerEntry,
+): Promise<string[]> {
+  const config = entry.config as RemoteServerConfig;
+  const token = await getValidAccessToken(entry.name, config.oauth);
+  if (!token) {
+    throw new Error(`${entry.name} 尚未完成 OAuth 授权`);
+  }
+
+  console.log(`[ToolRegistry]   连接 ${entry.name} (remote)...`);
+  const client = new RemoteMCPClient(config.url, () =>
+    getValidAccessToken(entry.name, config.oauth),
+  );
+  return reg.registerMCPServer(entry.name, client);
+}
+
+/**
+ * @deprecated 使用 connectServerByName 替代
+ * 单独连接指定的 Remote MCP Server（OAuth 授权完成后调用）。
+ */
+export async function connectRemoteServerByNameCompat(serverName: string): Promise<string[]> {
+  return connectServerByName(serverName);
 }

@@ -17,9 +17,21 @@ export {
   getToolRegistry,
   getAgentTools,
   shutdownMCP,
-  connectRemoteServerByName,
+  connectServerByName,
+  disconnectServerByName,
+  connectRemoteServerByNameCompat,
 } from './mcp-setup';
-export { KNOWN_MCP_SERVERS } from './mcp-config';
+export {
+  KNOWN_MCP_SERVERS,
+  getEffectiveServers,
+  isBuiltinServer,
+} from './mcp-config';
+export {
+  loadUserServers,
+  getUserServer,
+  saveUserServer,
+  deleteUserServer,
+} from './mcp-config-store';
 export {
   startOAuthFlow,
   checkOAuthToken,

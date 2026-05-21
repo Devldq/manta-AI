@@ -1,6 +1,6 @@
 /*  start: MCP OAuth 授权启动 — GET /api/mcp/oauth/start?server=xxx */
 import { NextResponse } from 'next/server';
-import { KNOWN_MCP_SERVERS } from '@/core/tool-registry/mcp-config';
+import { getEffectiveServers } from '@/core/tool-registry/mcp-config';
 import { startOAuthFlow } from '@/core/tool-registry/mcp-oauth';
 import type { RemoteServerConfig } from '@/core/tool-registry/types';
 
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     }
 
     // 查找 server 配置
-    const entry = KNOWN_MCP_SERVERS.find((s) => s.name === serverName);
+    const entry = getEffectiveServers().find((s) => s.name === serverName);
     if (!entry) {
       return NextResponse.json(
         { error: `未找到 MCP Server: ${serverName}` },
