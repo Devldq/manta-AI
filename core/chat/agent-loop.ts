@@ -149,6 +149,25 @@ function appendStepToMessages(
         ],
       } as ModelMessage)
     }
+
+    // 防御：为缺少结果的 tool-call 补充错误结果，避免 AI SDK 报 "Tool result is missing"
+    const resultCallIds = new Set(stepCollect.toolResults.map((r) => r.toolCallId))
+    for (const call of stepCollect.toolCalls) {
+      if (!resultCallIds.has(call.toolCallId)) {
+        console.warn(`[AgentLoop] 工具 ${call.toolName} (${call.toolCallId}) 缺少结果，补充兜底错误`)
+        newMessages.push({
+          role: 'tool' as const,
+          content: [
+            {
+              type: 'tool-result' as const,
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              output: { type: 'error-text', value: '工具执行超时或未返回结果' },
+            },
+          ],
+        } as ModelMessage)
+      }
+    }
   }
 
   return [...messages, ...newMessages]
@@ -270,6 +289,17 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
                 toolName: chunk.toolName,
                 output: toolResult,
                 isError: (chunk as any).isError ?? false,
+              })
+              break
+            case 'tool-error':
+              // 工具执行抛出异常时，AI SDK 发出 tool-error chunk（而非 tool-result）
+              // 必须收集此 chunk，否则下次 streamText 会因为缺少 tool-result 而报错
+              console.warn(`[AgentLoop] 工具 ${chunk.toolName} 执行出错:`, chunk.error)
+              stepCollect.toolResults.push({
+                toolCallId: chunk.toolCallId,
+                toolName: chunk.toolName,
+                output: chunk.error ?? '工具执行失败',
+                isError: true,
               })
               break
             case 'finish':

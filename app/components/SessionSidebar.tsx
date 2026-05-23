@@ -2,7 +2,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef, memo, useMemo } from 'react'
-import { FileEdit, FileText, ScrollText, Check, X, Loader2, Clock, Folder, FileSearch, Search, Terminal, FileCode, Wrench, Pencil, ChevronDown } from 'lucide-react'
+import { FileEdit, FileText, ScrollText, Check, X, Loader2, Clock, Folder, FileSearch, Search, Terminal, FileCode, Wrench, Pencil, ChevronDown, Copy, ClipboardCheck } from 'lucide-react'
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 
@@ -109,7 +109,7 @@ export const SessionSidebar = memo(function SessionSidebar({
   open,
   conversation,
 }: SessionSidebarProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('changes')
+  const [activeTab, setActiveTab] = useState<TabId>('logs')
   const [width, setWidth] = useState(420)
   const [isDragging, setIsDragging] = useState(false)
   const dragStartX = useRef(0)
@@ -459,10 +459,11 @@ function ToolLogs({ conversation }: { conversation: ConversationData | null }) {
     timestamp: string; isError: boolean
   }
 
+  type RoundGroup = { msgId: string; roundIdx: number; timestamp: string; entries: LogEntry[]; usage?: { inputTokens?: number; outputTokens?: number } }
+
   // 按轮次分组
   const roundGroups = useMemo(() => {
     if (!conversation) return []
-    type RoundGroup = { msgId: string; roundIdx: number; timestamp: string; entries: LogEntry[]; usage?: { inputTokens?: number; outputTokens?: number } }
     const groups: RoundGroup[] = []
     let roundNum = 0
     for (const msg of conversation.messages) {
@@ -510,6 +511,18 @@ function ToolLogs({ conversation }: { conversation: ConversationData | null }) {
       else next.add(roundIdx)
       return next
     })
+  }
+
+  // 复制状态：记录刚复制过的轮次 ID
+  const [copiedRound, setCopiedRound] = useState<number | null>(null)
+
+  const handleCopyRound = async (round: RoundGroup) => {
+    const header = `第 ${round.roundIdx} 轮 — ${formatRelativeTime(round.timestamp)}${round.usage ? ` (↑${fmtTokens(round.usage.inputTokens) || '0'} ↓${fmtTokens(round.usage.outputTokens) || '0'})` : ''}`
+    const body = round.entries.map(e => e.line).join('\n')
+    const text = `${header}\n${'─'.repeat(50)}\n${body}`
+    await navigator.clipboard.writeText(text)
+    setCopiedRound(round.roundIdx)
+    setTimeout(() => setCopiedRound(null), 1500)
   }
 
   if (roundGroups.length === 0) {
@@ -568,6 +581,20 @@ function ToolLogs({ conversation }: { conversation: ConversationData | null }) {
                 <span className="text-[10px] text-text-muted/50 ml-auto">
                   {new Set(round.entries.map(e => e.toolCallId)).size} 次调用
                 </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleCopyRound(round)
+                  }}
+                  title="复制本轮日志"
+                  className="p-0.5 rounded hover:bg-surface/60 transition-colors text-text-muted/40 hover:text-text-muted flex-shrink-0"
+                >
+                  {copiedRound === round.roundIdx ? (
+                    <ClipboardCheck size={12} className="text-status-ok" />
+                  ) : (
+                    <Copy size={12} />
+                  )}
+                </button>
               </button>
 
               {/* 折叠内容 */}

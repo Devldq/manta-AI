@@ -971,6 +971,9 @@ function ChatView({
 }) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [inputText, setInputText] = useState('')
+  // 本地 conversation 状态：初始值来自父组件，流式结束后从 API 刷新同步更新
+  const [sidebarConv, setSidebarConv] = useState<Conversation | null>(conversation)
+  useEffect(() => { setSidebarConv(conversation) }, [conversation])
   const SIDEBAR_OPEN_KEY = 'manta:session-sidebar-open'
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -1008,6 +1011,8 @@ function ChatView({
         .then((data) => {
           const conv = data.conversation
           if (!conv) return
+          // 同步更新侧边栏的 conversation 数据（含 toolCall 记录）
+          setSidebarConv(conv)
           const refreshed: UIMessage[] = conv.messages
             .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
             .map((m: { id: string; role: string; content: string; timestamp: string; toolCalls?: unknown[]; usage?: { inputTokens?: number; outputTokens?: number } | null }) => {
@@ -1123,7 +1128,7 @@ function ChatView({
       {/* 会话侧边栏 */}
       <SessionSidebar
         open={sidebarOpen}
-        conversation={conversation}
+        conversation={sidebarConv}
       />
     </div>
   )

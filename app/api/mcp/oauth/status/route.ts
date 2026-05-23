@@ -1,22 +1,22 @@
-/*  start: MCP OAuth 状态查询 — GET /api/mcp/oauth/status?server=xxx */
+/* MCP OAuth 状态查询 — GET /api/mcp/oauth/status?server=xxx
+ *
+ * 查询 OAuth 授权状态，完成后自动连接 MCP Server。
+ * 支持 local 和 remote 两种模式。
+ */
 import { NextResponse } from 'next/server';
 import { getEffectiveServers } from '@/core/tool-registry/mcp-config';
 import { checkOAuthToken } from '@/core/tool-registry/mcp-oauth';
 import { connectServerByName } from '@/core/tool-registry/mcp-setup';
-import type { RemoteServerConfig } from '@/core/tool-registry/types';
+import { resolveEnvVarsInObject } from '@/core/tool-registry/types';
+import type { RemoteServerConfig, LocalServerConfig, OAuthServerConfig } from '@/core/tool-registry/types';
 
 /**
- * GET /api/mcp/oauth/status?server=figma
+ * GET /api/mcp/oauth/status?server=figma   (remote)
+ * GET /api/mcp/oauth/status?server=github  (local)
  *
  * 查询 OAuth 授权状态：
  * - 检查 token 是否存在且有效
  * - 如果有效且 server 未注册工具，则动态注册 MCP 工具
- *
- * 返回：
- * - { connected: true, serverName }  — 已连接
- * - { connected: false, serverName } — 未授权
- *
- * 前端在收到 authorizationUrl 后，轮询此接口检测授权是否完成。
  */
 export async function GET(request: Request) {
   try {
@@ -38,17 +38,24 @@ export async function GET(request: Request) {
       );
     }
 
-    if (entry.config.type !== 'remote') {
+    // 提取 OAuth 配置（local 或 remote 都可以有 oauth 字段）
+    let oauthConfig: OAuthServerConfig | undefined;
+    if (entry.config.type === 'remote') {
+      oauthConfig = (entry.config as RemoteServerConfig).oauth;
+    } else if (entry.config.type === 'local') {
+      oauthConfig = (entry.config as LocalServerConfig).oauth;
+    }
+
+    if (!oauthConfig) {
       return NextResponse.json(
-        { error: `${serverName} 不是 Remote OAuth 模式` },
+        { error: `${serverName} 未配置 OAuth` },
         { status: 400 },
       );
     }
 
-    const config = entry.config as RemoteServerConfig;
-
-    // 检查 token
-    const hasToken = await checkOAuthToken(serverName, config.oauth);
+    // 解析环境变量引用后检查 token
+    const resolvedOAuth = resolveEnvVarsInObject(oauthConfig);
+    const hasToken = await checkOAuthToken(serverName, resolvedOAuth);
 
     if (!hasToken) {
       return NextResponse.json({ connected: false, serverName });
@@ -61,6 +68,7 @@ export async function GET(request: Request) {
         connected: true,
         serverName,
         toolCount: tools.length,
+        toolNames: tools,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -77,4 +85,3 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-/*  end: MCP OAuth 状态查询 */

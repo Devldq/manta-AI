@@ -116,6 +116,7 @@ const bashDef: ToolDefinition = {
     additionalProperties: false,
   },
   isConcurrencySafe: false,
+  searchHint: 'run execute shell command bash terminal script',
   execute: async (input: any) => {
     const { command, cwd: targetCwd = process.cwd(), timeout = 10000, run_in_background = false } = input
 
@@ -181,6 +182,7 @@ const bashKillDef: ToolDefinition = {
     additionalProperties: false,
   },
   isConcurrencySafe: true,
+  searchHint: 'kill stop terminate cancel background task bash',
   execute: async (input: any) => {
     const { task_id } = input
     const task = bashTaskRegistry.get(task_id)
@@ -214,6 +216,7 @@ const bashOutputDef: ToolDefinition = {
     additionalProperties: false,
   },
   isConcurrencySafe: true,
+  searchHint: 'get check background task output status result',
   execute: async (input: any) => {
     const { task_id, block = false } = input
     const task = bashTaskRegistry.get(task_id)
@@ -254,6 +257,7 @@ const readDef: ToolDefinition = {
     required: ['file_path'],
   },
   isConcurrencySafe: true, // 只读操作，可以并发
+  searchHint: 'read file content view inspect text lines',
   execute: async (input: any) => {
     const { file_path, offset, limit } = input
     const resolved = path.resolve(file_path)
@@ -296,6 +300,7 @@ const writeDef: ToolDefinition = {
     required: ['file_path', 'content'],
   },
   isConcurrencySafe: false, // 写操作，需要独占锁
+  searchHint: 'write create file save overwrite content output',
   execute: async (input: any) => {
     const { file_path, content } = input
     const resolved = path.resolve(file_path)
@@ -327,6 +332,7 @@ const editDef: ToolDefinition = {
     required: ['file_path', 'old_string', 'new_string'],
   },
   isConcurrencySafe: false, // 写操作，需要独占锁
+  searchHint: 'edit modify replace update change string file',
   execute: async (input: any) => {
     const { file_path, old_string, new_string, replace_all = false } = input
     const resolved = path.resolve(file_path)
@@ -384,6 +390,7 @@ const multiEditDef: ToolDefinition = {
     required: ['file_path', 'edits'],
   },
   isConcurrencySafe: false, // 写操作，需要独占锁
+  searchHint: 'batch multiple edit replace file modify string atomic',
   execute: async (input: any) => {
     const { file_path, edits } = input
     const resolved = path.resolve(file_path)
@@ -484,6 +491,7 @@ export const globTool: ToolDefinition = {
     additionalProperties: false,
   },
   isConcurrencySafe: true,
+  searchHint: 'find files pattern glob search match wildcard',
   execute: async ({ pattern, path: searchPath = '.' }: { pattern: string; path?: string }) => {
     const searchRoot = path.resolve(searchPath)
     console.log(`[cc-tools:glob] 开始执行，root: ${searchRoot}`)
@@ -546,6 +554,7 @@ const grepDef: ToolDefinition = {
     required: ['pattern'],
   },
   isConcurrencySafe: true, // 只读操作，可以并发
+  searchHint: 'search text content regex grep pattern find match',
   execute: async (input: any) => {
     const {
       pattern,
@@ -681,6 +690,8 @@ const webFetchDef: ToolDefinition = {
     required: ['url', 'prompt'],
   },
   isConcurrencySafe: true, // 只读操作，可以并发
+  shouldDefer: true,
+  searchHint: 'fetch scrape webpage url content extract html',
   execute: async (input: any) => {
     const { url, prompt: _prompt } = input
     try {
@@ -739,6 +750,8 @@ const webSearchDef: ToolDefinition = {
     required: ['query'],
   },
   isConcurrencySafe: true, // 只读操作，可以并发
+  shouldDefer: true,
+  searchHint: 'web search internet query duckduckgo find online',
   execute: async (input: any) => {
     const { query, allowed_domains, blocked_domains } = input
     try {
@@ -793,6 +806,8 @@ const todoReadDef: ToolDefinition = {
     required: [],
   },
   isConcurrencySafe: true, // 只读操作，可以并发
+  shouldDefer: true,
+  searchHint: 'todo task list read status progress pending',
   execute: async (_input: any) => {
     const todos = readTodos()
     return { todos, count: todos.length }
@@ -832,6 +847,8 @@ const todoWriteDef: ToolDefinition = {
     required: ['todos'],
   },
   isConcurrencySafe: false, // 写操作，需要独占锁
+  shouldDefer: true,
+  searchHint: 'todo task create update write manage track progress',
   execute: async (input: any) => {
     const { todos } = input
     writeTodos(todos)

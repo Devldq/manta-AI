@@ -22,6 +22,8 @@ const createConversationDef: ToolDefinition = {
     },
     required: ['agentName'],
   },
+  shouldDefer: true,
+  searchHint: 'create new chat conversation session start begin',
   execute: async (input: any) => {
     const { agentName, title } = input
     const conv = createConversation(agentName, title)
@@ -51,6 +53,8 @@ const listConversationsDef: ToolDefinition = {
     },
     required: [],
   },
+  shouldDefer: true,
+  searchHint: 'list conversations history sessions browse chat recent',
   execute: async (input: any) => {
     const { limit } = input
     const list = listConversations()
@@ -77,6 +81,8 @@ const getConversationDef: ToolDefinition = {
     },
     required: ['id'],
   },
+  shouldDefer: true,
+  searchHint: 'get conversation detail messages history view retrieve',
   execute: async (input: any) => {
     const { id } = input
     const conv = getConversation(id)
@@ -106,6 +112,8 @@ const appendMessageDef: ToolDefinition = {
     },
     required: ['conversationId', 'role', 'content'],
   },
+  shouldDefer: true,
+  searchHint: 'append add message to conversation write record',
   execute: async (input: any) => {
     const { conversationId, role, content } = input
     const result = appendMessage(conversationId, role, content)
@@ -132,6 +140,8 @@ const updateConversationAgentDef: ToolDefinition = {
     },
     required: ['conversationId', 'agentName'],
   },
+  shouldDefer: true,
+  searchHint: 'switch change update agent conversation session role',
   execute: async (input: any) => {
     const { conversationId, agentName } = input
     const conv = updateConversationAgent(conversationId, agentName)
@@ -156,6 +166,8 @@ const deleteConversationDef: ToolDefinition = {
     },
     required: ['conversationId'],
   },
+  shouldDefer: true,
+  searchHint: 'delete remove conversation session permanently clear history',
   execute: async (input: any) => {
     const { conversationId } = input
     const ok = deleteConversation(conversationId)

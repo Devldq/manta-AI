@@ -1,72 +1,66 @@
-/*  MCP Server 列表 & 创建 — GET/POST /api/mcp/servers */
+/* MCP Server 列表 & 创建 — GET/POST /api/mcp/servers
+ *
+ * 参照 OpenCode 设计重构:
+ * - type 使用 "local" / "remote" (原 "stdio" / "remote")
+ * - command 使用数组格式 (原 command + args)
+ * - remote 支持 headers 简单认证 (原仅支持 OAuth)
+ */
 import { NextResponse } from 'next/server';
 import {
   getEffectiveServers,
   isBuiltinServer,
 } from '@/core/tool-registry/mcp-config';
 import { saveUserServer } from '@/core/tool-registry/mcp-config-store';
-import { getToolRegistry } from '@/core/tool-registry/mcp-setup';
-import { checkOAuthToken } from '@/core/tool-registry/mcp-oauth';
+import { getAllMCPServerStatus } from '@/core/tool-registry/mcp-setup';
 
-import type { MCPServerEntry, RemoteServerConfig, StdioServerConfig } from '@/core/tool-registry/types';
+import type {
+  LocalServerConfig,
+  RemoteServerConfig,
+} from '@/core/tool-registry/types';
 
-// ── 列表响应类型 ───────────────────────────────────────────────────────────
+// ── 列表响应类型 ────────────────────────────────────────────────────────────
 
 interface MCPServerListItem {
   name: string;
   description: string;
   enabled: boolean;
-  type: 'stdio' | 'remote';
+  type: 'local' | 'remote';
   isBuiltin: boolean;
   isConnected: boolean;
   toolCount: number;
-  /** 仅 remote 模式：OAuth 是否已授权 */
+  toolNames: string[];
+  oauthRequired?: boolean;
   oauthAuthorized?: boolean;
+  lastError?: string;
 }
 
 /**
  * GET /api/mcp/servers
  *
  * 列出所有 MCP Server（内建 + 用户自定义），含连接状态。
- *
- * 返回: { servers: MCPServerListItem[] }
  */
 export async function GET() {
   try {
-    const registry = await getToolRegistry();
+    const statuses = await getAllMCPServerStatus();
     const effective = getEffectiveServers();
 
-    const servers: MCPServerListItem[] = await Promise.all(
-      effective.map(async (entry) => {
-        const isConnected = registry.isMCPServerConnected(entry.name);
-        const toolCount = isConnected
-          ? registry.getAll().filter((t) => t.name.startsWith(`mcp__${entry.name}__`)).length
-          : 0;
-
-        const item: MCPServerListItem = {
-          name: entry.name,
-          description: entry.description,
-          enabled: entry.enabled !== false,
-          type: entry.config.type,
-          isBuiltin: isBuiltinServer(entry.name),
-          isConnected,
-          toolCount,
-        };
-
-        // remote 模式：检查 OAuth 授权状态
-        if (entry.config.type === 'remote') {
-          try {
-            const config = entry.config as RemoteServerConfig;
-            const hasToken = await checkOAuthToken(entry.name, config.oauth);
-            item.oauthAuthorized = hasToken;
-          } catch {
-            item.oauthAuthorized = false;
-          }
-        }
-
-        return item;
-      }),
-    );
+    // 合并状态和配置
+    const servers: MCPServerListItem[] = effective.map((entry) => {
+      const status = statuses.find((s) => s.name === entry.name);
+      return {
+        name: entry.name,
+        description: entry.description,
+        enabled: entry.enabled !== false,
+        type: entry.config.type,
+        isBuiltin: isBuiltinServer(entry.name),
+        isConnected: status?.isConnected ?? false,
+        toolCount: status?.toolCount ?? 0,
+        toolNames: status?.toolNames ?? [],
+        oauthRequired: status?.oauthRequired,
+        oauthAuthorized: status?.oauthAuthorized,
+        lastError: status?.lastError,
+      };
+    });
 
     return NextResponse.json({ servers });
   } catch (err) {
@@ -76,41 +70,45 @@ export async function GET() {
   }
 }
 
-// ── 创建请求类型 ───────────────────────────────────────────────────────────
+// ── 创建请求类型 ────────────────────────────────────────────────────────────
 
 interface CreateMCPServerBody {
   name: string;
   description?: string;
   enabled?: boolean;
-  type: 'stdio' | 'remote';
-  /** Stdio 模式字段 */
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  /** Remote 模式字段 */
+  type: 'local' | 'remote';
+  /** local 模式: command 数组 */
+  command?: string[];
+  /** local 模式: 环境变量 */
+  environment?: Record<string, string>;
+  /** remote 模式: URL */
   url?: string;
+  /** remote 模式: 自定义请求头 (API Key 认证) */
+  headers?: Record<string, string>;
+  /** remote 模式: OAuth 配置 (如果配置，优先于 headers 的 Authorization) */
   oauth?: {
     authorizationEndpoint: string;
     tokenEndpoint: string;
     clientId: string;
     clientSecret?: string;
     scopes: string[];
+    /** local 模式: 将 token 注入到哪个环境变量 */
+    tokenEnvVar?: string;
   };
+  /** 超时 (毫秒) */
+  timeout?: number;
 }
 
 /**
  * POST /api/mcp/servers
  *
  * 创建用户自定义的 MCP Server。
- *
- * 请求体: CreateMCPServerBody
- * 返回: { server: MCPServerListItem }
  */
 export async function POST(request: Request) {
   try {
     const body: CreateMCPServerBody = await request.json();
 
-    // ── 参数校验 ───────────────────────────────────────────────────────────
+    // ── 参数校验 ──────────────────────────────────────────────────────────
 
     if (!body.name || !/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(body.name)) {
       return NextResponse.json(
@@ -119,9 +117,9 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!body.type || !['stdio', 'remote'].includes(body.type)) {
+    if (!body.type || !['local', 'remote'].includes(body.type)) {
       return NextResponse.json(
-        { error: 'type 必须是 "stdio" 或 "remote"' },
+        { error: 'type 必须是 "local" 或 "remote"' },
         { status: 400 },
       );
     }
@@ -130,22 +128,24 @@ export async function POST(request: Request) {
     const existing = getEffectiveServers().find((s) => s.name === body.name);
     if (existing) {
       return NextResponse.json(
-        { error: `MCP Server "${body.name}" 已存在，请使用 PUT 更新或删除后重建` },
+        {
+          error: `MCP Server "${body.name}" 已存在，请使用 PUT 更新或删除后重建`,
+        },
         { status: 409 },
       );
     }
 
-    // Stdio 模式校验
-    if (body.type === 'stdio') {
-      if (!body.command) {
+    // local 模式校验
+    if (body.type === 'local') {
+      if (!body.command || body.command.length === 0) {
         return NextResponse.json(
-          { error: 'stdio 模式必须提供 command 字段' },
+          { error: 'local 模式必须提供 command 数组' },
           { status: 400 },
         );
       }
     }
 
-    // Remote 模式校验
+    // remote 模式校验
     if (body.type === 'remote') {
       if (!body.url) {
         return NextResponse.json(
@@ -153,56 +153,66 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
-      if (!body.oauth?.authorizationEndpoint || !body.oauth?.tokenEndpoint || !body.oauth?.clientId) {
-        return NextResponse.json(
-          { error: 'remote 模式必须提供 oauth.authorizationEndpoint、oauth.tokenEndpoint、oauth.clientId' },
-          { status: 400 },
-        );
-      }
     }
 
-    // ── 构建配置 ───────────────────────────────────────────────────────────
+    // ── 构建配置 ──────────────────────────────────────────────────────────
 
-    let config: StdioServerConfig | RemoteServerConfig;
+    let config: LocalServerConfig | RemoteServerConfig;
 
-    if (body.type === 'stdio') {
+    if (body.type === 'local') {
       config = {
-        type: 'stdio',
+        type: 'local',
         command: body.command!,
-        args: body.args ?? [],
-        env: body.env,
+        environment: body.environment,
+        oauth: body.oauth
+          ? {
+              authorizationEndpoint: body.oauth.authorizationEndpoint,
+              tokenEndpoint: body.oauth.tokenEndpoint,
+              clientId: body.oauth.clientId,
+              clientSecret: body.oauth.clientSecret,
+              scopes: body.oauth.scopes ?? [],
+              tokenEnvVar: body.oauth.tokenEnvVar,
+            }
+          : undefined,
+        timeout: body.timeout,
       };
     } else {
       config = {
         type: 'remote',
         url: body.url!,
-        oauth: {
-          authorizationEndpoint: body.oauth!.authorizationEndpoint,
-          tokenEndpoint: body.oauth!.tokenEndpoint,
-          clientId: body.oauth!.clientId,
-          clientSecret: body.oauth!.clientSecret,
-          scopes: body.oauth!.scopes ?? [],
-        },
+        headers: body.headers,
+        oauth: body.oauth
+          ? {
+              authorizationEndpoint: body.oauth.authorizationEndpoint,
+              tokenEndpoint: body.oauth.tokenEndpoint,
+              clientId: body.oauth.clientId,
+              clientSecret: body.oauth.clientSecret,
+              scopes: body.oauth.scopes ?? [],
+              tokenEnvVar: body.oauth.tokenEnvVar,
+            }
+          : undefined,
+        timeout: body.timeout,
       };
     }
 
-    const entry: MCPServerEntry = {
+    const entry = {
       name: body.name,
       description: body.description ?? '',
       enabled: body.enabled !== false,
       config,
     };
 
-    // ── 持久化 ─────────────────────────────────────────────────────────────
+    // ── 持久化 ────────────────────────────────────────────────────────────
 
     saveUserServer(entry);
 
-    // ── Stdio 模式：立即尝试连接 ───────────────────────────────────────────
+    // ── local 模式: 立即尝试连接 ────────────────────────────────────────
 
     let isConnected = false;
     let toolCount = 0;
+    let toolNames: string[] = [];
 
-    if (body.type === 'stdio' && entry.enabled) {
+    if (body.type === 'local' && entry.enabled) {
       try {
         const { connectServerByName } = await import(
           '@/core/tool-registry/mcp-setup'
@@ -210,10 +220,10 @@ export async function POST(request: Request) {
         const tools = await connectServerByName(body.name);
         isConnected = true;
         toolCount = tools.length;
+        toolNames = tools;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[MCP:servers] ${body.name} stdio 连接失败: ${msg}`);
-        // 保存配置成功但连接失败，仍返回创建成功
+        console.warn(`[MCP:servers] ${body.name} local 连接失败: ${msg}`);
       }
     }
 
@@ -227,6 +237,7 @@ export async function POST(request: Request) {
           isBuiltin: false,
           isConnected,
           toolCount,
+          toolNames,
         },
       },
       { status: 201 },
@@ -237,4 +248,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-/*  end: MCP Server 列表 & 创建 */

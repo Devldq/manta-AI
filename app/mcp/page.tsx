@@ -1,4 +1,13 @@
-/*  MCP Server 管理页 — /mcp */
+/* MCP Server 管理页 — /mcp
+ *
+ * 参照 OpenCode 设计重构:
+ * - type: local / remote (原 stdio / remote)
+ * - command: 数组格式 (空格分隔输入)
+ * - remote 支持 headers 简单认证 (API Key)
+ * - 支持 timeout 配置
+ * - 显示工具名列表
+ * - 支持工具可见性预览
+ */
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -18,6 +27,8 @@ import {
   Loader2,
   Shield,
   ChevronDown,
+  Terminal,
+  Eye,
 } from 'lucide-react';
 
 // ── 类型定义 ───────────────────────────────────────────────────────────────
@@ -26,67 +37,75 @@ interface MCPServerListItem {
   name: string;
   description: string;
   enabled: boolean;
-  type: 'stdio' | 'remote';
+  type: 'local' | 'remote';
   isBuiltin: boolean;
   isConnected: boolean;
   toolCount: number;
+  toolNames: string[];
+  oauthRequired?: boolean;
   oauthAuthorized?: boolean;
+  lastError?: string;
 }
 
 interface ServerFormData {
   name: string;
   description: string;
   enabled: boolean;
-  type: 'stdio' | 'remote';
-  // Stdio
-  command: string;
-  args: string;
+  type: 'local' | 'remote';
+  // local
+  command: string; // 空格分隔
   env: string; // 每行 KEY=VALUE
-  // Remote
+  // remote
   url: string;
+  headerKey: string;
+  headerValue: string;
+  hasOauth: boolean;
   oauthAuthorizationEndpoint: string;
   oauthTokenEndpoint: string;
   oauthClientId: string;
   oauthClientSecret: string;
   oauthScopes: string;
+  oauthTokenEnvVar: string; // local 模式：将 token 注入到哪个环境变量
+  // 通用
+  timeout: string;
 }
 
-// ── 初始表单数据 ───────────────────────────────────────────────────────────
+// ── 初始表单数据 ────────────────────────────────────────────────────────────
 
 const emptyForm: ServerFormData = {
   name: '',
   description: '',
   enabled: true,
-  type: 'stdio',
+  type: 'local',
   command: '',
-  args: '',
   env: '',
   url: '',
+  headerKey: '',
+  headerValue: '',
+  hasOauth: false,
   oauthAuthorizationEndpoint: '',
   oauthTokenEndpoint: '',
   oauthClientId: '',
   oauthClientSecret: '',
   oauthScopes: '',
+  oauthTokenEnvVar: '',
+  timeout: '5000',
 };
 
-// ── 页面组件 ───────────────────────────────────────────────────────────────
+// ── 页面组件 ────────────────────────────────────────────────────────────────
 
 export default function MCPServersPage() {
   const [servers, setServers] = useState<MCPServerListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Modal 状态
   const [showModal, setShowModal] = useState(false);
   const [editingServer, setEditingServer] = useState<string | null>(null);
   const [form, setForm] = useState<ServerFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
 
-  // 展开的 server 详情
   const [expandedServer, setExpandedServer] = useState<string | null>(null);
-
-  // ── 加载 server 列表 ─────────────────────────────────────────────────────
 
   const loadServers = useCallback(async () => {
     try {
@@ -110,8 +129,6 @@ export default function MCPServersPage() {
     loadServers();
   }, [loadServers]);
 
-  // ── Modal 操作 ───────────────────────────────────────────────────────────
-
   function openCreateModal() {
     setEditingServer(null);
     setForm(emptyForm);
@@ -121,21 +138,24 @@ export default function MCPServersPage() {
 
   function openEditModal(server: MCPServerListItem) {
     setEditingServer(server.name);
-    // 预填现有值（config 字段需要从 API 获取，此处简化处理）
     setForm({
       name: server.name,
       description: server.description,
       enabled: server.enabled,
       type: server.type,
       command: '',
-      args: '',
       env: '',
       url: '',
+      headerKey: '',
+      headerValue: '',
+      hasOauth: false,
       oauthAuthorizationEndpoint: '',
       oauthTokenEndpoint: '',
       oauthClientId: '',
       oauthClientSecret: '',
       oauthScopes: '',
+      oauthTokenEnvVar: '',
+      timeout: '5000',
     });
     setFormError('');
     setShowModal(true);
@@ -148,8 +168,6 @@ export default function MCPServersPage() {
     setFormError('');
   }
 
-  // ── 表单验证 ─────────────────────────────────────────────────────────────
-
   function validateForm(): boolean {
     if (!form.name.trim()) {
       setFormError('名称不能为空');
@@ -159,24 +177,33 @@ export default function MCPServersPage() {
       setFormError('名称必须以字母开头，仅包含字母、数字、下划线和横线');
       return false;
     }
-    if (form.type === 'stdio' && !form.command.trim()) {
-      setFormError('Stdio 模式需要提供命令');
+    if (form.type === 'local' && !form.command.trim()) {
+      setFormError('local 模式需要提供命令');
       return false;
     }
-    if (form.type === 'remote') {
-      if (!form.url.trim()) {
-        setFormError('Remote 模式需要提供 URL');
-        return false;
-      }
-      if (!form.oauthAuthorizationEndpoint.trim() || !form.oauthTokenEndpoint.trim() || !form.oauthClientId.trim()) {
-        setFormError('Remote 模式需要提供 OAuth 授权端点、Token 端点和 Client ID');
-        return false;
-      }
+    if (form.type === 'remote' && !form.url.trim()) {
+      setFormError('remote 模式需要提供 URL');
+      return false;
+    }
+    if (
+      form.hasOauth &&
+      (!form.oauthAuthorizationEndpoint.trim() ||
+        !form.oauthTokenEndpoint.trim() ||
+        !form.oauthClientId.trim())
+    ) {
+      setFormError('OAuth 模式需要提供授权端点、Token 端点和 Client ID');
+      return false;
+    }
+    if (form.type === 'local' && form.hasOauth && !form.oauthTokenEnvVar.trim()) {
+      setFormError('local 模式的 OAuth 需要指定 Token 环境变量名');
+      return false;
+    }
+    if (form.timeout && (isNaN(Number(form.timeout)) || Number(form.timeout) < 0)) {
+      setFormError('超时必须为非负整数');
+      return false;
     }
     return true;
   }
-
-  // ── 提交表单 ─────────────────────────────────────────────────────────────
 
   async function handleSubmit() {
     if (!validateForm()) return;
@@ -185,7 +212,6 @@ export default function MCPServersPage() {
     setFormError('');
 
     try {
-      // 解析 env（每行 KEY=VALUE）
       const envObj: Record<string, string> = {};
       if (form.env.trim()) {
         form.env.split('\n').forEach((line) => {
@@ -196,14 +222,9 @@ export default function MCPServersPage() {
         });
       }
 
-      // 解析 args（空格分隔）
-      const argsArr = form.args.trim()
-        ? form.args.trim().split(/\s+/)
-        : [];
-
-      // 解析 scopes（空格分隔）
-      const scopesArr = form.oauthScopes.trim()
-        ? form.oauthScopes.trim().split(/\s+/)
+      // command 数组 (空格分隔)
+      const commandArr = form.command.trim()
+        ? form.command.trim().split(/\s+/)
         : [];
 
       const body: Record<string, unknown> = {
@@ -213,19 +234,50 @@ export default function MCPServersPage() {
         type: form.type,
       };
 
-      if (form.type === 'stdio') {
-        body.command = form.command.trim();
-        body.args = argsArr;
-        body.env = Object.keys(envObj).length > 0 ? envObj : undefined;
+      if (form.type === 'local') {
+        body.command = commandArr;
+        if (Object.keys(envObj).length > 0) {
+          body.environment = envObj;
+        }
+        // OAuth (可选, local 也支持 OAuth token 注入)
+        if (form.hasOauth) {
+          const scopesArr = form.oauthScopes.trim()
+            ? form.oauthScopes.trim().split(/\s+/)
+            : [];
+          body.oauth = {
+            authorizationEndpoint: form.oauthAuthorizationEndpoint.trim(),
+            tokenEndpoint: form.oauthTokenEndpoint.trim(),
+            clientId: form.oauthClientId.trim(),
+            clientSecret: form.oauthClientSecret.trim() || undefined,
+            scopes: scopesArr,
+            tokenEnvVar: form.oauthTokenEnvVar.trim(),
+          };
+        }
       } else {
         body.url = form.url.trim();
-        body.oauth = {
-          authorizationEndpoint: form.oauthAuthorizationEndpoint.trim(),
-          tokenEndpoint: form.oauthTokenEndpoint.trim(),
-          clientId: form.oauthClientId.trim(),
-          clientSecret: form.oauthClientSecret.trim() || undefined,
-          scopes: scopesArr,
-        };
+        // headers (API Key 认证)
+        if (form.headerKey.trim() && form.headerValue.trim()) {
+          body.headers = {
+            [form.headerKey.trim()]: form.headerValue.trim(),
+          };
+        }
+        // OAuth (可选)
+        if (form.hasOauth) {
+          const scopesArr = form.oauthScopes.trim()
+            ? form.oauthScopes.trim().split(/\s+/)
+            : [];
+          body.oauth = {
+            authorizationEndpoint: form.oauthAuthorizationEndpoint.trim(),
+            tokenEndpoint: form.oauthTokenEndpoint.trim(),
+            clientId: form.oauthClientId.trim(),
+            clientSecret: form.oauthClientSecret.trim() || undefined,
+            scopes: scopesArr,
+          };
+        }
+      }
+
+      if (form.timeout) {
+        body.timeout = Number(form.timeout);
       }
 
       let res: Response;
@@ -258,8 +310,6 @@ export default function MCPServersPage() {
     }
   }
 
-  // ── 删除 server ──────────────────────────────────────────────────────────
-
   async function handleDelete(name: string) {
     if (!confirm(`确定删除 MCP Server "${name}"？此操作不可逆。`)) return;
 
@@ -275,8 +325,6 @@ export default function MCPServersPage() {
       alert('网络错误');
     }
   }
-
-  // ── 连接/断开 ────────────────────────────────────────────────────────────
 
   async function handleToggleEnabled(server: MCPServerListItem) {
     try {
@@ -295,61 +343,6 @@ export default function MCPServersPage() {
       alert('网络错误');
     }
   }
-
-  // ── 状态徽章 ─────────────────────────────────────────────────────────────
-
-  function StatusBadge({ server }: { server: MCPServerListItem }) {
-    if (!server.enabled) {
-      return (
-        <span
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium"
-          style={{ background: 'var(--color-surface)', color: 'var(--color-text-muted)' }}
-        >
-          <XCircle size={12} /> 已禁用
-        </span>
-      );
-    }
-    if (server.isConnected) {
-      return (
-        <span
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium"
-          style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e' }}
-        >
-          <CheckCircle2 size={12} /> 已连接 ({server.toolCount} 工具)
-        </span>
-      );
-    }
-    if (server.type === 'remote' && server.oauthAuthorized === false) {
-      return (
-        <span
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium"
-          style={{ background: 'rgba(250,204,21,0.15)', color: '#facc15' }}
-        >
-          <AlertCircle size={12} /> 待授权
-        </span>
-      );
-    }
-    if (server.type === 'remote' && server.oauthAuthorized === true) {
-      return (
-        <span
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium"
-          style={{ background: 'rgba(59,130,246,0.15)', color: '#3b82f6' }}
-        >
-          <Globe size={12} /> 已授权（未连接）
-        </span>
-      );
-    }
-    return (
-      <span
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium"
-        style={{ background: 'rgba(249,115,22,0.15)', color: '#f97316' }}
-      >
-        <AlertCircle size={12} /> 未连接
-      </span>
-    );
-  }
-
-  // ── 渲染 ─────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -391,7 +384,6 @@ export default function MCPServersPage() {
         </button>
       </div>
 
-      {/* 错误 */}
       {error && (
         <div
           className="mb-6 p-3 rounded-lg text-sm"
@@ -412,7 +404,6 @@ export default function MCPServersPage() {
         </div>
       )}
 
-      {/* Server 列表 */}
       {servers.length === 0 ? (
         <div
           className="text-center py-16 rounded-xl border"
@@ -449,7 +440,9 @@ export default function MCPServersPage() {
               server={server}
               expanded={expandedServer === server.name}
               onToggleExpand={() =>
-                setExpandedServer(expandedServer === server.name ? null : server.name)
+                setExpandedServer(
+                  expandedServer === server.name ? null : server.name,
+                )
               }
               onEdit={() => openEditModal(server)}
               onDelete={() => handleDelete(server.name)}
@@ -460,7 +453,6 @@ export default function MCPServersPage() {
         </div>
       )}
 
-      {/* 添加/编辑 Modal */}
       {showModal && (
         <ServerFormModal
           form={form}
@@ -476,7 +468,7 @@ export default function MCPServersPage() {
   );
 }
 
-// ── Server 卡片组件 ────────────────────────────────────────────────────────
+// ── Server 卡片组件 ─────────────────────────────────────────────────────────
 
 function ServerCard({
   server,
@@ -500,26 +492,28 @@ function ServerCard({
   async function handleConnect() {
     setActionLoading('connect');
     try {
-      const res = await fetch(`/api/mcp/oauth/start?server=${encodeURIComponent(server.name)}`);
+      const res = await fetch(
+        `/api/mcp/oauth/start?server=${encodeURIComponent(server.name)}`,
+      );
       if (!res.ok) {
         const data = await res.json();
         alert(data.error || 'OAuth 启动失败');
         return;
       }
       const data = await res.json();
-      // 打开授权页面
       if (data.authorizationUrl) {
         window.open(data.authorizationUrl, '_blank');
-        // 轮询等待授权完成
         const poll = setInterval(async () => {
-          const statusRes = await fetch(`/api/mcp/oauth/status?server=${server.name}`);
+          const statusRes = await fetch(
+            `/api/mcp/oauth/status?server=${server.name}`,
+          );
           const statusData = await statusRes.json();
           if (statusData.connected) {
             clearInterval(poll);
             onRefresh();
           }
         }, 3000);
-        setTimeout(() => clearInterval(poll), 5 * 60 * 1000); // 5 分钟超时
+        setTimeout(() => clearInterval(poll), 5 * 60 * 1000);
       }
     } catch {
       alert('网络错误');
@@ -555,36 +549,37 @@ function ServerCard({
       className="rounded-xl border transition-colors"
       style={{
         borderColor: 'var(--color-border)',
-        background: server.enabled ? 'var(--color-background)' : 'var(--color-surface)',
+        background: server.enabled
+          ? 'var(--color-background)'
+          : 'var(--color-surface)',
         opacity: server.enabled ? 1 : 0.6,
       }}
     >
-      {/* 主行 */}
       <div className="flex items-center gap-4 p-4">
-        {/* 展开按钮 */}
         <button
           onClick={onToggleExpand}
           className="flex-shrink-0 p-1 rounded transition-transform"
           style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
         >
-          <ChevronDown size={16} style={{ color: 'var(--color-text-muted)' }} />
+          <ChevronDown
+            size={16}
+            style={{ color: 'var(--color-text-muted)' }}
+          />
         </button>
 
-        {/* 图标 */}
         <div
           className="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center"
           style={{ background: 'var(--color-surface)' }}
         >
           {server.isBuiltin ? (
             <Shield size={18} style={{ color: 'var(--color-accent)' }} />
-          ) : server.type === 'remote' ? (
-            <Globe size={18} style={{ color: 'var(--color-accent)' }} />
+          ) : server.type === 'local' ? (
+            <Terminal size={18} style={{ color: 'var(--color-accent)' }} />
           ) : (
-            <Wrench size={18} style={{ color: 'var(--color-accent)' }} />
+            <Globe size={18} style={{ color: 'var(--color-accent)' }} />
           )}
         </div>
 
-        {/* 信息 */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h3
@@ -610,35 +605,34 @@ function ServerCard({
             className="text-xs mt-0.5 truncate"
             style={{ color: 'var(--color-text-muted)' }}
           >
-            {server.description || (server.type === 'stdio' ? '本地 Stdio 进程' : '远程 HTTP 服务')}
+            {server.description ||
+              (server.type === 'local' ? '本地子进程 (local)' : '远程 HTTP 服务 (remote)')}
           </p>
         </div>
 
-        {/* 状态 */}
         <div className="flex-shrink-0">
           <StatusBadge server={server} />
         </div>
 
-        {/* 操作按钮 */}
         <div className="flex-shrink-0 flex items-center gap-1">
-          {/* Remote 模式：连接按钮 */}
-          {server.type === 'remote' && server.enabled && !server.isConnected && (
-            <button
-              onClick={handleConnect}
-              disabled={actionLoading === 'connect'}
-              className="p-1.5 rounded-lg transition-colors"
-              style={{ color: 'var(--color-accent)' }}
-              title="OAuth 授权连接"
-            >
-              {actionLoading === 'connect' ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <Plug size={16} />
-              )}
-            </button>
-          )}
+          {server.oauthRequired &&
+            server.enabled &&
+            !server.isConnected && (
+              <button
+                onClick={handleConnect}
+                disabled={actionLoading === 'connect'}
+                className="p-1.5 rounded-lg transition-colors"
+                style={{ color: 'var(--color-accent)' }}
+                title="OAuth 授权连接"
+              >
+                {actionLoading === 'connect' ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Plug size={16} />
+                )}
+              </button>
+            )}
 
-          {/* 已连接：断开按钮 */}
           {server.isConnected && (
             <button
               onClick={handleDisconnect}
@@ -655,7 +649,6 @@ function ServerCard({
             </button>
           )}
 
-          {/* 编辑（仅自定义 server） */}
           {!server.isBuiltin && (
             <button
               onClick={onEdit}
@@ -667,7 +660,6 @@ function ServerCard({
             </button>
           )}
 
-          {/* 删除（仅自定义 server） */}
           {!server.isBuiltin && (
             <button
               onClick={onDelete}
@@ -679,18 +671,13 @@ function ServerCard({
             </button>
           )}
 
-          {/* 启用/禁用切换 */}
           <button
             onClick={onToggleEnabled}
             className="p-1.5 rounded-lg transition-colors"
             style={{ color: 'var(--color-text-muted)' }}
             title={server.enabled ? '禁用' : '启用'}
           >
-            {server.enabled ? (
-              <XCircle size={16} />
-            ) : (
-              <CheckCircle2 size={16} />
-            )}
+            <XCircle size={16} />
           </button>
         </div>
       </div>
@@ -702,46 +689,104 @@ function ServerCard({
           style={{ borderColor: 'var(--color-border)' }}
         >
           <div className="grid grid-cols-2 gap-3 mt-3">
-            <DetailItem label="类型" value={server.type === 'stdio' ? 'Stdio (本地进程)' : 'Remote (HTTP + OAuth)'} />
-            <DetailItem label="状态" value={server.enabled ? (server.isConnected ? '已连接' : '未连接') : '已禁用'} />
-            <DetailItem label="工具数" value={server.toolCount > 0 ? `${server.toolCount} 个工具` : '-'} />
-            <DetailItem label="来源" value={server.isBuiltin ? '内建' : '用户自定义'} />
-            {server.type === 'remote' && (
+            <DetailItem
+              label="类型"
+              value={
+                server.type === 'local'
+                  ? 'Local (本地子进程)'
+                  : 'Remote (HTTP 服务)'
+              }
+            />
+            <DetailItem
+              label="状态"
+              value={
+                server.enabled
+                  ? server.isConnected
+                    ? '已连接'
+                    : '未连接'
+                  : '已禁用'
+              }
+            />
+            <DetailItem
+              label="工具数"
+              value={
+                server.toolCount > 0
+                  ? `${server.toolCount} 个工具`
+                  : '-'
+              }
+            />
+            <DetailItem
+              label="来源"
+              value={server.isBuiltin ? '内建' : '用户自定义'}
+            />
+            {server.oauthRequired && (
               <DetailItem
                 label="OAuth 授权"
                 value={server.oauthAuthorized ? '已授权' : '未授权'}
               />
             )}
+            {server.lastError && (
+              <DetailItem label="最后错误" value={server.lastError} />
+            )}
           </div>
+
+          {/* 工具名列表 */}
+          {server.toolNames.length > 0 && (
+            <div className="mt-3">
+              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+                已注册工具 ({server.toolNames.length})
+              </span>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {server.toolNames.map((t) => (
+                  <span
+                    key={t}
+                    className="text-[10px] px-1.5 py-0.5 font-mono rounded"
+                    style={{
+                      background: 'var(--color-surface)',
+                      color: 'var(--color-text-secondary)',
+                      border: '1px solid var(--color-border)',
+                    }}
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-// ── 详情项 ─────────────────────────────────────────────────────────────────
-
 function DetailItem({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+      <span
+        className="text-[11px]"
+        style={{ color: 'var(--color-text-muted)' }}
+      >
         {label}
       </span>
-      <p className="text-sm mt-0.5" style={{ color: 'var(--color-text-primary)' }}>
+      <p
+        className="text-sm mt-0.5"
+        style={{ color: 'var(--color-text-primary)' }}
+      >
         {value}
       </p>
     </div>
   );
 }
 
-// ── 状态徽章（外部提取版）──────────────────────────────────────────────────
-
 function StatusBadge({ server }: { server: MCPServerListItem }) {
   if (!server.enabled) {
     return (
       <span
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium"
-        style={{ background: 'var(--color-surface)', color: 'var(--color-text-muted)' }}
+        style={{
+          background: 'var(--color-surface)',
+          color: 'var(--color-text-muted)',
+        }}
       >
         <XCircle size={12} /> 已禁用
       </span>
@@ -753,11 +798,11 @@ function StatusBadge({ server }: { server: MCPServerListItem }) {
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium"
         style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e' }}
       >
-        <CheckCircle2 size={12} /> 已连接 ({server.toolCount} 工具)
+        <CheckCircle2 size={12} /> 已连接 ({server.toolCount})
       </span>
     );
   }
-  if (server.type === 'remote' && server.oauthAuthorized === false) {
+  if (server.oauthRequired && server.oauthAuthorized === false) {
     return (
       <span
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium"
@@ -767,13 +812,13 @@ function StatusBadge({ server }: { server: MCPServerListItem }) {
       </span>
     );
   }
-  if (server.type === 'remote' && server.oauthAuthorized === true) {
+  if (server.oauthAuthorized === true) {
     return (
       <span
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium"
         style={{ background: 'rgba(59,130,246,0.15)', color: '#3b82f6' }}
       >
-        <Globe size={12} /> 已授权（未连接）
+        <Globe size={12} /> 已授权
       </span>
     );
   }
@@ -787,7 +832,7 @@ function StatusBadge({ server }: { server: MCPServerListItem }) {
   );
 }
 
-// ── 表单 Modal ─────────────────────────────────────────────────────────────
+// ── 表单 Modal ──────────────────────────────────────────────────────────────
 
 function ServerFormModal({
   form,
@@ -824,7 +869,7 @@ function ServerFormModal({
           borderColor: 'var(--color-border)',
         }}
       >
-        {/* Modal Header */}
+        {/* Header */}
         <div
           className="flex items-center justify-between px-5 py-4 border-b"
           style={{ borderColor: 'var(--color-border)' }}
@@ -844,7 +889,7 @@ function ServerFormModal({
           </button>
         </div>
 
-        {/* Modal Body */}
+        {/* Body */}
         <div className="p-5 space-y-3">
           {/* 名称 */}
           <div>
@@ -900,7 +945,7 @@ function ServerFormModal({
               连接类型 *
             </label>
             <div className="flex gap-2">
-              {(['stdio', 'remote'] as const).map((t) => (
+              {(['local', 'remote'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => update({ type: t })}
@@ -920,27 +965,27 @@ function ServerFormModal({
                         : 'var(--color-border)',
                   }}
                 >
-                  {t === 'stdio' ? '📡 Stdio (本地进程)' : '🌐 Remote (HTTP + OAuth)'}
+                  {t === 'local' ? '⌨️ Local (本地进程)' : '🌐 Remote (HTTP 服务)'}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Stdio 字段 */}
-          {form.type === 'stdio' && (
+          {/* local 字段 */}
+          {form.type === 'local' && (
             <>
               <div>
                 <label
                   className="block text-xs font-medium mb-1"
                   style={{ color: 'var(--color-text-secondary)' }}
                 >
-                  命令 *
+                  命令 * (空格分隔)
                 </label>
                 <input
                   type="text"
                   value={form.command}
                   onChange={(e) => update({ command: e.target.value })}
-                  placeholder="例如: npx 或 node"
+                  placeholder="例如: npx -y @modelcontextprotocol/server-github"
                   className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
                   style={{
                     background: 'var(--color-surface)',
@@ -954,32 +999,12 @@ function ServerFormModal({
                   className="block text-xs font-medium mb-1"
                   style={{ color: 'var(--color-text-secondary)' }}
                 >
-                  参数 (空格分隔)
-                </label>
-                <input
-                  type="text"
-                  value={form.args}
-                  onChange={(e) => update({ args: e.target.value })}
-                  placeholder="例如: -y @modelcontextprotocol/server-github"
-                  className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
-                  style={{
-                    background: 'var(--color-surface)',
-                    borderColor: 'var(--color-border)',
-                    color: 'var(--color-text-primary)',
-                  }}
-                />
-              </div>
-              <div>
-                <label
-                  className="block text-xs font-medium mb-1"
-                  style={{ color: 'var(--color-text-secondary)' }}
-                >
-                  环境变量 (每行 KEY=VALUE)
+                  环境变量 (每行 KEY=VALUE, 支持 {'{env:VAR}'} 引用)
                 </label>
                 <textarea
                   value={form.env}
                   onChange={(e) => update({ env: e.target.value })}
-                  placeholder="GITHUB_TOKEN=ghp_xxx"
+                  placeholder={`GITHUB_PERSONAL_ACCESS_TOKEN={env:GITHUB_TOKEN}`}
                   rows={3}
                   className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono resize-none transition-colors"
                   style={{
@@ -989,10 +1014,178 @@ function ServerFormModal({
                   }}
                 />
               </div>
+
+              {/* OAuth 开关 (local 模式) */}
+              <div className="flex items-center justify-between pt-1">
+                <span
+                  className="text-xs font-medium"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  OAuth 2.0 认证
+                </span>
+                <button
+                  onClick={() => update({ hasOauth: !form.hasOauth })}
+                  className={`relative w-9 h-5 rounded-full transition-colors`}
+                  style={{
+                    background: form.hasOauth
+                      ? 'var(--color-accent)'
+                      : 'var(--color-border)',
+                  }}
+                >
+                  <span
+                    className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform"
+                    style={{
+                      left: form.hasOauth
+                        ? 'calc(100% - 1.125rem)'
+                        : '0.125rem',
+                    }}
+                  />
+                </button>
+              </div>
+
+              {/* OAuth 详细配置 (local 模式) */}
+              {form.hasOauth && (
+                <>
+                  <div>
+                    <label
+                      className="block text-xs font-medium mb-1"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      Token 环境变量名 *（OAuth token 注入到的变量名）
+                    </label>
+                    <input
+                      type="text"
+                      value={form.oauthTokenEnvVar}
+                      onChange={(e) =>
+                        update({ oauthTokenEnvVar: e.target.value })
+                      }
+                      placeholder="例如: GITHUB_PERSONAL_ACCESS_TOKEN"
+                      className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                      style={{
+                        background: 'var(--color-surface)',
+                        borderColor: 'var(--color-border)',
+                        color: 'var(--color-text-primary)',
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="block text-xs font-medium mb-1"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      授权端点 *
+                    </label>
+                    <input
+                      type="text"
+                      value={form.oauthAuthorizationEndpoint}
+                      onChange={(e) =>
+                        update({ oauthAuthorizationEndpoint: e.target.value })
+                      }
+                      placeholder="https://github.com/login/oauth/authorize"
+                      className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                      style={{
+                        background: 'var(--color-surface)',
+                        borderColor: 'var(--color-border)',
+                        color: 'var(--color-text-primary)',
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="block text-xs font-medium mb-1"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      Token 端点 *
+                    </label>
+                    <input
+                      type="text"
+                      value={form.oauthTokenEndpoint}
+                      onChange={(e) =>
+                        update({ oauthTokenEndpoint: e.target.value })
+                      }
+                      placeholder="https://github.com/login/oauth/access_token"
+                      className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                      style={{
+                        background: 'var(--color-surface)',
+                        borderColor: 'var(--color-border)',
+                        color: 'var(--color-text-primary)',
+                      }}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label
+                        className="block text-xs font-medium mb-1"
+                        style={{ color: 'var(--color-text-secondary)' }}
+                      >
+                        Client ID *
+                      </label>
+                      <input
+                        type="text"
+                        value={form.oauthClientId}
+                        onChange={(e) =>
+                          update({ oauthClientId: e.target.value })
+                        }
+                        placeholder="{'env:GITHUB_CLIENT_ID}'"
+                        className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                        style={{
+                          background: 'var(--color-surface)',
+                          borderColor: 'var(--color-border)',
+                          color: 'var(--color-text-primary)',
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        className="block text-xs font-medium mb-1"
+                        style={{ color: 'var(--color-text-secondary)' }}
+                      >
+                        Client Secret
+                      </label>
+                      <input
+                        type="password"
+                        value={form.oauthClientSecret}
+                        onChange={(e) =>
+                          update({ oauthClientSecret: e.target.value })
+                        }
+                        placeholder="(可选)"
+                        className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                        style={{
+                          background: 'var(--color-surface)',
+                          borderColor: 'var(--color-border)',
+                          color: 'var(--color-text-primary)',
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label
+                      className="block text-xs font-medium mb-1"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      Scopes (空格分隔)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.oauthScopes}
+                      onChange={(e) =>
+                        update({ oauthScopes: e.target.value })
+                      }
+                      placeholder="repo read:org read:user workflow"
+                      className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                      style={{
+                        background: 'var(--color-surface)',
+                        borderColor: 'var(--color-border)',
+                        color: 'var(--color-text-primary)',
+                      }}
+                    />
+                  </div>
+                </>
+              )}
             </>
           )}
 
-          {/* Remote 字段 */}
+          {/* remote 字段 */}
           {form.type === 'remote' && (
             <>
               <div>
@@ -1015,88 +1208,34 @@ function ServerFormModal({
                   }}
                 />
               </div>
+
+              {/* Headers (API Key 认证) */}
               <div>
                 <label
                   className="block text-xs font-medium mb-1"
                   style={{ color: 'var(--color-text-secondary)' }}
                 >
-                  OAuth 授权端点 *
+                  Headers (API Key 认证，可选)
                 </label>
-                <input
-                  type="text"
-                  value={form.oauthAuthorizationEndpoint}
-                  onChange={(e) =>
-                    update({ oauthAuthorizationEndpoint: e.target.value })
-                  }
-                  placeholder="https://example.com/oauth/authorize"
-                  className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
-                  style={{
-                    background: 'var(--color-surface)',
-                    borderColor: 'var(--color-border)',
-                    color: 'var(--color-text-primary)',
-                  }}
-                />
-              </div>
-              <div>
-                <label
-                  className="block text-xs font-medium mb-1"
-                  style={{ color: 'var(--color-text-secondary)' }}
-                >
-                  OAuth Token 端点 *
-                </label>
-                <input
-                  type="text"
-                  value={form.oauthTokenEndpoint}
-                  onChange={(e) =>
-                    update({ oauthTokenEndpoint: e.target.value })
-                  }
-                  placeholder="https://example.com/oauth/token"
-                  className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
-                  style={{
-                    background: 'var(--color-surface)',
-                    borderColor: 'var(--color-border)',
-                    color: 'var(--color-text-primary)',
-                  }}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label
-                    className="block text-xs font-medium mb-1"
-                    style={{ color: 'var(--color-text-secondary)' }}
-                  >
-                    Client ID *
-                  </label>
+                <div className="flex gap-2">
                   <input
                     type="text"
-                    value={form.oauthClientId}
-                    onChange={(e) =>
-                      update({ oauthClientId: e.target.value })
-                    }
-                    placeholder="your-client-id"
-                    className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                    value={form.headerKey}
+                    onChange={(e) => update({ headerKey: e.target.value })}
+                    placeholder="Header 名"
+                    className="flex-1 px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
                     style={{
                       background: 'var(--color-surface)',
                       borderColor: 'var(--color-border)',
                       color: 'var(--color-text-primary)',
                     }}
                   />
-                </div>
-                <div>
-                  <label
-                    className="block text-xs font-medium mb-1"
-                    style={{ color: 'var(--color-text-secondary)' }}
-                  >
-                    Client Secret
-                  </label>
                   <input
-                    type="password"
-                    value={form.oauthClientSecret}
-                    onChange={(e) =>
-                      update({ oauthClientSecret: e.target.value })
-                    }
-                    placeholder="(可选)"
-                    className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                    type="text"
+                    value={form.headerValue}
+                    onChange={(e) => update({ headerValue: e.target.value })}
+                    placeholder="Header 值 (支持 {env:VAR})"
+                    className="flex-[2] px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
                     style={{
                       background: 'var(--color-surface)',
                       borderColor: 'var(--color-border)',
@@ -1105,28 +1244,177 @@ function ServerFormModal({
                   />
                 </div>
               </div>
-              <div>
-                <label
-                  className="block text-xs font-medium mb-1"
+
+              {/* OAuth 开关 */}
+              <div className="flex items-center justify-between pt-1">
+                <span
+                  className="text-xs font-medium"
                   style={{ color: 'var(--color-text-secondary)' }}
                 >
-                  Scopes (空格分隔)
-                </label>
-                <input
-                  type="text"
-                  value={form.oauthScopes}
-                  onChange={(e) => update({ oauthScopes: e.target.value })}
-                  placeholder="files:read comments:read"
-                  className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                  OAuth 2.0 认证
+                </span>
+                <button
+                  onClick={() => update({ hasOauth: !form.hasOauth })}
+                  className={`relative w-9 h-5 rounded-full transition-colors`}
                   style={{
-                    background: 'var(--color-surface)',
-                    borderColor: 'var(--color-border)',
-                    color: 'var(--color-text-primary)',
+                    background: form.hasOauth
+                      ? 'var(--color-accent)'
+                      : 'var(--color-border)',
                   }}
-                />
+                >
+                  <span
+                    className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform"
+                    style={{
+                      left: form.hasOauth
+                        ? 'calc(100% - 1.125rem)'
+                        : '0.125rem',
+                    }}
+                  />
+                </button>
               </div>
+
+              {/* OAuth 详细配置 */}
+              {form.hasOauth && (
+                <>
+                  <div>
+                    <label
+                      className="block text-xs font-medium mb-1"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      授权端点 *
+                    </label>
+                    <input
+                      type="text"
+                      value={form.oauthAuthorizationEndpoint}
+                      onChange={(e) =>
+                        update({ oauthAuthorizationEndpoint: e.target.value })
+                      }
+                      placeholder="https://example.com/oauth/authorize"
+                      className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                      style={{
+                        background: 'var(--color-surface)',
+                        borderColor: 'var(--color-border)',
+                        color: 'var(--color-text-primary)',
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="block text-xs font-medium mb-1"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      Token 端点 *
+                    </label>
+                    <input
+                      type="text"
+                      value={form.oauthTokenEndpoint}
+                      onChange={(e) =>
+                        update({ oauthTokenEndpoint: e.target.value })
+                      }
+                      placeholder="https://example.com/oauth/token"
+                      className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                      style={{
+                        background: 'var(--color-surface)',
+                        borderColor: 'var(--color-border)',
+                        color: 'var(--color-text-primary)',
+                      }}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label
+                        className="block text-xs font-medium mb-1"
+                        style={{ color: 'var(--color-text-secondary)' }}
+                      >
+                        Client ID *
+                      </label>
+                      <input
+                        type="text"
+                        value={form.oauthClientId}
+                        onChange={(e) =>
+                          update({ oauthClientId: e.target.value })
+                        }
+                        placeholder="{'env:MY_CLIENT_ID}'"
+                        className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                        style={{
+                          background: 'var(--color-surface)',
+                          borderColor: 'var(--color-border)',
+                          color: 'var(--color-text-primary)',
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label
+                        className="block text-xs font-medium mb-1"
+                        style={{ color: 'var(--color-text-secondary)' }}
+                      >
+                        Client Secret
+                      </label>
+                      <input
+                        type="password"
+                        value={form.oauthClientSecret}
+                        onChange={(e) =>
+                          update({ oauthClientSecret: e.target.value })
+                        }
+                        placeholder="(可选)"
+                        className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                        style={{
+                          background: 'var(--color-surface)',
+                          borderColor: 'var(--color-border)',
+                          color: 'var(--color-text-primary)',
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label
+                      className="block text-xs font-medium mb-1"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      Scopes (空格分隔)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.oauthScopes}
+                      onChange={(e) =>
+                        update({ oauthScopes: e.target.value })
+                      }
+                      placeholder="files:read comments:read"
+                      className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+                      style={{
+                        background: 'var(--color-surface)',
+                        borderColor: 'var(--color-border)',
+                        color: 'var(--color-text-primary)',
+                      }}
+                    />
+                  </div>
+                </>
+              )}
             </>
           )}
+
+          {/* 超时 */}
+          <div>
+            <label
+              className="block text-xs font-medium mb-1"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              超时 (毫秒，默认 5000)
+            </label>
+            <input
+              type="number"
+              value={form.timeout}
+              onChange={(e) => update({ timeout: e.target.value })}
+              placeholder="5000"
+              min="0"
+              className="w-full px-2 py-1.5 text-xs rounded border focus:outline-none font-mono transition-colors"
+              style={{
+                background: 'var(--color-surface)',
+                borderColor: 'var(--color-border)',
+                color: 'var(--color-text-primary)',
+              }}
+            />
+          </div>
 
           {/* 启用开关 */}
           <div className="flex items-center justify-between pt-1">
@@ -1138,17 +1426,19 @@ function ServerFormModal({
             </span>
             <button
               onClick={() => update({ enabled: !form.enabled })}
-              className={`relative w-9 h-5 rounded-full transition-colors ${
-                form.enabled ? '' : ''
-              }`}
+              className="relative w-9 h-5 rounded-full transition-colors"
               style={{
-                background: form.enabled ? 'var(--color-accent)' : 'var(--color-border)',
+                background: form.enabled
+                  ? 'var(--color-accent)'
+                  : 'var(--color-border)',
               }}
             >
               <span
                 className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform"
                 style={{
-                  left: form.enabled ? 'calc(100% - 1.125rem)' : '0.125rem',
+                  left: form.enabled
+                    ? 'calc(100% - 1.125rem)'
+                    : '0.125rem',
                 }}
               />
             </button>
@@ -1168,7 +1458,7 @@ function ServerFormModal({
           )}
         </div>
 
-        {/* Modal Footer */}
+        {/* Footer */}
         <div
           className="flex justify-end gap-2 px-5 py-4 border-t"
           style={{ borderColor: 'var(--color-border)' }}
@@ -1208,4 +1498,3 @@ function ServerFormModal({
     </div>
   );
 }
-/*  end: MCP Server 管理页 */

@@ -1,22 +1,18 @@
-/*  start: MCP OAuth 授权启动 — GET /api/mcp/oauth/start?server=xxx */
+/* MCP OAuth 授权启动 — GET /api/mcp/oauth/start?server=xxx
+ *
+ * 支持 local 和 remote 两种模式的 OAuth 授权。
+ */
 import { NextResponse } from 'next/server';
 import { getEffectiveServers } from '@/core/tool-registry/mcp-config';
 import { startOAuthFlow } from '@/core/tool-registry/mcp-oauth';
-import type { RemoteServerConfig } from '@/core/tool-registry/types';
+import { resolveEnvVarsInObject } from '@/core/tool-registry/types';
+import type { RemoteServerConfig, LocalServerConfig, OAuthServerConfig } from '@/core/tool-registry/types';
 
 /**
- * GET /api/mcp/oauth/start?server=figma
+ * GET /api/mcp/oauth/start?server=figma  (remote)
+ * GET /api/mcp/oauth/start?server=github (local)
  *
- * 发起 OAuth 2.0 + PKCE 授权流程：
- * 1. 启动 Loopback Server（随机端口）
- * 2. 生成 PKCE 参数
- * 3. 返回 authorizationUrl（前端用 shell.openExternal 打开浏览器）
- *
- * 返回：
- * - { authorizationUrl, state }  — 成功
- * - { error }                     — server 不存在或不是 remote 模式
- *
- * 前端收到 authorizationUrl 后，在 Electron 中用 shell.openExternal(url) 打开系统浏览器。
+ * 发起 OAuth 2.0 + PKCE 授权流程。
  */
 export async function GET(request: Request) {
   try {
@@ -30,7 +26,6 @@ export async function GET(request: Request) {
       );
     }
 
-    // 查找 server 配置
     const entry = getEffectiveServers().find((s) => s.name === serverName);
     if (!entry) {
       return NextResponse.json(
@@ -39,26 +34,36 @@ export async function GET(request: Request) {
       );
     }
 
-    if (entry.config.type !== 'remote') {
+    // 提取 OAuth 配置（local 或 remote 都可以有 oauth 字段）
+    let oauthConfig: OAuthServerConfig | undefined;
+    if (entry.config.type === 'remote') {
+      oauthConfig = (entry.config as RemoteServerConfig).oauth;
+    } else if (entry.config.type === 'local') {
+      oauthConfig = (entry.config as LocalServerConfig).oauth;
+    }
+
+    if (!oauthConfig) {
       return NextResponse.json(
-        { error: `${serverName} 不是 Remote OAuth 模式` },
+        { error: `${serverName} 未配置 OAuth, 使用现有认证方式即可` },
         { status: 400 },
       );
     }
 
-    const config = entry.config as RemoteServerConfig;
-
-    if (!config.oauth.clientId) {
+    if (!oauthConfig.clientId) {
       return NextResponse.json(
-        { error: `${serverName} 未配置 clientId（请设置环境变量 ${serverName.toUpperCase()}_CLIENT_ID）` },
+        {
+          error: `${serverName} 未配置 clientId (请设置环境变量 ${serverName.toUpperCase()}_CLIENT_ID)`,
+        },
         { status: 500 },
       );
     }
 
-    // 发起 OAuth 流程
+    // 解析环境变量引用
+    const resolvedOAuth = resolveEnvVarsInObject(oauthConfig);
+
     const { authorizationUrl, state } = await startOAuthFlow(
       serverName,
-      config.oauth,
+      resolvedOAuth,
     );
 
     return NextResponse.json({ authorizationUrl, state });
@@ -68,4 +73,3 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-/*  end: MCP OAuth 授权启动 */

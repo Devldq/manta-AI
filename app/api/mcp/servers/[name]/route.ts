@@ -1,4 +1,10 @@
-/*  MCP Server 更新 & 删除 — PUT/DELETE /api/mcp/servers/[name] */
+/* MCP Server 更新 & 删除 — PUT/DELETE /api/mcp/servers/[name]
+ *
+ * 参照 OpenCode 设计重构:
+ * - 支持新的 local/remote 配置格式
+ * - remote 支持 headers 简单认证
+ * - 内建 server 只能更新 enabled/description
+ */
 import { NextResponse } from 'next/server';
 import {
   getEffectiveServers,
@@ -9,31 +15,41 @@ import {
   saveUserServer,
   deleteUserServer,
 } from '@/core/tool-registry/mcp-config-store';
-import { connectServerByName, disconnectServerByName } from '@/core/tool-registry/mcp-setup';
+import {
+  connectServerByName,
+  disconnectServerByName,
+} from '@/core/tool-registry/mcp-setup';
 import { revokeOAuthToken } from '@/core/tool-registry/mcp-oauth';
 
-import type { MCPServerEntry, StdioServerConfig, RemoteServerConfig } from '@/core/tool-registry/types';
+import type {
+  MCPServerEntry,
+  LocalServerConfig,
+  RemoteServerConfig,
+} from '@/core/tool-registry/types';
 
-// ── 更新请求类型 ───────────────────────────────────────────────────────────
+// ── 更新请求类型 ────────────────────────────────────────────────────────────
 
 interface UpdateMCPServerBody {
   description?: string;
   enabled?: boolean;
   /** 如果提供，会修改连接配置；不提供则保留原配置 */
   config?: {
-    type: 'stdio' | 'remote';
-    /** Stdio 模式字段 */
-    command?: string;
-    args?: string[];
-    env?: Record<string, string>;
-    /** Remote 模式字段 */
+    type: 'local' | 'remote';
+    /** local 模式字段 */
+    command?: string[];
+    environment?: Record<string, string>;
+    timeout?: number;
+    /** remote 模式字段 */
     url?: string;
+    headers?: Record<string, string>;
     oauth?: {
       authorizationEndpoint: string;
       tokenEndpoint: string;
       clientId: string;
       clientSecret?: string;
       scopes: string[];
+      /** local 模式: 将 token 注入到哪个环境变量 */
+      tokenEnvVar?: string;
     };
   };
 }
@@ -42,9 +58,6 @@ interface UpdateMCPServerBody {
  * PUT /api/mcp/servers/[name]
  *
  * 更新 MCP Server 配置。
- * - 内建 server：只能更新 enabled 和 description，不能修改 config
- * - 用户自定义 server：可以更新所有字段
- * - 如果 config 有变更，会先断开再重连
  */
 export async function PUT(
   request: Request,
@@ -57,10 +70,9 @@ export async function PUT(
     const builtin = isBuiltinServer(name);
     const userEntry = getUserServer(name);
 
-    // ── 查找现有配置 ───────────────────────────────────────────────────────
+    // ── 查找现有配置 ──────────────────────────────────────────────────────
 
     let existing: MCPServerEntry | undefined;
-
     if (builtin) {
       existing = getEffectiveServers().find((s) => s.name === name);
     } else {
@@ -74,7 +86,7 @@ export async function PUT(
       );
     }
 
-    // ── 内建 server 限制 ──────────────────────────────────────────────────
+    // ── 内建 server 限制 ─────────────────────────────────────────────────
 
     if (body.config && builtin) {
       return NextResponse.json(
@@ -83,25 +95,35 @@ export async function PUT(
       );
     }
 
-    // ── 构建新配置 ─────────────────────────────────────────────────────────
+    // ── 构建新配置 ────────────────────────────────────────────────────────
 
     let configChanged = false;
     let newConfig = existing.config;
 
     if (body.config) {
-      if (body.config.type === 'stdio') {
-        if (!body.config.command) {
+      if (body.config.type === 'local') {
+        if (!body.config.command || body.config.command.length === 0) {
           return NextResponse.json(
-            { error: 'stdio 模式必须提供 command 字段' },
+            { error: 'local 模式必须提供 command 数组' },
             { status: 400 },
           );
         }
         newConfig = {
-          type: 'stdio',
+          type: 'local',
           command: body.config.command,
-          args: body.config.args ?? [],
-          env: body.config.env,
-        } as StdioServerConfig;
+          environment: body.config.environment,
+          oauth: body.config.oauth
+            ? {
+                authorizationEndpoint: body.config.oauth.authorizationEndpoint,
+                tokenEndpoint: body.config.oauth.tokenEndpoint,
+                clientId: body.config.oauth.clientId,
+                clientSecret: body.config.oauth.clientSecret,
+                scopes: body.config.oauth.scopes ?? [],
+                tokenEnvVar: body.config.oauth.tokenEnvVar,
+              }
+            : undefined,
+          timeout: body.config.timeout,
+        } as LocalServerConfig;
         configChanged = true;
       } else if (body.config.type === 'remote') {
         if (!body.config.url) {
@@ -110,29 +132,20 @@ export async function PUT(
             { status: 400 },
           );
         }
-        if (
-          !body.config.oauth?.authorizationEndpoint ||
-          !body.config.oauth?.tokenEndpoint ||
-          !body.config.oauth?.clientId
-        ) {
-          return NextResponse.json(
-            {
-              error:
-                'remote 模式必须提供 oauth.authorizationEndpoint、oauth.tokenEndpoint、oauth.clientId',
-            },
-            { status: 400 },
-          );
-        }
         newConfig = {
           type: 'remote',
           url: body.config.url,
-          oauth: {
-            authorizationEndpoint: body.config.oauth.authorizationEndpoint,
-            tokenEndpoint: body.config.oauth.tokenEndpoint,
-            clientId: body.config.oauth.clientId,
-            clientSecret: body.config.oauth.clientSecret,
-            scopes: body.config.oauth.scopes ?? [],
-          },
+          headers: body.config.headers,
+          oauth: body.config.oauth
+            ? {
+                authorizationEndpoint: body.config.oauth.authorizationEndpoint,
+                tokenEndpoint: body.config.oauth.tokenEndpoint,
+                clientId: body.config.oauth.clientId,
+                clientSecret: body.config.oauth.clientSecret,
+                scopes: body.config.oauth.scopes ?? [],
+              }
+            : undefined,
+          timeout: body.config.timeout,
         } as RemoteServerConfig;
         configChanged = true;
       }
@@ -141,30 +154,25 @@ export async function PUT(
     const updatedEntry: MCPServerEntry = {
       ...existing,
       description: body.description ?? existing.description,
-      enabled: body.enabled !== undefined ? body.enabled : existing.enabled !== false,
+      enabled:
+        body.enabled !== undefined ? body.enabled : existing.enabled !== false,
       config: newConfig,
     };
 
-    // ── 持久化 ─────────────────────────────────────────────────────────────
+    // ── 持久化 ────────────────────────────────────────────────────────────
 
-    if (builtin) {
-      // 内建 server 的变更写入用户配置（覆盖内建配置）
-      saveUserServer(updatedEntry);
-    } else {
-      saveUserServer(updatedEntry);
-    }
+    saveUserServer(updatedEntry);
 
-    // ── 重连逻辑 ───────────────────────────────────────────────────────────
+    // ── 重连逻辑 ──────────────────────────────────────────────────────────
 
     let isConnected = false;
     let toolCount = 0;
+    let toolNames: string[] = [];
 
-    // 如果 config 有变更，先断开
     if (configChanged) {
       try {
         await disconnectServerByName(name);
         if (existing.config.type === 'remote') {
-          // remote 模式断开时清理 token
           await revokeOAuthToken(name);
         }
       } catch {
@@ -181,16 +189,16 @@ export async function PUT(
       }
     }
 
-    // 如果 enabled 且没有 config 变更导致的重连，且当前未连接
+    // 如果 enabled，尝试连接
     if (updatedEntry.enabled) {
       try {
-        // stdio 模式或 remote 已授权 → 尝试连接
-        if (updatedEntry.config.type === 'stdio') {
+        if (updatedEntry.config.type === 'local') {
           const tools = await connectServerByName(name);
           isConnected = true;
           toolCount = tools.length;
+          toolNames = tools;
         }
-        // remote 模式不自动连接，需要走 OAuth 流程
+        // remote 不自动连接，需要走 OAuth 或 headers 认证流程
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[MCP:servers] ${name} 重连失败: ${msg}`);
@@ -206,6 +214,7 @@ export async function PUT(
         isBuiltin: builtin,
         isConnected,
         toolCount,
+        toolNames,
       },
     });
   } catch (err) {
@@ -218,9 +227,7 @@ export async function PUT(
 /**
  * DELETE /api/mcp/servers/[name]
  *
- * 删除 MCP Server。
- * - 内建 server：返回 403 禁止删除，可通过 PUT 设置 enabled: false 来禁用
- * - 用户自定义 server：断开连接 + 清理 token + 删除配置
+ * 删除 MCP Server。内建 server 返回 403。
  */
 export async function DELETE(
   _request: Request,
@@ -229,15 +236,15 @@ export async function DELETE(
   try {
     const { name } = await params;
 
-    // 内建 server 不可删除
     if (isBuiltinServer(name)) {
       return NextResponse.json(
-        { error: `内建 MCP Server "${name}" 不可删除，可通过 PUT 设置 enabled: false 禁用` },
+        {
+          error: `内建 MCP Server "${name}" 不可删除，可通过 PUT 设置 enabled: false 禁用`,
+        },
         { status: 403 },
       );
     }
 
-    // 检查是否存在
     const entry = getUserServer(name);
     if (!entry) {
       return NextResponse.json(
@@ -246,17 +253,14 @@ export async function DELETE(
       );
     }
 
-    // 断开连接
-    if (entry.config.type === 'remote') {
-      await revokeOAuthToken(name);
-    }
+    // 断开连接 & 撤销 OAuth token
+    await revokeOAuthToken(name);
     try {
       await disconnectServerByName(name);
     } catch {
       // 忽略断开错误
     }
 
-    // 删除配置
     deleteUserServer(name);
 
     return NextResponse.json({ success: true, name });
@@ -266,4 +270,3 @@ export async function DELETE(
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
-/*  end: MCP Server 更新 & 删除 */
