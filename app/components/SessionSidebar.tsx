@@ -1,8 +1,9 @@
 /* 会话侧边栏 — 展示本次会话的修改内容和变更文件 */
 'use client'
 
-import React, { useState, useEffect, useRef, memo, useMemo } from 'react'
-import { FileEdit, FileText, ScrollText, Check, X, Loader2, Clock, Folder, FileSearch, Search, Terminal, FileCode, Wrench, Pencil, ChevronDown, Copy, ClipboardCheck } from 'lucide-react'
+import React, { useState, useEffect, useRef, memo } from 'react'
+import { FileEdit, FileText, ScrollText } from 'lucide-react'
+import SystemLogs from './SystemLogs'
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 
@@ -69,26 +70,14 @@ function formatRelativeTime(ts: string): string {
   }
 }
 
-function formatLogTime(ts: string): string {
-  try {
-    const d = new Date(ts)
-    return d.toLocaleTimeString('zh-CN', { hour12: false })
-  } catch {
-    return ''
-  }
-}
+
 
 function truncateText(text: string, maxLen: number): string {
   if (!text) return ''
   return text.length > maxLen ? text.slice(0, maxLen) + '…' : text
 }
 
-/** 格式化 token 数：≥10000 显示为 x.xw */
-function fmtTokens(n: number | undefined): string {
-  if (n === undefined || n === 0) return ''
-  if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + 'w'
-  return String(n)
-}
+
 
 function extractFilePath(input: unknown): string | null {
   if (!input || typeof input !== 'object') return null
@@ -196,7 +185,7 @@ export const SessionSidebar = memo(function SessionSidebar({
           {[
             { id: 'changes' as TabId, label: '修改内容', icon: FileEdit },
             { id: 'files' as TabId, label: '变更文件', icon: FileText },
-            { id: 'logs' as TabId, label: '工具日志', icon: ScrollText },
+            { id: 'logs' as TabId, label: '系统日志', icon: ScrollText },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -222,7 +211,7 @@ export const SessionSidebar = memo(function SessionSidebar({
             <ChangedFiles conversation={conversation} />
           )}
           {activeTab === 'logs' && (
-            <ToolLogs conversation={conversation} />
+            <SystemLogs conversationId={conversation?.id} />
           )}
         </div>
       </div>
@@ -312,328 +301,13 @@ function FileChanges({ conversation }: { conversation: ConversationData | null }
 
 // ─── 工具日志面板 ──────────────────────────────────────────────────────────────
 
-/** 工具名 → lucide icon 映射 */
-const TOOL_ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
-  lsDir: Folder,
-  readFile: FileCode,
-  glob: FileSearch,
-  grep: Search,
-  bash: Terminal,
-  write: Pencil,
-  edit: Pencil,
-  multiEdit: Pencil,
-}
 
-function getToolIcon(toolName: string) {
-  return TOOL_ICON_MAP[toolName] ?? Wrench
-}
 
-/** 将任意值截断为可读字符串 */
-function fmtVal(v: unknown, maxLen = 200): string {
-  if (v === undefined || v === null) return ''
-  const s = typeof v === 'string' ? v : JSON.stringify(v)
-  return s.length > maxLen ? s.slice(0, maxLen) + '…' : s
-}
 
-/** 根据工具调用生成模拟的日志行（仿 fs-tools console.log 风格） */
-function generateLogLines(tc: StoredToolCall): string[] {
-  const lines: string[] = []
-  const input = (tc.input ?? {}) as Record<string, unknown>
-  const tag = `[fs-tools:${tc.toolName}]`
 
-  switch (tc.toolName) {
-    case 'lsDir': {
-      const p = String(input.dir_path ?? input.path ?? '')
-      lines.push(`${tag} 开始执行, raw input: { path: '${p}' }`)
-      lines.push(`${tag} 解析后 params: { path: '${p}' }`)
-      lines.push(`${tag} targetPath: ${p}`)
-      lines.push(`[fs-tools] checkAccess: ${p} → ${p}`)
-      lines.push(`[fs-tools] isApproved: true`)
-      lines.push(`[fs-tools] ✓ 已授权，直接访问`)
-      lines.push(`${tag} resolved: ${p}`)
-      lines.push(`${tag} existsSync: true`)
-      lines.push(`${tag} 调用 statSync...`)
-      lines.push(`${tag} isDirectory: true`)
-      lines.push(`${tag} 调用 readdirSync...`)
-      const output = tc.output as Record<string, unknown> | undefined
-      const entries = output?.entries
-      if (Array.isArray(entries)) {
-        const dirs = entries.filter((e: unknown) => typeof e === 'object' && e !== null && (e as Record<string,unknown>).type === 'directory').length
-        const files = entries.filter((e: unknown) => typeof e === 'object' && e !== null && (e as Record<string,unknown>).type !== 'directory').length
-        lines.push(`${tag} readdirSync 成功，条目数: ${entries.length}` + (dirs > 0 || files > 0 ? ` (${files} 文件, ${dirs} 目录)` : ''))
-      } else {
-        lines.push(`${tag} readdirSync 成功，条目数: ${entries?.length ?? '?'}`)
-      }
-      if (tc.isError) lines.push(`${tag} ✗ 错误: ${tc.errorText ?? 'unknown'}`)
-      break
-    }
-    case 'readFile': {
-      const fp = String(input.file_path ?? '')
-      lines.push(`${tag} 开始执行, raw input: { file_path: '${fp}' }`)
-      lines.push(`${tag} 解析后 params: { file_path: '${fp}' }`)
-      lines.push(`${tag} filePath: ${fp}`)
-      lines.push(`[fs-tools] checkAccess: ${fp} → ${fp}`)
-      lines.push(`[fs-tools] isApproved: true`)
-      lines.push(`[fs-tools] ✓ 已授权，直接访问`)
-      if (tc.isError) {
-        lines.push(`${tag} ✗ 错误: ${tc.errorText ?? 'unknown'}`)
-      } else {
-        const output = tc.output as string | undefined
-        if (typeof output === 'string') {
-          const lineCount = output.split('\n').length
-          lines.push(`${tag} 读取成功，${lineCount} 行, ${output.length} 字符`)
-        } else {
-          lines.push(`${tag} 读取成功`)
-        }
-      }
-      break
-    }
-    case 'glob': {
-      const pat = String(input.pattern ?? '')
-      const sp = String(input.path ?? '')
-      lines.push(`${tag} 开始执行, raw input: { pattern: '${pat}'${sp ? `, path: '${sp}'` : ''} }`)
-      lines.push(`${tag} walkFiles 完成...`)
-      const output = tc.output as string[] | undefined
-      if (Array.isArray(output)) {
-        lines.push(`${tag} 匹配到 ${output.length} 个文件`)
-      }
-      if (tc.isError) lines.push(`${tag} ✗ 错误: ${tc.errorText ?? 'unknown'}`)
-      break
-    }
-    case 'grep': {
-      const pat = String(input.pattern ?? '')
-      const sp = String(input.search_path ?? input.path ?? '')
-      lines.push(`${tag} 开始执行, raw input: { pattern: '${pat}'${sp ? `, search_path: '${sp}'` : ''} }`)
-      const output = tc.output as unknown
-      if (output && typeof output === 'object') {
-        const arr = Array.isArray(output) ? output : [output]
-        lines.push(`${tag} 搜索完成，找到 ${arr.length} 个匹配`)
-      } else {
-        lines.push(`${tag} 搜索完成`)
-      }
-      if (tc.isError) lines.push(`${tag} ✗ 错误: ${tc.errorText ?? 'unknown'}`)
-      break
-    }
-    case 'bash': {
-      const cmd = String(input.command ?? '')
-      const desc = input.description ? ` (${input.description})` : ''
-      lines.push(`[cc-tools:bash] 开始执行${desc}`)
-      lines.push(`[cc-tools:bash] command: ${cmd.length > 100 ? cmd.slice(0, 100) + '…' : cmd}`)
-      if (tc.isError) {
-        lines.push(`[cc-tools:bash] ✗ 错误: ${tc.errorText ?? 'unknown'}`)
-      } else {
-        lines.push(`[cc-tools:bash] 执行完成`)
-      }
-      break
-    }
-    case 'write':
-    case 'edit':
-    case 'multiEdit': {
-      const fp = extractFilePath(tc.input)
-      if (fp) {
-        lines.push(`[cc-tools:${tc.toolName}] filePath: ${fp}`)
-        if (tc.isError) {
-          lines.push(`[cc-tools:${tc.toolName}] ✗ 错误: ${tc.errorText ?? 'unknown'}`)
-        } else {
-          lines.push(`[cc-tools:${tc.toolName}] 写入成功`)
-        }
-      }
-      break
-    }
-    default: {
-      lines.push(`[tools:${tc.toolName}] 调用`)
-      lines.push(`[tools:${tc.toolName}] input: ${fmtVal(tc.input, 160)}`)
-      if (tc.isError) {
-        lines.push(`[tools:${tc.toolName}] ✗ 错误: ${tc.errorText ?? 'unknown'}`)
-      } else {
-        lines.push(`[tools:${tc.toolName}] 完成`)
-      }
-    }
-  }
-  return lines
-}
 
-function ToolLogs({ conversation }: { conversation: ConversationData | null }) {
-  type LogEntry = {
-    toolCallId: string; toolName: string; line: string
-    timestamp: string; isError: boolean
-  }
 
-  type RoundGroup = { msgId: string; roundIdx: number; timestamp: string; entries: LogEntry[]; usage?: { inputTokens?: number; outputTokens?: number } }
 
-  // 按轮次分组
-  const roundGroups = useMemo(() => {
-    if (!conversation) return []
-    const groups: RoundGroup[] = []
-    let roundNum = 0
-    for (const msg of conversation.messages) {
-      if (msg.role !== 'assistant' || !msg.toolCalls) continue
-      roundNum++
-      const entries: LogEntry[] = []
-      for (const tc of msg.toolCalls) {
-        const lines = generateLogLines(tc)
-        for (const line of lines) {
-          entries.push({
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            line,
-            timestamp: msg.timestamp,
-            isError: line.includes('✗'),
-          })
-        }
-      }
-      groups.push({ msgId: msg.id, roundIdx: roundNum, timestamp: msg.timestamp, entries, usage: msg.usage })
-    }
-    return groups
-  }, [conversation])
-
-  // 默认只展开最后一轮
-  const [expandedRounds, setExpandedRounds] = useState<Set<number>>(() => {
-    if (roundGroups.length === 0) return new Set()
-    return new Set([roundGroups[roundGroups.length - 1].roundIdx])
-  })
-
-  // 当前轮次变化时自动展开
-  useEffect(() => {
-    if (roundGroups.length === 0) return
-    const lastIdx = roundGroups[roundGroups.length - 1].roundIdx
-    setExpandedRounds(prev => {
-      if (prev.has(lastIdx)) return prev
-      const next = new Set([lastIdx]) // 只保留最新轮展开
-      return next
-    })
-  }, [roundGroups.length])
-
-  const toggleRound = (roundIdx: number) => {
-    setExpandedRounds(prev => {
-      const next = new Set(prev)
-      if (next.has(roundIdx)) next.delete(roundIdx)
-      else next.add(roundIdx)
-      return next
-    })
-  }
-
-  // 复制状态：记录刚复制过的轮次 ID
-  const [copiedRound, setCopiedRound] = useState<number | null>(null)
-
-  const handleCopyRound = async (round: RoundGroup) => {
-    const header = `第 ${round.roundIdx} 轮 — ${formatRelativeTime(round.timestamp)}${round.usage ? ` (↑${fmtTokens(round.usage.inputTokens) || '0'} ↓${fmtTokens(round.usage.outputTokens) || '0'})` : ''}`
-    const body = round.entries.map(e => e.line).join('\n')
-    const text = `${header}\n${'─'.repeat(50)}\n${body}`
-    await navigator.clipboard.writeText(text)
-    setCopiedRound(round.roundIdx)
-    setTimeout(() => setCopiedRound(null), 1500)
-  }
-
-  if (roundGroups.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-center p-6">
-        <ScrollText size={32} className="text-text-muted mb-3 opacity-50" />
-        <p className="text-sm text-text-muted">暂无工具日志</p>
-        <p className="text-xs text-text-muted mt-1">Agent 调用工具后，这里将显示详细日志</p>
-      </div>
-    )
-  }
-
-  const totalToolCalls = roundGroups.reduce((sum, g) => sum + new Set(g.entries.map(e => e.toolCallId)).size, 0)
-  const totalLogs = roundGroups.reduce((sum, g) => sum + g.entries.length, 0)
-
-  return (
-    <div className="h-full overflow-y-auto">
-      {/* 统计头 */}
-      <div className="px-3 py-2 border-b border-border-subtle bg-background flex items-center gap-2 sticky top-0 z-10">
-        <Clock size={12} className="text-text-muted" />
-        <span className="text-xs text-text-muted">
-          共 <span className="font-semibold text-text-secondary">{roundGroups.length}</span> 轮对话，
-          <span className="font-semibold text-text-secondary"> {totalToolCalls}</span> 次工具调用，
-          <span className="font-semibold text-text-secondary"> {totalLogs}</span> 条日志
-        </span>
-      </div>
-
-      {/* 日志列表 */}
-      <div className="font-mono text-[11px] leading-relaxed">
-        {roundGroups.map((round) => {
-          const isExpanded = expandedRounds.has(round.roundIdx)
-          let lastTcId = ''
-          return (
-            <div key={round.msgId}>
-              {/* 轮次分割头 — 可点击折叠 */}
-              <button
-                onClick={() => toggleRound(round.roundIdx)}
-                className="flex items-center gap-2 px-3 py-1.5 border-b border-accent/20 w-full text-left hover:bg-accent/10 transition-colors cursor-pointer bg-background sticky top-8 z-[5]"
-              >
-                <ChevronDown
-                  size={10}
-                  className="text-accent flex-shrink-0 transition-transform"
-                  style={{ transform: isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}
-                />
-                <span className="text-[10px] font-semibold text-accent">
-                  第 {round.roundIdx} 轮
-                </span>
-                <span className="text-[10px] text-text-muted">
-                  {formatRelativeTime(round.timestamp)}
-                </span>
-                {round.usage && (round.usage.inputTokens || round.usage.outputTokens) ? (
-                  <span className="text-[10px] text-text-muted/60">
-                    ↑{fmtTokens(round.usage.inputTokens) || '0'} ↓{fmtTokens(round.usage.outputTokens) || '0'}
-                  </span>
-                ) : null}
-                <span className="text-[10px] text-text-muted/50 ml-auto">
-                  {new Set(round.entries.map(e => e.toolCallId)).size} 次调用
-                </span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleCopyRound(round)
-                  }}
-                  title="复制本轮日志"
-                  className="p-0.5 rounded hover:bg-surface/60 transition-colors text-text-muted/40 hover:text-text-muted flex-shrink-0"
-                >
-                  {copiedRound === round.roundIdx ? (
-                    <ClipboardCheck size={12} className="text-status-ok" />
-                  ) : (
-                    <Copy size={12} />
-                  )}
-                </button>
-              </button>
-
-              {/* 折叠内容 */}
-              {isExpanded && round.entries.map((entry, idx) => {
-                const isNewTool = entry.toolCallId !== lastTcId
-                lastTcId = entry.toolCallId
-                return (
-                  <div key={`${entry.toolCallId}-${idx}`}>
-                    {/* 工具调用头 */}
-                    {isNewTool && (
-                      <div className="flex items-center gap-1.5 px-3 py-1 bg-surface/20 border-b border-border-subtle/60">
-                        {React.createElement(getToolIcon(entry.toolName), {
-                          size: 11,
-                          className: 'text-text-muted flex-shrink-0',
-                        })}
-                        <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wide">
-                          {entry.toolName}
-                        </span>
-                      </div>
-                    )}
-                    {/* 日志行 */}
-                    <div
-                      className={`px-3 py-0.5 border-b border-border-subtle/30 whitespace-pre-wrap break-all flex gap-2 ${
-                        entry.isError ? 'text-status-failed bg-status-failed/5' : 'text-text-muted'
-                      }`}
-                    >
-                      <span className="text-text-muted/50 flex-shrink-0 select-none">{formatLogTime(entry.timestamp)}</span>
-                      <span>{entry.line}</span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
 
 // ─── 变更文件面板 ──────────────────────────────────────────────────────────────
 

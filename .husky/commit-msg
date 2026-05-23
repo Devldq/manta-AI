@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Git commit-msg 钩子 — 自动更新版本号
+# 根据 commit message 格式自动递增版本：
+# - feat/feature: → minor 版本 +1
+# - fix/bugfix: → patch 版本 +1  
+# - breaking/BREAKING CHANGE: → major 版本 +1
+# - 其他: → patch 版本 +1
+
+set -e
+
+# 检查 Node.js 环境
+if ! command -v node &> /dev/null; then
+  echo "⚠️  警告: 未找到 Node.js，跳过版本更新"
+  exit 0
+fi
+
+# 检查版本更新脚本是否存在
+SCRIPT_FILE="scripts/update-version.ts"
+if [ ! -f "$SCRIPT_FILE" ]; then
+  echo "⚠️  未找到版本更新脚本: $SCRIPT_FILE"
+  echo "跳过版本更新"
+  exit 0
+fi
+
+# 获取 commit message（从文件参数）
+COMMIT_MSG_FILE="$1"
+if [ ! -f "$COMMIT_MSG_FILE" ]; then
+  echo "⚠️  无法读取 commit message 文件"
+  exit 0
+fi
+
+COMMIT_MSG=$(head -n 1 "$COMMIT_MSG_FILE")
+
+# 跳过 merge commit 和 revert commit
+if echo "$COMMIT_MSG" | grep -qE "^(Merge|Revert)"; then
+  exit 0
+fi
+
+# 执行版本更新
+echo "📦 更新版本号..."
+if command -v npx &> /dev/null; then
+  npx tsx "$SCRIPT_FILE" "$COMMIT_MSG"
+else
+  echo "⚠️  无法执行版本更新脚本"
+fi
+
+# 将更新后的 version.json 加入暂存区
+if [ -f "version.json" ]; then
+  git add version.json
+fi

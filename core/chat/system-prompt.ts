@@ -5,6 +5,8 @@
  * 参考：https://github.com/Piebald-AI/claude-code-system-prompts
  */
 
+import { logger } from '@/core/log'
+
 // ─── 1. 身份与核心定位 ────────────────────────────────────────────────────────
 
 const IDENTITY = `# Identity
@@ -82,7 +84,7 @@ Assist with authorized security testing, defensive security, CTF challenges, and
  * 工作目录模板 — 运行时由 buildSystemPrompt 注入实际 cwd
  */
 function buildWorkingDirectory(cwd: string): string {
-  console.log('cwd',cwd)
+  logger.debug('Building working directory', { cwd }, ['system', 'prompt'])
   return `# Working Directory
 
 The current working directory for file operations is: ${cwd}

@@ -13,8 +13,12 @@ export interface LLMConfig {
   model: string
   /** 温度（0~2，默认 0.7）*/
   temperature?: number
-  /** 最大输出 token 数 */
+  /** 单次调用最大输出 token 数（传给模型） */
   maxTokens?: number
+  /** Agent Loop 累计输出 token 预算上限，0 = 不限（默认 100 万） */
+  maxOutputTokens?: number
+  /** Agent Loop 最大步数上限，0 = 不限（默认 200） */
+  maxSteps?: number
 }
 
 /** 单个模型配置 Profile — 带有 id、name、isDefault 等元信息 */
@@ -30,7 +34,12 @@ export interface ModelProfile {
   baseUrl?: string
   model: string
   temperature?: number
+  /** 单次调用最大输出 token 数（传给模型） */
   maxTokens?: number
+  /** Agent Loop 累计输出 token 预算上限，0 = 不限（默认 100 万） */
+  maxOutputTokens?: number
+  /** Agent Loop 最大步数上限，0 = 不限（默认 200） */
+  maxSteps?: number
 }
 
 /** 多模型配置列表（新存储格式） */
@@ -50,6 +59,8 @@ export function profileToLLMConfig(profile: ModelProfile): LLMConfig {
     model: profile.model,
     temperature: profile.temperature,
     maxTokens: profile.maxTokens,
+    maxOutputTokens: profile.maxOutputTokens,
+    maxSteps: profile.maxSteps,
   }
 }
 

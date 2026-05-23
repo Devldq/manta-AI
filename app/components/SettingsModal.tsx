@@ -1409,6 +1409,10 @@ function LLMTab() {
     model: string
     temperature?: number
     maxTokens?: number
+    /** Agent Loop 累计输出 token 预算上限，0 = 不限 */
+    maxOutputTokens?: number
+    /** Agent Loop 最大步数上限，0 = 不限 */
+    maxSteps?: number
     apiKeyMasked?: string
   }
 
@@ -1472,6 +1476,8 @@ function LLMTab() {
           model: p.model ?? 'gpt-4o-mini',
           temperature: p.temperature ?? 0.7,
           maxTokens: p.maxTokens,
+          maxOutputTokens: p.maxOutputTokens,
+          maxSteps: p.maxSteps,
           apiKeyMasked: p.apiKeyMasked ?? (p.apiKey === '****' ? '****' : undefined),
         })))
         setActiveProfileId(data.activeProfileId || '')
@@ -1512,6 +1518,8 @@ function LLMTab() {
       baseUrl: DEFAULT_BASE_URLS['openai'] ?? '',
       model: 'gpt-4o-mini',
       temperature: 0.7,
+      maxOutputTokens: 1_000_000,
+      maxSteps: 200,
     })
     setMsg(null)
   }
@@ -1856,6 +1864,8 @@ function LLMTab() {
         model: p.model ?? 'gpt-4o-mini',
         temperature: p.temperature ?? 0.7,
         maxTokens: p.maxTokens,
+        maxOutputTokens: p.maxOutputTokens,
+        maxSteps: p.maxSteps,
         apiKeyMasked: p.apiKeyMasked ?? (p.apiKey === '****' ? '****' : undefined),
       })))
       setActiveProfileId(data.activeProfileId || '')
@@ -2360,6 +2370,73 @@ function LLMTab() {
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
                 <span>0 — 确定性</span>
                 <span>2 — 高随机</span>
+              </div>
+            </div>
+
+            {/* Agent Loop 限制 */}
+            <div style={{ marginBottom: '20px', padding: '12px', background: 'var(--color-surface)', borderRadius: '8px', border: '1px solid var(--color-border)' }}>
+              <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '12px' }}>
+                Agent Loop 限制
+              </div>
+              
+              {/* 最大输出 Token 预算 */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
+                  <span>累计输出 Token 预算</span>
+                  <span style={{ fontFamily: 'monospace', color: 'var(--color-text-primary)', fontSize: '11px' }}>
+                    {editForm.maxOutputTokens === 0 ? '不限' : (editForm.maxOutputTokens ?? 1_000_000)}
+                  </span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="100000"
+                  value={editForm.maxOutputTokens ?? 1_000_000}
+                  onChange={(e) => setEditForm((p) => p ? { ...p, maxOutputTokens: parseInt(e.target.value) || 0 } : p)}
+                  placeholder="1000000，0 = 不限"
+                  style={{
+                    width: '100%',
+                    padding: '6px 10px',
+                    borderRadius: '6px',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                    color: 'var(--color-text-primary)',
+                    fontSize: '13px',
+                  }}
+                />
+                <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', marginTop: '4px' }}>
+                  累计输出 token 达到上限后停止循环，设为 0 不限制（默认 100 万）
+                </div>
+              </div>
+
+              {/* 最大步数 */}
+              <div>
+                <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '6px' }}>
+                  <span>最大执行步数</span>
+                  <span style={{ fontFamily: 'monospace', color: 'var(--color-text-primary)', fontSize: '11px' }}>
+                    {editForm.maxSteps === 0 ? '不限' : (editForm.maxSteps ?? 200)}
+                  </span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="10"
+                  value={editForm.maxSteps ?? 200}
+                  onChange={(e) => setEditForm((p) => p ? { ...p, maxSteps: parseInt(e.target.value) || 0 } : p)}
+                  placeholder="200，0 = 不限"
+                  style={{
+                    width: '100%',
+                    padding: '6px 10px',
+                    borderRadius: '6px',
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                    color: 'var(--color-text-primary)',
+                    fontSize: '13px',
+                  }}
+                />
+                <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', marginTop: '4px' }}>
+                  Agent 单次请求最大执行步数，设为 0 不限制（默认 200）
+                </div>
               </div>
             </div>
 

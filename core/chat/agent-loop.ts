@@ -7,12 +7,13 @@ import { getAgentTools } from '@/core/tool-registry/mcp-setup'
 import { LoopDetector } from './loop-detector'
 import type { LoopDetectionResult } from './loop-detector'
 import { formatAIError, formatErrorForSSE } from './error-formatter'
+import { logger } from '@/core/log'
 
-/** Token 预算上限（累计输出 token 超过此值则停止） */
-const MAX_OUTPUT_TOKENS = 8000
+/** Token 预算默认值 */
+const DEFAULT_MAX_OUTPUT_TOKENS = 1_000_000
 
-/** 安全兜底步数上限（极高值，仅在循环检测和 token 预算都未触发时生效） */
-const SAFETY_MAX_STEPS = 100
+/** 安全兜底步数默认值 */
+const DEFAULT_MAX_STEPS = 200
 
 /** Agent Loop 选项 */
 export interface AgentLoopOptions {
@@ -44,20 +45,24 @@ interface StopDecision {
 
 /**
  * 判断是否应该退出循环（合并所有检测逻辑，避免重复调用 detect）
+ * @param maxOutputTokens Token 预算上限，0 = 不限
+ * @param maxSteps 步数上限，0 = 不限
  */
 function decideStop(
   stepCollect: StepCollect,
   loopDetector: LoopDetector,
   totalOutputTokens: number,
-  stepIndex: number
+  stepIndex: number,
+  maxOutputTokens: number,
+  maxSteps: number,
 ): StopDecision {
-  // 1. 安全兜底步数上限
-  if (stepIndex >= SAFETY_MAX_STEPS) {
-    return { shouldStop: true, reason: `safety-max-steps:${SAFETY_MAX_STEPS}` }
+  // 1. 安全兜底步数上限（0 = 不限）
+  if (maxSteps > 0 && stepIndex >= maxSteps) {
+    return { shouldStop: true, reason: `safety-max-steps:${maxSteps}` }
   }
 
-  // 2. Token 预算超限
-  if (totalOutputTokens >= MAX_OUTPUT_TOKENS) {
+  // 2. Token 预算超限（0 = 不限）
+  if (maxOutputTokens > 0 && totalOutputTokens >= maxOutputTokens) {
     return { shouldStop: true, reason: 'token-budget' }
   }
 
@@ -154,7 +159,10 @@ function appendStepToMessages(
     const resultCallIds = new Set(stepCollect.toolResults.map((r) => r.toolCallId))
     for (const call of stepCollect.toolCalls) {
       if (!resultCallIds.has(call.toolCallId)) {
-        console.warn(`[AgentLoop] 工具 ${call.toolName} (${call.toolCallId}) 缺少结果，补充兜底错误`)
+        logger.warn(`[AgentLoop] 工具 ${call.toolName} (${call.toolCallId}) 缺少结果，补充兜底错误`, {
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+        }, ['agent', 'loop', 'tool-missing'])
         newMessages.push({
           role: 'tool' as const,
           content: [
@@ -182,6 +190,10 @@ function appendStepToMessages(
 export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFinish, onError }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
+
+  // 从配置读取限制，0 = 不限，未设置则用默认值
+  const maxOutputTokens = llmConfig.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
+  const maxSteps = llmConfig.maxSteps ?? DEFAULT_MAX_STEPS
 
   const encoder = new TextEncoder()
   let streamController!: ReadableStreamDefaultController<Uint8Array>
@@ -213,7 +225,10 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
       streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'start', messageId })}\n\n`))
 
       while (true) {
-        console.log(`[AgentLoop] Step ${stepIndex + 1}...`)
+        logger.info(`[AgentLoop] Step ${stepIndex + 1}...`, {
+          messageId,
+          stepIndex,
+        }, ['agent', 'loop', 'step-start'])
 
         // 注入警告消息到 systemPrompt
         const effectiveSystemPrompt = warningMessage
@@ -294,7 +309,12 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
             case 'tool-error':
               // 工具执行抛出异常时，AI SDK 发出 tool-error chunk（而非 tool-result）
               // 必须收集此 chunk，否则下次 streamText 会因为缺少 tool-result 而报错
-              console.warn(`[AgentLoop] 工具 ${chunk.toolName} 执行出错:`, chunk.error)
+              logger.error(`[AgentLoop] 工具 ${chunk.toolName} 执行出错`, chunk.error, {
+                messageId,
+                stepIndex,
+                toolCallId: chunk.toolCallId,
+                toolName: chunk.toolName,
+              }, ['agent', 'loop', 'tool-error'])
               stepCollect.toolResults.push({
                 toolCallId: chunk.toolCallId,
                 toolName: chunk.toolName,
@@ -329,14 +349,23 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
         allStepCollects.push(stepCollect)
 
         // 判断退出条件（一次调用，包含 warning 检测）
-        const decision = decideStop(stepCollect, loopDetector, totalOutputTokens, stepIndex)
+        const decision = decideStop(stepCollect, loopDetector, totalOutputTokens, stepIndex, maxOutputTokens, maxSteps)
         if (decision.shouldStop) {
-          console.log(`[AgentLoop] Stopping: ${decision.reason}`)
+          logger.info(`[AgentLoop] Stopping: ${decision.reason}`, {
+            messageId,
+            stepIndex,
+            reason: decision.reason,
+            totalOutputTokens,
+          }, ['agent', 'loop', 'stop'])
           break
         }
         if (decision.warningToInject) {
           warningMessage = decision.warningToInject
-          console.warn(`[LoopDetector] Warning：${warningMessage}`)
+          logger.warn(`[LoopDetector] Warning：${warningMessage}`, {
+            messageId,
+            stepIndex,
+            warning: warningMessage,
+          }, ['agent', 'loop', 'warning'])
         }
 
         // 将步骤结果追加到消息列表
@@ -374,7 +403,10 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
       // 流结束，关闭 controller
       streamController.close()
     } catch (err) {
-      console.error('[AgentLoop] Error:', err)
+      logger.error('[AgentLoop] Error:', err, {
+        messageId,
+        stepIndex,
+      }, ['agent', 'loop', 'error'])
       // 将技术错误转换为用户友好的提示
       const errorInfo = formatAIError(err)
       const friendlyMessage = formatErrorForSSE(errorInfo)

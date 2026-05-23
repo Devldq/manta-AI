@@ -8,6 +8,8 @@
  * 本模块提供 transformChunk() 函数，逐个转换 fullStream chunk 为客户端可接受的格式。
  */
 
+import { logger } from '@/core/log'
+
 /** 生成唯一 ID（使用随机后缀，避免多请求并发冲突） */
 function genId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -174,7 +176,9 @@ export function transformChunk(chunk: FullStreamChunk): UIMessageChunkOutput | n
 
     default:
       // 未识别的 chunk 类型：安全跳过，避免客户端 schema 验证失败
-      console.warn(`[stream-transformer] Unknown chunk type: ${chunk.type}, skipping`)
+      logger.warn(`[stream-transformer] Unknown chunk type: ${chunk.type}, skipping`, {
+        chunkType: chunk.type,
+      }, ['stream', 'transformer', 'unknown-chunk'])
       return null
   }
 }
