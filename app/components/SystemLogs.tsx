@@ -1,68 +1,57 @@
-/* 会话日志组件 */
+/* 会话日志组件 — 紧凑单行视图，按 agent-loop 轮次分组 */
 
 'use client'
 
-import React, { useState, useEffect, useMemo, useCallback, memo } from 'react'
+import React, { useState, useEffect, useMemo, memo } from 'react'
 import { 
   ScrollText, 
-  Clock, 
   ChevronDown, 
+  ChevronRight,
   Copy, 
-  ClipboardCheck, 
   Filter, 
   Search, 
   RefreshCw, 
   Trash2, 
   Download,
   Upload,
-  Settings,
   AlertCircle,
-  Info,
-  AlertTriangle,
-  XCircle,
-  Bug,
-  Zap,
-  Workflow,
-  User,
-  Shield,
   Wrench,
   Terminal,
   FileCode,
   FileSearch,
   Folder,
-  Pencil
+  Pencil,
+  Layers,
+  List,
 } from 'lucide-react'
 import { useLogState, useLogFilter, useLogExport, useLogActions } from '@/core/log/hooks'
 import { LogEntry, LogLevel, LogType, LogSource, LogFilter } from '@/core/log/types'
 
-/** 日志级别图标映射 */
-const LEVEL_ICONS: Record<LogLevel, React.ComponentType<{ size?: number; className?: string }>> = {
-  [LogLevel.DEBUG]: Bug,
-  [LogLevel.INFO]: Info,
-  [LogLevel.WARN]: AlertTriangle,
-  [LogLevel.ERROR]: XCircle,
-  [LogLevel.FATAL]: AlertCircle,
-}
-
-/** 日志级别颜色映射 */
+/** 日志级别颜色映射（纯前景色） */
 const LEVEL_COLORS: Record<LogLevel, string> = {
-  [LogLevel.DEBUG]: 'text-gray-500 bg-gray-500/10',
-  [LogLevel.INFO]: 'text-blue-500 bg-blue-500/10',
-  [LogLevel.WARN]: 'text-yellow-500 bg-yellow-500/10',
-  [LogLevel.ERROR]: 'text-red-500 bg-red-500/10',
-  [LogLevel.FATAL]: 'text-purple-500 bg-purple-500/10',
+  [LogLevel.DEBUG]: 'text-gray-500',
+  [LogLevel.INFO]: 'text-blue-500',
+  [LogLevel.WARN]: 'text-yellow-500',
+  [LogLevel.ERROR]: 'text-red-500',
+  [LogLevel.FATAL]: 'text-purple-500',
 }
 
-/** 日志类型图标映射 */
-const TYPE_ICONS: Record<LogType, React.ComponentType<{ size?: number; className?: string }>> = {
-  [LogType.TOOL_CALL]: Wrench,
-  [LogType.SYSTEM]: Settings,
-  [LogType.AGENT_LOOP]: RefreshCw,
-  [LogType.WORKFLOW]: Workflow,
-  [LogType.USER_ACTION]: User,
-  [LogType.PERFORMANCE]: Zap,
-  [LogType.ERROR]: XCircle,
-  [LogType.SECURITY]: Shield,
+/** 日志级别背景色映射 */
+const LEVEL_BG: Record<LogLevel, string> = {
+  [LogLevel.DEBUG]: 'bg-gray-500/10',
+  [LogLevel.INFO]: 'bg-blue-500/10',
+  [LogLevel.WARN]: 'bg-yellow-500/10',
+  [LogLevel.ERROR]: 'bg-red-500/10',
+  [LogLevel.FATAL]: 'bg-purple-500/10',
+}
+
+/** 日志级别简写 */
+const LEVEL_SHORT: Record<LogLevel, string> = {
+  [LogLevel.DEBUG]: 'DBG',
+  [LogLevel.INFO]: 'INF',
+  [LogLevel.WARN]: 'WRN',
+  [LogLevel.ERROR]: 'ERR',
+  [LogLevel.FATAL]: 'FTL',
 }
 
 /** 日志来源标签映射 */
@@ -86,21 +75,6 @@ const TOOL_ICON_MAP: Record<string, React.ComponentType<{ size?: number; classNa
   multiEdit: Pencil,
 }
 
-/** 格式化相对时间 */
-function formatRelativeTime(ts: string): string {
-  try {
-    const diff = Date.now() - new Date(ts).getTime()
-    const mins = Math.floor(diff / 60000)
-    if (mins < 1) return '刚刚'
-    if (mins < 60) return `${mins}m 前`
-    const hours = Math.floor(mins / 60)
-    if (hours < 24) return `${hours}h 前`
-    return `${Math.floor(hours / 24)}d 前`
-  } catch {
-    return ''
-  }
-}
-
 /** 格式化日志时间 */
 function formatLogTime(ts: string): string {
   try {
@@ -111,17 +85,99 @@ function formatLogTime(ts: string): string {
   }
 }
 
-/** 截断文本 */
-function truncateText(text: string, maxLen: number): string {
-  if (!text) return ''
-  return text.length > maxLen ? text.slice(0, maxLen) + '…' : text
+/** 格式化完整时间 */
+function formatFullTime(ts: string): string {
+  try {
+    const d = new Date(ts)
+    return d.toLocaleString('zh-CN', { hour12: false })
+  } catch {
+    return ts
+  }
 }
 
-/** 格式化token数 */
-function fmtTokens(n: number | undefined): string {
-  if (n === undefined || n === 0) return ''
-  if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + 'w'
-  return String(n)
+/** 获取 stepIndex（从 metadata 中提取） */
+function getStepIndex(log: LogEntry): number | undefined {
+  return log.metadata?.stepIndex as number | undefined
+}
+
+/** 按 agent-loop 轮次分组日志，未分组日志按时间戳插入轮次之间 */
+function buildGroups(logs: LogEntry[]): LogGroup[] {
+  const map = new Map<string, LogGroup>()
+  const ungrouped: LogEntry[] = []
+
+  for (const log of logs) {
+    const si = getStepIndex(log)
+    if (si !== undefined && si >= 0) {
+      const key = String(si)
+      let group = map.get(key)
+      if (!group) {
+        group = {
+          key,
+          stepIndex: si,
+          entries: [],
+          toolCallCount: 0,
+          errorCount: 0,
+        }
+        map.set(key, group)
+      }
+      group.entries.push(log)
+      if (log.type === LogType.TOOL_CALL) group.toolCallCount++
+      if (log.level === LogLevel.ERROR || log.level === LogLevel.FATAL) group.errorCount++
+      if (log.type === LogType.AGENT_LOOP) group.agentLoopLog = log
+    } else {
+      ungrouped.push(log)
+    }
+  }
+
+  const rounds = Array.from(map.values()).sort((a, b) => a.stepIndex - b.stepIndex)
+
+  if (ungrouped.length === 0) return rounds
+
+  // 每个轮次取最早一条日志的时间戳作为位置标记
+  const roundTimestamps = rounds.map(g => ({
+    ts: g.entries[0]?.timestamp ?? '',
+    group: g,
+  }))
+
+  // 按时间戳排序的 merged 列表: { ts, type: 'round' | 'log', group?, log? }
+  type Slot = { ts: string; type: 'round'; group: LogGroup } | { ts: string; type: 'log'; log: LogEntry }
+  const slots: Slot[] = [
+    ...roundTimestamps.map(r => ({ ts: r.ts, type: 'round' as const, group: r.group })),
+    ...ungrouped.map(l => ({ ts: l.timestamp, type: 'log' as const, log: l })),
+  ]
+  slots.sort((a, b) => a.ts.localeCompare(b.ts))
+
+  // 合并相邻的非 round slot 为一个 __ungrouped__ 组，保留 round slot 原位
+  const result: LogGroup[] = []
+  let pendingUngrouped: LogEntry[] = []
+  let ungroupedSeq = 0
+
+  const flushUngrouped = () => {
+    if (pendingUngrouped.length === 0) return
+    result.push({
+      key: `__ungrouped__${ungroupedSeq++}`,
+      stepIndex: -1,
+      entries: [...pendingUngrouped],
+      toolCallCount: pendingUngrouped.filter(l => l.type === LogType.TOOL_CALL).length,
+      errorCount: pendingUngrouped.filter(l => l.level === LogLevel.ERROR || l.level === LogLevel.FATAL).length,
+    })
+    pendingUngrouped = []
+  }
+
+  for (const slot of slots) {
+    if (slot.type === 'round') {
+      flushUngrouped()
+      // 避免重复添加同一个 round（一个 round 可能被多次命中，用 stepIndex 去重）
+      if (!result.some(g => g.key === slot.group.key)) {
+        result.push(slot.group)
+      }
+    } else {
+      pendingUngrouped.push(slot.log)
+    }
+  }
+  flushUngrouped()
+
+  return result
 }
 
 /** 会话日志组件属性 */
@@ -138,6 +194,22 @@ interface SystemLogsProps {
   showActions?: boolean
   /** 最大高度 */
   maxHeight?: string
+}
+
+/** 分组结构 */
+interface LogGroup {
+  /** 分组键：stepIndex 或 ''(无分组) */
+  key: string
+  /** 轮次索引（从0开始），未分组为 -1 */
+  stepIndex: number
+  /** 该组日志条目 */
+  entries: LogEntry[]
+  /** 工具调用次数 */
+  toolCallCount: number
+  /** 错误数 */
+  errorCount: number
+  /** AgentLoop 步骤完成日志 */
+  agentLoopLog?: LogEntry
 }
 
 /** 会话日志组件 */
@@ -165,7 +237,7 @@ export const SystemLogs = memo(function SystemLogs({
     clearTimeRange,
   } = useLogFilter()
 
-  // 合并 props 过滤 + 面板过滤（conversationId 不作为过滤条件，而是直接指定日志文件）
+  // 合并 props 过滤 + 面板过滤
   const combinedFilter = useMemo(
     () => ({ ...initialFilter, ...filter }),
     [initialFilter, filter]
@@ -173,511 +245,412 @@ export const SystemLogs = memo(function SystemLogs({
   const { logs, stats, loading, error, refreshLogs } = useLogState(combinedFilter, conversationId)
 
   // 日志导出
-  const { exporting, exportResult, exportLogs, downloadExport, clearExport } = useLogExport()
+  const { exporting, exportLogs, downloadExport } = useLogExport()
 
   // 日志操作
   const { clearing, reporting, clearLogs, reportLogs } = useLogActions()
 
-  // 搜索状态
+  // UI 状态
   const [searchTerm, setSearchTerm] = useState('')
   const [showFilterPanel, setShowFilterPanel] = useState(false)
+  const [groupByRound, setGroupByRound] = useState(true)              // 是否按轮次分组
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())  // 展开的分组key
+  const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set()) // 展开详情的条目id
 
   // 应用初始过滤器
   useEffect(() => {
-    if (initialFilter) {
-      updateFilter(initialFilter)
-    }
+    if (initialFilter) updateFilter(initialFilter)
   }, [initialFilter, updateFilter])
 
   // 应用会话ID过滤
   useEffect(() => {
-    if (conversationId) {
-      updateFilter({ conversationId })
-    }
+    if (conversationId) updateFilter({ conversationId })
   }, [conversationId, updateFilter])
 
-  // 搜索处理
+  // 默认展开所有分组（包括其他日志）
+  useEffect(() => {
+    if (!groupByRound) return
+    const groups = buildGroups(logs)
+    if (groups.length === 0) return
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      let changed = false
+      for (const g of groups) {
+        if (!next.has(g.key)) { next.add(g.key); changed = true }
+      }
+      return changed ? next : prev
+    })
+  }, [logs, groupByRound])
+
+  // ── 分组逻辑 ──
+  const groups = useMemo(() => buildGroups(logs), [logs])
+  const groupCount = groups.length
+
+  // ── 搜索 ──
   const handleSearch = (term: string) => {
     setSearchTerm(term)
     setSearch(term)
   }
 
-  // 刷新日志
-  const handleRefresh = () => {
-    refreshLogs()
-  }
-
-  // 清空日志
+  // ── 刷新/清空/上报/导出 ──
+  const handleRefresh = () => refreshLogs()
   const handleClear = async () => {
     if (confirm('确定要清空所有日志吗？此操作不可恢复。')) {
       await clearLogs()
       refreshLogs()
     }
   }
-
-  // 上报日志
-  const handleReport = async () => {
-    await reportLogs()
-    refreshLogs()
-  }
-
-  // 导出日志
+  const handleReport = async () => { await reportLogs(); refreshLogs() }
   const handleExport = async (format: 'json' | 'csv' | 'text' | 'html') => {
     try {
-      const result = await exportLogs({
-        format,
-        filter,
-        includeMetadata: true,
-        includeDetails: true,
-      })
+      const result = await exportLogs({ format, filter, includeMetadata: true, includeDetails: true })
       downloadExport(result)
-    } catch (error) {
-      console.error('Export failed:', error)
-    }
+    } catch (err) { console.error('Export failed:', err) }
   }
 
-  // 复制日志
+  // ── 分组展开/折叠 ──
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+  }
+  const toggleEntry = (id: string) => {
+    setExpandedEntries(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  // ── 复制 ──
   const handleCopyLog = async (log: LogEntry) => {
     const text = `[${log.timestamp}] ${log.level.toUpperCase()} ${log.type}: ${log.message}`
     await navigator.clipboard.writeText(text)
   }
-
-  // 复制所有日志
   const handleCopyAll = async () => {
-    const text = logs.map(log => 
-      `[${log.timestamp}] ${log.level.toUpperCase()} ${log.type}: ${log.message}`
-    ).join('\n')
+    const text = logs.map(l => `[${l.timestamp}] ${l.level.toUpperCase()} ${l.type}: ${l.message}`).join('\n')
     await navigator.clipboard.writeText(text)
   }
 
-  // 获取日志级别图标
-  const getLevelIcon = (level: LogLevel) => {
-    const Icon = LEVEL_ICONS[level] || Info
-    return <Icon size={12} />
-  }
-
-  // 获取日志类型图标
-  const getTypeIcon = (type: LogType) => {
-    const Icon = TYPE_ICONS[type] || Settings
-    return <Icon size={12} />
-  }
-
-  // 获取工具图标
+  // ── 工具图标 ──
   const getToolIcon = (toolName: string) => {
     const Icon = TOOL_ICON_MAP[toolName] || Wrench
-    return <Icon size={12} />
+    return <Icon size={11} />
   }
 
-  // 渲染日志条目
-  const renderLogEntry = (log: LogEntry, index: number) => {
-    const levelColor = LEVEL_COLORS[log.level] || 'text-gray-500 bg-gray-500/10'
+  // ── 渲染单条紧凑日志行 ──
+  const renderLogLine = (log: LogEntry) => {
+    const isError = log.level === LogLevel.ERROR || log.level === LogLevel.FATAL
     const isToolCall = log.type === LogType.TOOL_CALL
     const toolName = isToolCall ? (log.details as any)?.toolName : null
+    const isExpanded = expandedEntries.has(log.id)
 
     return (
-      <div
-        key={log.id}
-        className={`px-3 py-2 border-b border-border-subtle hover:bg-surface/50 transition-colors ${
-          log.level === LogLevel.ERROR || log.level === LogLevel.FATAL 
-            ? 'bg-red-500/5' 
-            : ''
-        }`}
-      >
-        <div className="flex items-start gap-2">
+      <div key={log.id} className="log-line group">
+        {/* 主行：单行显示 */}
+        <div
+          className={`flex items-center gap-1.5 px-2 py-[2px] cursor-pointer select-none
+            ${isError ? 'bg-red-500/[0.06]' : ''} 
+            hover:bg-surface/60 transition-colors`}
+          onClick={() => toggleEntry(log.id)}
+        >
+          {/* 展开指示器 */}
+          <span className="w-3.5 flex-shrink-0 text-text-muted/50">
+            {isExpanded
+              ? <ChevronDown size={10} />
+              : <ChevronRight size={10} />
+            }
+          </span>
+
           {/* 时间戳 */}
-          <span className="text-[10px] text-text-muted/50 flex-shrink-0 select-none w-16">
+          <span className="text-[10px] text-text-muted/60 flex-shrink-0 w-14 tabular-nums">
             {formatLogTime(log.timestamp)}
           </span>
 
-          {/* 日志级别 */}
-          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${levelColor}`}>
-            {getLevelIcon(log.level)}
-            {log.level.toUpperCase()}
+          {/* 级别标记 */}
+          <span className={`text-[10px] font-semibold flex-shrink-0 w-7 ${LEVEL_COLORS[log.level]}`}>
+            {LEVEL_SHORT[log.level]}
           </span>
 
-          {/* 日志类型 */}
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface/50 text-text-secondary">
-            {getTypeIcon(log.type)}
-            {log.type}
-          </span>
-
-          {/* 日志来源 */}
-          <span className="text-[10px] text-text-muted">
-            [{SOURCE_LABELS[log.source] || log.source}]
-          </span>
-
-          {/* 工具名称（如果是工具调用日志） */}
+          {/* 工具名称（有色小标记） */}
           {isToolCall && toolName && (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent/10 text-accent">
+            <span className="inline-flex items-center gap-0.5 px-1 rounded text-[10px] bg-accent/10 text-accent flex-shrink-0 max-w-[72px] truncate">
               {getToolIcon(toolName)}
-              {toolName}
+              <span className="truncate">{toolName}</span>
             </span>
           )}
 
-          {/* 操作按钮 */}
-          <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              onClick={() => handleCopyLog(log)}
-              title="复制日志"
-              className="p-0.5 rounded hover:bg-surface/60 transition-colors text-text-muted/40 hover:text-text-muted"
-            >
-              <Copy size={10} />
-            </button>
-          </div>
-        </div>
-
-        {/* 日志消息 */}
-        <div className="mt-1 ml-16">
-          <p className="text-xs text-text-primary font-mono whitespace-pre-wrap break-all">
+          {/* 消息主体 — 单行截断 */}
+          <span className={`text-[11px] truncate flex-1 min-w-0 ${isError ? 'text-red-400' : 'text-text-primary'}`}>
             {log.message}
-          </p>
+          </span>
+
+          {/* hover 操作 */}
+          <button
+            onClick={(e) => { e.stopPropagation(); handleCopyLog(log) }}
+            className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-surface/80 transition-all text-text-muted/40 flex-shrink-0"
+            title="复制"
+          >
+            <Copy size={10} />
+          </button>
         </div>
 
-        {/* 日志详情（如果有） */}
-        {log.details && (
-          <div className="mt-1 ml-16">
-            <details className="text-[10px] text-text-muted">
-              <summary className="cursor-pointer hover:text-text-secondary">
-                详情
-              </summary>
-              <pre className="mt-1 p-2 bg-surface/30 rounded overflow-x-auto">
-                {JSON.stringify(log.details, null, 2)}
-              </pre>
-            </details>
-          </div>
-        )}
+        {/* 展开详情行 */}
+        {isExpanded && (
+          <div className="px-2 pb-1.5 ml-[22px] border-l border-border-subtle">
+            <div className="pl-3">
+              {/* 元信息 */}
+              <div className="flex items-center gap-2 text-[10px] text-text-muted/70 pt-1">
+                <span>{formatFullTime(log.timestamp)}</span>
+                <span>|</span>
+                <span>{log.type.replace(/_/g, ' ')}</span>
+                <span>|</span>
+                <span>{SOURCE_LABELS[log.source] || log.source}</span>
+                {toolName && <span>| {toolName}</span>}
+                {log.metadata?.durationMs != null && (
+                  <span>| {log.metadata.durationMs}ms</span>
+                )}
+                <span className="text-text-muted/40">|</span>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    await navigator.clipboard.writeText(log.id)
+                  }}
+                  className="text-text-muted/40 hover:text-text-muted transition-colors font-mono"
+                  title={`ID: ${log.id}\n点击复制`}
+                >
+                  {log.id.slice(0, 10)}…
+                </button>
+              </div>
 
-        {/* 标签（如果有） */}
-        {log.tags && log.tags.length > 0 && (
-          <div className="mt-1 ml-16 flex flex-wrap gap-1">
-            {log.tags.map((tag, idx) => (
-              <span
-                key={idx}
-                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-surface/50 text-text-muted"
-              >
-                #{tag}
-              </span>
-            ))}
-          </div>
-        )}
+              {/* 完整消息 */}
+              <p className="text-[11px] text-text-primary font-mono whitespace-pre-wrap break-all mt-0.5">
+                {log.message}
+              </p>
 
-        {/* 元数据（如果有） */}
-        {log.metadata && Object.keys(log.metadata).length > 0 && (
-          <div className="mt-1 ml-16">
-            <details className="text-[10px] text-text-muted">
-              <summary className="cursor-pointer hover:text-text-secondary">
-                元数据
-              </summary>
-              <pre className="mt-1 p-2 bg-surface/30 rounded overflow-x-auto">
-                {JSON.stringify(log.metadata, null, 2)}
-              </pre>
-            </details>
+              {/* details JSON */}
+              {log.details && Object.keys(log.details).length > 0 && (
+                <div className="text-[10px] text-text-muted mt-0.5">
+                  <span className="text-text-muted/60">details</span>
+                  <pre className="mt-0.5 p-1.5 bg-surface/30 rounded text-[10px] overflow-x-auto max-h-32">
+                    {JSON.stringify(log.details, null, 2)}
+                  </pre>
+                </div>
+              )}
+
+              {/* metadata JSON */}
+              {log.metadata && Object.keys(log.metadata).length > 0 && (
+                <div className="text-[10px] text-text-muted">
+                  <span className="text-text-muted/60">metadata</span>
+                  <pre className="mt-0.5 p-1.5 bg-surface/30 rounded text-[10px] overflow-x-auto max-h-32">
+                    {JSON.stringify(log.metadata, null, 2)}
+                  </pre>
+                </div>
+              )}
+
+              {/* 标签 */}
+              {log.tags && log.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {log.tags.map((tag, idx) => (
+                    <span key={idx} className="px-1 py-px rounded text-[9px] bg-surface/50 text-text-muted">
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
     )
   }
 
-  // 渲染统计信息
-  const renderStats = () => {
-    if (!stats) return null
+  // ── 渲染分组头 ──
+  const renderGroupHeader = (group: LogGroup) => {
+    const isExpanded = expandedGroups.has(group.key)
+    const isUngrouped = group.stepIndex < 0
 
     return (
-      <div className="px-3 py-2 border-b border-border-subtle bg-background flex items-center gap-4 sticky top-0 z-10">
-        <div className="flex items-center gap-2">
-          <Clock size={12} className="text-text-muted" />
-          <span className="text-xs text-text-muted">
-            共 <span className="font-semibold text-text-secondary">{stats.total}</span> 条日志
+      <div
+        className={`flex items-center gap-2 px-2 py-1 cursor-pointer select-none sticky top-0 z-[5]
+          ${isUngrouped ? 'bg-surface/40' : 'bg-surface/60'}
+          border-b border-border-subtle hover:bg-surface/70 transition-colors`}
+        onClick={() => toggleGroup(group.key)}
+      >
+        <span className="text-text-muted/60 flex-shrink-0">
+          {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </span>
+
+        <span className="text-[10px] font-semibold text-text-secondary flex-shrink-0">
+          {isUngrouped ? '其他日志' : `第 ${group.stepIndex + 1} 轮`}
+        </span>
+
+        <span className="text-[10px] text-text-muted/60">
+          {group.entries.length} 条
+          {group.toolCallCount > 0 && ` · ${group.toolCallCount} 工具调用`}
+          {group.errorCount > 0 && (
+            <span className="text-red-500 ml-1">· {group.errorCount} 错误</span>
+          )}
+        </span>
+
+        {/* Agent loop 摘要信息 */}
+        {group.agentLoopLog && (
+          <span className="text-[10px] text-text-muted/50 truncate ml-auto">
+            {(group.agentLoopLog.details as any)?.finishReason && 
+              `结束: ${(group.agentLoopLog.details as any).finishReason}`}
           </span>
-        </div>
+        )}
+      </div>
+    )
+  }
 
+  // ── 统计栏 ──
+  const renderStats = () => {
+    if (!stats) return null
+    return (
+      <div className="px-2 py-1 border-b border-border-subtle bg-background flex items-center gap-3 sticky top-0 z-10">
+        <span className="text-[10px] text-text-muted">
+          共 <span className="font-semibold text-text-secondary">{stats.total}</span> 条
+        </span>
+        {groupByRound && groupCount > 0 && (
+          <span className="text-[10px] text-text-muted">
+            <span className="font-semibold text-text-secondary">{groupCount}</span> 轮
+          </span>
+        )}
         {stats.errorRate > 0 && (
-          <div className="flex items-center gap-1">
-            <AlertCircle size={12} className="text-red-500" />
-            <span className="text-xs text-red-500">
-              错误率: {(stats.errorRate * 100).toFixed(1)}%
-            </span>
-          </div>
+          <span className="text-[10px] text-red-500">
+            错误 {(stats.errorRate * 100).toFixed(0)}%
+          </span>
         )}
-
-        {stats.averageDuration !== undefined && (
-          <div className="flex items-center gap-1">
-            <Zap size={12} className="text-yellow-500" />
-            <span className="text-xs text-yellow-500">
-              平均耗时: {stats.averageDuration.toFixed(0)}ms
-            </span>
-          </div>
-        )}
-
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={() => setGroupByRound(!groupByRound)}
+            className={`p-1 rounded transition-colors ${groupByRound ? 'text-accent' : 'text-text-muted hover:text-text-secondary'}`}
+            title={groupByRound ? '平铺视图' : '分组视图'}
+          >
+            {groupByRound ? <Layers size={11} /> : <List size={11} />}
+          </button>
           <button
             onClick={handleRefresh}
             disabled={loading}
             className="p-1 rounded hover:bg-surface/60 transition-colors text-text-muted hover:text-text-secondary disabled:opacity-50"
             title="刷新"
           >
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
     )
   }
 
-  // 渲染过滤器面板
+  // ── 过滤器面板 ──
   const renderFilterPanel = () => {
     if (!showFilterPanel) return null
-
     return (
-      <div className="px-3 py-2 border-b border-border-subtle bg-surface/30">
-        <div className="flex items-center gap-2 mb-2">
-          <Filter size={12} className="text-text-muted" />
-          <span className="text-xs font-medium text-text-secondary">过滤器</span>
-          <button
-            onClick={resetFilter}
-            className="ml-auto text-[10px] text-text-muted hover:text-text-secondary"
-          >
-            重置
-          </button>
+      <div className="px-2 py-1.5 border-b border-border-subtle bg-surface/30">
+        <div className="flex items-center gap-2 mb-1.5">
+          <Filter size={10} className="text-text-muted" />
+          <span className="text-[10px] font-medium text-text-secondary">过滤器</span>
+          <button onClick={resetFilter} className="ml-auto text-[10px] text-text-muted hover:text-text-secondary">重置</button>
         </div>
-
         <div className="flex flex-wrap gap-1">
-          {/* 级别过滤 */}
           {Object.values(LogLevel).map(level => (
-            <button
-              key={level}
-              onClick={() => {
-                if (filter.level?.includes(level)) {
-                  removeLevelFilter(level)
-                } else {
-                  addLevelFilter(level)
-                }
-              }}
-              className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                filter.level?.includes(level)
-                  ? LEVEL_COLORS[level]
-                  : 'bg-surface/50 text-text-muted hover:bg-surface/80'
-              }`}
-            >
-              {level.toUpperCase()}
-            </button>
+            <button key={level} onClick={() => filter.level?.includes(level) ? removeLevelFilter(level) : addLevelFilter(level)}
+              className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors ${
+                filter.level?.includes(level) ? `${LEVEL_COLORS[level]} ${LEVEL_BG[level]}` : 'bg-surface/50 text-text-muted hover:bg-surface/80'
+              }`}>{LEVEL_SHORT[level]}</button>
           ))}
-
-          {/* 类型过滤 */}
           {Object.values(LogType).map(type => (
-            <button
-              key={type}
-              onClick={() => {
-                if (filter.type?.includes(type)) {
-                  removeTypeFilter(type)
-                } else {
-                  addTypeFilter(type)
-                }
-              }}
-              className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                filter.type?.includes(type)
-                  ? 'bg-accent/10 text-accent'
-                  : 'bg-surface/50 text-text-muted hover:bg-surface/80'
-              }`}
-            >
-              {type}
-            </button>
+            <button key={type} onClick={() => filter.type?.includes(type) ? removeTypeFilter(type) : addTypeFilter(type)}
+              className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors ${
+                filter.type?.includes(type) ? 'bg-accent/10 text-accent' : 'bg-surface/50 text-text-muted hover:bg-surface/80'
+              }`}>{type}</button>
           ))}
-
-          {/* 来源过滤 */}
           {Object.values(LogSource).map(source => (
-            <button
-              key={source}
-              onClick={() => {
-                if (filter.source?.includes(source)) {
-                  removeSourceFilter(source)
-                } else {
-                  addSourceFilter(source)
-                }
-              }}
-              className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                filter.source?.includes(source)
-                  ? 'bg-green-500/10 text-green-500'
-                  : 'bg-surface/50 text-text-muted hover:bg-surface/80'
-              }`}
-            >
-              {SOURCE_LABELS[source] || source}
-            </button>
+            <button key={source} onClick={() => filter.source?.includes(source) ? removeSourceFilter(source) : addSourceFilter(source)}
+              className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors ${
+                filter.source?.includes(source) ? 'bg-green-500/10 text-green-500' : 'bg-surface/50 text-text-muted hover:bg-surface/80'
+              }`}>{SOURCE_LABELS[source]}</button>
           ))}
         </div>
       </div>
     )
   }
 
-  // 渲染操作按钮
+  // ── 操作栏 ──
   const renderActions = () => {
     if (!showActions) return null
-
     return (
-      <div className="px-3 py-2 border-b border-border-subtle bg-background flex items-center gap-2 sticky top-0 z-10">
-        {/* 搜索框 */}
+      <div className="px-2 py-1 border-b border-border-subtle bg-background flex items-center gap-1.5 sticky top-0 z-10">
         <div className="relative flex-1">
-          <Search size={12} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-text-muted" />
-          <input
-            type="text"
-            placeholder="搜索日志..."
-            value={searchTerm}
+          <Search size={10} className="absolute left-1.5 top-1/2 -translate-y-1/2 text-text-muted" />
+          <input type="text" placeholder="搜索..." value={searchTerm}
             onChange={(e) => handleSearch(e.target.value)}
-            className="w-full pl-7 pr-3 py-1.5 text-xs bg-surface/50 border border-border-subtle rounded focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent"
+            className="w-full pl-6 pr-2 py-1 text-[10px] bg-surface/50 border border-border-subtle rounded focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </div>
-
-        {/* 过滤器按钮 */}
-        <button
-          onClick={() => setShowFilterPanel(!showFilterPanel)}
-          className={`p-1.5 rounded transition-colors ${
-            showFilterPanel
-              ? 'bg-accent/10 text-accent'
-              : 'hover:bg-surface/60 text-text-muted hover:text-text-secondary'
-          }`}
-          title="过滤器"
-        >
-          <Filter size={12} />
-        </button>
-
-        {/* 刷新按钮 */}
-        <button
-          onClick={handleRefresh}
-          disabled={loading}
-          className="p-1.5 rounded hover:bg-surface/60 transition-colors text-text-muted hover:text-text-secondary disabled:opacity-50"
-          title="刷新"
-        >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-        </button>
-
-        {/* 上报按钮 */}
-        <button
-          onClick={handleReport}
-          disabled={reporting}
-          className="p-1.5 rounded hover:bg-surface/60 transition-colors text-text-muted hover:text-text-secondary disabled:opacity-50"
-          title="上报日志"
-        >
-          <Upload size={12} className={reporting ? 'animate-pulse' : ''} />
-        </button>
-
-        {/* 导出按钮 */}
+        <button onClick={() => setShowFilterPanel(!showFilterPanel)}
+          className={`p-1 rounded transition-colors ${showFilterPanel ? 'bg-accent/10 text-accent' : 'hover:bg-surface/60 text-text-muted'}`}
+          title="过滤器"><Filter size={11} /></button>
+        <button onClick={handleReport} disabled={reporting}
+          className="p-1 rounded hover:bg-surface/60 transition-colors text-text-muted disabled:opacity-50"
+          title="上报"><Upload size={11} /></button>
         <div className="relative group">
-          <button
-            disabled={exporting}
-            className="p-1.5 rounded hover:bg-surface/60 transition-colors text-text-muted hover:text-text-secondary disabled:opacity-50"
-            title="导出日志"
-          >
-            <Download size={12} className={exporting ? 'animate-pulse' : ''} />
-          </button>
-          
-          {/* 导出选项下拉菜单 */}
-          <div className="absolute right-0 top-full mt-1 w-32 bg-background border border-border-subtle rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-20">
-            <div className="py-1">
-              <button
-                onClick={() => handleExport('json')}
-                className="w-full px-3 py-1.5 text-xs text-left hover:bg-surface/50"
-              >
-                JSON
-              </button>
-              <button
-                onClick={() => handleExport('csv')}
-                className="w-full px-3 py-1.5 text-xs text-left hover:bg-surface/50"
-              >
-                CSV
-              </button>
-              <button
-                onClick={() => handleExport('text')}
-                className="w-full px-3 py-1.5 text-xs text-left hover:bg-surface/50"
-              >
-                纯文本
-              </button>
-              <button
-                onClick={() => handleExport('html')}
-                className="w-full px-3 py-1.5 text-xs text-left hover:bg-surface/50"
-              >
-                HTML
-              </button>
-            </div>
+          <button disabled={exporting}
+            className="p-1 rounded hover:bg-surface/60 transition-colors text-text-muted disabled:opacity-50"
+            title="导出"><Download size={11} /></button>
+          <div className="absolute right-0 top-full mt-1 w-28 bg-background border border-border-subtle rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-20">
+            {(['json','csv','text','html'] as const).map(f => (
+              <button key={f} onClick={() => handleExport(f)}
+                className="w-full px-2 py-1 text-[10px] text-left hover:bg-surface/50">{f.toUpperCase()}</button>
+            ))}
           </div>
         </div>
-
-        {/* 复制按钮 */}
-        <button
-          onClick={handleCopyAll}
-          className="p-1.5 rounded hover:bg-surface/60 transition-colors text-text-muted hover:text-text-secondary"
-          title="复制所有日志"
-        >
-          <Copy size={12} />
-        </button>
-
-        {/* 清空按钮 */}
-        <button
-          onClick={handleClear}
-          disabled={clearing}
-          className="p-1.5 rounded hover:bg-surface/60 transition-colors text-text-muted hover:text-text-secondary disabled:opacity-50"
-          title="清空日志"
-        >
-          <Trash2 size={12} className={clearing ? 'animate-pulse' : ''} />
-        </button>
+        <button onClick={handleCopyAll} className="p-1 rounded hover:bg-surface/60 transition-colors text-text-muted" title="复制全部"><Copy size={11} /></button>
+        <button onClick={handleClear} disabled={clearing}
+          className="p-1 rounded hover:bg-surface/60 transition-colors text-text-muted disabled:opacity-50" title="清空"><Trash2 size={11} /></button>
       </div>
     )
   }
 
-  // 渲染空状态
-  const renderEmptyState = () => (
-    <div className="flex flex-col items-center justify-center h-full text-center p-6">
-      <ScrollText size={32} className="text-text-muted mb-3 opacity-50" />
-      <p className="text-sm text-text-muted">暂无会话日志</p>
-      <p className="text-xs text-text-muted mt-1">会话运行后，这里将显示详细日志</p>
-    </div>
-  )
-
-  // 渲染加载状态
-  const renderLoadingState = () => (
-    <div className="flex flex-col items-center justify-center h-full text-center p-6">
-      <RefreshCw size={32} className="text-text-muted mb-3 opacity-50 animate-spin" />
-      <p className="text-sm text-text-muted">加载中...</p>
-    </div>
-  )
-
-  // 渲染错误状态
-  const renderErrorState = () => (
-    <div className="flex flex-col items-center justify-center h-full text-center p-6">
-      <AlertCircle size={32} className="text-red-500 mb-3 opacity-50" />
-      <p className="text-sm text-red-500">加载失败</p>
-      <p className="text-xs text-text-muted mt-1">{error?.message}</p>
-      <button
-        onClick={handleRefresh}
-        className="mt-2 px-3 py-1.5 text-xs bg-surface/50 rounded hover:bg-surface/80"
-      >
-        重试
-      </button>
-    </div>
-  )
-
-  // 主渲染
+  // ── 主渲染 ──
   return (
     <div className="flex flex-col h-full" style={{ maxHeight }}>
-      {/* 统计信息 */}
       {showStats && renderStats()}
-
-      {/* 操作按钮 */}
       {renderActions()}
-
-      {/* 过滤器面板 */}
       {renderFilterPanel()}
 
-      {/* 日志列表 */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto font-mono text-[11px]">
         {loading ? (
-          renderLoadingState()
-        ) : error ? (
-          renderErrorState()
-        ) : logs.length === 0 ? (
-          renderEmptyState()
-        ) : (
-          <div className="font-mono text-[11px] leading-relaxed">
-            {logs.map((log, index) => renderLogEntry(log, index))}
+          <div className="flex flex-col items-center justify-center h-full p-6">
+            <RefreshCw size={28} className="text-text-muted mb-2 opacity-50 animate-spin" />
+            <p className="text-xs text-text-muted">加载中...</p>
           </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center h-full p-6">
+            <AlertCircle size={28} className="text-red-500 mb-2 opacity-50" />
+            <p className="text-xs text-red-500">加载失败</p>
+            <p className="text-[10px] text-text-muted mt-0.5">{error?.message}</p>
+            <button onClick={handleRefresh} className="mt-2 px-2 py-1 text-[10px] bg-surface/50 rounded hover:bg-surface/80">重试</button>
+          </div>
+        ) : logs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full p-6">
+            <ScrollText size={28} className="text-text-muted mb-2 opacity-50" />
+            <p className="text-xs text-text-muted">暂无会话日志</p>
+          </div>
+        ) : groupByRound ? (
+          /* 分组视图 */
+          groups.map(group => (
+            <div key={group.key}>
+              {renderGroupHeader(group)}
+              {expandedGroups.has(group.key) && group.entries.map(log => renderLogLine(log))}
+            </div>
+          ))
+        ) : (
+          /* 平铺视图 */
+          logs.map(log => renderLogLine(log))
         )}
       </div>
     </div>

@@ -205,26 +205,56 @@ export class ToolRegistry {
   /**
    * 生成延迟工具的摘要，用于附加到 System prompt 中。
    *
-   * 延迟工具 = 所有 MCP 工具（有 mcpServer 字段的工具）。
+   * 延迟工具 = 所有非 tool_search 的工具（系统工具 + MCP 工具）。
    * 模型看到这个列表后，可以通过 tool_search 按需获取完整 Schema。
    *
-   * @returns 格式化的延迟工具名列表字符串
+   * 结构：按"系统工具"和"MCP 工具"分类展示，每类包含工具名及简短描述。
+   *
+   * @returns 格式化的延迟工具摘要字符串
    */
   getDeferredToolSummary(): string {
-    const deferred = this.getAll()
-      .filter((t) => !!t.mcpServer)
-      .map((t) => t.name);
+    const deferred = this.getAll().filter((t) => t.name !== 'tool_search');
 
     if (deferred.length === 0) return '';
 
-    const lines = [
-      '## 延迟工具（按需加载）',
+    const systemTools = deferred.filter((t) => !t.mcpServer);
+    const mcpTools = deferred.filter((t) => !!t.mcpServer);
+
+    const lines: string[] = [
+      '## 可用工具（按需加载）',
       '',
-      '以下工具的完整 Schema 未在系统提示中展开。',
-      '需要时，调用 `tool_search` 并传入工具名即可获取完整定义。',
+      '以下所有工具的完整 Schema 均未展开。需要调用某个工具时，先用 `tool_search` 获取其完整定义。',
       '',
-      ...deferred.map((name) => `- ${name}`),
     ];
+
+    if (systemTools.length > 0) {
+      lines.push('### 系统工具', '');
+      for (const t of systemTools) {
+        const brief = t.description.length > 80
+          ? t.description.slice(0, 80) + '...'
+          : t.description;
+        lines.push(`- **${t.name}**: ${brief}`);
+      }
+      lines.push('');
+    }
+
+    if (mcpTools.length > 0) {
+      lines.push('### MCP 工具', '');
+      // 按 MCP Server 分组
+      const mcpGroups = new Map<string, string[]>();
+      for (const t of mcpTools) {
+        const server = t.mcpServer!;
+        if (!mcpGroups.has(server)) mcpGroups.set(server, []);
+        mcpGroups.get(server)!.push(t.name);
+      }
+      for (const [server, tools] of mcpGroups) {
+        lines.push(`#### ${server}`, '');
+        for (const name of tools) {
+          lines.push(`- ${name}`);
+        }
+        lines.push('');
+      }
+    }
 
     return lines.join('\n');
   }
@@ -237,14 +267,32 @@ export class ToolRegistry {
   }
 
   /**
-   * 转换为 Vercel AI SDK 工具格式
+   * 转换为 Vercel AI SDK 工具格式（延迟加载版本）
+   *
+   * 策略：
+   * - 始终包含 tool_search 工具
+   * - 只包含已发现的工具（discoveredTools）
+   * - 其他所有工具都延迟加载
    */
   toAISDKFormat(): Record<string, any> {
-    return this.buildAISDKTools(this.getAll());
+    const discovered = new Set(this.getDiscoveredTools());
+
+    const tools = this.getAll().filter((t) => {
+      // 始终包含 tool_search
+      if (t.name === 'tool_search') return true;
+
+      // 包含已发现的工具
+      if (discovered.has(t.name)) return true;
+
+      // 其他工具不包含（延迟加载）
+      return false;
+    });
+
+    return this.buildAISDKTools(tools);
   }
 
   /**
-   * 根据 agent 转换为 Vercel AI SDK 工具格式
+   * 根据 agent 转换为 Vercel AI SDK 工具格式（延迟加载版本）
    *
    * @param agentName agent 名称
    * @param visibility 工具可见性配置
@@ -253,7 +301,20 @@ export class ToolRegistry {
     agentName: string | null,
     visibility: MCPToolVisibility | null,
   ): Record<string, any> {
-    const tools = this.getByAgent(agentName, visibility);
+    const agentTools = this.getByAgent(agentName, visibility);
+    const discovered = new Set(this.getDiscoveredTools());
+
+    const tools = agentTools.filter((t) => {
+      // 始终包含 tool_search
+      if (t.name === 'tool_search') return true;
+
+      // 包含已发现的工具
+      if (discovered.has(t.name)) return true;
+
+      // 其他工具不包含（延迟加载）
+      return false;
+    });
+
     return this.buildAISDKTools(tools);
   }
 

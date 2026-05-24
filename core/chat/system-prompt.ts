@@ -6,6 +6,7 @@
  */
 
 import { logger } from '@/core/log'
+import { getToolRegistry } from '@/core/tool-registry/mcp-setup'
 
 // ─── 1. 身份与核心定位 ────────────────────────────────────────────────────────
 
@@ -98,36 +99,15 @@ When accessing files:
 
 // ─── 8. Manta 专属工具指令 ────────────────────────────────────────────────────
 
-const MANTA_TOOL_INSTRUCTION = `# Manta Tool Calling Rules
+const MANTA_TOOL_INSTRUCTION = `# Manta 工具使用规则
 
-You are an AI assistant that can directly operate the local filesystem. You have the following tools:
+## 工具加载机制
 
-## Available Tools
+所有工具默认采用延迟加载。只有 \`tool_search\` 工具始终可见。
 
-### lsDir
-List directory contents. Parameters:
-- \`dir_path\`, \`path\`, \`dir\`, or \`directory\`: directory path to list (required)
-- Example: \`{"dir_path": "/path/to/dir"}\` or \`{"path": "."}\`
-
-### readFile
-Read file content. Parameters:
-- \`file_path\`, \`path\`, \`file\`, or \`filename\`: file path to read (required)
-- \`offset\`: starting line number (default: 1)
-- \`limit\`: max lines to read (optional)
-- Example: \`{"file_path": "src/app.ts", "offset": 1, "limit": 50}\`
-
-### glob
-Match files by glob pattern. Parameters:
-- \`pattern\`: glob pattern like "**/*.ts" or "src/**/*.tsx" (required)
-- \`root\` or \`path\`: search root directory (optional, defaults to CWD)
-- Example: \`{"pattern": "**/*.ts", "root": "/project"}\`
-
-### grep
-Search text in files using regex. Parameters:
-- \`pattern\`: regex pattern (required)
-- \`root\` or \`path\`: search directory (optional, defaults to CWD)
-- \`include\`: file filter glob (optional, e.g., "*.ts")
-- Example: \`{"pattern": "function.*test", "include": "*.ts"}\`
+当需要调用某个工具时：
+1. 先调用 \`tool_search\`，传入工具名获取该工具的完整参数 Schema
+2. 拿到 Schema 后，再按需调用目标工具
 
 ## Critical Rules:
 
@@ -165,11 +145,16 @@ Remember: **Call tools first, then speak. Without calling tools, you cannot answ
  * @param options.cwd - 当前工作目录（可选，默认使用 process.cwd()）
  * @returns 组合后的 system prompt
  */
-export function buildSystemPrompt(options: {
+export async function buildSystemPrompt(options: {
   soulPrompt?: string | null
   cwd?: string
-} = {}): string {
+} = {}): Promise<string> {
   const { soulPrompt = null, cwd = process.cwd() } = options
+
+  // 获取延迟工具摘要（动态注入可用工具列表，不展开 Schema）
+  const registry = await getToolRegistry()
+  const deferredSummary = registry.getDeferredToolSummary()
+
   const sections = [
     IDENTITY,
     buildWorkingDirectory(cwd),
@@ -180,6 +165,11 @@ export function buildSystemPrompt(options: {
     SECURITY_BOUNDARY,
     MANTA_TOOL_INSTRUCTION,
   ]
+
+  // 追加延迟工具列表（在 Manta 工具规则之后）
+  if (deferredSummary) {
+    sections.push(deferredSummary)
+  }
 
   if (soulPrompt) {
     sections.unshift(`# Agent Soul\n\n${soulPrompt}`)

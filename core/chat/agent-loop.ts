@@ -228,9 +228,6 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
     // 基础日志元数据（所有本 loop 日志共享）
     const baseMeta = { messageId, conversationId, prompt }
 
-    // 获取共享 ToolRegistry（含 MCP 工具，首次调用时初始化 MCP 连接）
-    const allTools = await getAgentTools()
-
     try {
       // 发送统一的 start 事件（只发一次，整个 loop 共享 messageId）
       streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'start', messageId })}\n\n`))
@@ -250,10 +247,14 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
 
         // 每步调一次 streamText，stopWhen=[stepCountIs(1)] 强制单步执行
         const effectiveTemperature = llmConfig.temperature ?? 0.7
+
+        // 每步重新获取工具列表（包含新发现的工具）
+        const stepTools = await getAgentTools()
+
         const result = streamText({
           model,
           system: effectiveSystemPrompt,
-          tools: allTools,
+          tools: stepTools,
           temperature: effectiveTemperature,
           messages: currentMessages,
           abortSignal,

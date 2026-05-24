@@ -42,7 +42,7 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
 
   // 构建 system prompt（融合 Claude Code 设计理念的模块化组合）
   const soulPrompt = readAgentSoul(agentName)
-  const systemPrompt = buildSystemPrompt({ soulPrompt, cwd: process.cwd() })
+  const systemPrompt = await buildSystemPrompt({ soulPrompt, cwd: process.cwd() })
 
   // 解析消息格式
   const coreMessages = parseMessagesToCore(messages)

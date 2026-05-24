@@ -153,6 +153,7 @@ const readFileDef: ToolDefinition = {
     },
     additionalProperties: true,
   },
+  shouldDefer: true,
   isConcurrencySafe: true, // 只读操作，可以并发
   searchHint: 'read file content view inspect text lines',
   execute: async (input: any) => {
@@ -211,6 +212,7 @@ const lsDirDef: ToolDefinition = {
     },
     additionalProperties: true,
   },
+  shouldDefer: true,
   isConcurrencySafe: true, // 只读操作，可以并发
   searchHint: 'list directory folder files browse entries ls dir',
   execute: async (input: any) => {
@@ -280,6 +282,7 @@ const globDef: ToolDefinition = {
     required: ['pattern'],
     additionalProperties: true,
   },
+  shouldDefer: true,
   isConcurrencySafe: true, // 只读操作，可以并发
   searchHint: 'find files pattern glob search match wildcard',
   execute: async (input: any) => {
@@ -345,6 +348,7 @@ const grepDef: ToolDefinition = {
     required: ['pattern'],
     additionalProperties: true,
   },
+  shouldDefer: true,
   isConcurrencySafe: true, // 只读操作，可以并发
   searchHint: 'search text content regex pattern match find grep',
   execute: async (input: any) => {

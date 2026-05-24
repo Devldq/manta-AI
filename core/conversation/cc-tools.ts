@@ -115,6 +115,7 @@ const bashDef: ToolDefinition = {
     required: ['command'],
     additionalProperties: false,
   },
+  shouldDefer: true,
   isConcurrencySafe: false,
   searchHint: 'run execute shell command bash terminal script',
   execute: async (input: any) => {
@@ -181,6 +182,7 @@ const bashKillDef: ToolDefinition = {
     required: ['task_id'],
     additionalProperties: false,
   },
+  shouldDefer: true,
   isConcurrencySafe: true,
   searchHint: 'kill stop terminate cancel background task bash',
   execute: async (input: any) => {
@@ -215,6 +217,7 @@ const bashOutputDef: ToolDefinition = {
     required: ['task_id'],
     additionalProperties: false,
   },
+  shouldDefer: true,
   isConcurrencySafe: true,
   searchHint: 'get check background task output status result',
   execute: async (input: any) => {
@@ -256,6 +259,7 @@ const readDef: ToolDefinition = {
     },
     required: ['file_path'],
   },
+  shouldDefer: true,
   isConcurrencySafe: true, // 只读操作，可以并发
   searchHint: 'read file content view inspect text lines',
   execute: async (input: any) => {
@@ -299,6 +303,7 @@ const writeDef: ToolDefinition = {
     },
     required: ['file_path', 'content'],
   },
+  shouldDefer: true,
   isConcurrencySafe: false, // 写操作，需要独占锁
   searchHint: 'write create file save overwrite content output',
   execute: async (input: any) => {
@@ -331,6 +336,7 @@ const editDef: ToolDefinition = {
     },
     required: ['file_path', 'old_string', 'new_string'],
   },
+  shouldDefer: true,
   isConcurrencySafe: false, // 写操作，需要独占锁
   searchHint: 'edit modify replace update change string file',
   execute: async (input: any) => {
@@ -389,6 +395,7 @@ const multiEditDef: ToolDefinition = {
     },
     required: ['file_path', 'edits'],
   },
+  shouldDefer: true,
   isConcurrencySafe: false, // 写操作，需要独占锁
   searchHint: 'batch multiple edit replace file modify string atomic',
   execute: async (input: any) => {
@@ -490,6 +497,7 @@ export const globTool: ToolDefinition = {
     required: ['pattern'],
     additionalProperties: false,
   },
+  shouldDefer: true,
   isConcurrencySafe: true,
   searchHint: 'find files pattern glob search match wildcard',
   execute: async ({ pattern, path: searchPath = '.' }: { pattern: string; path?: string }) => {
@@ -553,6 +561,7 @@ const grepDef: ToolDefinition = {
     },
     required: ['pattern'],
   },
+  shouldDefer: true,
   isConcurrencySafe: true, // 只读操作，可以并发
   searchHint: 'search text content regex grep pattern find match',
   execute: async (input: any) => {
