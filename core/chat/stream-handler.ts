@@ -18,15 +18,25 @@ export interface StreamChatOptions {
 
 /** 执行流式聊天并返回流式响应 */
 export async function streamChat({ messages, agentName, conversationId, abortSignal }: StreamChatOptions) {
-  // 检查 LLM 配置
+  // 提取用户最新输入的 prompt（用于日志记录）
+  const lastUIMessage = [...messages].reverse().find(m => m.role === 'user')
+  const userPrompt = lastUIMessage?.parts
+    ? lastUIMessage.parts.filter(p => p.type === 'text').map(p => p.text ?? '').join('')
+    : (lastUIMessage?.content ?? '')
+
+  // 获取 LLM 配置信息
   const llmConfig = getLLMConfig()
   if (!llmConfig.apiKey && llmConfig.provider !== 'ollama' && llmConfig.provider !== 'lm-studio') {
     throw new Error('LLM 未配置 API Key，请前往 Settings → AI 模型 进行配置')
   }
+  const modelInfo = { model: llmConfig.model, provider: llmConfig.provider }
 
   logger.system('ChatStream', `开始处理会话 ${conversationId}`, 'pending', {
     conversationId,
     agentName,
+    prompt: userPrompt,
+    model: modelInfo.model,
+    provider: modelInfo.provider,
     messageCount: messages.length,
   })
 
@@ -41,6 +51,7 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
   const response = await runAgentLoop({
     messages: coreMessages,
     systemPrompt,
+    prompt: userPrompt,
     abortSignal,
     conversationId,
     onFinish: async (event) => {
@@ -81,6 +92,10 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
 
       logger.system('ChatStream', `会话 ${conversationId} 处理完成`, 'success', {
         conversationId,
+        agentName,
+        prompt: userPrompt,
+        model: modelInfo.model,
+        provider: modelInfo.provider,
         stepsCount: steps.length,
         toolCallsCount: toolCalls.length,
         responseLength: text.length,
@@ -90,6 +105,10 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
     onError: async (errorText: string) => {
       logger.system('ChatStream', `会话 ${conversationId} 处理出错`, 'failure', {
         conversationId,
+        agentName,
+        prompt: userPrompt,
+        model: modelInfo.model,
+        provider: modelInfo.provider,
         errorText: errorText.slice(0, 200),
       })
 

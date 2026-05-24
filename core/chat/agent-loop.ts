@@ -19,6 +19,8 @@ const DEFAULT_MAX_STEPS = 200
 export interface AgentLoopOptions {
   messages: ModelMessage[]
   systemPrompt?: string | null
+  /** 用户输入的原始提示词（用于日志记录） */
+  prompt?: string
   abortSignal?: AbortSignal
   conversationId?: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -164,11 +166,10 @@ function appendStepToMessages(
     for (const call of stepCollect.toolCalls) {
       if (!resultCallIds.has(call.toolCallId)) {
         logger.warn(`[AgentLoop] 工具 ${call.toolName} (${call.toolCallId}) 缺少结果，补充兜底错误`, {
+          ...baseMeta,
           toolCallId: call.toolCallId,
           toolName: call.toolName,
-          conversationId,
           stepIndex,
-          messageId,
         }, ['agent', 'loop', 'tool-missing'])
         newMessages.push({
           role: 'tool' as const,
@@ -194,7 +195,7 @@ function appendStepToMessages(
  * - 在后台异步循环中逐个 enqueue chunk 到 controller
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户中断
  */
-export async function runAgentLoop({ messages, systemPrompt, abortSignal, conversationId, onFinish, onError }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal, conversationId, onFinish, onError }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
 
@@ -224,6 +225,9 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, conver
     // 生成统一的 messageId，整个 agent loop 共享（确保前端合并为一个消息气泡）
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
+    // 基础日志元数据（所有本 loop 日志共享）
+    const baseMeta = { messageId, conversationId, prompt }
+
     // 获取共享 ToolRegistry（含 MCP 工具，首次调用时初始化 MCP 连接）
     const allTools = await getAgentTools()
 
@@ -233,10 +237,9 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, conver
 
       while (true) {
         logger.info(`[AgentLoop] 第 ${stepIndex + 1} 轮开始`, {
-          messageId,
+          ...baseMeta,
           stepIndex,
           messageCount: currentMessages.length,
-          conversationId,
         }, ['agent', 'loop', 'step-start'])
 
         // 注入警告消息到 systemPrompt
@@ -304,12 +307,11 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, conver
                 input: chunk.input,
               })
               logger.info(`[AgentLoop] 工具调用开始: ${chunk.toolName}`, {
-                messageId,
+                ...baseMeta,
                 stepIndex,
                 toolCallId: chunk.toolCallId,
                 toolName: chunk.toolName,
                 input: chunk.input,
-                conversationId,
               }, ['agent', 'loop', 'tool-call'])
               break
             case 'tool-result':
@@ -330,7 +332,7 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, conver
                 toolResult,
                 toolResultIsError,
                 toolResultIsError ? String(toolResult ?? '') : undefined,
-                { messageId, stepIndex, conversationId }
+                { ...baseMeta, stepIndex }
               )
               break
             case 'tool-error':
@@ -343,7 +345,7 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, conver
                 chunk.error ?? '工具执行失败',
                 true,
                 String(chunk.error ?? ''),
-                { messageId, stepIndex, conversationId }
+                { ...baseMeta, stepIndex }
               )
               stepCollect.toolResults.push({
                 toolCallId: chunk.toolCallId,
@@ -383,8 +385,7 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, conver
           stepCollect.toolCalls.length,
           totalOutputTokens,
           {
-            messageId,
-            conversationId,
+            ...baseMeta,
             finishReason: stepCollect.finishReason,
             toolCallNames: stepCollect.toolCalls.map(c => c.toolName),
             hasText: !!stepCollect.text,
@@ -395,22 +396,20 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, conver
         const decision = decideStop(stepCollect, loopDetector, totalOutputTokens, stepIndex, maxOutputTokens, maxSteps)
         if (decision.shouldStop) {
           logger.info(`[AgentLoop] 循环结束: ${decision.reason}`, {
-            messageId,
+            ...baseMeta,
             stepIndex,
             reason: decision.reason,
             totalOutputTokens,
             totalSteps: stepIndex + 1,
-            conversationId,
           }, ['agent', 'loop', 'stop'])
           break
         }
         if (decision.warningToInject) {
           warningMessage = decision.warningToInject
           logger.warn(`[LoopDetector] 循环警告: ${warningMessage}`, {
-            messageId,
+            ...baseMeta,
             stepIndex,
             warning: warningMessage,
-            conversationId,
           }, ['agent', 'loop', 'warning'])
         }
 
@@ -428,8 +427,7 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, conver
         { inputTokens: 0, outputTokens: 0 }
       )
       logger.info(`[AgentLoop] 全部完成: ${allStepCollects.length} 轮, ${allStepCollects.reduce((n, s) => n + s.toolCalls.length, 0)} 次工具调用`, {
-        messageId,
-        conversationId,
+        ...baseMeta,
         totalSteps: allStepCollects.length,
         totalToolCalls: allStepCollects.reduce((n, s) => n + s.toolCalls.length, 0),
         totalInputTokens: totalUsage.inputTokens,
@@ -461,9 +459,8 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, conver
       streamController.close()
     } catch (err) {
       logger.error('[AgentLoop] 执行异常:', err, {
-        messageId,
+        ...baseMeta,
         stepIndex,
-        conversationId,
       }, ['agent', 'loop', 'error'])
       // 将技术错误转换为用户友好的提示
       const errorInfo = formatAIError(err)

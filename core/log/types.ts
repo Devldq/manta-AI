@@ -65,6 +65,14 @@ export interface LogMetadata {
   requestId?: string
   /** 耗时（毫秒） */
   durationMs?: number
+  /** 用户输入的提示词（单次对话的 user prompt） */
+  prompt?: string
+  /** Agent 名称 */
+  agentName?: string
+  /** 模型名称 */
+  model?: string
+  /** 模型提供商 */
+  provider?: string
   /** Token使用量 */
   usage?: {
     inputTokens?: number
