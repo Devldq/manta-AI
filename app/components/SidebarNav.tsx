@@ -11,12 +11,7 @@ import { applyTheme, loadThemeFromStorage, getThemeById, getThemeConfig, DESIGN_
 import { SettingsModal } from './SettingsModal'
 
 const NAV_ITEMS = [
-  { href: '/',           label: '首页',   icon: '◎' },
-  { href: '/kanban',     label: '看板',   icon: '▦' },
-  { href: '/workflows',  label: '编排',   icon: '⟳' },
-  { href: '/agents',     label: 'Agent', icon: '◉' },
-  { href: '/skills',     label: 'Skills', icon: '⚡' },
-  { href: '/mcp',        label: 'MCP',   icon: '⎈' },
+  { href: '/mcp', label: 'MCP', icon: '⎈' },
 ]
 
 // AI: LLM 聊天会话类型
@@ -133,7 +128,7 @@ export function SidebarNav() {
           style={{ height: 'var(--header-height)', borderBottom: '1px solid var(--color-border)' }}
           className="flex items-center justify-between px-5 flex-shrink-0"
         >
-          <Link href="/" className="flex items-center gap-2.5 hover:opacity-80 transition-opacity">
+          <Link href="/tasks" className="flex items-center gap-2.5 hover:opacity-80 transition-opacity">
             <div
               className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
               style={{ background: 'var(--color-accent)', boxShadow: '0 0 8px var(--color-accent)' }}
@@ -195,7 +190,7 @@ export function SidebarNav() {
           {/* 固定导航项 */}
           <div className="space-y-0.5 flex-shrink-0">
             {NAV_ITEMS.map((item) => {
-              const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href)
+              const isActive = pathname.startsWith(item.href)
               return (
                 <Link
                   key={item.href}

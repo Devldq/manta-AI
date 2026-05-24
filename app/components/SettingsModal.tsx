@@ -949,8 +949,7 @@ function SettingsTab() {
         <div style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--color-border)' }}>
           <InfoRow label="版本" value="Manta v2.0.0" />
           <InfoRow label="数据目录" value="~/manta-data/" />
-          <InfoRow label="Agent 元数据" value="~/manta-data/agents/" />
-          <InfoRow label="任务存储" value="~/manta-data/tasks.json" />
+          <InfoRow label="会话存储" value="~/manta-data/conversations/" />
         </div>
       </section>
     </div>
