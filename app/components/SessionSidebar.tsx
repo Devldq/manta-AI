@@ -185,7 +185,7 @@ export const SessionSidebar = memo(function SessionSidebar({
           {[
             { id: 'changes' as TabId, label: '修改内容', icon: FileEdit },
             { id: 'files' as TabId, label: '变更文件', icon: FileText },
-            { id: 'logs' as TabId, label: '系统日志', icon: ScrollText },
+            { id: 'logs' as TabId, label: '会话日志', icon: ScrollText },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}

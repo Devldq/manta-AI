@@ -1,39 +1,73 @@
 /* 日志系统React钩子 */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { logger } from './index'
 import type { LogEntry, LogLevel, LogType, LogSource, LogFilter, LogStats, LogReportConfig, LogExportOptions, LogExportResult } from './types'
 
-/** 构建 SSE 查询参数 */
-function buildStreamParams(filter?: LogFilter): string {
-  if (!filter) return ''
-  const params = new URLSearchParams()
-  if (filter.level?.length) params.set('level', filter.level.join(','))
-  if (filter.type?.length) params.set('type', filter.type.join(','))
-  if (filter.source?.length) params.set('source', filter.source.join(','))
-  if (filter.conversationId) params.set('conversationId', filter.conversationId)
-  const qs = params.toString()
-  return qs ? `?${qs}` : ''
+/** 前端过滤日志条目 */
+function matchFilter(entry: LogEntry, filter: LogFilter): boolean {
+  if (filter.level?.length && !filter.level.includes(entry.level)) return false
+  if (filter.type?.length && !filter.type.includes(entry.type)) return false
+  if (filter.source?.length && !filter.source.includes(entry.source)) return false
+  if (filter.conversationId && entry.metadata?.conversationId !== filter.conversationId) return false
+  if (filter.search) {
+    const s = filter.search.toLowerCase()
+    const haystack = `${entry.message} ${JSON.stringify(entry.details || {})} ${(entry.tags || []).join(' ')}`.toLowerCase()
+    if (!haystack.includes(s)) return false
+  }
+  return true
 }
 
-/** 日志状态钩子（通过 SSE 从服务端实时获取） */
-export function useLogState(filter?: LogFilter) {
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [stats, setStats] = useState<LogStats | null>(null)
+/** 日志状态钩子（轮询日志文件增读，前端过滤）
+ * @param filter  前端过滤条件
+ * @param conversationId  可选，传入后读取会话专属日志文件（~/.manta-data/conversations/<id>/log.ndjson）
+ */
+export function useLogState(filter?: LogFilter, conversationId?: string) {
+  const [rawLogs, setRawLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  const offsetRef = useRef(0)
   const filterKey = filter ? JSON.stringify(filter) : ''
+  const convKey = conversationId || ''
 
-  // 手动刷新：重新建立 SSE 连接
+  // filter / conversationId 变化时：清空数据、重置 offset、显示 loading
+  useEffect(() => {
+    offsetRef.current = 0
+    setRawLogs([])
+    setLoading(true)
+    setError(null)
+  }, [filterKey, convKey])
+
+  // 用 useMemo 基于 rawLogs + filter 计算可见日志（最新在前）
+  const { logs, stats } = useMemo(() => {
+    const filtered = filter ? rawLogs.filter(l => matchFilter(l, filter)) : rawLogs
+    const errorCount = filtered.filter(l => l.level === 'error' || l.level === 'fatal').length
+    return {
+      logs: filtered,
+      stats: {
+        total: filtered.length,
+        errorCount,
+        errorRate: filtered.length > 0 ? errorCount / filtered.length : 0,
+      } as LogStats,
+    }
+  }, [rawLogs, filterKey])
+
+  // 手动刷新：重置 offset，从文件头重新读取
   const refreshLogs = useCallback(async () => {
     setLoading(true)
+    offsetRef.current = 0
+    setRawLogs([])
+    setError(null)
+    const url = conversationId
+      ? `/api/logs/file?offset=0&conversationId=${encodeURIComponent(conversationId)}`
+      : '/api/logs/file?offset=0'
     try {
-      const res = await fetch(`/api/logs${buildStreamParams(filter)}`)
+      const res = await fetch(url)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json()
-      if (json.success) {
-        setLogs(json.data.logs)
-        setStats(json.data.stats)
+      if (json.entries?.length > 0) {
+        offsetRef.current = json.offset
+        setRawLogs(json.entries.reverse())
       }
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)))
@@ -41,41 +75,53 @@ export function useLogState(filter?: LogFilter) {
       setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKey])
+  }, [filterKey, convKey])
 
-  // SSE 实时订阅
+  // 轮询日志文件，增量读取
   useEffect(() => {
-    setLoading(true)
-    setLogs([])
+    let stopped = false
+    let hasInitial = false
 
-    const params = buildStreamParams(filter)
-    const es = new EventSource(`/api/logs/stream${params}`)
+    const urlBase = conversationId
+      ? `/api/logs/file?conversationId=${encodeURIComponent(conversationId)}`
+      : '/api/logs/file'
 
-    es.onmessage = (event) => {
+    const poll = async () => {
+      if (stopped) return
       try {
-        const msg = JSON.parse(event.data)
-        if (msg.type === 'log') {
-          setLogs(prev => [msg.data, ...prev])
+        const res = await fetch(`${urlBase}&offset=${offsetRef.current}`)
+        if (!res.ok) return
+        const json = await res.json()
+        if (json.entries?.length > 0) {
+          offsetRef.current = json.offset
+          setRawLogs(prev => {
+            const existingIds = new Set(prev.map(l => l.id))
+            const newEntries = json.entries.filter((e: LogEntry) => !existingIds.has(e.id))
+            if (newEntries.length === 0) return prev
+            return [...newEntries.reverse(), ...prev]
+          })
+          if (!hasInitial) {
+            hasInitial = true
+            setLoading(false)
+          }
+        } else if (!hasInitial) {
+          hasInitial = true
           setLoading(false)
-        } else if (msg.type === 'connected') {
-          setLoading(false)
-          setError(null)
         }
       } catch {
-        // ignore parse errors
+        // 轮询失败不报错，下次继续
       }
     }
 
-    es.onerror = () => {
-      setError(new Error('日志流连接断开'))
-      setLoading(false)
-    }
+    poll()
+    const timer = setInterval(poll, 1000)
 
     return () => {
-      es.close()
+      stopped = true
+      clearInterval(timer)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKey])
+  }, [filterKey, convKey])
 
   return {
     logs,

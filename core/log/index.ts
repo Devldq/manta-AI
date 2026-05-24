@@ -46,19 +46,14 @@ export class LogManager {
     return LogManager.instance
   }
 
-  /** 初始化日志系统 */
+  /** 初始化日志系统（设置配置，幂等） */
   initialize(config?: Partial<LogReportConfig>): void {
-    if (this.isInitialized) {
-      console.warn('LogManager already initialized')
-      return
-    }
+    if (this.isInitialized) return
+    this.isInitialized = true
 
     if (config) {
       this.collector.setConfig(config)
     }
-
-    this.isInitialized = true
-    console.log('LogManager initialized with config:', this.collector.getConfig())
   }
 
   /** 获取收集器 */
@@ -76,14 +71,69 @@ export class LogManager {
     return this.formatter
   }
 
+  /** 获取系统日志文件路径 */
+  static getLogFilePath(): string {
+    // 动态 require 避免客户端打包 fs/os/path
+    if (typeof window !== 'undefined') return ''
+    try {
+      const path = require('path')
+      const os = require('os')
+      return path.join(os.homedir(), '.manta-data', 'system.log')
+    } catch {
+      return ''
+    }
+  }
+
+  /** 获取会话专属日志文件路径 */
+  static getSessionLogFilePath(conversationId: string): string {
+    if (typeof window !== 'undefined') return ''
+    try {
+      const path = require('path')
+      const os = require('os')
+      const dir = path.join(os.homedir(), '.manta-data', 'conversations', conversationId)
+      return path.join(dir, 'log.ndjson')
+    } catch {
+      return ''
+    }
+  }
+
+  /** 将日志追加写入文件（仅服务端生效）— 双写：全局 system.log + 会话专属 log.ndjson */
+  private appendToFile(entry: LogEntry): void {
+    if (typeof window !== 'undefined') return
+    try {
+      const fs = require('fs')
+      const path = require('path')
+
+      // 1. 写入全局日志文件
+      const globalLog = LogManager.getLogFilePath()
+      if (globalLog) {
+        const globalDir = path.dirname(globalLog)
+        if (!fs.existsSync(globalDir)) fs.mkdirSync(globalDir, { recursive: true })
+        fs.appendFileSync(globalLog, JSON.stringify(entry) + '\n')
+      }
+
+      // 2. 如果有关联的会话ID，同时写入会话专属日志文件
+      const conversationId = entry.metadata?.conversationId
+      if (conversationId) {
+        const sessionLog = LogManager.getSessionLogFilePath(conversationId)
+        if (sessionLog) {
+          const sessionDir = path.dirname(sessionLog)
+          if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true })
+          fs.appendFileSync(sessionLog, JSON.stringify(entry) + '\n')
+        }
+      }
+    } catch { /* 写入失败不影响内存日志 */ }
+  }
+
   /** 添加日志 */
   addLog(entry: Omit<LogEntry, 'id' | 'timestamp'>): void {
-    this.collector.addLog(entry)
+    const logEntry = this.collector.addLog(entry)
+    if (logEntry) this.appendToFile(logEntry)
   }
 
   /** 批量添加日志 */
   addLogs(entries: Omit<LogEntry, 'id' | 'timestamp'>[]): void {
-    this.collector.addLogs(entries)
+    entries.forEach(entry => this.addLog(entry))
   }
 
   /** 获取日志 */

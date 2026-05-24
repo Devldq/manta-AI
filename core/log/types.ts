@@ -240,8 +240,8 @@ export interface LogReportConfig {
 
 /** 日志收集器接口 */
 export interface LogCollector {
-  /** 添加日志 */
-  addLog(entry: Omit<LogEntry, 'id' | 'timestamp'>): void
+  /** 添加日志，返回创建的完整日志条目 */
+  addLog(entry: Omit<LogEntry, 'id' | 'timestamp'>): LogEntry
   /** 批量添加日志 */
   addLogs(entries: Omit<LogEntry, 'id' | 'timestamp'>[]): void
   /** 获取日志 */

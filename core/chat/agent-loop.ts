@@ -20,6 +20,7 @@ export interface AgentLoopOptions {
   messages: ModelMessage[]
   systemPrompt?: string | null
   abortSignal?: AbortSignal
+  conversationId?: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onFinish?: (event: any) => Promise<void> | void
   /** 错误时回调，用于持久化错误信息到对话历史 */
@@ -111,7 +112,10 @@ function formatToolOutput(output: unknown, isError: boolean): { type: string; va
  */
 function appendStepToMessages(
   messages: ModelMessage[],
-  stepCollect: StepCollect
+  stepCollect: StepCollect,
+  conversationId?: string,
+  stepIndex?: number,
+  messageId?: string,
 ): ModelMessage[] {
   const newMessages: ModelMessage[] = []
 
@@ -162,6 +166,9 @@ function appendStepToMessages(
         logger.warn(`[AgentLoop] 工具 ${call.toolName} (${call.toolCallId}) 缺少结果，补充兜底错误`, {
           toolCallId: call.toolCallId,
           toolName: call.toolName,
+          conversationId,
+          stepIndex,
+          messageId,
         }, ['agent', 'loop', 'tool-missing'])
         newMessages.push({
           role: 'tool' as const,
@@ -187,7 +194,7 @@ function appendStepToMessages(
  * - 在后台异步循环中逐个 enqueue chunk 到 controller
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户中断
  */
-export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFinish, onError }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, abortSignal, conversationId, onFinish, onError }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
 
@@ -225,9 +232,11 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
       streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'start', messageId })}\n\n`))
 
       while (true) {
-        logger.info(`[AgentLoop] Step ${stepIndex + 1}...`, {
+        logger.info(`[AgentLoop] 第 ${stepIndex + 1} 轮开始`, {
           messageId,
           stepIndex,
+          messageCount: currentMessages.length,
+          conversationId,
         }, ['agent', 'loop', 'step-start'])
 
         // 注入警告消息到 systemPrompt
@@ -294,27 +303,48 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
                 toolName: chunk.toolName,
                 input: chunk.input,
               })
+              logger.info(`[AgentLoop] 工具调用开始: ${chunk.toolName}`, {
+                messageId,
+                stepIndex,
+                toolCallId: chunk.toolCallId,
+                toolName: chunk.toolName,
+                input: chunk.input,
+                conversationId,
+              }, ['agent', 'loop', 'tool-call'])
               break
             case 'tool-result':
               // AI SDK v6: tool-result chunk 使用 output 字段存储执行结果（不是 result）
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const toolResult = (chunk as any).output
+              const toolResultIsError = (chunk as any).isError ?? false
               stepCollect.toolResults.push({
                 toolCallId: chunk.toolCallId,
                 toolName: chunk.toolName,
                 output: toolResult,
-                isError: (chunk as any).isError ?? false,
+                isError: toolResultIsError,
               })
+              logger.toolCall(
+                chunk.toolName,
+                chunk.toolCallId,
+                stepCollect.toolCalls.find(c => c.toolCallId === chunk.toolCallId)?.input ?? null,
+                toolResult,
+                toolResultIsError,
+                toolResultIsError ? String(toolResult ?? '') : undefined,
+                { messageId, stepIndex, conversationId }
+              )
               break
             case 'tool-error':
               // 工具执行抛出异常时，AI SDK 发出 tool-error chunk（而非 tool-result）
               // 必须收集此 chunk，否则下次 streamText 会因为缺少 tool-result 而报错
-              logger.error(`[AgentLoop] 工具 ${chunk.toolName} 执行出错`, chunk.error, {
-                messageId,
-                stepIndex,
-                toolCallId: chunk.toolCallId,
-                toolName: chunk.toolName,
-              }, ['agent', 'loop', 'tool-error'])
+              logger.toolCall(
+                chunk.toolName,
+                chunk.toolCallId,
+                stepCollect.toolCalls.find(c => c.toolCallId === chunk.toolCallId)?.input ?? null,
+                chunk.error ?? '工具执行失败',
+                true,
+                String(chunk.error ?? ''),
+                { messageId, stepIndex, conversationId }
+              )
               stepCollect.toolResults.push({
                 toolCallId: chunk.toolCallId,
                 toolName: chunk.toolName,
@@ -345,43 +375,70 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
         // 更新累计 token
         totalOutputTokens += stepCollect.usage.outputTokens
 
-        // 记录步骤
+        // 记录步骤完成
         allStepCollects.push(stepCollect)
+        logger.agentLoop(
+          stepIndex,
+          currentMessages.length,
+          stepCollect.toolCalls.length,
+          totalOutputTokens,
+          {
+            messageId,
+            conversationId,
+            finishReason: stepCollect.finishReason,
+            toolCallNames: stepCollect.toolCalls.map(c => c.toolName),
+            hasText: !!stepCollect.text,
+          }
+        )
 
         // 判断退出条件（一次调用，包含 warning 检测）
         const decision = decideStop(stepCollect, loopDetector, totalOutputTokens, stepIndex, maxOutputTokens, maxSteps)
         if (decision.shouldStop) {
-          logger.info(`[AgentLoop] Stopping: ${decision.reason}`, {
+          logger.info(`[AgentLoop] 循环结束: ${decision.reason}`, {
             messageId,
             stepIndex,
             reason: decision.reason,
             totalOutputTokens,
+            totalSteps: stepIndex + 1,
+            conversationId,
           }, ['agent', 'loop', 'stop'])
           break
         }
         if (decision.warningToInject) {
           warningMessage = decision.warningToInject
-          logger.warn(`[LoopDetector] Warning：${warningMessage}`, {
+          logger.warn(`[LoopDetector] 循环警告: ${warningMessage}`, {
             messageId,
             stepIndex,
             warning: warningMessage,
+            conversationId,
           }, ['agent', 'loop', 'warning'])
         }
 
         // 将步骤结果追加到消息列表
-        currentMessages = appendStepToMessages(currentMessages, stepCollect)
+        currentMessages = appendStepToMessages(currentMessages, stepCollect, conversationId, stepIndex, messageId)
         stepIndex++
       }
 
+      // Agent Loop 整体完成摘要日志
+      const totalUsage = allStepCollects.reduce(
+        (acc, step) => ({
+          inputTokens: acc.inputTokens + step.usage.inputTokens,
+          outputTokens: acc.outputTokens + step.usage.outputTokens,
+        }),
+        { inputTokens: 0, outputTokens: 0 }
+      )
+      logger.info(`[AgentLoop] 全部完成: ${allStepCollects.length} 轮, ${allStepCollects.reduce((n, s) => n + s.toolCalls.length, 0)} 次工具调用`, {
+        messageId,
+        conversationId,
+        totalSteps: allStepCollects.length,
+        totalToolCalls: allStepCollects.reduce((n, s) => n + s.toolCalls.length, 0),
+        totalInputTokens: totalUsage.inputTokens,
+        totalOutputTokens: totalUsage.outputTokens,
+        finishReason: allStepCollects[allStepCollects.length - 1]?.finishReason ?? 'stop',
+      }, ['agent', 'loop', 'summary'])
+
       // 调用 onFinish 回调（流结束后持久化消息）
       if (onFinish) {
-        const totalUsage = allStepCollects.reduce(
-          (acc, step) => ({
-            inputTokens: acc.inputTokens + step.usage.inputTokens,
-            outputTokens: acc.outputTokens + step.usage.outputTokens,
-          }),
-          { inputTokens: 0, outputTokens: 0 }
-        )
         const finalText = allStepCollects.map((s) => s.text).join('')
 
         const stepsForCallback = allStepCollects.map((s) => ({
@@ -403,9 +460,10 @@ export async function runAgentLoop({ messages, systemPrompt, abortSignal, onFini
       // 流结束，关闭 controller
       streamController.close()
     } catch (err) {
-      logger.error('[AgentLoop] Error:', err, {
+      logger.error('[AgentLoop] 执行异常:', err, {
         messageId,
         stepIndex,
+        conversationId,
       }, ['agent', 'loop', 'error'])
       // 将技术错误转换为用户友好的提示
       const errorInfo = formatAIError(err)

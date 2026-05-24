@@ -1,4 +1,4 @@
-/* 会话存储层 — JSON 文件实现 */
+/* 会话存储层 — 文件夹实现（每个会话一个文件夹，内含 session.json + log.ndjson 等） */
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
@@ -11,22 +11,62 @@ function ensureDir(): void {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
 }
 
-function convFilePath(id: string): string {
-  return path.join(DATA_DIR, `${id}.json`)
+/** 会话文件夹路径 */
+function convDirPath(id: string): string {
+  return path.join(DATA_DIR, id)
+}
+
+/** 会话 JSON 文件路径 */
+function convSessionFilePath(id: string): string {
+  return path.join(convDirPath(id), 'session.json')
+}
+
+/** 会话专属日志文件路径 */
+export function getSessionLogPath(conversationId: string): string {
+  return path.join(convDirPath(conversationId), 'log.ndjson')
+}
+
+/** 确保会话文件夹存在 */
+function ensureConvDir(id: string): void {
+  const dir = convDirPath(id)
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 }
 
 function readConv(id: string): Conversation | null {
-  const fp = convFilePath(id)
-  if (!fs.existsSync(fp)) return null
-  try { return JSON.parse(fs.readFileSync(fp, 'utf-8')) as Conversation } catch { return null }
+  // 先尝试新格式（文件夹中的 session.json）
+  const newFp = convSessionFilePath(id)
+  if (fs.existsSync(newFp)) {
+    try { return JSON.parse(fs.readFileSync(newFp, 'utf-8')) as Conversation } catch { return null }
+  }
+  // 兼容旧格式（直接的 .json 文件）
+  const oldFp = path.join(DATA_DIR, `${id}.json`)
+  if (fs.existsSync(oldFp)) {
+    try { return JSON.parse(fs.readFileSync(oldFp, 'utf-8')) as Conversation } catch { return null }
+  }
+  return null
 }
 
 function writeConv(conv: Conversation): void {
   ensureDir()
-  const fp = convFilePath(conv.id)
+  ensureConvDir(conv.id)
+  const fp = convSessionFilePath(conv.id)
   const tmp = `${fp}.tmp`
   fs.writeFileSync(tmp, JSON.stringify(conv, null, 2), 'utf-8')
   fs.renameSync(tmp, fp)
+}
+
+/** 迁移旧的 .json 文件到文件夹格式 */
+function migrateOldFormat(id: string): boolean {
+  const oldFp = path.join(DATA_DIR, `${id}.json`)
+  if (!fs.existsSync(oldFp)) return false
+  try {
+    const conv = JSON.parse(fs.readFileSync(oldFp, 'utf-8')) as Conversation
+    writeConv(conv)
+    fs.unlinkSync(oldFp)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** 创建新会话 */
@@ -50,15 +90,30 @@ export function createConversation(agentName: string, title?: string): Conversat
 export function listConversations(): Conversation[] {
   ensureDir()
   try {
-    return fs
-      .readdirSync(DATA_DIR)
-      .filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
-      .map((f) => {
-        try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf-8')) as Conversation }
-        catch { return null }
-      })
-      .filter((c): c is Conversation => c !== null)
-      .sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
+    const convs: Conversation[] = []
+    const entries = fs.readdirSync(DATA_DIR, { withFileTypes: true })
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        // 新格式：文件夹中的 session.json
+        const sfp = convSessionFilePath(entry.name)
+        if (fs.existsSync(sfp)) {
+          try { convs.push(JSON.parse(fs.readFileSync(sfp, 'utf-8')) as Conversation) } catch { /* skip */ }
+        }
+      } else if (entry.isFile() && entry.name.endsWith('.json') && !entry.name.endsWith('.tmp')) {
+        // 旧格式兼容：直接的 .json 文件
+        try {
+          const conv = JSON.parse(fs.readFileSync(path.join(DATA_DIR, entry.name), 'utf-8')) as Conversation
+          if (conv.id) {
+            // 自动迁移到新格式
+            migrateOldFormat(conv.id)
+            convs.push(conv)
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    return convs.sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
   } catch { return [] }
 }
 
@@ -107,9 +162,32 @@ export function appendMessage(
   return { conv, message: msg }
 }
 
+/** 递归删除文件夹 */
+function removeDir(dir: string): void {
+  if (!fs.existsSync(dir)) return
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      removeDir(full)
+    } else {
+      fs.unlinkSync(full)
+    }
+  }
+  fs.rmdirSync(dir)
+}
+
 /** 删除会话 */
 export function deleteConversation(id: string): boolean {
-  const fp = convFilePath(id)
-  if (!fs.existsSync(fp)) return false
-  try { fs.unlinkSync(fp); return true } catch { return false }
+  // 新格式：删除整个文件夹
+  const dir = convDirPath(id)
+  if (fs.existsSync(dir)) {
+    try { removeDir(dir); return true } catch { return false }
+  }
+  // 旧格式兼容：删除 .json 文件
+  const oldFp = path.join(DATA_DIR, `${id}.json`)
+  if (fs.existsSync(oldFp)) {
+    try { fs.unlinkSync(oldFp); return true } catch { return false }
+  }
+  return false
 }

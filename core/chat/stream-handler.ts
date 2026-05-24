@@ -6,6 +6,7 @@ import { readAgentSoul } from './agent-soul'
 import { buildSystemPrompt } from './system-prompt'
 import { parseMessagesToCore, type UIMessage } from './message-parser'
 import { runAgentLoop } from './agent-loop'
+import { logger } from '@/core/log'
 
 /** 流式聊天选项 */
 export interface StreamChatOptions {
@@ -23,6 +24,12 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
     throw new Error('LLM 未配置 API Key，请前往 Settings → AI 模型 进行配置')
   }
 
+  logger.system('ChatStream', `开始处理会话 ${conversationId}`, 'pending', {
+    conversationId,
+    agentName,
+    messageCount: messages.length,
+  })
+
   // 构建 system prompt（融合 Claude Code 设计理念的模块化组合）
   const soulPrompt = readAgentSoul(agentName)
   const systemPrompt = buildSystemPrompt({ soulPrompt, cwd: process.cwd() })
@@ -35,6 +42,7 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
     messages: coreMessages,
     systemPrompt,
     abortSignal,
+    conversationId,
     onFinish: async (event) => {
       const { text, steps } = event
       // 从所有步骤里提取工具调用记录（input + output 配对）
@@ -70,9 +78,21 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
           : undefined
         appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage)
       }
+
+      logger.system('ChatStream', `会话 ${conversationId} 处理完成`, 'success', {
+        conversationId,
+        stepsCount: steps.length,
+        toolCallsCount: toolCalls.length,
+        responseLength: text.length,
+      })
     },
     /** 错误时回调：保存用户消息和错误信息到对话历史 */
     onError: async (errorText: string) => {
+      logger.system('ChatStream', `会话 ${conversationId} 处理出错`, 'failure', {
+        conversationId,
+        errorText: errorText.slice(0, 200),
+      })
+
       // 保存用户消息
       const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
       const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''

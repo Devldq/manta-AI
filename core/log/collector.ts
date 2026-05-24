@@ -40,10 +40,10 @@ export class DefaultLogCollector implements LogCollector {
     this.startAutoReport()
   }
 
-  /** 添加单条日志 */
-  addLog(entry: Omit<LogEntry, 'id' | 'timestamp'>): void {
-    if (!this.config.enabled) return
-    if (!this.shouldLog(entry.level)) return
+  /** 添加单条日志，返回创建的完整日志条目 */
+  addLog(entry: Omit<LogEntry, 'id' | 'timestamp'>): LogEntry {
+    if (!this.config.enabled) return null as unknown as LogEntry
+    if (!this.shouldLog(entry.level)) return null as unknown as LogEntry
 
     const logEntry: LogEntry = {
       ...entry,
@@ -60,6 +60,8 @@ export class DefaultLogCollector implements LogCollector {
 
     // 触发实时日志事件（可用于UI更新）
     this.emitLogEvent(logEntry)
+    
+    return logEntry
   }
 
   /** 批量添加日志 */

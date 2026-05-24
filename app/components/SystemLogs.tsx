@@ -1,4 +1,4 @@
-/* 系统日志组件 */
+/* 会话日志组件 */
 
 'use client'
 
@@ -124,7 +124,7 @@ function fmtTokens(n: number | undefined): string {
   return String(n)
 }
 
-/** 系统日志组件属性 */
+/** 会话日志组件属性 */
 interface SystemLogsProps {
   /** 会话ID（可选，用于过滤特定会话的日志） */
   conversationId?: string
@@ -140,7 +140,7 @@ interface SystemLogsProps {
   maxHeight?: string
 }
 
-/** 系统日志组件 */
+/** 会话日志组件 */
 export const SystemLogs = memo(function SystemLogs({
   conversationId,
   initialFilter,
@@ -149,15 +149,7 @@ export const SystemLogs = memo(function SystemLogs({
   showActions = true,
   maxHeight = '100%',
 }: SystemLogsProps) {
-  // 日志状态 - 用 useMemo 稳定 filter 引用，避免无限渲染
-  const logFilter = useMemo(
-    () => ({ ...initialFilter, conversationId }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [conversationId]
-  )
-  const { logs, stats, loading, error, refreshLogs } = useLogState(logFilter)
-
-  // 日志过滤
+  // 日志过滤（面板交互式过滤器）
   const {
     filter,
     updateFilter,
@@ -172,6 +164,13 @@ export const SystemLogs = memo(function SystemLogs({
     setTimeRange,
     clearTimeRange,
   } = useLogFilter()
+
+  // 合并 props 过滤 + 面板过滤（conversationId 不作为过滤条件，而是直接指定日志文件）
+  const combinedFilter = useMemo(
+    () => ({ ...initialFilter, ...filter }),
+    [initialFilter, filter]
+  )
+  const { logs, stats, loading, error, refreshLogs } = useLogState(combinedFilter, conversationId)
 
   // 日志导出
   const { exporting, exportResult, exportLogs, downloadExport, clearExport } = useLogExport()
@@ -627,8 +626,8 @@ export const SystemLogs = memo(function SystemLogs({
   const renderEmptyState = () => (
     <div className="flex flex-col items-center justify-center h-full text-center p-6">
       <ScrollText size={32} className="text-text-muted mb-3 opacity-50" />
-      <p className="text-sm text-text-muted">暂无系统日志</p>
-      <p className="text-xs text-text-muted mt-1">系统运行后，这里将显示详细日志</p>
+      <p className="text-sm text-text-muted">暂无会话日志</p>
+      <p className="text-xs text-text-muted mt-1">会话运行后，这里将显示详细日志</p>
     </div>
   )
 
