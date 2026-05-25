@@ -100,12 +100,22 @@ function getStepIndex(log: LogEntry): number | undefined {
   return log.metadata?.stepIndex as number | undefined
 }
 
-/** 按 agent-loop 轮次分组日志，未分组日志按时间戳插入轮次之间 */
-function buildGroups(logs: LogEntry[]): LogGroup[] {
+/** 获取 messageId（从 metadata 中提取） */
+function getMessageId(log: LogEntry): string | undefined {
+  return log.metadata?.messageId as string | undefined
+}
+
+/** 获取 prompt（从 metadata 中提取） */
+function getPrompt(log: LogEntry): string | undefined {
+  return log.metadata?.prompt as string | undefined
+}
+
+/** 将一组日志按 stepIndex 分组为 LogGroup[] */
+function buildStepGroups(turnLogs: LogEntry[]): { steps: LogGroup[]; ungrouped: LogEntry[] } {
   const map = new Map<string, LogGroup>()
   const ungrouped: LogEntry[] = []
 
-  for (const log of logs) {
+  for (const log of turnLogs) {
     const si = getStepIndex(log)
     if (si !== undefined && si >= 0) {
       const key = String(si)
@@ -129,55 +139,83 @@ function buildGroups(logs: LogEntry[]): LogGroup[] {
     }
   }
 
-  const rounds = Array.from(map.values()).sort((a, b) => a.stepIndex - b.stepIndex)
-
-  if (ungrouped.length === 0) return rounds
-
-  // 每个轮次取最早一条日志的时间戳作为位置标记
-  const roundTimestamps = rounds.map(g => ({
-    ts: g.entries[0]?.timestamp ?? '',
-    group: g,
-  }))
-
-  // 按时间戳排序的 merged 列表: { ts, type: 'round' | 'log', group?, log? }
-  type Slot = { ts: string; type: 'round'; group: LogGroup } | { ts: string; type: 'log'; log: LogEntry }
-  const slots: Slot[] = [
-    ...roundTimestamps.map(r => ({ ts: r.ts, type: 'round' as const, group: r.group })),
-    ...ungrouped.map(l => ({ ts: l.timestamp, type: 'log' as const, log: l })),
-  ]
-  slots.sort((a, b) => a.ts.localeCompare(b.ts))
-
-  // 合并相邻的非 round slot 为一个 __ungrouped__ 组，保留 round slot 原位
-  const result: LogGroup[] = []
-  let pendingUngrouped: LogEntry[] = []
-  let ungroupedSeq = 0
-
-  const flushUngrouped = () => {
-    if (pendingUngrouped.length === 0) return
-    result.push({
-      key: `__ungrouped__${ungroupedSeq++}`,
-      stepIndex: -1,
-      entries: [...pendingUngrouped],
-      toolCallCount: pendingUngrouped.filter(l => l.type === LogType.TOOL_CALL).length,
-      errorCount: pendingUngrouped.filter(l => l.level === LogLevel.ERROR || l.level === LogLevel.FATAL).length,
-    })
-    pendingUngrouped = []
+  // 每个 step 内按时间升序排列
+  for (const group of map.values()) {
+    group.entries.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
   }
+  // 按 stepIndex 升序排列（自然顺序：Step 1 → Step 2 → …）
+  const steps = Array.from(map.values()).sort((a, b) => a.stepIndex - b.stepIndex)
+  return { steps, ungrouped }
+}
 
-  for (const slot of slots) {
-    if (slot.type === 'round') {
-      flushUngrouped()
-      // 避免重复添加同一个 round（一个 round 可能被多次命中，用 stepIndex 去重）
-      if (!result.some(g => g.key === slot.group.key)) {
-        result.push(slot.group)
+/**
+ * 两级分组：先按对话轮次（messageId）分组，再在每轮内按 stepIndex 分组。
+ * 返回 TurnGroup[]，按时间倒序排列（最新的轮次在前）。
+ */
+function buildTurnGroups(logs: LogEntry[]): { turns: TurnGroup[]; globalUngrouped: LogEntry[] } {
+  // 第一级：按 messageId 分组
+  const turnMap = new Map<string, LogEntry[]>()
+  const globalUngrouped: LogEntry[] = []
+
+  for (const log of logs) {
+    const mid = getMessageId(log)
+    if (mid) {
+      const existing = turnMap.get(mid)
+      if (existing) {
+        existing.push(log)
+      } else {
+        turnMap.set(mid, [log])
       }
     } else {
-      pendingUngrouped.push(slot.log)
+      globalUngrouped.push(log)
     }
   }
-  flushUngrouped()
 
-  return result
+  // 第二级：每个轮次内按 stepIndex 分组
+  const turns: TurnGroup[] = []
+
+  for (const [messageId, turnLogs] of turnMap.entries()) {
+    // 从任意一条日志的 metadata 中提取 prompt
+    const prompt = turnLogs
+      .map(getPrompt)
+      .find(p => p !== undefined)
+
+    const { steps, ungrouped } = buildStepGroups(turnLogs)
+
+    const totalEntries = turnLogs.length
+    const toolCallCount = turnLogs.filter(l => l.type === LogType.TOOL_CALL).length
+    const errorCount = turnLogs.filter(l => l.level === LogLevel.ERROR || l.level === LogLevel.FATAL).length
+
+    turns.push({
+      key: messageId,
+      messageId,
+      prompt,
+      steps,
+      ungrouped,
+      totalEntries,
+      toolCallCount,
+      errorCount,
+    })
+  }
+
+  // 找每轮最新日志的时间戳用于倒序排序
+  const latestTs = (turnLogs: LogEntry[]) => {
+    let latest = ''
+    for (const l of turnLogs) {
+      if (l.timestamp > latest) latest = l.timestamp
+    }
+    return latest
+  }
+
+  turns.sort((a, b) => {
+    const aLogs = turnMap.get(a.messageId) ?? []
+    const bLogs = turnMap.get(b.messageId) ?? []
+    return latestTs(bLogs).localeCompare(latestTs(aLogs))
+  })
+
+  globalUngrouped.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+
+  return { turns, globalUngrouped }
 }
 
 /** 会话日志组件属性 */
@@ -196,11 +234,11 @@ interface SystemLogsProps {
   maxHeight?: string
 }
 
-/** 分组结构 */
+/** Step 分组结构 */
 interface LogGroup {
   /** 分组键：stepIndex 或 ''(无分组) */
   key: string
-  /** 轮次索引（从0开始），未分组为 -1 */
+  /** 步骤索引（从0开始），未分组为 -1 */
   stepIndex: number
   /** 该组日志条目 */
   entries: LogEntry[]
@@ -210,6 +248,26 @@ interface LogGroup {
   errorCount: number
   /** AgentLoop 步骤完成日志 */
   agentLoopLog?: LogEntry
+}
+
+/** 对话轮次分组结构 */
+interface TurnGroup {
+  /** 分组键：messageId */
+  key: string
+  /** 消息ID（对应一轮 agent loop） */
+  messageId: string
+  /** 用户提问内容 */
+  prompt?: string
+  /** 该轮次下的 Step 分组（按 stepIndex 排序） */
+  steps: LogGroup[]
+  /** 该轮次下无 stepIndex 的日志 */
+  ungrouped: LogEntry[]
+  /** 该轮次的总日志条数 */
+  totalEntries: number
+  /** 该轮次的工具调用次数 */
+  toolCallCount: number
+  /** 该轮次的错误数 */
+  errorCount: number
 }
 
 /** 会话日志组件 */
@@ -253,8 +311,9 @@ export const SystemLogs = memo(function SystemLogs({
   // UI 状态
   const [searchTerm, setSearchTerm] = useState('')
   const [showFilterPanel, setShowFilterPanel] = useState(false)
-  const [groupByRound, setGroupByRound] = useState(true)              // 是否按轮次分组
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())  // 展开的分组key
+  const [groupByRound, setGroupByRound] = useState(true)              // 是否按轮次+步骤分组
+  const [expandedTurns, setExpandedTurns] = useState<Set<string>>(new Set())    // 展开的轮次key（messageId）
+  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())   // 展开的步骤key（messageId:stepIndex）
   const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set()) // 展开详情的条目id
 
   // 应用初始过滤器
@@ -267,24 +326,40 @@ export const SystemLogs = memo(function SystemLogs({
     if (conversationId) updateFilter({ conversationId })
   }, [conversationId, updateFilter])
 
-  // 默认展开所有分组（包括其他日志）
+  // 默认展开所有轮次和步骤
   useEffect(() => {
     if (!groupByRound) return
-    const groups = buildGroups(logs)
-    if (groups.length === 0) return
-    setExpandedGroups(prev => {
+    const { turns } = buildTurnGroups(logs)
+    if (turns.length === 0) return
+
+    // 展开所有轮次
+    setExpandedTurns(prev => {
       const next = new Set(prev)
       let changed = false
-      for (const g of groups) {
-        if (!next.has(g.key)) { next.add(g.key); changed = true }
+      for (const t of turns) {
+        if (!next.has(t.key)) { next.add(t.key); changed = true }
+      }
+      return changed ? next : prev
+    })
+
+    // 展开所有步骤
+    setExpandedSteps(prev => {
+      const next = new Set(prev)
+      let changed = false
+      for (const t of turns) {
+        for (const s of t.steps) {
+          const stepKey = `${t.messageId}:${s.stepIndex}`
+          if (!next.has(stepKey)) { next.add(stepKey); changed = true }
+        }
       }
       return changed ? next : prev
     })
   }, [logs, groupByRound])
 
-  // ── 分组逻辑 ──
-  const groups = useMemo(() => buildGroups(logs), [logs])
-  const groupCount = groups.length
+  // ── 分组逻辑（两级：轮次 → 步骤） ──
+  const { turns, globalUngrouped } = useMemo(() => buildTurnGroups(logs), [logs])
+  const turnCount = turns.length
+  const totalStepCount = turns.reduce((n, t) => n + t.steps.length, 0)
 
   // ── 搜索 ──
   const handleSearch = (term: string) => {
@@ -308,9 +383,17 @@ export const SystemLogs = memo(function SystemLogs({
     } catch (err) { console.error('Export failed:', err) }
   }
 
-  // ── 分组展开/折叠 ──
-  const toggleGroup = (key: string) => {
-    setExpandedGroups(prev => {
+  // ── 轮次/步骤展开折叠 ──
+  const toggleTurn = (messageId: string) => {
+    setExpandedTurns(prev => {
+      const next = new Set(prev)
+      if (next.has(messageId)) next.delete(messageId); else next.add(messageId)
+      return next
+    })
+  }
+  const toggleStep = (messageId: string, stepIndex: number) => {
+    const key = `${messageId}:${stepIndex}`
+    setExpandedSteps(prev => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key); else next.add(key)
       return next
@@ -467,24 +550,59 @@ export const SystemLogs = memo(function SystemLogs({
     )
   }
 
-  // ── 渲染分组头 ──
-  const renderGroupHeader = (group: LogGroup) => {
-    const isExpanded = expandedGroups.has(group.key)
-    const isUngrouped = group.stepIndex < 0
+  // ── 渲染轮次头（一级分组） ──
+  const renderTurnHeader = (turn: TurnGroup) => {
+    const isExpanded = expandedTurns.has(turn.key)
+    const promptPreview = turn.prompt
+      ? (turn.prompt.length > 40 ? turn.prompt.slice(0, 40) + '…' : turn.prompt)
+      : '(无提问内容)'
 
     return (
       <div
-        className={`flex items-center gap-2 px-2 py-1 cursor-pointer select-none sticky top-0 z-[5]
-          ${isUngrouped ? 'bg-surface/40' : 'bg-surface/60'}
-          border-b border-border-subtle hover:bg-surface/70 transition-colors`}
-        onClick={() => toggleGroup(group.key)}
+        className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer select-none sticky top-0 z-10
+          bg-surface/90 border-b border-border-subtle hover:bg-surface transition-colors`}
+        onClick={() => toggleTurn(turn.key)}
       >
         <span className="text-text-muted/60 flex-shrink-0">
-          {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        </span>
+
+        <span className="text-[11px] font-semibold text-text-primary flex-shrink-0">
+          对话
+        </span>
+
+        <span className="text-[11px] text-text-secondary truncate flex-1 min-w-0" title={turn.prompt}>
+          {promptPreview}
+        </span>
+
+        <span className="text-[10px] text-text-muted/60 flex-shrink-0">
+          {turn.steps.length} 步 · {turn.totalEntries} 条
+          {turn.toolCallCount > 0 && ` · ${turn.toolCallCount} 工具`}
+          {turn.errorCount > 0 && (
+            <span className="text-red-500 ml-1">· {turn.errorCount} 错误</span>
+          )}
+        </span>
+      </div>
+    )
+  }
+
+  // ── 渲染步骤头（二级分组） ──
+  const renderStepHeader = (group: LogGroup, messageId: string) => {
+    const stepKey = `${messageId}:${group.stepIndex}`
+    const isExpanded = expandedSteps.has(stepKey)
+
+    return (
+      <div
+        className={`flex items-center gap-2 px-2 py-[3px] cursor-pointer select-none
+          bg-surface/40 border-b border-border-subtle/50 hover:bg-surface/60 transition-colors`}
+        onClick={(e) => { e.stopPropagation(); toggleStep(messageId, group.stepIndex) }}
+      >
+        <span className="text-text-muted/50 flex-shrink-0 ml-4">
+          {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         </span>
 
         <span className="text-[10px] font-semibold text-text-secondary flex-shrink-0">
-          {isUngrouped ? '其他日志' : `第 ${group.stepIndex + 1} 轮`}
+          Step {group.stepIndex + 1}
         </span>
 
         <span className="text-[10px] text-text-muted/60">
@@ -514,9 +632,14 @@ export const SystemLogs = memo(function SystemLogs({
         <span className="text-[10px] text-text-muted">
           共 <span className="font-semibold text-text-secondary">{stats.total}</span> 条
         </span>
-        {groupByRound && groupCount > 0 && (
+        {groupByRound && turnCount > 0 && (
           <span className="text-[10px] text-text-muted">
-            <span className="font-semibold text-text-secondary">{groupCount}</span> 轮
+            <span className="font-semibold text-text-secondary">{turnCount}</span> 轮对话
+          </span>
+        )}
+        {groupByRound && totalStepCount > 0 && (
+          <span className="text-[10px] text-text-muted">
+            <span className="font-semibold text-text-secondary">{totalStepCount}</span> 步骤
           </span>
         )}
         {stats.errorRate > 0 && (
@@ -641,13 +764,46 @@ export const SystemLogs = memo(function SystemLogs({
             <p className="text-xs text-text-muted">暂无会话日志</p>
           </div>
         ) : groupByRound ? (
-          /* 分组视图 */
-          groups.map(group => (
-            <div key={group.key}>
-              {renderGroupHeader(group)}
-              {expandedGroups.has(group.key) && group.entries.map(log => renderLogLine(log))}
-            </div>
-          ))
+          /* 两级分组视图：轮次 → 步骤 → 日志行 */
+          <>
+            {turns.map(turn => (
+              <div key={turn.key}>
+                {renderTurnHeader(turn)}
+                {expandedTurns.has(turn.key) && (
+                  <>
+                    {/* 该轮次下的 Step 分组 */}
+                    {turn.steps.map(step => (
+                      <div key={`${turn.messageId}:${step.stepIndex}`}>
+                        {renderStepHeader(step, turn.messageId)}
+                        {expandedSteps.has(`${turn.messageId}:${step.stepIndex}`) &&
+                          step.entries.map(log => renderLogLine(log))
+                        }
+                      </div>
+                    ))}
+                    {/* 该轮次下无 stepIndex 的日志 */}
+                    {turn.ungrouped.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 px-2 py-[3px] bg-surface/30 border-b border-border-subtle/30">
+                          <span className="text-[10px] text-text-muted/50 ml-4">· 其他</span>
+                        </div>
+                        {turn.ungrouped.map(log => renderLogLine(log))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+            {/* 全局未分组日志（无 messageId） */}
+            {globalUngrouped.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 px-2 py-1 bg-surface/50 border-b border-border-subtle">
+                  <span className="text-[10px] font-semibold text-text-muted">其他日志</span>
+                  <span className="text-[10px] text-text-muted/50">{globalUngrouped.length} 条</span>
+                </div>
+                {globalUngrouped.map(log => renderLogLine(log))}
+              </div>
+            )}
+          </>
         ) : (
           /* 平铺视图 */
           logs.map(log => renderLogLine(log))
