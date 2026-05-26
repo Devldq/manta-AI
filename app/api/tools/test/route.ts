@@ -2,7 +2,7 @@
  * 直接调用 fs-tools 中的工具进行测试
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { fsToolDefs } from '@/core/conversation/fs-tools'
+import { fsToolDefs } from '@/core/tools/file-tools'
 
 // 直接获取工具定义
 const tools = new Map<string, (typeof fsToolDefs)[0]>()

@@ -1,4 +1,8 @@
-/* LangChain 模型工厂 — 根据 LLMConfig 创建对应的 ChatModel */
+/**
+ * @deprecated 项目已迁移到 AI SDK (ai)，不再使用 LangChain。此文件保留仅为历史参考，后续版本将删除。
+ * 
+ * LangChain 模型工厂 — 根据 LLMConfig 创建对应的 ChatModel
+ */
 import type { LLMConfig } from './types'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 

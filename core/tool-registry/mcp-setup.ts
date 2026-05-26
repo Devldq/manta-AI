@@ -13,9 +13,9 @@ import { MCPClient, MockMCPClient, RemoteMCPClient } from './mcp-client';
 import { getEffectiveServers, getMCPToolVisibility } from './mcp-config';
 import { getValidAccessToken } from './mcp-oauth';
 import { resolveEnvVarsInObject, normalizeServerConfig } from './types';
-import { conversationToolDefs } from '@/core/conversation/tools';
-import { fsToolDefs } from '@/core/conversation/fs-tools';
-import { ccToolDefs } from '@/core/conversation/cc-tools';
+import { conversationToolDefs } from '@/core/tools/conversation-tools';
+import { fsToolDefs } from '@/core/tools/file-tools';
+import { ccToolDefs } from '@/core/tools/shell-tools';
 import { createToolSearchTool } from './tool-search';
 
 import type {

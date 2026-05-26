@@ -20,29 +20,29 @@ global:
 # 敏感信息检测规则
 # 可以根据项目需求自定义添加或修改规则
 rules:
-  # 快手相关敏感信息
-  - id: "kuaishou-email"
-    name: "快手公司邮箱"
+  # 相关敏感信息
+  - id: "xxx-email"
+    name: "公司邮箱"
     enabled: true
     severity: "high"
-    pattern: "@kuaishou\\.com"
-    description: "检测到快手公司邮箱地址"
+    pattern: "@xxx\\.com"
+    description: "检测到公司邮箱地址"
     suggestion: "请移除公司邮箱，使用个人邮箱或占位符（如 example@example.com）"
 
-  - id: "kuaishou-domain"
-    name: "快手内网域名"
+  - id: "xxx-domain"
+    name: "内网域名"
     enabled: true
     severity: "high"
-    pattern: "(corp|internal|intranet)\\.kuaishou\\.com"
-    description: "检测到快手内网域名"
+    pattern: "(corp|internal|intranet)\\.xxx\\.com"
+    description: "检测到内网域名"
     suggestion: "请移除内网域名配置，使用环境变量或配置文件"
 
-  - id: "kuaishou-npm-registry"
-    name: "快手内网 npm 镜像源"
+  - id: "xxx-npm-registry"
+    name: "内网 npm 镜像源"
     enabled: true
     severity: "medium"
-    pattern: "npm\\.corp\\.kuaishou\\.com"
-    description: "检测到快手内网 npm 镜像源配置"
+    pattern: "npm\\.corp\\.xxx\\.com"
+    description: "检测到内网 npm 镜像源配置"
     suggestion: "请使用公共 npm 镜像源或在 .npmrc 中配置（已在 .gitignore 中忽略）"
 
   # API 密钥和令牌

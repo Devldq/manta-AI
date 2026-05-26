@@ -7,7 +7,7 @@ import {
   appendMessage,
   deleteConversation,
   updateConversationAgent,
-} from './store'
+} from '@/core/conversation/store'
 
 /** 创建新会话 */
 const createConversationDef: ToolDefinition = {
