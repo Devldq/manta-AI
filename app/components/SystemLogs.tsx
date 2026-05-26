@@ -23,6 +23,7 @@ import {
   Pencil,
   Layers,
   List,
+  MessageSquare,
 } from 'lucide-react'
 import { useLogState, useLogFilter, useLogExport, useLogActions } from '@/core/log/hooks'
 import { LogEntry, LogLevel, LogType, LogSource, LogFilter } from '@/core/log/types'
@@ -127,12 +128,14 @@ function buildStepGroups(turnLogs: LogEntry[]): { steps: LogGroup[]; ungrouped: 
           entries: [],
           toolCallCount: 0,
           errorCount: 0,
+          modelOutputCount: 0,
         }
         map.set(key, group)
       }
       group.entries.push(log)
       if (log.type === LogType.TOOL_CALL) group.toolCallCount++
       if (log.level === LogLevel.ERROR || log.level === LogLevel.FATAL) group.errorCount++
+      if (log.type === LogType.MODEL_OUTPUT) group.modelOutputCount++
       if (log.type === LogType.AGENT_LOOP) group.agentLoopLog = log
     } else {
       ungrouped.push(log)
@@ -246,6 +249,8 @@ interface LogGroup {
   toolCallCount: number
   /** 错误数 */
   errorCount: number
+  /** 模型输出次数 */
+  modelOutputCount: number
   /** AgentLoop 步骤完成日志 */
   agentLoopLog?: LogEntry
 }
@@ -427,6 +432,7 @@ export const SystemLogs = memo(function SystemLogs({
   const renderLogLine = (log: LogEntry) => {
     const isError = log.level === LogLevel.ERROR || log.level === LogLevel.FATAL
     const isToolCall = log.type === LogType.TOOL_CALL
+    const isModelOutput = log.type === LogType.MODEL_OUTPUT
     const toolName = isToolCall ? (log.details as any)?.toolName : null
     const isExpanded = expandedEntries.has(log.id)
 
@@ -462,6 +468,13 @@ export const SystemLogs = memo(function SystemLogs({
             <span className="inline-flex items-center gap-0.5 px-1 rounded text-[10px] bg-accent/10 text-accent flex-shrink-0 max-w-[72px] truncate">
               {getToolIcon(toolName)}
               <span className="truncate">{toolName}</span>
+            </span>
+          )}
+
+          {/* 模型输出标记 */}
+          {isModelOutput && (
+            <span className="inline-flex items-center gap-0.5 px-1 rounded text-[10px] bg-green-500/10 text-green-500 flex-shrink-0" title="模型输出">
+              <MessageSquare size={11} />
             </span>
           )}
 
@@ -551,7 +564,7 @@ export const SystemLogs = memo(function SystemLogs({
   }
 
   // ── 渲染轮次头（一级分组） ──
-  const renderTurnHeader = (turn: TurnGroup) => {
+  const renderTurnHeader = (turn: TurnGroup, index: number, total: number) => {
     const isExpanded = expandedTurns.has(turn.key)
     const promptPreview = turn.prompt
       ? (turn.prompt.length > 40 ? turn.prompt.slice(0, 40) + '…' : turn.prompt)
@@ -560,7 +573,7 @@ export const SystemLogs = memo(function SystemLogs({
     return (
       <div
         className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer select-none sticky top-0 z-10
-          bg-surface/90 border-b border-border-subtle hover:bg-surface transition-colors`}
+          bg-background border-b border-border-subtle hover:bg-surface transition-colors`}
         onClick={() => toggleTurn(turn.key)}
       >
         <span className="text-text-muted/60 flex-shrink-0">
@@ -568,7 +581,7 @@ export const SystemLogs = memo(function SystemLogs({
         </span>
 
         <span className="text-[11px] font-semibold text-text-primary flex-shrink-0">
-          对话
+          第 {total - index} 轮对话
         </span>
 
         <span className="text-[11px] text-text-secondary truncate flex-1 min-w-0" title={turn.prompt}>
@@ -597,7 +610,7 @@ export const SystemLogs = memo(function SystemLogs({
           bg-surface/40 border-b border-border-subtle/50 hover:bg-surface/60 transition-colors`}
         onClick={(e) => { e.stopPropagation(); toggleStep(messageId, group.stepIndex) }}
       >
-        <span className="text-text-muted/50 flex-shrink-0 ml-4">
+        <span className="text-text-muted/50 flex-shrink-0">
           {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         </span>
 
@@ -605,13 +618,14 @@ export const SystemLogs = memo(function SystemLogs({
           Step {group.stepIndex + 1}
         </span>
 
-        <span className="text-[10px] text-text-muted/60">
-          {group.entries.length} 条
-          {group.toolCallCount > 0 && ` · ${group.toolCallCount} 工具调用`}
-          {group.errorCount > 0 && (
-            <span className="text-red-500 ml-1">· {group.errorCount} 错误</span>
-          )}
-        </span>
+      <span className="text-[10px] text-text-muted/60">
+        {group.entries.length} 条
+        {group.toolCallCount > 0 && ` · ${group.toolCallCount} 工具调用`}
+        {group.modelOutputCount > 0 && ` · ${group.modelOutputCount} 输出`}
+        {group.errorCount > 0 && (
+          <span className="text-red-500 ml-1">· {group.errorCount} 错误</span>
+        )}
+      </span>
 
         {/* Agent loop 摘要信息 */}
         {group.agentLoopLog && (
@@ -766,9 +780,10 @@ export const SystemLogs = memo(function SystemLogs({
         ) : groupByRound ? (
           /* 两级分组视图：轮次 → 步骤 → 日志行 */
           <>
-            {turns.map(turn => (
+            {turns.map((turn, i) => (
               <div key={turn.key}>
-                {renderTurnHeader(turn)}
+                {renderTurnHeader(turn, i, turns.length)}
+
                 {expandedTurns.has(turn.key) && (
                   <>
                     {/* 该轮次下的 Step 分组 */}

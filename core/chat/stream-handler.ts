@@ -6,7 +6,7 @@ import { readAgentSoul } from '../context/agent-soul'
 import { buildSystemPrompt } from '../context/system-prompt'
 import { parseMessagesToCore, type UIMessage } from './message-parser'
 import { runAgentLoop } from './agent-loop'
-import { logger } from '@/core/log'
+import { logger, logManager } from '@/core/log'
 
 /** 流式聊天选项 */
 export interface StreamChatOptions {
@@ -100,6 +100,8 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
         toolCallsCount: toolCalls.length,
         responseLength: text.length,
       })
+      // flush 该会话的 staging 缓冲区（处理完成/出错 的日志已补齐 messageId）
+      logManager.closeConversation(conversationId)
     },
     /** 错误时回调：保存用户消息和错误信息到对话历史 */
     onError: async (errorText: string) => {
@@ -120,6 +122,9 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
       }
       // 保存错误回复
       appendMessage(conversationId, 'assistant', errorText)
+
+      // flush 该会话的 staging 缓冲区
+      logManager.closeConversation(conversationId)
     },
   })
 

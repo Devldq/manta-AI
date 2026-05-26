@@ -380,6 +380,15 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
 
         // 记录步骤完成
         allStepCollects.push(stepCollect)
+
+        // 记录模型文本输出到日志（会写入会话 log.ndjson）
+        if (stepCollect.text) {
+          logger.modelOutput(stepIndex, stepCollect.text, {
+            inputTokens: stepCollect.usage.inputTokens,
+            outputTokens: stepCollect.usage.outputTokens,
+          }, { ...baseMeta })
+        }
+
         logger.agentLoop(
           stepIndex,
           currentMessages.length,

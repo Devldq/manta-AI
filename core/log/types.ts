@@ -12,6 +12,7 @@ export enum LogLevel {
 /** 日志类型 */
 export enum LogType {
   TOOL_CALL = 'tool_call',           // 工具调用日志
+  MODEL_OUTPUT = 'model_output',     // 模型输出日志
   SYSTEM = 'system',                 // 系统日志
   AGENT_LOOP = 'agent_loop',         // Agent循环日志
   WORKFLOW = 'workflow',             // 工作流日志
@@ -111,6 +112,24 @@ export interface ToolCallLog extends LogEntry {
     phase?: 'start' | 'input' | 'output' | 'error' | 'complete'
     /** 耗时 */
     durationMs?: number
+  }
+}
+
+/** 模型输出日志 */
+export interface ModelOutputLog extends LogEntry {
+  type: LogType.MODEL_OUTPUT
+  details: {
+    /** 步骤索引 */
+    stepIndex: number
+    /** 模型输出的文本内容 */
+    text: string
+    /** 文本长度 */
+    textLength: number
+    /** 该步骤的 token 用量 */
+    usage?: {
+      inputTokens?: number
+      outputTokens?: number
+    }
   }
 }
 
