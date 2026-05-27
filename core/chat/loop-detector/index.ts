@@ -11,6 +11,7 @@ export class LoopDetector {
   private state: LoopDetectorState = {
     history: [],
     warningInjected: false,
+    criticalInjected: false,
   }
 
   private config: LoopDetectorConfig
@@ -65,12 +66,27 @@ export class LoopDetector {
   }
 
   /**
+   * 检查是否已注入过 critical 警告
+   */
+  hasInjectedCritical(): boolean {
+    return this.state.criticalInjected
+  }
+
+  /**
+   * 标记已注入 critical 警告
+   */
+  markCriticalInjected(): void {
+    this.state.criticalInjected = true
+  }
+
+  /**
    * 重置检测器
    */
   reset(): void {
     this.state = {
       history: [],
       warningInjected: false,
+      criticalInjected: false,
     }
   }
 

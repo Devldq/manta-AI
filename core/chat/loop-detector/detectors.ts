@@ -9,8 +9,14 @@ const {
 } = DEFAULT_CONFIG
 
 /**
- * 检测通用重复：同一个工具、同样的参数、同样的结果，反复调用
- * 例如：连续 5 次读取同一个不存在的文件
+ * 检测通用重复：同一个工具、同样的参数反复调用
+ *
+ * 两级匹配：
+ * - 完全重复（callHash + outputHash 都相同）：最严重，相同输入相同输出
+ * - 参数重复（仅 callHash 相同）：相同输入但输出不同（如每次 404 错误文本不同）
+ *   参数重复达到阈值时也触发检测，避免因输出微小差异导致永远检测不到
+ *
+ * 例如：连续 5 次搜索同一个 URL 返回 404，即使每次错误信息略有不同也应检测到
  */
 export function detectGeneralRepeat(
   history: ToolCallFingerprint[]
@@ -21,30 +27,63 @@ export function detectGeneralRepeat(
   const last = history[history.length - 1]
   if (!last) return null
 
-  // 在历史中连续查找完全相同的调用（callHash + outputHash 都相同）
-  let repeatCount = 0
+  // 连续查找完全相同的调用（callHash + outputHash 都相同）
+  let exactRepeatCount = 0
   for (let i = history.length - 2; i >= 0; i--) {
     const prev = history[i]
     if (prev.callHash === last.callHash && prev.outputHash === last.outputHash) {
-      repeatCount++
+      exactRepeatCount++
     } else {
-      break  // 一旦不匹配就停止计数
+      break
     }
   }
 
-  if (repeatCount >= WARNING_THRESHOLD - 1) {
-    const severity = repeatCount >= CIRCUIT_BREAKER_THRESHOLD - 1
+  // 完全重复达到阈值 → 直接按原有逻辑处理
+  if (exactRepeatCount >= WARNING_THRESHOLD - 1) {
+    const severity = exactRepeatCount >= CIRCUIT_BREAKER_THRESHOLD - 1
       ? 'circuit-breaker'
-      : repeatCount >= CRITICAL_THRESHOLD - 1
+      : exactRepeatCount >= CRITICAL_THRESHOLD - 1
         ? 'critical'
         : 'warning'
 
     return {
       type: 'general-repeat',
       severity,
-      repeatCount: repeatCount + 1,
+      repeatCount: exactRepeatCount + 1,
       lastFingerprint: last,
-      message: `检测到重复调用：工具 ${last.toolName} 以相同参数和结果被调用了 ${repeatCount + 1} 次，请尝试其他方法或策略。`,
+      message: `检测到重复调用：工具 ${last.toolName} 以相同参数和结果被调用了 ${exactRepeatCount + 1} 次，请尝试其他方法或策略。`,
+    }
+  }
+
+  // 参数重复检测：仅 callHash 相同，但 output 不同
+  // 使用稍高的阈值（避免偶发的正常重复被误判）
+  let paramRepeatCount = 0
+  for (let i = history.length - 2; i >= 0; i--) {
+    const prev = history[i]
+    if (prev.callHash === last.callHash) {
+      paramRepeatCount++
+    } else {
+      break
+    }
+  }
+
+  const PARAM_WARNING = WARNING_THRESHOLD + 2   // 7 次 → warning
+  const PARAM_CRITICAL = CRITICAL_THRESHOLD + 2  // 10 次 → critical
+  const PARAM_BREAKER = CIRCUIT_BREAKER_THRESHOLD + 2  // 12 次 → 熔断
+
+  if (paramRepeatCount >= PARAM_WARNING - 1) {
+    const severity = paramRepeatCount >= PARAM_BREAKER - 1
+      ? 'circuit-breaker'
+      : paramRepeatCount >= PARAM_CRITICAL - 1
+        ? 'critical'
+        : 'warning'
+
+    return {
+      type: 'general-repeat',
+      severity,
+      repeatCount: paramRepeatCount + 1,
+      lastFingerprint: last,
+      message: `检测到重复调用：工具 ${last.toolName} 以相同参数被调用了 ${paramRepeatCount + 1} 次（每次输出不同），请尝试其他方法或策略。`,
     }
   }
 

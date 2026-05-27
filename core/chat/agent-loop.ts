@@ -95,8 +95,13 @@ function decideStop(
   if (loopResult.severity === 'circuit-breaker') {
     return { shouldStop: true, reason: `circuit-breaker:${loopResult.type}` }
   }
-  if (loopResult.severity === 'critical') {
-    return { shouldStop: true, reason: `critical:${loopResult.type}` }
+  if (loopResult.severity === 'critical' && !loopDetector.hasInjectedCritical()) {
+    loopDetector.markCriticalInjected()
+    return {
+      shouldStop: false,
+      reason: '',
+      warningToInject: `[严重警告] ${loopResult.message ?? '检测到严重循环行为，你已陷入重复模式。'} 请立即停止当前策略，换一种完全不同的方法，或向用户说明你遇到的问题。`,
+    }
   }
   if (loopResult.severity === 'warning' && !loopDetector.hasInjectedWarning()) {
     loopDetector.markWarningInjected()

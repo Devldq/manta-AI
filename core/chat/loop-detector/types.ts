@@ -23,6 +23,7 @@ export interface LoopDetectionResult {
 export interface LoopDetectorState {
   history: ToolCallFingerprint[]
   warningInjected: boolean
+  criticalInjected: boolean
 }
 
 /** 循环检测配置 */
@@ -40,9 +41,9 @@ export interface LoopDetectorConfig {
 /** 默认配置 */
 export const DEFAULT_CONFIG: LoopDetectorConfig = {
   slidingWindowSize: 30,
-  warningThreshold: 5,
-  criticalThreshold: 8,
-  circuitBreakerThreshold: 10,
+  warningThreshold: 5,       // 第 5 次 → 注入提示，模型自行调整
+  criticalThreshold: 6,      // 第 6 次 → critical 警告（告诉模型陷入循环，给一次机会）
+  circuitBreakerThreshold: 8, // 第 8 次 → 熔断停止
 }
 
 /* AI end: 循环检测器类型定义结束 */
