@@ -79,6 +79,9 @@ export interface LogMetadata {
     inputTokens?: number
     outputTokens?: number
     totalTokens?: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    noCacheTokens?: number
   }
   /** 性能指标 */
   performance?: {
@@ -94,6 +97,26 @@ export interface LogMetadata {
     stack?: string
     code?: string
   }
+  /** 消息数量 */
+  messageCount?: number
+  /** 步骤数量 */
+  stepsCount?: number
+  /** 工具调用数量 */
+  toolCallsCount?: number
+  /** 响应内容长度 */
+  responseLength?: number
+  /** 错误文本 */
+  errorText?: string
+  /** 是否有 Agent Soul */
+  hasSoul?: boolean
+  /** Agent Soul 长度 */
+  soulLength?: number
+  /** Agent Soul 内容 */
+  soulContent?: string
+  /** System Prompt 长度 */
+  systemLength?: number
+  /** System Prompt 内容 */
+  systemContent?: string
   /** 附加数据 */
   extra?: Record<string, unknown>
 }
@@ -129,6 +152,9 @@ export interface ModelOutputLog extends LogEntry {
     usage?: {
       inputTokens?: number
       outputTokens?: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+      noCacheTokens?: number
     }
   }
 }
@@ -145,6 +171,14 @@ export interface AgentLoopLog extends LogEntry {
     decision?: {
       shouldStop: boolean
       reason?: string
+    }
+    /** 该步骤的 token 用量（含缓存明细） */
+    stepUsage?: {
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+      noCacheTokens?: number
     }
     /** 循环检测结果 */
     loopDetection?: {

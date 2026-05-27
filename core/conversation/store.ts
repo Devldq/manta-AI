@@ -138,7 +138,8 @@ export function appendMessage(
   role: 'user' | 'assistant',
   content: string,
   toolCalls?: import('./types').ToolCallRecord[],
-  usage?: { inputTokens?: number; outputTokens?: number },
+  usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number },
+  stepUsages?: import('./types').StepUsageRecord[],
 ): { conv: Conversation; message: Message } | null {
   const conv = readConv(convId)
   if (!conv) return null
@@ -150,6 +151,7 @@ export function appendMessage(
     timestamp: new Date().toISOString(),
     ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
     ...(usage ? { usage } : {}),
+    ...(stepUsages && stepUsages.length > 0 ? { stepUsages } : {}),
   }
   conv.messages.push(msg)
   conv.updatedAt = new Date().toISOString()

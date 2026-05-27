@@ -24,7 +24,8 @@ export interface StoredMessage {
   content: string
   timestamp: string
   toolCalls?: StoredToolCall[]
-  usage?: { inputTokens?: number; outputTokens?: number }
+  usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number }
+  stepUsages?: Array<{ inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number; toolNames?: string[] }>
 }
 
 /** 会话数据 */

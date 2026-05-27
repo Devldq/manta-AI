@@ -26,23 +26,12 @@ import {
   PerformanceLog
 } from './types'
 
-/** 会话 staging 条目 */
-interface StagedConversation {
-  /** 暂存的日志条目（尚未写入，等待 messageId） */
-  entries: Omit<LogEntry, 'id' | 'timestamp'>[]
-  /** 已知的 messageId（该会话的首个 messageId，后续无 messageId 日志自动使用） */
-  messageId?: string
-}
-
 /** 日志系统管理器 */
 export class LogManager {
   private static instance: LogManager | null = null
   private collector: LogCollector
   private formatter: LogFormatter
   private isInitialized = false
-
-  /** staging 缓冲区：按 conversationId 暂存无 messageId 的日志 */
-  private stagedLogs: Map<string, StagedConversation> = new Map()
 
   private constructor(collector?: LogCollector, formatter?: LogFormatter) {
     this.collector = collector || defaultLogCollector
@@ -136,44 +125,8 @@ export class LogManager {
     } catch { /* 写入失败不影响内存日志 */ }
   }
 
-  /** 添加日志（含 staging：无 messageId 的会话日志暂存，等 messageId 到达后自动补齐并 flush） */
+  /** 添加日志 */
   addLog(entry: Omit<LogEntry, 'id' | 'timestamp'>): void {
-    const convId = entry.metadata?.conversationId as string | undefined
-    const msgId = entry.metadata?.messageId as string | undefined
-
-    if (convId) {
-      const staged = this.stagedLogs.get(convId)
-
-      if (msgId) {
-        // 有 messageId → 注册并 flush 暂存的同会话日志
-        if (!staged) {
-          this.stagedLogs.set(convId, { entries: [], messageId: msgId })
-        } else {
-          staged.messageId = msgId
-          if (staged.entries.length > 0) {
-            for (const stagedEntry of staged.entries) {
-              stagedEntry.metadata = { ...stagedEntry.metadata, messageId: msgId }
-              this.writeLog(stagedEntry)
-            }
-            staged.entries = []
-          }
-        }
-      } else {
-        // 无 messageId → 检查是否已注册 messageId
-        if (staged?.messageId) {
-          // 已知 messageId，自动补齐
-          entry.metadata = { ...entry.metadata, messageId: staged.messageId }
-        } else {
-          // 暂未知 messageId → 暂存
-          if (!staged) {
-            this.stagedLogs.set(convId, { entries: [] })
-          }
-          this.stagedLogs.get(convId)!.entries.push(entry)
-          return
-        }
-      }
-    }
-
     this.writeLog(entry)
   }
 
@@ -183,15 +136,9 @@ export class LogManager {
     if (logEntry) this.appendToFile(logEntry)
   }
 
-  /** 关闭会话：flush 该会话所有暂存日志（无 messageId 补齐则原样写入，落入全局「其他日志」） */
-  closeConversation(conversationId: string): void {
-    const staged = this.stagedLogs.get(conversationId)
-    if (staged) {
-      for (const entry of staged.entries) {
-        this.writeLog(entry)
-      }
-      this.stagedLogs.delete(conversationId)
-    }
+  /** 关闭会话（无操作，保留以兼容调用方） */
+  closeConversation(_conversationId: string): void {
+    // staging 已移除，无需 flush
   }
 
   /** 批量添加日志 */
@@ -316,7 +263,7 @@ export class LogManager {
   logModelOutput(
     stepIndex: number,
     text: string,
-    usage?: { inputTokens?: number; outputTokens?: number },
+    usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number },
     metadata?: Partial<LogEntry['metadata']>
   ): void {
     if (!text) return // 空文本不记录
@@ -338,6 +285,9 @@ export class LogManager {
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
           totalTokens: (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0),
+          cacheReadTokens: usage.cacheReadTokens,
+          cacheWriteTokens: usage.cacheWriteTokens,
+          noCacheTokens: usage.noCacheTokens,
         } : undefined,
       },
       tags: ['agent', 'model-output'],
@@ -350,7 +300,8 @@ export class LogManager {
     messageCount: number,
     toolCallCount: number,
     totalOutputTokens: number,
-    metadata?: Partial<LogEntry['metadata']>
+    metadata?: Partial<LogEntry['metadata']>,
+    stepUsage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number },
   ): void {
     this.addLog({
       level: LogLevel.INFO,
@@ -362,6 +313,7 @@ export class LogManager {
         messageCount,
         toolCallCount,
         totalOutputTokens,
+        stepUsage,
       },
       metadata: {
         ...metadata,
@@ -557,12 +509,12 @@ export const logger = {
   },
 
   /** Agent循环日志 */
-  agentLoop(stepIndex: number, messageCount: number, toolCallCount: number, totalOutputTokens: number, metadata?: Partial<LogEntry['metadata']>): void {
-    logManager.logAgentLoop(stepIndex, messageCount, toolCallCount, totalOutputTokens, metadata)
+  agentLoop(stepIndex: number, messageCount: number, toolCallCount: number, totalOutputTokens: number, metadata?: Partial<LogEntry['metadata']>, stepUsage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number }): void {
+    logManager.logAgentLoop(stepIndex, messageCount, toolCallCount, totalOutputTokens, metadata, stepUsage)
   },
 
   /** 模型输出日志 */
-  modelOutput(stepIndex: number, text: string, usage?: { inputTokens?: number; outputTokens?: number }, metadata?: Partial<LogEntry['metadata']>): void {
+  modelOutput(stepIndex: number, text: string, usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number }, metadata?: Partial<LogEntry['metadata']>): void {
     logManager.logModelOutput(stepIndex, text, usage, metadata)
   },
 

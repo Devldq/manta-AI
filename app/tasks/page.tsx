@@ -33,7 +33,8 @@ interface StoredMessage {
   content: string
   timestamp: string
   toolCalls?: StoredToolCall[]
-  usage?: { inputTokens?: number; outputTokens?: number }
+  usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number }
+  stepUsages?: Array<{ inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number; toolNames?: string[] }>
 }
 
 interface Conversation {
@@ -433,6 +434,175 @@ const ToolCallItem = memo(function ToolCallItem({ entry }: { entry: ToolCallEntr
   )
 })
 
+// ─── Token 分析面板：按步骤展示 token 消耗进度条 ──────────────────────────────────
+
+interface StepUsageData {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  noCacheTokens?: number
+  toolNames?: string[]
+}
+
+const TokenBreakdown = memo(function TokenBreakdown({ steps, open, onToggle }: { steps: StepUsageData[]; open: boolean; onToggle: () => void }) {
+  const stepCount = steps.length
+  if (stepCount === 0) return null
+
+  // 找出所有步骤中最高的总 token 数，用于归一化进度条宽度
+  const maxTotal = Math.max(...steps.map((s) =>
+    s.inputTokens + s.outputTokens + (s.cacheReadTokens ?? 0)
+  ), 1)
+
+  const totalIn = steps.reduce((a, s) => a + s.inputTokens, 0)
+  const totalOut = steps.reduce((a, s) => a + s.outputTokens, 0)
+  const totalCache = steps.reduce((a, s) => a + (s.cacheReadTokens ?? 0), 0)
+
+  return (
+    <div style={{ marginTop: '10px' }}>
+      {/* 折叠开关 */}
+      <button
+        onClick={onToggle}
+        className="token-toggle"
+        style={{
+          display: 'flex', alignItems: 'center', gap: '5px',
+          padding: '3px 8px', border: 'none', background: 'var(--color-surface-secondary, #f0f0f0)',
+          cursor: 'pointer', borderRadius: '5px',
+          color: 'var(--color-text-secondary)', fontSize: '11px',
+          fontFamily: 'var(--font-mono)',
+          transition: 'background 0.15s, color 0.15s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-accent)' }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface-secondary, #f0f0f0)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}
+      >
+        <span style={{ display: 'inline-block', transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform var(--duration-normal) var(--ease-out-quart)', fontSize: '9px', lineHeight: 1 }}>▼</span>
+        Token 分析 · {stepCount} 步
+        <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
+          in {fmtTokens(totalIn + totalCache)} out {fmtTokens(totalOut)}
+        </span>
+        {totalCache > 0 && (
+          <span style={{ color: 'var(--color-status-done, #10b981)' }}>cache +{fmtTokens(totalCache)}</span>
+        )}
+      </button>
+
+      {/* 展开后的步骤列表 */}
+      {open && (
+        <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {steps.map((step, i) => {
+            // 该步的各类 token
+            const noCache = step.noCacheTokens ?? step.inputTokens
+            const cache = step.cacheReadTokens ?? 0
+            const out = step.outputTokens
+            const total = noCache + cache + out
+
+            // 该步在进度条中的占比（相对于最高步）
+            const ratio = maxTotal > 0 ? total / maxTotal : 0
+            // 各段占比（相对于该步）
+            const inPct = total > 0 ? (noCache / total) * 100 : 0
+            const cachePct = total > 0 ? (cache / total) * 100 : 0
+            const outPct = total > 0 ? (out / total) * 100 : 0
+
+            return (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                {/* 步骤标签行 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{
+                    fontSize: '10px', fontWeight: 600, fontFamily: 'var(--font-mono)',
+                    color: 'var(--color-text-secondary)', minWidth: '38px',
+                    padding: '1px 5px', borderRadius: '3px',
+                    background: 'var(--color-surface-secondary, #f0f0f0)',
+                    textAlign: 'center',
+                  }}>
+                    S{i + 1}
+                  </span>
+                  {step.toolNames && step.toolNames.length > 0 && (
+                    <span style={{
+                      fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      flex: 1,
+                    }}>
+                      {step.toolNames.join(', ')}
+                    </span>
+                  )}
+                  {/* 无工具调用时显示文本输出 */}
+                  {(!step.toolNames || step.toolNames.length === 0) && (
+                    <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>文本回复</span>
+                  )}
+                </div>
+
+                {/* 进度条 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{
+                    flex: 1, height: '6px', borderRadius: '3px',
+                    background: 'var(--color-surface-secondary, #f0f0f0)',
+                    overflow: 'hidden', position: 'relative',
+                    opacity: 0.25 + ratio * 0.75, // 小步略透明，形成视觉层级
+                  }}>
+                    {/* 输入（非缓存）段 */}
+                    {inPct > 0 && (
+                      <div style={{
+                        position: 'absolute', left: 0, top: 0, height: '100%',
+                        width: `${inPct}%`,
+                        background: 'var(--color-accent, #6366f1)',
+                        borderRadius: cachePct === 0 && outPct === 0 ? '3px' : '3px 0 0 3px',
+                        transition: 'width 0.4s var(--ease-out-quart)',
+                      }} />
+                    )}
+                    {/* 缓存段 */}
+                    {cachePct > 0 && (
+                      <div style={{
+                        position: 'absolute', left: `${inPct}%`, top: 0, height: '100%',
+                        width: `${cachePct}%`,
+                        background: 'var(--color-status-done, #10b981)',
+                        borderRadius: outPct === 0 ? '0 3px 3px 0' : '0',
+                        transition: 'width 0.4s var(--ease-out-quart)',
+                      }} />
+                    )}
+                    {/* 输出段 */}
+                    {outPct > 0 && (
+                      <div style={{
+                        position: 'absolute', left: `${inPct + cachePct}%`, top: 0, height: '100%',
+                        width: `${outPct}%`,
+                        background: 'var(--color-warning, #f59e0b)',
+                        borderRadius: '0 3px 3px 0',
+                        transition: 'width 0.4s var(--ease-out-quart)',
+                      }} />
+                    )}
+                  </div>
+                  {/* 数字 */}
+                  <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', width: '70px', textAlign: 'right' }}>
+                    {noCache > 0 && <span style={{ color: 'var(--color-accent)' }}>{fmtTokens(noCache)}</span>}
+                    {cache > 0 && <span style={{ color: 'var(--color-status-done, #10b981)' }}>+{fmtTokens(cache)}</span>}
+                    {out > 0 && <span style={{ color: 'var(--color-warning, #f59e0b)' }}> →{fmtTokens(out)}</span>}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
+
+          {/* 图例 */}
+          <div style={{ display: 'flex', gap: '14px', marginTop: '4px', fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: 'var(--color-accent, #6366f1)', display: 'inline-block' }} />
+              input (no-cache)
+            </span>
+            {totalCache > 0 && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: 'var(--color-status-done, #10b981)', display: 'inline-block' }} />
+                cache hit
+              </span>
+            )}
+            <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: 'var(--color-warning, #f59e0b)', display: 'inline-block' }} />
+              output
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+})
+
 // ─── 消息行 ────────────────────────────────────────────────────────────────────
 
 /** 格式化 token 数：≥10000 显示为 x.xw */
@@ -457,11 +627,14 @@ const MessageRow = memo(function MessageRow({ message, agentName, isStreaming }:
   const [hovered, setHovered] = useState(false)
   const [copied, setCopied] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [tokenDetailOpen, setTokenDetailOpen] = useState(false)
   const content = getTextContent(message)
   const toolCalls = extractToolCalls(message.parts)
-  const meta = message.metadata as { timestamp?: string; usage?: { inputTokens?: number; outputTokens?: number } | null } | undefined
+  const meta = message.metadata as { timestamp?: string; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number } | null; stepUsages?: Array<{ inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number; toolNames?: string[] }> | null } | undefined
   const timestamp = formatTime(meta?.timestamp)
   const usage = meta?.usage
+  const stepUsages = meta?.stepUsages
+  const hasStepUsages = stepUsages && stepUsages.length > 1  // 只有多步才展示分析面板
   const isLong = content.length > CONTENT_SCROLL_THRESHOLD
 
   async function handleCopy() {
@@ -573,15 +746,30 @@ const MessageRow = memo(function MessageRow({ message, agentName, isStreaming }:
 
         {/* 底部：token 消耗 */}
         {!isStreaming && usage && (usage.inputTokens != null || usage.outputTokens != null) && (
-          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {usage.inputTokens != null && (
-              <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>in {fmtTokens(usage.inputTokens)}</span>
-            )}
-            {usage.outputTokens != null && (
-              <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>out {fmtTokens(usage.outputTokens)}</span>
-            )}
-            {usage.inputTokens != null && usage.outputTokens != null && (
-              <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>· {fmtTokens(usage.inputTokens + usage.outputTokens)} total</span>
+          <div style={{ marginTop: '10px' }}>
+            {/* 紧凑摘要行 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              {usage.inputTokens != null && (
+                <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>in {fmtTokens(usage.inputTokens)}</span>
+              )}
+              {usage.outputTokens != null && (
+                <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>out {fmtTokens(usage.outputTokens)}</span>
+              )}
+              {usage.inputTokens != null && usage.outputTokens != null && (
+                <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>· {fmtTokens(usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0))} total</span>
+              )}
+              {usage.cacheReadTokens != null && usage.cacheReadTokens > 0 && (
+                <span style={{ fontSize: '10px', color: 'var(--color-text-success, #10b981)', fontFamily: 'var(--font-mono)' }}>cache hit {fmtTokens(usage.cacheReadTokens)}</span>
+              )}
+            </div>
+
+            {/* 分步分析面板（仅多步时显示） */}
+            {hasStepUsages && (
+              <TokenBreakdown
+                steps={stepUsages!}
+                open={tokenDetailOpen}
+                onToggle={() => setTokenDetailOpen((v) => !v)}
+              />
             )}
           </div>
         )}
@@ -1055,7 +1243,7 @@ function ChatView({
           setSidebarConv(conv)
           const refreshed: UIMessage[] = conv.messages
             .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
-            .map((m: { id: string; role: string; content: string; timestamp: string; toolCalls?: unknown[]; usage?: { inputTokens?: number; outputTokens?: number } | null }) => {
+            .map((m: { id: string; role: string; content: string; timestamp: string; toolCalls?: unknown[]; usage?: Record<string, unknown> | null; stepUsages?: Array<Record<string, unknown>> | null }) => {
               const parts: UIMessage['parts'] = []
               if (m.toolCalls && m.toolCalls.length > 0) {
                 for (const tc of m.toolCalls as { toolCallId: string; toolName: string; isError: boolean; input: unknown; output: unknown; errorText?: string }[]) {
@@ -1075,7 +1263,7 @@ function ChatView({
                 id: m.id,
                 role: m.role as 'user' | 'assistant',
                 parts,
-                metadata: { timestamp: m.timestamp, usage: m.usage ?? null },
+                metadata: { timestamp: m.timestamp, usage: m.usage ?? null, stepUsages: m.stepUsages ?? null },
               }
             })
           setMessages(refreshed)
@@ -1106,7 +1294,7 @@ function ChatView({
           setSidebarConv(conv)
           const refreshed: UIMessage[] = conv.messages
             .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
-            .map((m: { id: string; role: string; content: string; timestamp: string; toolCalls?: unknown[]; usage?: { inputTokens?: number; outputTokens?: number } | null }) => {
+            .map((m: { id: string; role: string; content: string; timestamp: string; toolCalls?: unknown[]; usage?: Record<string, unknown> | null; stepUsages?: Array<Record<string, unknown>> | null }) => {
               const parts: UIMessage['parts'] = []
               if (m.toolCalls && m.toolCalls.length > 0) {
                 for (const tc of m.toolCalls as { toolCallId: string; toolName: string; isError: boolean; input: unknown; output: unknown; errorText?: string }[]) {
@@ -1126,7 +1314,7 @@ function ChatView({
                 id: m.id,
                 role: m.role as 'user' | 'assistant',
                 parts,
-                metadata: { timestamp: m.timestamp, usage: m.usage ?? null },
+                metadata: { timestamp: m.timestamp, usage: m.usage ?? null, stepUsages: m.stepUsages ?? null },
               }
             })
           setMessages(refreshed)

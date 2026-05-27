@@ -21,6 +21,8 @@ export interface AgentLoopOptions {
   systemPrompt?: string | null
   /** 用户输入的原始提示词（用于日志记录） */
   prompt?: string
+  /** 统一的消息ID（整轮 loop 共享，由上层调用方提前生成） */
+  messageId?: string
   /** 专用的 AbortSignal（来自 LoopRegistry，仅用户点击停止时触发，不与 HTTP 请求生命周期绑定） */
   abortSignal?: AbortSignal
   conversationId?: string
@@ -34,13 +36,25 @@ export interface AgentLoopOptions {
   onError?: (errorText: string) => Promise<void> | void
 }
 
+/** 单步 token 用量（含缓存明细） */
+export interface StepUsage {
+  inputTokens: number
+  outputTokens: number
+  /** 缓存命中读取的 token 数（节省的费用） */
+  cacheReadTokens?: number
+  /** 缓存写入的 token 数 */
+  cacheWriteTokens?: number
+  /** 非缓存输入 token 数 */
+  noCacheTokens?: number
+}
+
 /** 单步收集的结果 */
 interface StepCollect {
   text: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   toolCalls: any[]
   toolResults: { toolCallId: string; toolName: string; output: unknown; isError?: boolean }[]
-  usage: { inputTokens: number; outputTokens: number }
+  usage: StepUsage
   finishReason: string
 }
 
@@ -201,7 +215,7 @@ function appendStepToMessages(
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户停止
  * - 不创建 ReadableStream 或 Response，不感知 HTTP 连接状态
  */
-export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal, conversationId, onChunk, onDone, onFinish, onError }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, onChunk, onDone, onFinish, onError }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
 
@@ -218,8 +232,8 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
     let stepIndex = 0
     let warningMessage: string | null = null
 
-    // 生成统一的 messageId，整个 agent loop 共享（确保前端合并为一个消息气泡）
-    const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    // 使用上层传入的 messageId（由 startAgentLoop 提前生成），兜底自动生成
+    const messageId = incomingMessageId || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
     // 基础日志元数据（所有本 loop 日志共享）
     const baseMeta = { messageId, conversationId, prompt }
@@ -365,9 +379,13 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
             case 'finish':
               stepCollect.finishReason = chunk.finishReason
               if (chunk.totalUsage) {
+                const details = chunk.totalUsage.inputTokenDetails
                 stepCollect.usage = {
                   inputTokens: chunk.totalUsage.inputTokens ?? 0,
                   outputTokens: chunk.totalUsage.outputTokens ?? 0,
+                  cacheReadTokens: details?.cacheReadTokens ?? undefined,
+                  cacheWriteTokens: details?.cacheWriteTokens ?? undefined,
+                  noCacheTokens: details?.noCacheTokens ?? undefined,
                 }
               }
               break
@@ -393,6 +411,9 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
           logger.modelOutput(stepIndex, stepCollect.text, {
             inputTokens: stepCollect.usage.inputTokens,
             outputTokens: stepCollect.usage.outputTokens,
+            cacheReadTokens: stepCollect.usage.cacheReadTokens,
+            cacheWriteTokens: stepCollect.usage.cacheWriteTokens,
+            noCacheTokens: stepCollect.usage.noCacheTokens,
           }, { ...baseMeta })
         }
 
@@ -406,7 +427,8 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
             finishReason: stepCollect.finishReason,
             toolCallNames: stepCollect.toolCalls.map(c => c.toolName),
             hasText: !!stepCollect.text,
-          }
+          },
+          stepCollect.usage,
         )
 
         // 判断退出条件（一次调用，包含 warning 检测）
@@ -440,8 +462,11 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
         (acc, step) => ({
           inputTokens: acc.inputTokens + step.usage.inputTokens,
           outputTokens: acc.outputTokens + step.usage.outputTokens,
+          cacheReadTokens: (acc.cacheReadTokens ?? 0) + (step.usage.cacheReadTokens ?? 0),
+          cacheWriteTokens: (acc.cacheWriteTokens ?? 0) + (step.usage.cacheWriteTokens ?? 0),
+          noCacheTokens: (acc.noCacheTokens ?? 0) + (step.usage.noCacheTokens ?? 0),
         }),
-        { inputTokens: 0, outputTokens: 0 }
+        { inputTokens: 0, outputTokens: 0 } as StepUsage
       )
       logger.info(`[AgentLoop] 全部完成: ${allStepCollects.length} 轮, ${allStepCollects.reduce((n, s) => n + s.toolCalls.length, 0)} 次工具调用`, {
         ...baseMeta,
@@ -449,6 +474,9 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
         totalToolCalls: allStepCollects.reduce((n, s) => n + s.toolCalls.length, 0),
         totalInputTokens: totalUsage.inputTokens,
         totalOutputTokens: totalUsage.outputTokens,
+        totalCacheReadTokens: totalUsage.cacheReadTokens,
+        totalCacheWriteTokens: totalUsage.cacheWriteTokens,
+        totalNoCacheTokens: totalUsage.noCacheTokens,
         finishReason: allStepCollects[allStepCollects.length - 1]?.finishReason ?? 'stop',
       }, ['agent', 'loop', 'summary'])
 

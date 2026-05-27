@@ -185,6 +185,28 @@ function buildTurnGroups(logs: LogEntry[]): { turns: TurnGroup[]; globalUngroupe
 
     const { steps, ungrouped } = buildStepGroups(turnLogs)
 
+    // 将无 stepIndex 的日志按时间拆分为 init（loop 前）和 completion（loop 后）两段
+    let initLogs: LogEntry[] = []
+    let completionLogs: LogEntry[] = []
+
+    if (steps.length > 0) {
+      // 找到第一轮 loop 的最早时间 和 最后一轮 loop 的最晚时间
+      let loopStartTs = ''
+      let loopEndTs = ''
+      for (const step of steps) {
+        for (const entry of step.entries) {
+          if (!loopStartTs || entry.timestamp < loopStartTs) loopStartTs = entry.timestamp
+          if (!loopEndTs || entry.timestamp > loopEndTs) loopEndTs = entry.timestamp
+        }
+      }
+
+      initLogs = ungrouped.filter(e => e.timestamp < loopStartTs).sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      completionLogs = ungrouped.filter(e => e.timestamp > loopEndTs).sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    } else {
+      // 没有 step 分组时，所有 ungrouped 归入 init（单次对话可能只有初始化日志）
+      initLogs = [...ungrouped].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    }
+
     const totalEntries = turnLogs.length
     const toolCallCount = turnLogs.filter(l => l.type === LogType.TOOL_CALL).length
     const errorCount = turnLogs.filter(l => l.level === LogLevel.ERROR || l.level === LogLevel.FATAL).length
@@ -194,7 +216,8 @@ function buildTurnGroups(logs: LogEntry[]): { turns: TurnGroup[]; globalUngroupe
       messageId,
       prompt,
       steps,
-      ungrouped,
+      initLogs,
+      completionLogs,
       totalEntries,
       toolCallCount,
       errorCount,
@@ -265,8 +288,10 @@ interface TurnGroup {
   prompt?: string
   /** 该轮次下的 Step 分组（按 stepIndex 排序） */
   steps: LogGroup[]
-  /** 该轮次下无 stepIndex 的日志 */
-  ungrouped: LogEntry[]
+  /** 该轮次下 Agent 初始化阶段的日志（在第一轮 loop 之前） */
+  initLogs: LogEntry[]
+  /** 该轮次下 Agent 结束阶段的日志（在最后一轮 loop 之后） */
+  completionLogs: LogEntry[]
   /** 该轮次的总日志条数 */
   totalEntries: number
   /** 该轮次的工具调用次数 */
@@ -362,7 +387,43 @@ export const SystemLogs = memo(function SystemLogs({
   }, [logs, groupByRound])
 
   // ── 分组逻辑（两级：轮次 → 步骤） ──
-  const { turns, globalUngrouped } = useMemo(() => buildTurnGroups(logs), [logs])
+  const { turns, globalUngrouped } = useMemo(() => {
+    const result = buildTurnGroups(logs)
+    return result
+  }, [logs])
+
+  // ── 将全局未分组日志按时间拆分为 init / completion ──
+  const { globalInitLogs, globalCompletionLogs } = useMemo(() => {
+    let init: LogEntry[] = []
+    let completion: LogEntry[] = []
+
+    if (turns.length > 0 && globalUngrouped.length > 0) {
+      // 以第一轮 init 开始为分界线：比第一轮最早日志还早的 → 全局 init
+      // 以最后一轮 completion 结束为分界线：比最后一轮最晚日志还晚的 → 全局 completion
+      const firstTurn = turns[turns.length - 1] // turns 是倒序的，最后一个是最早的
+      const lastTurn = turns[0] // 第一个是最晚的
+
+      let allTurnStart = ''
+      let allTurnEnd = ''
+
+      // 最早上轮次的最早 init 日志或最早 step 日志
+      for (const e of [...firstTurn.initLogs, ...firstTurn.steps.flatMap(s => s.entries)]) {
+        if (!allTurnStart || e.timestamp < allTurnStart) allTurnStart = e.timestamp
+      }
+      // 最晚上轮次的最晚 completion 日志或最晚 step 日志
+      for (const e of [...lastTurn.completionLogs, ...lastTurn.steps.flatMap(s => s.entries)]) {
+        if (!allTurnEnd || e.timestamp > allTurnEnd) allTurnEnd = e.timestamp
+      }
+
+      init = globalUngrouped.filter(e => e.timestamp < allTurnStart).sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      completion = globalUngrouped.filter(e => e.timestamp > allTurnEnd).sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    } else if (globalUngrouped.length > 0) {
+      // 没有轮次时全部归入 init
+      init = [...globalUngrouped].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    }
+
+    return { globalInitLogs: init, globalCompletionLogs: completion }
+  }, [globalUngrouped, turns])
   const turnCount = turns.length
   const totalStepCount = turns.reduce((n, t) => n + t.steps.length, 0)
 
@@ -599,10 +660,53 @@ export const SystemLogs = memo(function SystemLogs({
     )
   }
 
+  /** 格式化 token 数：≥10000 显示为 x.xw */
+  function fmtTokens(n: number): string {
+    if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + 'w'
+    return String(n)
+  }
+
+  /** 从 agentLoopLog 中提取 stepUsage */
+  function getStepUsage(group: LogGroup): { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number } | null {
+    // 优先从 agentLoopLog.details.stepUsage 取
+    if (group.agentLoopLog) {
+      const su = (group.agentLoopLog.details as any)?.stepUsage
+      if (su) return su
+    }
+    // 备选：从 modelOutput 日志的 metadata.usage 取
+    const modelLog = group.entries.find(l => l.type === LogType.MODEL_OUTPUT)
+    if (modelLog?.metadata?.usage) {
+      const u = modelLog.metadata.usage as any
+      return { inputTokens: u.inputTokens ?? 0, outputTokens: u.outputTokens ?? 0, cacheReadTokens: u.cacheReadTokens, noCacheTokens: u.noCacheTokens }
+    }
+    return null
+  }
+
   // ── 渲染步骤头（二级分组） ──
   const renderStepHeader = (group: LogGroup, messageId: string) => {
     const stepKey = `${messageId}:${group.stepIndex}`
     const isExpanded = expandedSteps.has(stepKey)
+    const stepUsage = getStepUsage(group)
+
+    // token 彩色数字
+    let tokenInfo = null
+    if (stepUsage) {
+      const noCache = stepUsage.noCacheTokens ?? stepUsage.inputTokens
+      const cache = stepUsage.cacheReadTokens ?? 0
+      const out = stepUsage.outputTokens
+      const total = noCache + cache + out
+
+      tokenInfo = (
+        <span
+          className="text-[9px] font-mono whitespace-nowrap flex-shrink-0 ml-auto"
+          title={`Input: ${noCache.toLocaleString()}  |  Cache: ${cache.toLocaleString()}  |  Output: ${out.toLocaleString()}  |  Total: ${total.toLocaleString()}`}
+        >
+          {noCache > 0 && <span style={{ color: 'var(--color-accent, #6366f1)' }}>{fmtTokens(noCache)}</span>}
+          {cache > 0 && <span style={{ color: 'var(--color-status-done, #10b981)' }}>+{fmtTokens(cache)}</span>}
+          {out > 0 && <span style={{ color: 'var(--color-warning, #f59e0b)' }}>→{fmtTokens(out)}</span>}
+        </span>
+      )
+    }
 
     return (
       <div
@@ -627,8 +731,11 @@ export const SystemLogs = memo(function SystemLogs({
         )}
       </span>
 
-        {/* Agent loop 摘要信息 */}
-        {group.agentLoopLog && (
+        {/* token 彩色数字 */}
+        {tokenInfo}
+
+        {/* 无 usage 时兜底显示 finishReason */}
+        {!tokenInfo && group.agentLoopLog && (
           <span className="text-[10px] text-text-muted/50 truncate ml-auto">
             {(group.agentLoopLog.details as any)?.finishReason && 
               `结束: ${(group.agentLoopLog.details as any).finishReason}`}
@@ -778,14 +885,34 @@ export const SystemLogs = memo(function SystemLogs({
             <p className="text-xs text-text-muted">暂无会话日志</p>
           </div>
         ) : groupByRound ? (
-          /* 两级分组视图：轮次 → 步骤 → 日志行 */
+          /* 两级分组视图：全局初始化 → 轮次[init → steps → completion] → 全局结束 */
           <>
+            {/* 全局初始化日志（在所有轮次之前，无 messageId） */}
+            {globalInitLogs.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 px-2 py-1 bg-surface/50 border-b border-border-subtle">
+                  <span className="text-[10px] font-semibold text-text-muted">Agent 初始化</span>
+                  <span className="text-[10px] text-text-muted/50">{globalInitLogs.length} 条</span>
+                </div>
+                {globalInitLogs.map(log => renderLogLine(log))}
+              </div>
+            )}
             {turns.map((turn, i) => (
               <div key={turn.key}>
                 {renderTurnHeader(turn, i, turns.length)}
 
                 {expandedTurns.has(turn.key) && (
                   <>
+                    {/* 该轮次下初始化阶段日志（第一轮 loop 之前） */}
+                    {turn.initLogs.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 px-2 py-[3px] bg-surface/30 border-b border-border-subtle/30">
+                          <span className="text-[10px] text-text-muted/50">Agent 初始化</span>
+                          <span className="text-[10px] text-text-muted/40">{turn.initLogs.length} 条</span>
+                        </div>
+                        {turn.initLogs.map(log => renderLogLine(log))}
+                      </div>
+                    )}
                     {/* 该轮次下的 Step 分组 */}
                     {turn.steps.map(step => (
                       <div key={`${turn.messageId}:${step.stepIndex}`}>
@@ -795,27 +922,28 @@ export const SystemLogs = memo(function SystemLogs({
                         }
                       </div>
                     ))}
-                    {/* 该轮次下无 stepIndex 的日志 */}
-                    {turn.ungrouped.length > 0 && (
+                    {/* 该轮次下结束阶段日志（最后一轮 loop 之后） */}
+                    {turn.completionLogs.length > 0 && (
                       <div>
                         <div className="flex items-center gap-2 px-2 py-[3px] bg-surface/30 border-b border-border-subtle/30">
-                          <span className="text-[10px] text-text-muted/50 ml-4">· 其他</span>
+                          <span className="text-[10px] text-text-muted/50">Agent 结束</span>
+                          <span className="text-[10px] text-text-muted/40">{turn.completionLogs.length} 条</span>
                         </div>
-                        {turn.ungrouped.map(log => renderLogLine(log))}
+                        {turn.completionLogs.map(log => renderLogLine(log))}
                       </div>
                     )}
                   </>
                 )}
               </div>
             ))}
-            {/* 全局未分组日志（无 messageId） */}
-            {globalUngrouped.length > 0 && (
+            {/* 全局结束日志（在所有轮次之后，无 messageId） */}
+            {globalCompletionLogs.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 px-2 py-1 bg-surface/50 border-b border-border-subtle">
-                  <span className="text-[10px] font-semibold text-text-muted">其他日志</span>
-                  <span className="text-[10px] text-text-muted/50">{globalUngrouped.length} 条</span>
+                  <span className="text-[10px] font-semibold text-text-muted">Agent 结束</span>
+                  <span className="text-[10px] text-text-muted/50">{globalCompletionLogs.length} 条</span>
                 </div>
-                {globalUngrouped.map(log => renderLogLine(log))}
+                {globalCompletionLogs.map(log => renderLogLine(log))}
               </div>
             )}
           </>

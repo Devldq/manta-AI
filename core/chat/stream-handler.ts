@@ -1,7 +1,7 @@
 /* AI start: 流式聊天核心处理逻辑 */
 import { getLLMConfig } from '@/core/llm/config-store'
 import { appendMessage } from '@/core/conversation/store'
-import type { ToolCallRecord } from '@/core/conversation/types'
+import type { ToolCallRecord, StepUsageRecord } from '@/core/conversation/types'
 import { readAgentSoul } from '../context/agent-soul'
 import { buildSystemPrompt } from '../context/system-prompt'
 import { parseMessagesToCore, type UIMessage } from './message-parser'
@@ -46,8 +46,12 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
   }
   const modelInfo = { model: llmConfig.model, provider: llmConfig.provider }
 
+  // 提前生成 messageId（整轮 agent loop 共享，确保早期日志也能立即关联到会话）
+  const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
   logger.system('ChatStream', `开始处理会话 ${conversationId}`, 'pending', {
     conversationId,
+    messageId,
     agentName,
     prompt: userPrompt,
     model: modelInfo.model,
@@ -59,6 +63,21 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
   const soulPrompt = readAgentSoul(agentName)
   const systemPrompt = await buildSystemPrompt({ soulPrompt, cwd: process.cwd() })
 
+  logger.info(`会话 ${conversationId} soulPrompt`, {
+    conversationId,
+    messageId,
+    hasSoul: !!soulPrompt,
+    soulLength: soulPrompt?.length ?? 0,
+    soulContent: soulPrompt || undefined,
+  }, ['chat', 'prompt'])
+  logger.info(`会话 ${conversationId} systemPrompt 已构建`, {
+    conversationId,
+    messageId,
+    systemLength: systemPrompt.length,
+    hasSoul: !!soulPrompt,
+    systemContent: systemPrompt,
+  }, ['chat', 'prompt'])
+
   // 解析消息格式
   const coreMessages = parseMessagesToCore(messages)
 
@@ -68,13 +87,15 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
       messages: coreMessages,
       systemPrompt,
       prompt: userPrompt,
+      messageId,
       conversationId,
       onChunk: (data: string) => emitLoopEvent(conversationId, data),
       onDone: () => resolve(),
       onFinish: async (event) => {
         const { text, steps } = event
-        // 从所有步骤里提取工具调用记录（input + output 配对）
+        // 从所有步骤里提取工具调用记录（input + output 配对）+ per-step usage
         const toolCalls: ToolCallRecord[] = []
+        const stepUsages: StepUsageRecord[] = []
         for (const step of steps) {
           for (const call of step.toolCalls) {
             const result = step.toolResults.find(
@@ -90,6 +111,16 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
               errorText: isError ? String((result as { output?: unknown } | undefined)?.output ?? '') : undefined,
             })
           }
+          // 收集该步骤的 token 用量 + 工具名列表
+          const stepToolNames = step.toolCalls.map((c: { toolName: string }) => c.toolName)
+          stepUsages.push({
+            inputTokens: step.usage.inputTokens ?? 0,
+            outputTokens: step.usage.outputTokens ?? 0,
+            cacheReadTokens: step.usage.cacheReadTokens,
+            cacheWriteTokens: step.usage.cacheWriteTokens,
+            noCacheTokens: step.usage.noCacheTokens,
+            toolNames: stepToolNames.length > 0 ? stepToolNames : undefined,
+          })
         }
 
         // 持久化：最后一条 user 消息 + assistant 回复（含工具调用记录）
@@ -100,13 +131,20 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
         }
         if (text || toolCalls.length > 0) {
           const usage = event.usage
-            ? { inputTokens: event.usage.inputTokens ?? undefined, outputTokens: event.usage.outputTokens ?? undefined }
+            ? {
+                inputTokens: event.usage.inputTokens ?? undefined,
+                outputTokens: event.usage.outputTokens ?? undefined,
+                cacheReadTokens: event.usage.cacheReadTokens ?? undefined,
+                cacheWriteTokens: event.usage.cacheWriteTokens ?? undefined,
+                noCacheTokens: event.usage.noCacheTokens ?? undefined,
+              }
             : undefined
-          appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage)
+          appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined)
         }
 
         logger.system('ChatStream', `会话 ${conversationId} 处理完成`, 'success', {
           conversationId,
+          messageId,
           agentName,
           prompt: userPrompt,
           model: modelInfo.model,
@@ -120,6 +158,7 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
       onError: async (errorText: string) => {
         logger.system('ChatStream', `会话 ${conversationId} 处理出错`, 'failure', {
           conversationId,
+          messageId,
           agentName,
           prompt: userPrompt,
           model: modelInfo.model,
