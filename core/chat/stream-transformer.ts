@@ -34,7 +34,11 @@ type UIMessageChunkOutput = {
  * 将单个 fullStream chunk 转换为 UIMessageChunk 格式
  * 不匹配的 chunk 类型返回 null（应跳过不转发）
  */
-export function transformChunk(chunk: FullStreamChunk): UIMessageChunkOutput | null {
+export function transformChunk(
+  chunk: FullStreamChunk,
+  conversationId?: string,
+  messageId?: string,
+): UIMessageChunkOutput | null {
   switch (chunk.type) {
     // ---- 直接匹配的类型 ----
 
@@ -177,6 +181,8 @@ export function transformChunk(chunk: FullStreamChunk): UIMessageChunkOutput | n
     default:
       // 未识别的 chunk 类型：安全跳过，避免客户端 schema 验证失败
       logger.warn(`[stream-transformer] Unknown chunk type: ${chunk.type}, skipping`, {
+        conversationId,
+        messageId,
         chunkType: chunk.type,
       }, ['stream', 'transformer', 'unknown-chunk'])
       return null

@@ -276,6 +276,24 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
         const stepTools = await getAgentTools()
 
         const stepStartTime = performance.now()
+
+        // 记录传给模型的内容（精简版：仅文本片段，避免日志膨胀）
+        const msgSummary = currentMessages.map(m => {
+          const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+          return `${m.role}: ${content.length > 100 ? content.slice(0, 100) + '…' : content}`
+        }).join(' | ')
+        logger.info(`[AgentLoop] Step ${stepIndex + 1} → 模型`, {
+          ...baseMeta,
+          stepIndex,
+          systemLength: effectiveSystemPrompt?.length ?? 0,
+          systemContent: effectiveSystemPrompt ?? undefined,
+          extra: {
+            messageCount: currentMessages.length,
+            messagesPreview: msgSummary,
+            toolCount: stepTools ? Object.keys(stepTools).length : 0,
+          },
+        }, ['agent', 'loop', 'model-input'])
+
         const result = streamText({
           model,
           system: effectiveSystemPrompt,
@@ -298,7 +316,7 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
         // 遍历 fullStream：收集数据 + 逐个通过 onChunk 输出
         for await (const chunk of result.fullStream) {
           // 将 fullStream chunk 转换为 UIMessageChunk 格式并立即输出
-          const transformed = transformChunk(chunk as { type: string; [key: string]: unknown })
+          const transformed = transformChunk(chunk as { type: string; [key: string]: unknown }, conversationId, messageId)
           if (transformed) {
             sendChunk(transformed)
           }

@@ -300,8 +300,10 @@ export async function buildSystemPromptWithStats(options: {
   cwd?: string
   sessionId?: string
   sessionMessageCount?: number
+  conversationId?: string
+  messageId?: string
 } = {}): Promise<{ prompt: string; stats: PipeStats[]; debug(): PipeStats[] }> {
-  const { soulPrompt = null, cwd = process.cwd(), sessionId = '', sessionMessageCount = 0 } = options
+  const { soulPrompt = null, cwd = process.cwd(), sessionId = '', sessionMessageCount = 0, conversationId = '', messageId = '' } = options
 
   const registry = await getToolRegistry()
   const deferredToolSummary = registry.getDeferredToolSummary()
@@ -317,6 +319,8 @@ export async function buildSystemPromptWithStats(options: {
   const result = builder.buildWithStats(ctx)
 
   logger.info('Prompt Pipe 构建完成', {
+    conversationId,
+    messageId,
     extra: {
       sessionId,
       totalChars: result.totalChars,

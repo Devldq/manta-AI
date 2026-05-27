@@ -84,8 +84,8 @@ Assist with authorized security testing, defensive security, CTF challenges, and
 /**
  * 工作目录模板 — 运行时由 buildSystemPrompt 注入实际 cwd
  */
-function buildWorkingDirectory(cwd: string): string {
-  logger.debug('Building working directory', { cwd }, ['system', 'prompt'])
+function buildWorkingDirectory(cwd: string, conversationId?: string, messageId?: string): string {
+  logger.debug('Building working directory', { conversationId, messageId, extra: { cwd } }, ['system', 'prompt'])
   return `# Working Directory
 
 The current working directory for file operations is: ${cwd}

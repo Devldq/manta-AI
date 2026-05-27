@@ -635,7 +635,7 @@ export const SystemLogs = memo(function SystemLogs({
     return (
       <div
         className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer select-none sticky top-0 z-10
-          bg-surface/80 border-b-2 border-accent/40 hover:bg-accent/10 transition-colors`}
+          bg-surface border-b-2 border-accent/40 hover:bg-accent/10 transition-colors`}
         onClick={() => toggleTurn(turn.key)}
       >
         <span className="text-accent flex-shrink-0">

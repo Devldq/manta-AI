@@ -53,6 +53,8 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
   const { prompt: systemPrompt, stats: pipeStats } = await buildSystemPromptWithStats({
     soulPrompt,
     cwd: process.cwd(),
+    conversationId,
+    messageId,
   })
 
   // 简洁启动日志：模型 + prompt 摘要 + pipe 统计
@@ -66,6 +68,7 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
     provider: modelInfo.provider,
     messageCount: messages.length,
     systemLength: systemPrompt.length,
+    systemContent: systemPrompt,
     hasSoul: !!soulPrompt,
     soulLength: soulPrompt?.length ?? 0,
     extra: {
