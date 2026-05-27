@@ -18,6 +18,7 @@ export enum LogType {
   WORKFLOW = 'workflow',             // 工作流日志
   USER_ACTION = 'user_action',       // 用户操作日志
   PERFORMANCE = 'performance',       // 性能日志
+  METRICS = 'metrics',               // 指标日志（结构化 Turn/Session 指标）
   ERROR = 'error',                   // 错误日志
   SECURITY = 'security',             // 安全日志
 }

@@ -8,6 +8,8 @@ import { LoopDetector } from './loop-detector'
 import type { LoopDetectionResult } from './loop-detector'
 import { formatAIError, formatErrorForSSE } from './error-formatter'
 import { logger } from '@/core/log'
+import { recordTurn } from '@/core/metrics'
+import type { TurnMetrics, StepMetrics } from '@/core/metrics'
 
 /** Token 预算默认值 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 1_000_000
@@ -185,7 +187,8 @@ function appendStepToMessages(
     for (const call of stepCollect.toolCalls) {
       if (!resultCallIds.has(call.toolCallId)) {
         logger.warn(`[AgentLoop] 工具 ${call.toolName} (${call.toolCallId}) 缺少结果，补充兜底错误`, {
-          ...baseMeta,
+          conversationId,
+          messageId,
           toolCallId: call.toolCallId,
           toolName: call.toolName,
           stepIndex,
@@ -238,6 +241,12 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
     // 基础日志元数据（所有本 loop 日志共享）
     const baseMeta = { messageId, conversationId, prompt }
 
+    // ── 性能计时 ──
+    const turnStartTime = performance.now()
+    let ttftMs = 0
+    let ttftMeasured = false
+    let loopDetectionCount = 0
+
     // 辅助函数：发送 SSE 行到 onChunk
     function sendChunk(obj: unknown) {
       onChunk(`data: ${JSON.stringify(obj)}\n\n`)
@@ -250,19 +259,9 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
       while (true) {
         // 检查是否被用户停止
         if (abortSignal?.aborted) {
-          logger.info('[AgentLoop] 用户停止生成', {
-            ...baseMeta,
-            stepIndex,
-          }, ['agent', 'loop', 'stopped'])
           onDone()
           return
         }
-
-        logger.info(`[AgentLoop] 第 ${stepIndex + 1} 轮开始`, {
-          ...baseMeta,
-          stepIndex,
-          messageCount: currentMessages.length,
-        }, ['agent', 'loop', 'step-start'])
 
         // 注入警告消息到 systemPrompt
         const effectiveSystemPrompt = warningMessage
@@ -276,6 +275,7 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
         // 每步重新获取工具列表（包含新发现的工具）
         const stepTools = await getAgentTools()
 
+        const stepStartTime = performance.now()
         const result = streamText({
           model,
           system: effectiveSystemPrompt,
@@ -320,6 +320,11 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
               return
 
             case 'text-delta':
+              // 首字延迟（TTFT）— 仅记录第一次
+              if (!ttftMeasured) {
+                ttftMs = Math.round(performance.now() - turnStartTime)
+                ttftMeasured = true
+              }
               stepCollect.text += chunk.text
               break
             case 'tool-call':
@@ -328,13 +333,6 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
                 toolName: chunk.toolName,
                 input: chunk.input,
               })
-              logger.info(`[AgentLoop] 工具调用开始: ${chunk.toolName}`, {
-                ...baseMeta,
-                stepIndex,
-                toolCallId: chunk.toolCallId,
-                toolName: chunk.toolName,
-                input: chunk.input,
-              }, ['agent', 'loop', 'tool-call'])
               break
             case 'tool-result':
               // AI SDK v6: tool-result chunk 使用 output 字段存储执行结果（不是 result）
@@ -392,6 +390,8 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
           }
         }
 
+        const stepDurationMs = Math.round(performance.now() - stepStartTime)
+
         // 记录工具调用到循环检测器
         for (const call of stepCollect.toolCalls) {
           const toolResult = stepCollect.toolResults.find(
@@ -406,7 +406,7 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
         // 记录步骤完成
         allStepCollects.push(stepCollect)
 
-        // 记录模型文本输出到日志（会写入会话 log.ndjson）
+        // 记录步骤日志（简洁版：模型输出 + 步骤完成）
         if (stepCollect.text) {
           logger.modelOutput(stepIndex, stepCollect.text, {
             inputTokens: stepCollect.usage.inputTokens,
@@ -424,9 +424,7 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
           totalOutputTokens,
           {
             ...baseMeta,
-            finishReason: stepCollect.finishReason,
-            toolCallNames: stepCollect.toolCalls.map(c => c.toolName),
-            hasText: !!stepCollect.text,
+            durationMs: stepDurationMs,
           },
           stepCollect.usage,
         )
@@ -434,21 +432,15 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
         // 判断退出条件（一次调用，包含 warning 检测）
         const decision = decideStop(stepCollect, loopDetector, totalOutputTokens, stepIndex, maxOutputTokens, maxSteps)
         if (decision.shouldStop) {
-          logger.info(`[AgentLoop] 循环结束: ${decision.reason}`, {
-            ...baseMeta,
-            stepIndex,
-            reason: decision.reason,
-            totalOutputTokens,
-            totalSteps: stepIndex + 1,
-          }, ['agent', 'loop', 'stop'])
           break
         }
         if (decision.warningToInject) {
+          loopDetectionCount++
           warningMessage = decision.warningToInject
-          logger.warn(`[LoopDetector] 循环警告: ${warningMessage}`, {
+          logger.warn(`[LoopDetector] ${warningMessage}`, {
             ...baseMeta,
             stepIndex,
-            warning: warningMessage,
+            extra: { warning: warningMessage },
           }, ['agent', 'loop', 'warning'])
         }
 
@@ -457,7 +449,7 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
         stepIndex++
       }
 
-      // Agent Loop 整体完成摘要日志
+      // ── Agent Loop 整体完成：计算聚合指标 ──
       const totalUsage = allStepCollects.reduce(
         (acc, step) => ({
           inputTokens: acc.inputTokens + step.usage.inputTokens,
@@ -468,17 +460,96 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
         }),
         { inputTokens: 0, outputTokens: 0 } as StepUsage
       )
-      logger.info(`[AgentLoop] 全部完成: ${allStepCollects.length} 轮, ${allStepCollects.reduce((n, s) => n + s.toolCalls.length, 0)} 次工具调用`, {
-        ...baseMeta,
-        totalSteps: allStepCollects.length,
-        totalToolCalls: allStepCollects.reduce((n, s) => n + s.toolCalls.length, 0),
+      const totalSteps = allStepCollects.length
+      const totalToolCalls = allStepCollects.reduce((n, s) => n + s.toolCalls.length, 0)
+      const totalToolErrors = allStepCollects.reduce(
+        (n, s) => n + s.toolResults.filter(r => r.isError).length, 0)
+      const totalDurationMs = Math.round(performance.now() - turnStartTime)
+      const totalTokens = totalUsage.inputTokens + totalUsage.outputTokens
+      const cacheHitRate = totalUsage.inputTokens > 0
+        ? (totalUsage.cacheReadTokens ?? 0) / totalUsage.inputTokens
+        : 0
+      const toolSuccessRate = totalToolCalls > 0
+        ? (totalToolCalls - totalToolErrors) / totalToolCalls
+        : 0
+
+      // ── 收集各步骤的 StepMetrics ──
+      const stepMetricsList: StepMetrics[] = allStepCollects.map((sc, idx) => {
+        const toolResults = sc.toolResults
+        return {
+          stepIndex: idx,
+          toolNames: sc.toolCalls.map(c => c.toolName),
+          toolCallCount: sc.toolCalls.length,
+          toolErrorCount: toolResults.filter(r => r.isError).length,
+          hasText: !!sc.text,
+          textLength: sc.text.length,
+          finishReason: sc.finishReason,
+          usage: {
+            inputTokens: sc.usage.inputTokens,
+            outputTokens: sc.usage.outputTokens,
+            cacheReadTokens: sc.usage.cacheReadTokens,
+            cacheWriteTokens: sc.usage.cacheWriteTokens,
+            noCacheTokens: sc.usage.noCacheTokens,
+          },
+          timing: { durationMs: 0 }, // per-step timing not tracked individually
+        }
+      })
+
+      // ── 构建并记录 TurnMetrics ──
+      const turnMetrics: TurnMetrics = {
+        messageId,
+        conversationId: conversationId ?? '',
+        prompt: (prompt ?? '').slice(0, 80),
+        totalDurationMs,
+        ttftMs,
+        totalSteps,
         totalInputTokens: totalUsage.inputTokens,
         totalOutputTokens: totalUsage.outputTokens,
-        totalCacheReadTokens: totalUsage.cacheReadTokens,
-        totalCacheWriteTokens: totalUsage.cacheWriteTokens,
-        totalNoCacheTokens: totalUsage.noCacheTokens,
-        finishReason: allStepCollects[allStepCollects.length - 1]?.finishReason ?? 'stop',
-      }, ['agent', 'loop', 'summary'])
+        totalTokens,
+        cacheReadTokens: totalUsage.cacheReadTokens ?? 0,
+        cacheWriteTokens: totalUsage.cacheWriteTokens ?? 0,
+        cacheHitRate,
+        totalToolCalls,
+        toolCallSuccessCount: totalToolCalls - totalToolErrors,
+        toolCallErrorCount: totalToolErrors,
+        toolCallSuccessRate: toolSuccessRate,
+        loopDetectionCount,
+        stopReason: allStepCollects[allStepCollects.length - 1]?.finishReason ?? 'stop',
+        steps: stepMetricsList,
+        model: llmConfig.model,
+        provider: llmConfig.provider,
+      }
+      recordTurn(turnMetrics)
+
+      // ── 单条结构化日志：一屏看完所有关键指标 ──
+      const cacheStr = totalUsage.cacheReadTokens
+        ? ` | cache:+${totalUsage.cacheReadTokens}`
+        : ''
+      logger.info(
+        `[AgentLoop] 完成 · ${totalSteps}步 · ${totalToolCalls}工具(${totalToolErrors}错) · ` +
+        `${totalDurationMs}ms · TTFT=${ttftMs}ms · ` +
+        `token:${totalTokens}${cacheStr} · 停止:${turnMetrics.stopReason}`,
+        {
+          ...baseMeta,
+          durationMs: totalDurationMs,
+          extra: {
+            ttftMs,
+            totalSteps,
+            totalToolCalls,
+            totalToolErrors,
+            toolSuccessRate,
+            totalInputTokens: totalUsage.inputTokens,
+            totalOutputTokens: totalUsage.outputTokens,
+            totalTokens,
+            cacheReadTokens: totalUsage.cacheReadTokens,
+            cacheWriteTokens: totalUsage.cacheWriteTokens,
+            cacheHitRate,
+            loopDetectionCount,
+            stopReason: turnMetrics.stopReason,
+          },
+        },
+        ['agent', 'loop', 'turn-summary']
+      )
 
       // 调用 onFinish 回调（流结束后持久化消息）
       if (onFinish) {
@@ -503,17 +574,14 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
       // 区分「用户主动停止」和「真正的错误」
       const isAborted = abortSignal?.aborted ?? false
       if (isAborted) {
-        logger.info('[AgentLoop] 用户停止生成', {
-          ...baseMeta,
-          stepIndex,
-        }, ['agent', 'loop', 'stopped'])
         onDone()
         return
       }
 
-      logger.error('[AgentLoop] 执行异常:', err, {
+      logger.error('[AgentLoop] 执行异常:', err instanceof Error ? err : new Error(String(err)), {
         ...baseMeta,
         stepIndex,
+        durationMs: Math.round(performance.now() - turnStartTime),
       }, ['agent', 'loop', 'error'])
       // 将技术错误转换为用户友好的提示
       const errorInfo = formatAIError(err)

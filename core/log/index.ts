@@ -431,6 +431,30 @@ export class LogManager {
       tags: ['workflow', workflowId, stepId],
     })
   }
+
+  /** 记录结构化指标日志 */
+  logMetrics(
+    metricName: string,
+    value: number,
+    unit: string,
+    details?: Record<string, unknown>,
+    metadata?: Partial<LogEntry['metadata']>
+  ): void {
+    this.addLog({
+      level: LogLevel.INFO,
+      type: LogType.METRICS,
+      source: LogSource.AGENT,
+      message: `Metrics: ${metricName} = ${value}${unit}`,
+      details: {
+        metric: metricName,
+        value,
+        unit,
+        ...(details ?? {}),
+      },
+      metadata,
+      tags: ['metrics', metricName],
+    })
+  }
 }
 
 /** 全局日志管理器实例 */
@@ -536,6 +560,11 @@ export const logger = {
   /** 工作流日志 */
   workflow(workflowId: string, stepId: string, action: string, status: 'success' | 'failure' | 'pending', metadata?: Partial<LogEntry['metadata']>): void {
     logManager.logWorkflow(workflowId, stepId, action, status, metadata)
+  },
+
+  /** 结构化指标日志 */
+  metrics(metricName: string, value: number, unit: string, details?: Record<string, unknown>, metadata?: Partial<LogEntry['metadata']>): void {
+    logManager.logMetrics(metricName, value, unit, details, metadata)
   },
 
   /** 获取日志 */

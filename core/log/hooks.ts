@@ -530,6 +530,46 @@ export function useLogPerformance() {
   }
 }
 
+/** Metrics 实时指标钩子 — 轮询 /api/metrics */
+export function useMetrics(conversationId?: string) {
+  const [lastTurn, setLastTurn] = useState<any>(null)
+  const [session, setSession] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!conversationId) return
+
+    let stopped = false
+    const poll = async () => {
+      if (stopped) return
+      try {
+        setLoading(true)
+        const res = await fetch(`/api/metrics?conversationId=${encodeURIComponent(conversationId)}`)
+        if (!res.ok || stopped) return
+        const json = await res.json()
+        if (!stopped) {
+          setLastTurn(json.lastTurn)
+          setSession(json.session)
+        }
+      } catch {
+        // 轮询失败不报错
+      } finally {
+        if (!stopped) setLoading(false)
+      }
+    }
+
+    poll()
+    const timer = setInterval(poll, 2000) // 2s 轮询
+
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }, [conversationId])
+
+  return { lastTurn, session, loading }
+}
+
 /** 日志错误分析钩子 */
 export function useLogErrorAnalysis() {
   const [errorLogs, setErrorLogs] = useState<LogEntry[]>([])

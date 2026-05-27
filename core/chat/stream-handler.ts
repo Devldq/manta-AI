@@ -3,7 +3,7 @@ import { getLLMConfig } from '@/core/llm/config-store'
 import { appendMessage } from '@/core/conversation/store'
 import type { ToolCallRecord, StepUsageRecord } from '@/core/conversation/types'
 import { readAgentSoul } from '../context/agent-soul'
-import { buildSystemPrompt } from '../context/system-prompt'
+import { buildSystemPromptWithStats } from '../context/prompt-builder'
 import { parseMessagesToCore, type UIMessage } from './message-parser'
 import { runAgentLoop } from './agent-loop'
 import { getActiveLoop, registerLoop, emitLoopEvent } from './loop-registry'
@@ -29,7 +29,6 @@ export interface StreamChatResult {
 export async function startAgentLoop({ messages, agentName, conversationId }: StreamChatOptions): Promise<StreamChatResult> {
   // 如果已有活跃循环，不重复启动
   if (getActiveLoop(conversationId)) {
-    logger.info(`会话 ${conversationId} 已有活跃循环，跳过启动`, undefined, ['chat', 'loop-existing'])
     return { isNew: false }
   }
 
@@ -49,7 +48,16 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
   // 提前生成 messageId（整轮 agent loop 共享，确保早期日志也能立即关联到会话）
   const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-  logger.system('ChatStream', `开始处理会话 ${conversationId}`, 'pending', {
+  // 构建 system prompt（使用 Pipe 模式，附带统计）
+  const soulPrompt = readAgentSoul(agentName)
+  const { prompt: systemPrompt, stats: pipeStats } = await buildSystemPromptWithStats({
+    soulPrompt,
+    cwd: process.cwd(),
+  })
+
+  // 简洁启动日志：模型 + prompt 摘要 + pipe 统计
+  const promptPreview = userPrompt.length > 60 ? userPrompt.slice(0, 60) + '…' : userPrompt
+  logger.system('AgentLoop', `开始 · ${modelInfo.model} · "${promptPreview}" · prompt=${systemPrompt.length}chars(~${pipeStats.reduce((s, p) => s + p.estimatedTokens, 0)}tokens)(${pipeStats.filter(s => s.enabled).length}/${pipeStats.length} pipes)`, 'pending', {
     conversationId,
     messageId,
     agentName,
@@ -57,26 +65,14 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
     model: modelInfo.model,
     provider: modelInfo.provider,
     messageCount: messages.length,
-  })
-
-  // 构建 system prompt（融合 Claude Code 设计理念的模块化组合）
-  const soulPrompt = readAgentSoul(agentName)
-  const systemPrompt = await buildSystemPrompt({ soulPrompt, cwd: process.cwd() })
-
-  logger.info(`会话 ${conversationId} soulPrompt`, {
-    conversationId,
-    messageId,
-    hasSoul: !!soulPrompt,
-    soulLength: soulPrompt?.length ?? 0,
-    soulContent: soulPrompt || undefined,
-  }, ['chat', 'prompt'])
-  logger.info(`会话 ${conversationId} systemPrompt 已构建`, {
-    conversationId,
-    messageId,
     systemLength: systemPrompt.length,
     hasSoul: !!soulPrompt,
-    systemContent: systemPrompt,
-  }, ['chat', 'prompt'])
+    soulLength: soulPrompt?.length ?? 0,
+    extra: {
+      pipePieces: pipeStats.filter(s => s.enabled).map(s => s.name),
+      pipeTokens: Math.ceil(systemPrompt.length / 2.5),
+    },
+  })
 
   // 解析消息格式
   const coreMessages = parseMessagesToCore(messages)
@@ -142,29 +138,15 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
           appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined)
         }
 
-        logger.system('ChatStream', `会话 ${conversationId} 处理完成`, 'success', {
-          conversationId,
-          messageId,
-          agentName,
-          prompt: userPrompt,
-          model: modelInfo.model,
-          provider: modelInfo.provider,
-          stepsCount: steps.length,
-          toolCallsCount: toolCalls.length,
-          responseLength: text.length,
-        })
         logManager.closeConversation(conversationId)
       },
       onError: async (errorText: string) => {
-        logger.system('ChatStream', `会话 ${conversationId} 处理出错`, 'failure', {
+        logger.error(`AgentLoop 异常: ${errorText.slice(0, 80)}`, undefined, {
           conversationId,
           messageId,
           agentName,
-          prompt: userPrompt,
-          model: modelInfo.model,
-          provider: modelInfo.provider,
           errorText: errorText.slice(0, 200),
-        })
+        }, ['agent', 'loop', 'error'])
 
         const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
         const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''

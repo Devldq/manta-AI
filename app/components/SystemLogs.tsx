@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { useLogState, useLogFilter, useLogExport, useLogActions } from '@/core/log/hooks'
 import { LogEntry, LogLevel, LogType, LogSource, LogFilter } from '@/core/log/types'
+import { MetricsDashboard } from './MetricsDashboard'
 
 /** 日志级别颜色映射（纯前景色） */
 const LEVEL_COLORS: Record<LogLevel, string> = {
@@ -634,14 +635,14 @@ export const SystemLogs = memo(function SystemLogs({
     return (
       <div
         className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer select-none sticky top-0 z-10
-          bg-background border-b border-border-subtle hover:bg-surface transition-colors`}
+          bg-surface/80 border-b-2 border-accent/40 hover:bg-accent/10 transition-colors`}
         onClick={() => toggleTurn(turn.key)}
       >
-        <span className="text-text-muted/60 flex-shrink-0">
+        <span className="text-accent flex-shrink-0">
           {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
 
-        <span className="text-[11px] font-semibold text-text-primary flex-shrink-0">
+        <span className="text-[11px] font-bold text-text-primary flex-shrink-0">
           第 {total - index} 轮对话
         </span>
 
@@ -862,6 +863,7 @@ export const SystemLogs = memo(function SystemLogs({
   // ── 主渲染 ──
   return (
     <div className="flex flex-col h-full" style={{ maxHeight }}>
+      <MetricsDashboard conversationId={conversationId} />
       {showStats && renderStats()}
       {renderActions()}
       {renderFilterPanel()}
@@ -902,7 +904,7 @@ export const SystemLogs = memo(function SystemLogs({
                 {renderTurnHeader(turn, i, turns.length)}
 
                 {expandedTurns.has(turn.key) && (
-                  <>
+                  <div className="ml-2 border-l border-border-subtle/60">
                     {/* 该轮次下初始化阶段日志（第一轮 loop 之前） */}
                     {turn.initLogs.length > 0 && (
                       <div>
@@ -917,9 +919,11 @@ export const SystemLogs = memo(function SystemLogs({
                     {turn.steps.map(step => (
                       <div key={`${turn.messageId}:${step.stepIndex}`}>
                         {renderStepHeader(step, turn.messageId)}
-                        {expandedSteps.has(`${turn.messageId}:${step.stepIndex}`) &&
-                          step.entries.map(log => renderLogLine(log))
-                        }
+                        {expandedSteps.has(`${turn.messageId}:${step.stepIndex}`) && (
+                          <div className="ml-3 border-l border-accent/30">
+                            {step.entries.map(log => renderLogLine(log))}
+                          </div>
+                        )}
                       </div>
                     ))}
                     {/* 该轮次下结束阶段日志（最后一轮 loop 之后） */}
@@ -932,7 +936,7 @@ export const SystemLogs = memo(function SystemLogs({
                         {turn.completionLogs.map(log => renderLogLine(log))}
                       </div>
                     )}
-                  </>
+                  </div>
                 )}
               </div>
             ))}

@@ -280,12 +280,14 @@ export function createMantaPromptBuilder(options: {
 } = {}): PromptBuilder {
   const { cwd = process.cwd(), soulPrompt = null } = options
 
+  // Pipe 注册顺序影响 KV Cache 命中率：
+  // prompt 前缀不变 → 计算结果可复用。因此 不变的 section 放前面，变的放后面。
   return new PromptBuilder()
-    .pipe('agentSoul', agentSoul(soulPrompt))
     .pipe('coreRules', coreRules())
-    .pipe('workingDirectory', workingDirectory(cwd))
     .pipe('toolGuide', toolGuide())
+    .pipe('workingDirectory', workingDirectory(cwd))
     .pipe('deferredTools', deferredTools())
+    .pipe('agentSoul', agentSoul(soulPrompt))
     .pipe('sessionContext', sessionContext())
 }
 
