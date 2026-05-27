@@ -4,12 +4,10 @@ module.exports = {
     './app/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
   ],
-  // AI: 使用 class 策略驱动暗色模式（.dark 类由 ThemeInitializer 管理）
   darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        // AI: Manta 主题色 — CSS 变量桥接，支持 theme.config.json 驱动切换
         background: 'var(--color-background)',
         surface: 'var(--color-surface)',
         'surface-elevated': 'var(--color-surface-elevated)',
@@ -38,6 +36,26 @@ module.exports = {
         md: 'var(--radius-md)',
         lg: 'var(--radius-lg)',
         xl: 'var(--radius-xl)',
+      },
+      spacing: {
+        xs: 'var(--space-xs)',
+        sm: 'var(--space-sm)',
+        md: 'var(--space-md)',
+        lg: 'var(--space-lg)',
+        xl: 'var(--space-xl)',
+        '2xl': 'var(--space-2xl)',
+        '3xl': 'var(--space-3xl)',
+        '4xl': 'var(--space-4xl)',
+      },
+      transitionTimingFunction: {
+        'out-quart': 'cubic-bezier(0.25, 1, 0.5, 1)',
+        'out-expo': 'cubic-bezier(0.16, 1, 0.3, 1)',
+        'in-out-quart': 'cubic-bezier(0.76, 0, 0.24, 1)',
+      },
+      transitionDuration: {
+        fast: '100ms',
+        normal: '200ms',
+        slow: '350ms',
       },
     },
   },

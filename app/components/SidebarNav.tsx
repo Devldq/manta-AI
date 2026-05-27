@@ -125,15 +125,18 @@ export function SidebarNav() {
       >
         {/* Logo */}
         <div
-          style={{ height: 'var(--header-height)', borderBottom: '1px solid var(--color-border)' }}
+          style={{ height: 'var(--header-height)', borderBottom: '1px solid var(--color-sidebar-border, var(--color-border))' }}
           className="flex items-center justify-between px-5 flex-shrink-0"
         >
-          <Link href="/tasks" className="flex items-center gap-2.5 hover:opacity-80 transition-opacity">
+          <Link href="/tasks" className="flex items-center gap-2.5 transition-opacity duration-normal hover:opacity-75">
             <div
-              className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
-              style={{ background: 'var(--color-accent)', boxShadow: '0 0 8px var(--color-accent)' }}
+              className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 transition-shadow duration-normal"
+              style={{
+                background: 'var(--color-accent)',
+                boxShadow: '0 2px 12px rgba(0, 158, 106, 0.2)',
+              }}
             >
-              <span style={{ color: '#050507', fontSize: '11px', fontWeight: 700 }}>M</span>
+              <span style={{ color: 'var(--color-text-inverse)', fontSize: '11px', fontWeight: 700 }}>M</span>
             </div>
             <span style={{ color: 'var(--color-text-primary)', fontWeight: 600, fontSize: '14px', letterSpacing: '-0.3px' }}>
               Manta
@@ -146,7 +149,7 @@ export function SidebarNav() {
         <div className="px-3 pt-3 pb-2 flex-shrink-0">
           <div className="flex items-center gap-2">
             <div
-              className="flex-1 flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+              className="flex-1 flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors duration-fast"
               style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', minWidth: 0 }}
             >
               <span style={{ color: 'var(--color-text-muted)', fontSize: '13px', flexShrink: 0 }}>🔍</span>
@@ -155,16 +158,16 @@ export function SidebarNav() {
                 placeholder="检索"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1 bg-transparent text-sm outline-none"
+                className="flex-1 bg-transparent text-sm outline-none placeholder:text-text-muted"
                 style={{ color: 'var(--color-text-primary)', minWidth: 0 }}
               />
             </div>
             <button
               onClick={() => setSettingsOpen(true)}
-              className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors flex-shrink-0"
+              className="w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-fast flex-shrink-0"
               style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-muted)' }}
             >
               <span style={{ fontSize: '13px' }}>⚙️</span>
             </button>
@@ -175,10 +178,10 @@ export function SidebarNav() {
         <div className="px-3 pb-2 flex-shrink-0">
           <button
             onClick={openNewConversation}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-all"
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-all duration-fast"
             style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent)', color: 'var(--color-text-primary)' }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-text-inverse)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-text-primary)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-text-inverse)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-text-primary)'; e.currentTarget.style.transform = 'translateY(0)' }}
           >
             <span style={{ fontSize: '13px' }}>✏️</span>
             <span style={{ fontSize: '13px', fontWeight: 500 }}>新建会话</span>
@@ -195,11 +198,10 @@ export function SidebarNav() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className="flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150"
+                  className="flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-fast"
                   style={{
                     color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)',
                     background: isActive ? 'var(--color-accent)' : 'transparent',
-                    borderLeft: '2px solid transparent',
                   }}
                   onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-text-primary)' } }}
                   onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-secondary)' } }}
@@ -207,29 +209,28 @@ export function SidebarNav() {
                   <span style={{ fontSize: '11px', width: '16px', textAlign: 'center', color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)', flexShrink: 0 }}>
                     {item.icon}
                   </span>
-                  <span style={{ fontSize: '13px', fontWeight: isActive ? 500 : 400 }}>{item.label}</span>
+                  <span style={{ fontSize: '13px', fontWeight: isActive ? 600 : 400 }}>{item.label}</span>
                 </Link>
               )
             })}
           </div>
 
-          {/* 会话列表（可滚动区域）*/}
+          {/* 会话列表 */}
           <div className="mt-3 pt-3 flex-1 flex flex-col overflow-hidden" style={{ borderTop: '1px solid var(--color-border)' }}>
-            {/* 标题行：会话 + 展开/折叠 */}
             <div className="flex items-center justify-between px-3 py-1.5 flex-shrink-0">
               <button
                 onClick={() => setConversationsExpanded(!conversationsExpanded)}
-                className="flex items-center gap-1.5"
+                className="flex items-center gap-1.5 transition-colors duration-fast hover:opacity-80"
               >
                 <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>会话</span>
-                <span style={{ fontSize: '10px', transition: 'transform 150ms', transform: conversationsExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', color: 'var(--color-text-muted)' }}>▾</span>
+                <span style={{ fontSize: '10px', transition: 'transform var(--duration-fast) var(--ease-out-quart)', transform: conversationsExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', color: 'var(--color-text-muted)' }}>▾</span>
               </button>
             </div>
 
             {conversationsExpanded && (
               <div className="mt-1 flex-1 overflow-y-auto space-y-0.5 scrollbar-none">
                 {filteredConversations.length === 0 ? (
-                  <div className="px-3 py-2 text-[11px] text-center" style={{ color: 'var(--color-text-muted)' }}>
+                  <div className="px-3 py-6 text-[11px] text-center" style={{ color: 'var(--color-text-muted)' }}>
                     {searchQuery ? '无匹配会话' : '暂无会话'}
                   </div>
                 ) : (
@@ -238,7 +239,7 @@ export function SidebarNav() {
                     return (
                       <div
                         key={conv.id}
-                        className="group relative flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-all"
+                        className="group relative flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-all duration-fast"
                         style={{
                           color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)',
                           background: isActive ? 'var(--color-accent)' : 'transparent',
@@ -265,7 +266,7 @@ export function SidebarNav() {
                           {formatRelativeTime(conv.updatedAt)}
                         </span>
                         <button
-                          className="hidden group-hover:flex items-center justify-center w-4 h-4 rounded flex-shrink-0 transition-colors"
+                          className="hidden group-hover:flex items-center justify-center w-4 h-4 rounded flex-shrink-0 transition-colors duration-fast"
                           style={{ color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)' }}
                           onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444' }}
                           onMouseLeave={(e) => { e.currentTarget.style.color = isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)' }}

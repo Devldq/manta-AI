@@ -1,4 +1,4 @@
-/* 会话聊天页面 — 参照 Kim 设计风格 */
+/* 会话聊天页面 — Impeccable 升级版 */
 'use client'
 
 import { useState, useEffect, useRef, Suspense, useCallback, memo } from 'react'
@@ -101,24 +101,31 @@ function FsAccessBanner() {
           padding: '10px 14px', borderRadius: '10px',
           background: 'var(--color-surface)', border: '1px solid var(--color-border)',
           fontSize: '13px',
+          animation: 'tool-log-in var(--duration-fast) var(--ease-out-quart) both',
         }}>
           <span style={{ fontSize: '16px' }}>🔒</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '2px' }}>
               Agent 申请访问目录
             </div>
-            <div style={{ color: 'var(--color-text-muted)', fontFamily: 'monospace', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {req.path}
             </div>
           </div>
           <button
             onClick={() => respond(req.id, 'grant')}
-            style={{ padding: '5px 14px', borderRadius: '7px', border: 'none', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', fontSize: '12px', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
+            className="transition-all duration-fast"
+            style={{ padding: '5px 14px', borderRadius: '7px', border: 'none', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', fontSize: '12px', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.85'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'translateY(0)' }}>
             批准
           </button>
           <button
             onClick={() => respond(req.id, 'deny')}
-            style={{ padding: '5px 14px', borderRadius: '7px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', fontSize: '12px', cursor: 'pointer', flexShrink: 0 }}>
+            className="transition-all duration-fast"
+            style={{ padding: '5px 14px', borderRadius: '7px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', fontSize: '12px', cursor: 'pointer', flexShrink: 0 }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-primary)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
             拒绝
           </button>
         </div>
@@ -470,7 +477,7 @@ const MessageRow = memo(function MessageRow({ message, agentName, isStreaming }:
             onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}>
             {copied ? '✓' : '⧉'}
           </button>
-          <div style={{ maxWidth: '72%', padding: '10px 16px', borderRadius: '16px', fontSize: '14px', lineHeight: '1.65', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          <div style={{ maxWidth: '72%', padding: '10px 16px', borderRadius: '16px', fontSize: '14px', lineHeight: '1.65', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', transition: 'transform var(--duration-fast) var(--ease-out-quart)' }}>
             {content}
           </div>
         </div>
@@ -527,6 +534,7 @@ const MessageRow = memo(function MessageRow({ message, agentName, isStreaming }:
                 <div style={{ marginTop: expanded ? '10px' : '2px', display: 'flex', justifyContent: 'center' }}>
                   <button
                     onClick={() => setExpanded(v => !v)}
+                    className="transition-all duration-fast"
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: '5px',
                       padding: '5px 14px', borderRadius: '20px', fontSize: '12px',
@@ -534,18 +542,19 @@ const MessageRow = memo(function MessageRow({ message, agentName, isStreaming }:
                       background: 'var(--color-surface)',
                       color: 'var(--color-text-secondary)',
                       cursor: 'pointer',
-                      transition: 'all 0.15s',
                     }}
                     onMouseEnter={e => {
-                      e.currentTarget.style.background = 'var(--color-border)'
-                      e.currentTarget.style.color = 'var(--color-text-primary)'
+                      e.currentTarget.style.background = 'var(--color-accent-subtle)'
+                      e.currentTarget.style.borderColor = 'var(--color-accent)'
+                      e.currentTarget.style.color = 'var(--color-accent)'
                     }}
                     onMouseLeave={e => {
                       e.currentTarget.style.background = 'var(--color-surface)'
+                      e.currentTarget.style.borderColor = 'var(--color-border)'
                       e.currentTarget.style.color = 'var(--color-text-secondary)'
                     }}
                   >
-                    <span style={{ display: 'inline-block', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s cubic-bezier(0.4,0,0.2,1)', fontSize: '10px', lineHeight: 1 }}>▼</span>
+                    <span style={{ display: 'inline-block', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform var(--duration-normal) var(--ease-out-quart)', fontSize: '10px', lineHeight: 1 }}>▼</span>
                     {expanded ? '收起' : '展开全文'}
                   </button>
                 </div>
@@ -683,19 +692,22 @@ function KimInputBar({
         border: '1px solid var(--color-border)',
         borderRadius: '16px',
         overflow: 'hidden',
-        boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+        transition: 'box-shadow var(--duration-normal) var(--ease-out-quart), border-color var(--duration-normal) var(--ease-out-quart)',
       }}>
         {/* 顶部工具栏 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '10px 14px 0' }}>
-          <button style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '14px' }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+          <button className="transition-all duration-fast"
+            style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '14px' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-accent)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)' }}
             title="@提及">
             @
           </button>
-          <button style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '14px' }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+          <button className="transition-all duration-fast"
+            style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '14px' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-accent)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)' }}
             title="附件">
             📎
           </button>
@@ -707,7 +719,7 @@ function KimInputBar({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="输入消息..."
+          placeholder="输入消息…"
           disabled={disabled}
           rows={3}
           autoFocus
@@ -737,48 +749,52 @@ function KimInputBar({
             <div ref={modelDropRef} style={{ position: 'relative' }}>
               <button
                 onClick={() => !disabled && setModelOpen((o) => !o)}
+                className="transition-all duration-fast"
                 style={{
                   display: 'flex', alignItems: 'center', gap: '5px',
                   padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)',
-                  background: 'transparent', color: 'var(--color-text-secondary)',
+                  background: modelOpen ? 'var(--color-accent-subtle)' : 'transparent',
+                  color: modelOpen ? 'var(--color-accent)' : 'var(--color-text-secondary)',
                   cursor: disabled ? 'default' : 'pointer', fontSize: '12px', fontWeight: 500,
-                  transition: 'all 0.15s',
                 }}
-                onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = 'var(--color-border)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                onMouseEnter={(e) => { if (!disabled) { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' } }}
+                onMouseLeave={(e) => { if (!disabled && !modelOpen) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' } }}
               >
                 <span style={{ fontSize: '12px' }}>◎</span>
                 <span>{profiles.find(p => p.id === activeProfileId)?.name || '选择模型'}</span>
-                <span style={{ fontSize: '9px', opacity: 0.6 }}>▾</span>
+                <span style={{ fontSize: '9px', opacity: 0.6, transition: 'transform var(--duration-fast) var(--ease-out-quart)', transform: modelOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>▾</span>
               </button>
               {modelOpen && (
-                <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 100, minWidth: '180px', background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+                <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 100, minWidth: '180px', background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)', borderRadius: '10px', boxShadow: '0 4px 24px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
                   {profiles.length === 0
                     ? <div style={{ padding: '10px 12px', fontSize: '12px', color: 'var(--color-text-muted)' }}>暂无模型</div>
                     : profiles.map((p) => (
                       <button key={p.id} onClick={() => handleModelChange(p.id)}
+                        className="transition-colors duration-fast"
                         style={{ width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none', background: p.id === activeProfileId ? 'var(--color-accent-subtle)' : 'transparent', color: 'var(--color-text-primary)', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
                         onMouseEnter={(e) => { if (p.id !== activeProfileId) e.currentTarget.style.background = 'var(--color-border)' }}
                         onMouseLeave={(e) => { if (p.id !== activeProfileId) e.currentTarget.style.background = 'transparent' }}>
                         {p.id === activeProfileId && <span style={{ color: 'var(--color-accent)', fontSize: '10px' }}>✓</span>}
-                        <span style={{ fontFamily: 'monospace' }}>{p.name}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)' }}>{p.name}</span>
                       </button>
                     ))}
                 </div>
               )}
             </div>
 
-            <button style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', fontWeight: 500 }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+            <button className="transition-all duration-fast"
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', fontWeight: 500 }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
               <span style={{ fontSize: '11px' }}>⚡</span>
               <span>Auto</span>
               <span style={{ fontSize: '9px', opacity: 0.6 }}>▾</span>
             </button>
 
-            <button style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', fontWeight: 500 }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+            <button className="transition-all duration-fast"
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', fontWeight: 500 }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
               <span style={{ fontSize: '11px' }}>✦</span>
               <span>Skills</span>
             </button>
@@ -786,21 +802,38 @@ function KimInputBar({
 
           {/* 右侧：选择文件夹 + 发送 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+            <button className="transition-all duration-fast"
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
               <span style={{ fontSize: '11px' }}>🖥</span>
               <span>选择文件夹</span>
               <span style={{ fontSize: '9px', opacity: 0.6 }}>▾</span>
             </button>
 
             {isLoading ? (
-              <button onClick={onStop} style={{ width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #ef4444', background: '#ef444415', color: '#ef4444', cursor: 'pointer', fontSize: '13px' }}>
+              <button onClick={onStop}
+                className="transition-all duration-fast"
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)' }}
+                style={{ width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--color-status-failed)', background: 'transparent', color: 'var(--color-status-failed)', cursor: 'pointer', fontSize: '13px', transition: 'all var(--duration-fast) var(--ease-out-quart)' }}>
                 ⏹
               </button>
             ) : (
               <button onClick={onSubmit} disabled={!value.trim() || disabled}
-                style={{ width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', background: value.trim() ? 'var(--color-text-primary)' : 'var(--color-border)', color: value.trim() ? 'var(--color-background)' : 'var(--color-text-muted)', cursor: value.trim() && !disabled ? 'pointer' : 'not-allowed', transition: 'all 0.15s', fontSize: '14px' }}>
+                className="transition-all duration-fast"
+                style={{
+                  width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  border: 'none',
+                  background: value.trim() ? 'var(--color-accent)' : 'var(--color-border)',
+                  color: value.trim() ? 'var(--color-text-inverse)' : 'var(--color-text-muted)',
+                  cursor: value.trim() && !disabled ? 'pointer' : 'not-allowed',
+                  fontSize: '14px',
+                  transform: value.trim() && !disabled ? 'scale(1)' : 'scale(1)',
+                  boxShadow: value.trim() && !disabled ? '0 2px 8px rgba(0, 158, 106, 0.25)' : 'none',
+                }}
+                onMouseEnter={(e) => { if (value.trim() && !disabled) e.currentTarget.style.transform = 'scale(1.05)' }}
+                onMouseLeave={(e) => { if (value.trim() && !disabled) e.currentTarget.style.transform = 'scale(1)' }}>
                 ↑
               </button>
             )}
@@ -901,10 +934,10 @@ function WelcomeScreen({
       </div>
 
       {/* 标题 */}
-      <h1 style={{ fontSize: '28px', fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: '10px', letterSpacing: '-0.5px', textAlign: 'center' }}>
+      <h1 style={{ fontSize: '28px', fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: '8px', letterSpacing: '-0.02em', textAlign: 'center', lineHeight: 1.3 }}>
         Claw Your Ideas Into Reality
       </h1>
-      <p style={{ fontSize: '14px', color: 'var(--color-text-muted)', marginBottom: '32px', textAlign: 'center' }}>
+      <p style={{ fontSize: '15px', color: 'var(--color-text-muted)', marginBottom: '40px', textAlign: 'center', lineHeight: 1.5 }}>
         Triggered Anywhere, Completed Locally
       </p>
 
@@ -936,21 +969,21 @@ function CapabilityTags({ onSelect }: { onSelect: (label: string) => void }) {
           <button
             key={tag.label}
             onClick={() => onSelect(tag.label)}
+            className="transition-all duration-fast"
             style={{
               display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0,
               padding: '6px 12px', borderRadius: '20px', border: '1px solid var(--color-border)',
               background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
-              fontSize: '12px', cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
+              fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-primary)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-surface)'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.transform = 'translateY(0)' }}
           >
             <span>{tag.icon}</span>
             <span>{tag.label}</span>
           </button>
         ))}
       </div>
-      {/* 右侧渐变 + 箭头 */}
       {showRight && (
         <div style={{ position: 'absolute', right: '20px', top: '0', bottom: '12px', width: '48px', background: 'linear-gradient(to right, transparent, var(--color-background))', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pointerEvents: 'none' }}>
           <span style={{ fontSize: '12px', color: 'var(--color-text-muted)', pointerEvents: 'all', cursor: 'pointer' }}
@@ -1183,23 +1216,25 @@ function ChatView({
             {/* 重连状态指示 */}
             {reconnect.connected && (
               <span style={{ fontSize: '11px', color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-accent)', display: 'inline-block', animation: 'pulse 2s infinite' }} />
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-accent)', display: 'inline-block', animation: 'pulse-soft 2s ease-in-out infinite' }} />
                 {reconnect.finished ? '已完成' : '生成中…'}
               </span>
             )}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: sidebarOpen ? 'var(--color-border)' : 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}
-              title={sidebarOpen ? '关闭会话详情' : '打开会话详情'}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)' }}
-              onMouseLeave={(e) => { if (!sidebarOpen) e.currentTarget.style.background = 'transparent' }}>
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-fast"
+              style={{ border: '1px solid var(--color-border)', background: sidebarOpen ? 'var(--color-accent-subtle)' : 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
+              onMouseLeave={(e) => { if (!sidebarOpen) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' } }}
+              title={sidebarOpen ? '关闭会话详情' : '打开会话详情'}>
               <PanelRight size={14} />
               <span>{sidebarOpen ? '隐藏' : '详情'}</span>
             </button>
             <button onClick={onNewChat}
-              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-border)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-fast"
+              style={{ border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
               + 新对话
             </button>
           </div>
@@ -1208,7 +1243,7 @@ function ChatView({
         {/* 消息列表 */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 24px 16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {isReconnecting && (
-            <div style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '13px', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-border)', color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ padding: '12px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 500, background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent)', color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Loader2 size={14} className="tool-spinner" />
               正在连接会话…
             </div>
@@ -1224,13 +1259,13 @@ function ChatView({
             </div>
           })}
           {error && (
-            <div style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '13px', background: '#ef444410', border: '1px solid #ef444440', color: '#ef4444' }}>
-              ❌ {error.message}
+            <div style={{ padding: '12px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 500, background: 'color-mix(in srgb, var(--color-status-failed) 10%, transparent)', border: '1px solid var(--color-status-failed)', color: 'var(--color-status-failed)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertCircle size={14} /> {error.message}
             </div>
           )}
           {reconnect.error && (
-            <div style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '13px', background: '#ef444410', border: '1px solid #ef444440', color: '#ef4444' }}>
-              ❌ {reconnect.error}
+            <div style={{ padding: '12px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 500, background: 'color-mix(in srgb, var(--color-status-failed) 10%, transparent)', border: '1px solid var(--color-status-failed)', color: 'var(--color-status-failed)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertCircle size={14} /> {reconnect.error}
             </div>
           )}
           <div ref={messagesEndRef} />

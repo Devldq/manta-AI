@@ -1,42 +1,38 @@
-/* AI start: Manta 全局样式 — CSS 变量由 theme-presets 注入，所有颜色用 var(--color-*) */
+/* Impeccable 升级版 — Manta 全局样式
+ * 设计原则：
+ * - oklch 色彩空间实现感知均匀的色调变换
+ * - DM Sans 替代 Inter（消除 #1 AI 特征）
+ * - 命名缓动曲线 + reduced-motion 支持
+ * - 语义化间距 scale + 焦点可见性
+ */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ─── 亮色主题变量（VoltAgent Light 默认）─── */
+/* ─── 设计令牌 ─── */
 :root {
-  /* 背景 */
-  --color-background: #f8f8f6;
-  --color-surface: #ffffff;
-  --color-surface-elevated: #ffffff;
+  /* 缓动曲线 */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
 
-  /* 边框 */
-  --color-border: #e8e5e2;
-  --color-border-subtle: #f0ede8;
+  /* Duration scale */
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
 
-  /* 文本 */
-  --color-text-primary: #1a1a18;
-  --color-text-secondary: #4a4a46;
-  --color-text-muted: #8b8b84;
-  --color-text-inverse: #ffffff;
+  /* 间距 scale — 4pt base */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+  --space-4xl: 64px;
 
-  /* 强调色 — VoltAgent Emerald（亮色版） */
-  --color-accent: #009e6a;
-  --color-accent-hover: #00b878;
-  --color-accent-subtle: #e5f7f1;
-  --color-emphasis: #009e6a;
-  --color-emphasis-hover: #00b878;
-
-  /* 状态色 */
-  --color-status-pending: #d97706;
-  --color-status-running: #4f46e5;
-  --color-status-done: #009e6a;
-  --color-status-failed: #dc2626;
-  --color-status-archived: #a3a3a3;
-  --color-status-planning: #8b5cf6;
-
-  /* 字体 */
-  --font-sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* 字体 — DM Sans via next/font (system fallback) */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 
   /* 圆角 */
@@ -49,57 +45,78 @@
   --sidebar-width: 240px;
   --header-height: 56px;
 
-  /* 壁纸（默认无） */
+  /* 壁纸 */
   --main-wallpaper: none;
   --main-bg-opacity: 1;
   --sidebar-wallpaper: none;
   --sidebar-overlay-color: transparent;
+}
 
-  /* 侧边栏 */
-  --sidebar-bg: #f0ede8;
-  --sidebar-text: #1a1a18;
-  --sidebar-text-secondary: #4a4a46;
-  --sidebar-border: #e8e5e2;
+/* ─── 亮色主题（Warm Stone + Emerald）─── */
+:root {
+  --color-background: oklch(97.5% 0.003 95);
+  --color-surface: oklch(100% 0 0);
+  --color-surface-elevated: oklch(100% 0 0);
+
+  --color-border: oklch(90% 0.006 95);
+  --color-border-subtle: oklch(95% 0.004 95);
+
+  --color-text-primary: oklch(12% 0.005 95);
+  --color-text-secondary: oklch(35% 0.008 95);
+  --color-text-muted: oklch(55% 0.006 95);
+  --color-text-inverse: oklch(100% 0 0);
+
+  --color-accent: oklch(55% 0.16 160);
+  --color-accent-hover: oklch(50% 0.18 160);
+  --color-accent-subtle: oklch(96% 0.03 160);
+  --color-emphasis: oklch(55% 0.16 160);
+  --color-emphasis-hover: oklch(50% 0.18 160);
+
+  --color-status-pending: oklch(65% 0.15 70);
+  --color-status-running: oklch(52% 0.22 265);
+  --color-status-done: oklch(55% 0.16 160);
+  --color-status-failed: oklch(55% 0.22 20);
+  --color-status-archived: oklch(55% 0.005 95);
+  --color-status-planning: oklch(52% 0.2 285);
+
+  --sidebar-bg: oklch(94% 0.004 95);
+  --sidebar-text: oklch(12% 0.005 95);
+  --sidebar-text-secondary: oklch(35% 0.008 95);
+  --sidebar-border: oklch(90% 0.006 95);
   --sidebar-collapsed-width: 64px;
 }
 
-/* ─── 暗色主题变量（VoltAgent Dark — Abyss Black + Emerald）─── */
+/* ─── 暗色主题（Deep Abyss + Emerald）─── */
 .dark {
-  /* 背景 — Abyss Black 系 */
-  --color-background: #050507;
-  --color-surface: #101010;
-  --color-surface-elevated: #181818;
+  --color-background: oklch(4% 0.004 260);
+  --color-surface: oklch(8% 0.005 260);
+  --color-surface-elevated: oklch(12% 0.005 260);
 
-  /* 边框 — Warm Charcoal */
-  --color-border: #3d3a39;
-  --color-border-subtle: #2a2827;
+  --color-border: oklch(18% 0.004 260);
+  --color-border-subtle: oklch(13% 0.004 260);
 
-  /* 文本 */
-  --color-text-primary: #f2f2f2;
-  --color-text-secondary: #b8b3b0;
-  --color-text-muted: #8b949e;
-  --color-text-inverse: #050507;
+  --color-text-primary: oklch(93% 0.002 260);
+  --color-text-secondary: oklch(70% 0.005 260);
+  --color-text-muted: oklch(50% 0.004 260);
+  --color-text-inverse: oklch(4% 0.004 260);
 
-  /* 强调色 — Emerald Signal Green */
-  --color-accent: #00d992;
-  --color-accent-hover: #2fd6a1;
-  --color-accent-subtle: #0a2e1e;
-  --color-emphasis: #00d992;
-  --color-emphasis-hover: #2fd6a1;
+  --color-accent: oklch(72% 0.16 160);
+  --color-accent-hover: oklch(76% 0.15 160);
+  --color-accent-subtle: oklch(16% 0.05 160);
+  --color-emphasis: oklch(72% 0.16 160);
+  --color-emphasis-hover: oklch(76% 0.15 160);
 
-  /* 状态色 */
-  --color-status-pending: #ffba00;
-  --color-status-running: #818cf8;
-  --color-status-done: #00d992;
-  --color-status-failed: #fb565b;
-  --color-status-archived: #6b7280;
-  --color-status-planning: #a78bfa;
+  --color-status-pending: oklch(80% 0.14 70);
+  --color-status-running: oklch(72% 0.18 265);
+  --color-status-done: oklch(72% 0.16 160);
+  --color-status-failed: oklch(65% 0.2 20);
+  --color-status-archived: oklch(45% 0.003 260);
+  --color-status-planning: oklch(72% 0.16 285);
 
-  /* 侧边栏 */
-  --sidebar-bg: #0a0a0c;
-  --sidebar-text: #f2f2f2;
-  --sidebar-text-secondary: #b8b3b0;
-  --sidebar-border: #3d3a39;
+  --sidebar-bg: oklch(5% 0.003 260);
+  --sidebar-text: oklch(93% 0.002 260);
+  --sidebar-text-secondary: oklch(70% 0.005 260);
+  --sidebar-border: oklch(18% 0.004 260);
 }
 
 /* ─── 基础重置 ─── */
@@ -116,45 +133,52 @@ body {
   color: var(--color-text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* AI: 主题切换时平滑过渡 */
-  transition: background-color 0.2s ease, color 0.2s ease;
+  font-kerning: normal;
+  transition: background-color var(--duration-normal) var(--ease-out-quart),
+              color var(--duration-normal) var(--ease-out-quart);
 }
 
-/* ─── 隐藏滚动条（保留滚动功能）─── */
+/* ─── 焦点可见性（Impeccable: focus-visible only）─── */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ─── 隐藏滚动条 ─── */
 .scrollbar-none {
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE/Edge */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 .scrollbar-none::-webkit-scrollbar {
-  display: none; /* Chrome/Safari */
+  display: none;
 }
 
-/* ─── 滚动条样式 ─── */
+/* ─── 滚动条 ─── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
   border-radius: 3px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-muted);
 }
+* {
+  scrollbar-color: var(--color-border) transparent;
+  scrollbar-width: thin;
+}
 
-/* ─── 主内容区壁纸（通过 CSS 变量控制）─── */
-/* AI: 壁纸铺在 ::before 伪元素，背景色透明度控制覆盖程度 */
+/* ─── 壁纸系统 ─── */
 .manta-main-container {
   position: relative;
   overflow: hidden;
 }
-
 .manta-main-container::before {
   content: '';
   position: absolute;
@@ -166,8 +190,6 @@ body {
   background-attachment: fixed;
   pointer-events: none;
 }
-
-/* AI: 背景色覆盖层，透明度由 --main-bg-opacity 控制 */
 .manta-main-container::after {
   content: '';
   position: absolute;
@@ -177,21 +199,16 @@ body {
   opacity: var(--main-bg-opacity, 1);
   pointer-events: none;
 }
-
-/* AI: 内容在壁纸/背景色覆盖层之上 */
 .manta-main-container > * {
   position: relative;
   z-index: 2;
 }
 
-/* ─── 侧边栏壁纸（通过 CSS 变量控制）─── */
 .manta-sidebar {
   position: relative;
   background-color: var(--sidebar-bg, var(--color-surface));
   overflow: hidden;
 }
-
-/* AI: 壁纸层 */
 .manta-sidebar::before {
   content: '';
   position: absolute;
@@ -202,8 +219,6 @@ body {
   background-position: center;
   pointer-events: none;
 }
-
-/* AI: 背景色覆盖层，透明度由 --sidebar-bg-opacity 控制 */
 .manta-sidebar::after {
   content: '';
   position: absolute;
@@ -213,49 +228,31 @@ body {
   opacity: var(--sidebar-bg-opacity, 1);
   pointer-events: none;
 }
-
-/* AI: 确保侧边栏内容在壁纸/背景色覆盖层之上 */
 .manta-sidebar > * {
   position: relative;
   z-index: 2;
 }
 
-/* ─── 代码块基础样式 ─── */
+/* ─── 代码块 ─── */
 code,
 pre {
   font-family: var(--font-mono);
   font-size: 0.875rem;
 }
 
-/* ─── 选中文本样式 ─── */
+/* ─── 选中文本 ─── */
 ::selection {
-  background-color: rgba(0, 158, 106, 0.3); /* 亮色主题：accent 颜色 30% 透明度 */
-  color: var(--color-text-primary);
+  background-color: var(--color-accent);
+  color: var(--color-text-inverse);
 }
 
-/* AI: 暗色主题下的选中样式 */
-.dark ::selection {
-  background-color: rgba(0, 217, 146, 0.25); /* 暗色主题：accent 颜色 25% 透明度 */
-  color: var(--color-text-primary);
-}
-
-/* ─── 主题切换动画 ─── */
+/* ─── 主题切换 ─── */
 .manta-sidebar,
 .manta-main-container {
-  transition: background-color 0.2s ease;
+  transition: background-color var(--duration-normal) var(--ease-out-quart);
 }
 
-/* ─── VoltAgent 风格 Glow 动画（暗色模式下强调元素） ─── */
-@keyframes volt-glow {
-  0%, 100% { filter: drop-shadow(0 0 2px var(--color-accent)); }
-  50% { filter: drop-shadow(0 0 8px var(--color-accent)); }
-}
-
-.volt-glow {
-  animation: volt-glow 3s ease-in-out infinite;
-}
-
-/* AI: 光标闪烁动画（流式输出用） */
+/* ─── Animation keyframes ─── */
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
@@ -265,19 +262,26 @@ pre {
   to { transform: rotate(360deg); }
 }
 
-/* ─── 工具调用日志动画 ─── */
+@keyframes tool-log-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ─── 工具调用动画 ─── */
 .tool-spinner {
   animation: spin 0.8s linear infinite;
-}
-@keyframes tool-log-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
 }
 
 .tool-log-panel {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: grid-template-rows var(--duration-normal) var(--ease-out-quart);
 }
 .tool-log-panel.open {
   grid-template-rows: 1fr;
@@ -287,14 +291,7 @@ pre {
 }
 
 .tool-call-item {
-  animation: tool-log-in 0.18s ease both;
-}
-
-.tool-log-header {
-  transition: background 0.12s ease;
-}
-.tool-log-header:hover {
-  background: var(--color-background) !important;
+  animation: tool-log-in var(--duration-fast) var(--ease-out-quart) both;
 }
 
 /* ─── 长内容折叠 ─── */
@@ -313,9 +310,18 @@ pre {
   background: linear-gradient(to bottom, transparent, var(--color-background));
   pointer-events: none;
 }
-/* 暗色模式下渐变色跟随背景 */
 .dark .msg-content-collapsed::after {
   background: linear-gradient(to bottom, transparent, var(--color-background));
 }
 
-/* AI end: 全局样式结束 */
+/* ─── reduced-motion（Impeccable: a11y essential）─── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
