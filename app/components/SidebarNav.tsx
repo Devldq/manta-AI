@@ -179,12 +179,12 @@ export function SidebarNav() {
           <button
             onClick={openNewConversation}
             className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-all duration-fast"
-            style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent)', color: 'var(--color-text-primary)' }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-text-inverse)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-text-primary)'; e.currentTarget.style.transform = 'translateY(0)' }}
+            style={{ background: 'var(--color-accent)', border: 'none', color: 'var(--color-text-inverse)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.88' }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '1' }}
           >
-            <span style={{ fontSize: '13px' }}>✏️</span>
-            <span style={{ fontSize: '13px', fontWeight: 500 }}>新建会话</span>
+            <span style={{ fontSize: '13px' }}>+</span>
+            <span style={{ fontSize: '13px', fontWeight: 500 }}>新对话</span>
           </button>
         </div>
 
@@ -217,13 +217,20 @@ export function SidebarNav() {
 
           {/* 会话列表 */}
           <div className="mt-3 pt-3 flex-1 flex flex-col overflow-hidden" style={{ borderTop: '1px solid var(--color-border)' }}>
-            <div className="flex items-center justify-between px-3 py-1.5 flex-shrink-0">
+            <div className="flex items-center justify-between px-3 py-1 flex-shrink-0">
               <button
                 onClick={() => setConversationsExpanded(!conversationsExpanded)}
-                className="flex items-center gap-1.5 transition-colors duration-fast hover:opacity-80"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '4px',
+                  border: 'none', background: 'transparent', cursor: 'pointer',
+                  color: 'var(--color-text-muted)', fontSize: '11px', fontWeight: 500,
+                  padding: 0,
+                }}
               >
-                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)' }}>会话</span>
-                <span style={{ fontSize: '10px', transition: 'transform var(--duration-fast) var(--ease-out-quart)', transform: conversationsExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', color: 'var(--color-text-muted)' }}>▾</span>
+                会话
+                <span style={{ fontSize: '9px', opacity: 0.5, transition: 'transform var(--duration-fast) var(--ease-out-quart)', transform: conversationsExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}>
+                  ▾
+                </span>
               </button>
             </div>
 
@@ -236,43 +243,52 @@ export function SidebarNav() {
                 ) : (
                   filteredConversations.map((conv) => {
                     const isActive = pathname.startsWith('/tasks') && selectedId === conv.id
+                    const isRunning = (() => {
+                      if (isActive) return true
+                      try {
+                        return (Date.now() - new Date(conv.updatedAt).getTime()) < 60_000
+                      } catch { return false }
+                    })()
                     return (
                       <div
                         key={conv.id}
-                        className="group relative flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-all duration-fast"
+                        className="group relative flex items-center gap-2 px-3 py-1 rounded-md text-sm transition-all duration-fast"
                         style={{
-                          color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)',
-                          background: isActive ? 'var(--color-accent)' : 'transparent',
-                          cursor: isActive ? 'default' : 'pointer',
+                          color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                          background: isActive ? 'var(--color-accent-subtle)' : 'transparent',
+                          cursor: 'pointer',
                         }}
-                        onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-text-primary)' } }}
-                        onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-secondary)' } }}
+                        onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.background = 'var(--color-border-subtle)' } }}
+                        onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.background = 'transparent' } }}
                         onClick={() => {
                           if (isActive) return
                           setSelectedId(conv.id)
                           router.replace(`/tasks?convId=${conv.id}`, { scroll: false })
                         }}
                       >
-                        <span style={{ fontSize: '12px', width: '14px', flexShrink: 0, textAlign: 'center' }}>
-                          💬
-                        </span>
+                        <span style={{
+                          width: '5px', height: '5px', borderRadius: '50%', flexShrink: 0,
+                          background: isRunning ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                          opacity: isRunning ? 0.9 : 0.3,
+                          animation: isRunning && !isActive ? 'dot-breathe 2.4s ease-in-out infinite' : 'none',
+                        }} />
                         <span
-                          style={{ fontSize: '11px', fontWeight: isActive ? 500 : 400, flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          style={{ fontSize: '12px', fontWeight: isActive ? 500 : 400, flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                           title={conv.title}
                         >
                           {conv.title}
                         </span>
-                        <span style={{ fontSize: '10px', color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)', flexShrink: 0 }} className="group-hover:hidden">
+                        <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', flexShrink: 0 }} className="group-hover:hidden">
                           {formatRelativeTime(conv.updatedAt)}
                         </span>
                         <button
                           className="hidden group-hover:flex items-center justify-center w-4 h-4 rounded flex-shrink-0 transition-colors duration-fast"
-                          style={{ color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)' }}
+                          style={{ color: 'var(--color-text-muted)' }}
                           onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444' }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)' }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-muted)' }}
                           onClick={(e) => handleDeleteConversation(e, conv.id)}
                           disabled={deletingId === conv.id}
-                          title="删除会话"
+                          title="删除"
                         >
                           <span style={{ fontSize: '11px' }}>{deletingId === conv.id ? '…' : '×'}</span>
                         </button>

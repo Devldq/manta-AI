@@ -5,6 +5,7 @@ import { useState, useEffect, useRef, Suspense, useCallback, memo } from 'react'
 import {
   Folder, FileText, FileSearch, Search, Terminal, Pencil,
   Wrench, Loader2, Check, AlertCircle, ChevronDown, PanelRight,
+  ArrowLeft,
 } from 'lucide-react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useChat } from '@ai-sdk/react'
@@ -1003,6 +1004,7 @@ function ChatView({
   onAgentChange: (name: string) => void; onNewChat: () => void; title: string; agents: AgentEntry[]
   conversation: Conversation | null
 }) {
+  const router = useRouter()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [inputText, setInputText] = useState('')
   // 本地 conversation 状态：初始值来自父组件，流式结束后从 API 刷新同步更新
@@ -1209,9 +1211,17 @@ function ChatView({
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minWidth: 0 }}>
         {/* 极简 Header */}
         <div style={{ height: 'var(--header-height)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', flexShrink: 0 }}>
-          <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px' }} title={title}>
-            {title}
-          </h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+            <button
+              onClick={() => router.replace('/tasks', { scroll: false })}
+              className="dashboard-back-btn"
+              title="返回仪表盘">
+              <ArrowLeft size={14} />
+            </button>
+            <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px' }} title={title}>
+              {title}
+            </h3>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {/* 重连状态指示 */}
             {reconnect.connected && (

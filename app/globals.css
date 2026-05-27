@@ -314,7 +314,126 @@ pre {
   background: linear-gradient(to bottom, transparent, var(--color-background));
 }
 
-/* ─── reduced-motion（Impeccable: a11y essential）─── */
+/* ─── Agentic assistant：极简任务区 ─── */
+
+/* 任务卡片网格 */
+.task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-sm);
+}
+
+/* 任务卡片 — 极简，内容驱动 */
+.task-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out-quart),
+    background-color var(--duration-fast) var(--ease-out-quart);
+  user-select: none;
+}
+
+.task-card:hover {
+  border-color: var(--color-accent);
+}
+
+.task-card:active {
+  background: var(--color-accent-subtle);
+}
+
+.task-card.is-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+
+/* 停止按钮 — hover 渐显 */
+.task-card-stop-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: 5px;
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 2px;
+  opacity: 0;
+  transition:
+    opacity var(--duration-fast) var(--ease-out-quart),
+    color var(--duration-fast) var(--ease-out-quart),
+    border-color var(--duration-fast) var(--ease-out-quart),
+    background-color var(--duration-fast) var(--ease-out-quart);
+}
+
+.task-card:hover .task-card-stop-btn {
+  opacity: 1;
+}
+
+.task-card-stop-btn:hover {
+  color: var(--color-status-failed);
+  border-color: var(--color-status-failed);
+  background: color-mix(in oklch, var(--color-status-failed) 8%, transparent);
+}
+
+/* 思索引擎三点 — 运行指示 */
+.agent-thinking-dot {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: dot-breathe 1.4s var(--ease-in-out-quart) infinite;
+}
+.agent-thinking-dot:nth-child(2) { animation-delay: 0.18s; }
+.agent-thinking-dot:nth-child(3) { animation-delay: 0.36s; }
+
+/* 回导航按钮 */
+.dashboard-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out-quart),
+    border-color var(--duration-fast) var(--ease-out-quart);
+}
+
+.dashboard-back-btn:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* ─── 动画 ─── */
+
+@keyframes dot-breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(0.6); }
+}
+
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.task-card {
+  animation: card-enter 0.3s var(--ease-out-quart) both;
+}
+
+/* ─── reduced-motion ─── */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -323,5 +442,13 @@ pre {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  .task-card {
+    animation: none;
+  }
+
+  .agent-thinking-dot {
+    animation: none;
   }
 }
