@@ -13,6 +13,7 @@ import type { UIMessage, TextUIPart } from 'ai'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { SessionSidebar } from '@/app/components/SessionSidebar'
+import { useReconnectSSE } from '@/app/hooks/useReconnectSSE'
 
 // ─── 类型 ──────────────────────────────────────────────────────────────────────
 
@@ -995,6 +996,61 @@ function ChatView({
 
   const isLoading = status === 'submitted' || status === 'streaming'
 
+  // ─── SSE 重连：页面刷新 / 切换回有活跃循环的会话时自动重连 ─────────────────
+  const reconnect = useReconnectSSE(convId, !isLoading && status === 'ready')
+
+  // 当发送新消息时，重置重连状态（新的 loop 会通过 POST 启动）
+  useEffect(() => {
+    if (isLoading) {
+      reconnect.reset()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading])
+
+  // 当重连流结束时，从 API 重新加载完整消息（含 metadata）
+  const reconnectFinishedRef = useRef(false)
+  useEffect(() => {
+    if (reconnect.finished && !reconnectFinishedRef.current) {
+      reconnectFinishedRef.current = true
+      fetch(`/api/conversations/${convId}`)
+        .then((r) => r.json())
+        .then((data) => {
+          const conv = data.conversation
+          if (!conv) return
+          setSidebarConv(conv)
+          const refreshed: UIMessage[] = conv.messages
+            .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
+            .map((m: { id: string; role: string; content: string; timestamp: string; toolCalls?: unknown[]; usage?: { inputTokens?: number; outputTokens?: number } | null }) => {
+              const parts: UIMessage['parts'] = []
+              if (m.toolCalls && m.toolCalls.length > 0) {
+                for (const tc of m.toolCalls as { toolCallId: string; toolName: string; isError: boolean; input: unknown; output: unknown; errorText?: string }[]) {
+                  parts.push({
+                    type: 'dynamic-tool',
+                    toolCallId: tc.toolCallId,
+                    toolName: tc.toolName,
+                    state: tc.isError ? 'output-error' : 'output-available',
+                    input: tc.input,
+                    output: tc.isError ? undefined : tc.output,
+                    errorText: tc.errorText,
+                  } as unknown as NonNullable<UIMessage['parts']>[number])
+                }
+              }
+              if (m.content) parts.push({ type: 'text' as const, text: m.content })
+              return {
+                id: m.id,
+                role: m.role as 'user' | 'assistant',
+                parts,
+                metadata: { timestamp: m.timestamp, usage: m.usage ?? null },
+              }
+            })
+          setMessages(refreshed)
+          // 清除重连状态，避免 streamingParts 残留导致 displayMessages 重复
+          reconnect.reset()
+        })
+        .catch(() => { })
+    }
+  }, [reconnect.finished, convId, setMessages, reconnect])
+
   // 持久化 sidebarOpen 到 localStorage
   useEffect(() => {
     localStorage.setItem(SIDEBAR_OPEN_KEY, String(sidebarOpen))
@@ -1058,11 +1114,61 @@ function ChatView({
   }, [messages])
 
   function handleSend() {
+    // 发送新消息时重置重连标记
+    reconnectFinishedRef.current = false
+    reconnect.reset()
     const msg = inputText.trim()
     if (!msg || isLoading) return
     setInputText('')
     sendMessage({ text: msg })
   }
+
+  // ─── 自定义停止：调用专用 stop API 停止后台 loop ────────────────────────────
+  async function handleStop() {
+    // 先调用 stop API 停止后台 agent loop
+    await fetch(`/api/conversations/${convId}/stop`, { method: 'POST' }).catch(() => {})
+    // 再调用 useChat 的 stop（中断前端 fetch）
+    stop()
+  }
+
+  // ─── 合并重连流式内容到消息列表 ────────────────────────────────────────────
+  const hasReconnectContent = reconnect.connected && reconnect.streamingParts.length > 0
+  // 记录被替换的消息在 displayMessages 中的索引，用于正确的 streaming 标识
+  const replacedMsgIdxRef = useRef(-1)
+  const displayMessages: UIMessage[] = hasReconnectContent
+    ? (() => {
+        const result = [...messages]
+        let lastAssistantIdx = -1
+        for (let i = result.length - 1; i >= 0; i--) {
+          if (result[i].role === 'assistant') {
+            lastAssistantIdx = i
+            break
+          }
+        }
+        if (lastAssistantIdx >= 0) {
+          // 用重连内容替换最后一条 assistant 的 parts（保留原 id 以维持 React key 稳定）
+          result[lastAssistantIdx] = {
+            ...result[lastAssistantIdx],
+            parts: reconnect.streamingParts,
+          }
+          replacedMsgIdxRef.current = lastAssistantIdx
+        } else {
+          // 没有已有的 assistant 消息 → 追加新消息（标记为 reconnect 消息）
+          result.push({
+            id: `reconnect-${convId}`,
+            role: 'assistant' as const,
+            parts: reconnect.streamingParts,
+            createdAt: new Date(),
+          })
+          replacedMsgIdxRef.current = result.length - 1
+        }
+        return result
+      })()
+    : (replacedMsgIdxRef.current = -1, messages)
+
+  // 重连中的 loading 态（有活跃循环但还没收到 chunk）
+  const isReconnecting = reconnect.reconnecting
+  const showReconnectStreaming = hasReconnectContent && !reconnect.finished
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden', position: 'relative' }}>
@@ -1074,6 +1180,13 @@ function ChatView({
             {title}
           </h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {/* 重连状态指示 */}
+            {reconnect.connected && (
+              <span style={{ fontSize: '11px', color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-accent)', display: 'inline-block', animation: 'pulse 2s infinite' }} />
+                {reconnect.finished ? '已完成' : '生成中…'}
+              </span>
+            )}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: sidebarOpen ? 'var(--color-border)' : 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', transition: 'all 0.15s' }}
@@ -1094,20 +1207,37 @@ function ChatView({
 
         {/* 消息列表 */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 24px 16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {messages.map((msg, idx) => {
-            const isLastAssistant = msg.role === 'assistant' && idx === messages.length - 1
-            return <div key={msg.id} style={{ width: '100%' }}><MessageRow message={msg} agentName={agentName} isStreaming={isLoading && isLastAssistant} /></div>
+          {isReconnecting && (
+            <div style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '13px', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-border)', color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Loader2 size={14} className="tool-spinner" />
+              正在连接会话…
+            </div>
+          )}
+          {displayMessages.map((msg, idx) => {
+            const isReconnectMsg = msg.id.startsWith('reconnect-') || idx === replacedMsgIdxRef.current
+            const isLastAssistant = msg.role === 'assistant' && (idx === displayMessages.length - 1)
+            const streaming = isReconnectMsg
+              ? showReconnectStreaming
+              : (isLoading && isLastAssistant)
+            return <div key={msg.id} style={{ width: '100%' }}>
+              <MessageRow message={msg} agentName={agentName} isStreaming={streaming} />
+            </div>
           })}
           {error && (
             <div style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '13px', background: '#ef444410', border: '1px solid #ef444440', color: '#ef4444' }}>
               ❌ {error.message}
             </div>
           )}
+          {reconnect.error && (
+            <div style={{ padding: '10px 14px', borderRadius: '8px', fontSize: '13px', background: '#ef444410', border: '1px solid #ef444440', color: '#ef4444' }}>
+              ❌ {reconnect.error}
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 
         {/* 能力标签 */}
-        {messages.length === 0 && <CapabilityTags onSelect={(label) => setInputText(label + ' ')} />}
+        {displayMessages.length === 0 && <CapabilityTags onSelect={(label) => setInputText(label + ' ')} />}
 
         {/* 文件访问授权 */}
         <FsAccessBanner />
@@ -1117,8 +1247,8 @@ function ChatView({
           value={inputText}
           onChange={setInputText}
           onSubmit={handleSend}
-          onStop={stop}
-          isLoading={isLoading}
+          onStop={handleStop}
+          isLoading={isLoading || isReconnecting}
           agentName={agentName}
           agents={agents}
           onAgentChange={onAgentChange}

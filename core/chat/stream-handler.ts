@@ -6,6 +6,7 @@ import { readAgentSoul } from '../context/agent-soul'
 import { buildSystemPrompt } from '../context/system-prompt'
 import { parseMessagesToCore, type UIMessage } from './message-parser'
 import { runAgentLoop } from './agent-loop'
+import { getActiveLoop, registerLoop, emitLoopEvent } from './loop-registry'
 import { logger, logManager } from '@/core/log'
 
 /** 流式聊天选项 */
@@ -13,11 +14,25 @@ export interface StreamChatOptions {
   messages: UIMessage[]
   agentName: string
   conversationId: string
-  abortSignal?: AbortSignal
 }
 
-/** 执行流式聊天并返回流式响应 */
-export async function streamChat({ messages, agentName, conversationId, abortSignal }: StreamChatOptions) {
+/** 启动结果的返回类型 */
+export interface StreamChatResult {
+  /** 是否是新启动的循环（true）还是已有活跃循环（false） */
+  isNew: boolean
+}
+
+/**
+ * 启动流式聊天 Agent Loop（如果该会话已有活跃循环则不重复启动）
+ * Loop 与 HTTP 连接完全解耦，通过 LoopRegistry 广播事件
+ */
+export async function startAgentLoop({ messages, agentName, conversationId }: StreamChatOptions): Promise<StreamChatResult> {
+  // 如果已有活跃循环，不重复启动
+  if (getActiveLoop(conversationId)) {
+    logger.info(`会话 ${conversationId} 已有活跃循环，跳过启动`, undefined, ['chat', 'loop-existing'])
+    return { isNew: false }
+  }
+
   // 提取用户最新输入的 prompt（用于日志记录）
   const lastUIMessage = [...messages].reverse().find(m => m.role === 'user')
   const userPrompt = lastUIMessage?.parts
@@ -47,88 +62,85 @@ export async function streamChat({ messages, agentName, conversationId, abortSig
   // 解析消息格式
   const coreMessages = parseMessagesToCore(messages)
 
-  // 执行 Agent Loop（返回 Response 对象）
-  const response = await runAgentLoop({
-    messages: coreMessages,
-    systemPrompt,
-    prompt: userPrompt,
-    abortSignal,
-    conversationId,
-    onFinish: async (event) => {
-      const { text, steps } = event
-      // 从所有步骤里提取工具调用记录（input + output 配对）
-      const toolCalls: ToolCallRecord[] = []
-      for (const step of steps) {
-        for (const call of step.toolCalls) {
-          // 找到对应的 toolResult
-          const result = step.toolResults.find(
-            (r: { toolCallId: string }) => r.toolCallId === call.toolCallId
-          )
-          const isError = (result as { isError?: boolean } | undefined)?.isError ?? false
-          toolCalls.push({
-            toolCallId: call.toolCallId,
-            toolName: call.toolName,
-            input: (call as { input?: unknown }).input,
-            output: (result as { output?: unknown } | undefined)?.output,
-            isError,
-            errorText: isError ? String((result as { output?: unknown } | undefined)?.output ?? '') : undefined,
-          })
+  // 注册新的活跃循环（占位，后续填充 running promise）
+  const loopPromise = new Promise<void>((resolve) => {
+    runAgentLoop({
+      messages: coreMessages,
+      systemPrompt,
+      prompt: userPrompt,
+      conversationId,
+      onChunk: (data: string) => emitLoopEvent(conversationId, data),
+      onDone: () => resolve(),
+      onFinish: async (event) => {
+        const { text, steps } = event
+        // 从所有步骤里提取工具调用记录（input + output 配对）
+        const toolCalls: ToolCallRecord[] = []
+        for (const step of steps) {
+          for (const call of step.toolCalls) {
+            const result = step.toolResults.find(
+              (r: { toolCallId: string }) => r.toolCallId === call.toolCallId
+            )
+            const isError = (result as { isError?: boolean } | undefined)?.isError ?? false
+            toolCalls.push({
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              input: (call as { input?: unknown }).input,
+              output: (result as { output?: unknown } | undefined)?.output,
+              isError,
+              errorText: isError ? String((result as { output?: unknown } | undefined)?.output ?? '') : undefined,
+            })
+          }
         }
-      }
 
-      // 持久化：最后一条 user 消息 + assistant 回复（含工具调用记录）
-      const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
-      const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
-      if (userText) {
-        appendMessage(conversationId, 'user', userText)
-      }
-      if (text || toolCalls.length > 0) {
-        // AI: 使用 event.usage 而非 event.totalUsage（P1-3 修复）
-        const usage = event.usage
-          ? { inputTokens: event.usage.inputTokens ?? undefined, outputTokens: event.usage.outputTokens ?? undefined }
-          : undefined
-        appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage)
-      }
+        // 持久化：最后一条 user 消息 + assistant 回复（含工具调用记录）
+        const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
+        const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
+        if (userText) {
+          appendMessage(conversationId, 'user', userText)
+        }
+        if (text || toolCalls.length > 0) {
+          const usage = event.usage
+            ? { inputTokens: event.usage.inputTokens ?? undefined, outputTokens: event.usage.outputTokens ?? undefined }
+            : undefined
+          appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage)
+        }
 
-      logger.system('ChatStream', `会话 ${conversationId} 处理完成`, 'success', {
-        conversationId,
-        agentName,
-        prompt: userPrompt,
-        model: modelInfo.model,
-        provider: modelInfo.provider,
-        stepsCount: steps.length,
-        toolCallsCount: toolCalls.length,
-        responseLength: text.length,
-      })
-      // flush 该会话的 staging 缓冲区（处理完成/出错 的日志已补齐 messageId）
-      logManager.closeConversation(conversationId)
-    },
-    /** 错误时回调：保存用户消息和错误信息到对话历史 */
-    onError: async (errorText: string) => {
-      logger.system('ChatStream', `会话 ${conversationId} 处理出错`, 'failure', {
-        conversationId,
-        agentName,
-        prompt: userPrompt,
-        model: modelInfo.model,
-        provider: modelInfo.provider,
-        errorText: errorText.slice(0, 200),
-      })
+        logger.system('ChatStream', `会话 ${conversationId} 处理完成`, 'success', {
+          conversationId,
+          agentName,
+          prompt: userPrompt,
+          model: modelInfo.model,
+          provider: modelInfo.provider,
+          stepsCount: steps.length,
+          toolCallsCount: toolCalls.length,
+          responseLength: text.length,
+        })
+        logManager.closeConversation(conversationId)
+      },
+      onError: async (errorText: string) => {
+        logger.system('ChatStream', `会话 ${conversationId} 处理出错`, 'failure', {
+          conversationId,
+          agentName,
+          prompt: userPrompt,
+          model: modelInfo.model,
+          provider: modelInfo.provider,
+          errorText: errorText.slice(0, 200),
+        })
 
-      // 保存用户消息
-      const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
-      const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
-      if (userText) {
-        appendMessage(conversationId, 'user', userText)
-      }
-      // 保存错误回复
-      appendMessage(conversationId, 'assistant', errorText)
+        const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
+        const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
+        if (userText) {
+          appendMessage(conversationId, 'user', userText)
+        }
+        appendMessage(conversationId, 'assistant', errorText)
 
-      // flush 该会话的 staging 缓冲区
-      logManager.closeConversation(conversationId)
-    },
+        logManager.closeConversation(conversationId)
+      },
+    })
   })
 
-  // 直接返回 Response（runAgentLoop 已构建好 SSE 流）
-  return response
+  registerLoop(conversationId, loopPromise)
+
+  return { isNew: true }
 }
 /* AI end: 流式聊天核心处理逻辑结束 */

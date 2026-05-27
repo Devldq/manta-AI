@@ -21,8 +21,13 @@ export interface AgentLoopOptions {
   systemPrompt?: string | null
   /** 用户输入的原始提示词（用于日志记录） */
   prompt?: string
+  /** 专用的 AbortSignal（来自 LoopRegistry，仅用户点击停止时触发，不与 HTTP 请求生命周期绑定） */
   abortSignal?: AbortSignal
   conversationId?: string
+  /** 每个 SSE chunk 的输出回调（写入 LoopRegistry，而非直接写入 HTTP stream） */
+  onChunk: (data: string) => void
+  /** 循环结束后回调 */
+  onDone: () => void
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onFinish?: (event: any) => Promise<void> | void
   /** 错误时回调，用于持久化错误信息到对话历史 */
@@ -190,12 +195,13 @@ function appendStepToMessages(
 }
 
 /**
- * 执行 Agent Loop（真流式）：
- * - 先创建 ReadableStream + Response 并立即返回
- * - 在后台异步循环中逐个 enqueue chunk 到 controller
- * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户中断
+ * 执行 Agent Loop（真流式，与 HTTP 连接完全解耦）：
+ * - 通过 onChunk 回调输出 SSE 事件（由 LoopRegistry 广播给所有订阅者）
+ * - 通过 onDone 回调通知循环结束
+ * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户停止
+ * - 不创建 ReadableStream 或 Response，不感知 HTTP 连接状态
  */
-export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal, conversationId, onFinish, onError }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal, conversationId, onChunk, onDone, onFinish, onError }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
 
@@ -203,17 +209,7 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
   const maxOutputTokens = llmConfig.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
   const maxSteps = llmConfig.maxSteps ?? DEFAULT_MAX_STEPS
 
-  const encoder = new TextEncoder()
-  let streamController!: ReadableStreamDefaultController<Uint8Array>
-
-  // 1. 先创建 ReadableStream，立即返回 Response（真流式）
-  const mergedStream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      streamController = controller
-    },
-  })
-
-  // 2. 在后台异步执行 agent loop，边产生边 enqueue
+  // 后台异步执行 agent loop，边产生边通过 onChunk 输出
   ;(async () => {
     const loopDetector = new LoopDetector()
     let totalOutputTokens = 0
@@ -228,11 +224,26 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
     // 基础日志元数据（所有本 loop 日志共享）
     const baseMeta = { messageId, conversationId, prompt }
 
+    // 辅助函数：发送 SSE 行到 onChunk
+    function sendChunk(obj: unknown) {
+      onChunk(`data: ${JSON.stringify(obj)}\n\n`)
+    }
+
     try {
-      // 发送统一的 start 事件（只发一次，整个 loop 共享 messageId）
-      streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'start', messageId })}\n\n`))
+      // 不再发送 start 事件 — AI SDK UIMessageChunk schema 不包含此类型
+      // 循环开始时直接进入 while，由 AI SDK 自身的 text-start 事件触发消息创建
 
       while (true) {
+        // 检查是否被用户停止
+        if (abortSignal?.aborted) {
+          logger.info('[AgentLoop] 用户停止生成', {
+            ...baseMeta,
+            stepIndex,
+          }, ['agent', 'loop', 'stopped'])
+          onDone()
+          return
+        }
+
         logger.info(`[AgentLoop] 第 ${stepIndex + 1} 轮开始`, {
           ...baseMeta,
           stepIndex,
@@ -257,7 +268,7 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
           tools: stepTools,
           temperature: effectiveTemperature,
           messages: currentMessages,
-          abortSignal,
+          abortSignal,  // 仅用户停止时触发（来自 LoopRegistry 的 AbortController）
           stopWhen: stepCountIs(1),
         })
 
@@ -270,12 +281,12 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
           finishReason: '',
         }
 
-        // 遍历 fullStream：收集数据 + 逐个 enqueue 到流式 controller
+        // 遍历 fullStream：收集数据 + 逐个通过 onChunk 输出
         for await (const chunk of result.fullStream) {
-          // 将 fullStream chunk 转换为 UIMessageChunk 格式并立即 enqueue
+          // 将 fullStream chunk 转换为 UIMessageChunk 格式并立即输出
           const transformed = transformChunk(chunk as { type: string; [key: string]: unknown })
           if (transformed) {
-            streamController.enqueue(encoder.encode(`data: ${JSON.stringify(transformed)}\n\n`))
+            sendChunk(transformed)
           }
 
           // 同时收集到 stepCollect
@@ -286,16 +297,12 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
               const errorFromChunk = (chunk as any).error ?? chunk
               const errorInfo = formatAIError(errorFromChunk)
               const friendlyMessage = formatErrorForSSE(errorInfo)
-              const errorChunk = { type: 'error', errorText: friendlyMessage }
-              try {
-                streamController.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`))
-              } catch { /* ignore */ }
-              // 直接关闭流并退出，不 throw（避免外层 catch 重复处理）
-              try { streamController.close() } catch { /* ignore */ }
+              sendChunk({ type: 'error', errorText: friendlyMessage })
               // 保存错误信息到对话历史
               if (onError) {
                 await onError(friendlyMessage)
               }
+              onDone()
               return
 
             case 'text-delta':
@@ -464,10 +471,18 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
           finishReason: allStepCollects[allStepCollects.length - 1]?.finishReason ?? 'stop',
         })
       }
-
-      // 流结束，关闭 controller
-      streamController.close()
     } catch (err) {
+      // 区分「用户主动停止」和「真正的错误」
+      const isAborted = abortSignal?.aborted ?? false
+      if (isAborted) {
+        logger.info('[AgentLoop] 用户停止生成', {
+          ...baseMeta,
+          stepIndex,
+        }, ['agent', 'loop', 'stopped'])
+        onDone()
+        return
+      }
+
       logger.error('[AgentLoop] 执行异常:', err, {
         ...baseMeta,
         stepIndex,
@@ -475,24 +490,13 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, abortSignal
       // 将技术错误转换为用户友好的提示
       const errorInfo = formatAIError(err)
       const friendlyMessage = formatErrorForSSE(errorInfo)
-      const errorChunk = { type: 'error', errorText: friendlyMessage }
-      try {
-        streamController.enqueue(encoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n`))
-      } catch { /* controller 可能已关闭 */ }
-      try { streamController.close() } catch { /* 忽略 */ }
+      sendChunk({ type: 'error', errorText: friendlyMessage })
       // 保存错误信息到对话历史
       if (onError) {
         await onError(friendlyMessage)
       }
+    } finally {
+      onDone()
     }
   })()
-
-  // 3. 立即返回 Response（流数据将在后台异步填充）
-  return new Response(mergedStream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    },
-  })
 }

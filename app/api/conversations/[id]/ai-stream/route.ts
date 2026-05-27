@@ -1,12 +1,87 @@
-/* POST /api/conversations/[id]/ai-stream — Vercel AI SDK v6 流式聊天 */
+/* POST /api/conversations/[id]/ai-stream — 启动 Agent Loop（或接入已有循环）
+ * GET  /api/conversations/[id]/ai-stream — 重连到已有循环
+ *
+ * 核心变化：agent loop 与 HTTP 连接完全解耦
+ * - POST 启动后台 agent loop 并创建 SSE 连接
+ * - GET 从断点重连到已有 SSE 流
+ * - 客户端断开不影响 agent loop 继续执行
+ */
 import { NextRequest } from 'next/server'
 import { getConversation } from '@/core/conversation/store'
-import { streamChat } from '@/core/chat/stream-handler'
+import { startAgentLoop } from '@/core/chat/stream-handler'
 import { formatAIError, formatErrorForSSE } from '@/core/chat/error-formatter'
+import { getActiveLoop, subscribeToLoop } from '@/core/chat/loop-registry'
 
 interface RouteContext {
   params: Promise<{ id: string }>
 }
+
+// ─── 辅助：创建 SSE 流式响应 ────────────────────────────────────────────────────
+
+/**
+ * 构建完整的 SSE 消息（使用 id: 字段传递 seq，不污染 data JSON）
+ * SSE 协议格式:
+ *   id: {seq}\n
+ *   data: {"type":"text-delta","delta":"Hello"}\n
+ *   \n
+ *
+ * 优势：seq 放在 id: 字段中，不与 AI SDK 的 data JSON schema 冲突
+ */
+function buildSSEMessage(event: { data: string; seq: number }): string {
+  const lines: string[] = []
+  // SSE id 字段 — 客户端以此跟踪重连位点
+  lines.push(`id: ${event.seq}`)
+  // data 保持原样，不做任何 JSON 注入
+  lines.push(event.data)
+  return lines.join('\n') + '\n'
+}
+
+function createSSEResponse(conversationId: string, fromSeq: number): Response {
+  const encoder = new TextEncoder()
+
+  const readable = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const unsubscribe = subscribeToLoop(conversationId, fromSeq, (event) => {
+        try {
+          const message = buildSSEMessage(event)
+          controller.enqueue(encoder.encode(message))
+        } catch {
+          // 客户端已断开，取消订阅
+          unsubscribe()
+        }
+      })
+
+      // 监听 loop 结束（通过定时检查 + done 事件结合）
+      // scheduleCleanup 会在 30 秒后清理，给重连留窗口
+      const loop = getActiveLoop(conversationId)
+      if (loop) {
+        const onDone = () => {
+          try { controller.close() } catch { /* ignore */ }
+        }
+        loop.emitter.on('done', onDone)
+
+        // 如果 loop 已经完成，立即关闭
+        if (loop.finished) {
+          try { controller.close() } catch { /* ignore */ }
+        }
+      }
+    },
+    cancel() {
+      // 客户端断开时不取消 loop，只是取消订阅
+      // loop 继续在后台运行
+    },
+  })
+
+  return new Response(readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  })
+}
+
+// ─── POST：启动 Agent Loop ─────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest, { params }: RouteContext) {
   const { id } = await params
@@ -42,17 +117,18 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     })
   }
 
-  // 使用有效的 agent 名称
   const effectiveAgentName = bodyAgentName || conv.agentName
 
   try {
-    // 调用拆分出的流式处理逻辑，透传 abortSignal 以支持用户中断
-    return await streamChat({
+    // 启动 agent loop（如果已有活跃循环则跳过，但仍创建 SSE 连接）
+    await startAgentLoop({
       messages,
       agentName: effectiveAgentName,
       conversationId: id,
-      abortSignal: req.signal,
     })
+
+    // 创建 SSE 流，从当前已广播的事件开始
+    return createSSEResponse(id, 0)
   } catch (err) {
     console.error('[ai-stream] fatal error:', err)
     const errorInfo = formatAIError(err)
@@ -62,4 +138,24 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     )
   }
+}
+
+// ─── GET：重连到已有循环 ───────────────────────────────────────────────────────
+
+export async function GET(req: NextRequest, { params }: RouteContext) {
+  const { id } = await params
+
+  // 检查是否有活跃循环
+  const loop = getActiveLoop(id)
+  if (!loop) {
+    return new Response(JSON.stringify({ error: '暂无活跃会话' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // 从查询参数获取重连起点序号（客户端上次收到的最后序号）
+  const fromSeq = parseInt(req.nextUrl.searchParams.get('fromSeq') ?? '0', 10)
+
+  return createSSEResponse(id, fromSeq)
 }
