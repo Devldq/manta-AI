@@ -7,6 +7,8 @@ import { getAgentTools } from '@/core/tool-registry/mcp-setup'
 import { LoopDetector } from './loop-detector'
 import type { LoopDetectionResult } from './loop-detector'
 import { formatAIError, formatErrorForSSE } from './error-formatter'
+import { applyMicrocompactWithLogging } from './microcompact'
+import { compactMessages } from './compaction'
 import { logger } from '@/core/log'
 import { recordTurn } from '@/core/metrics'
 import type { TurnMetrics, StepMetrics } from '@/core/metrics'
@@ -230,6 +232,11 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
   // 从配置读取限制，0 = 不限，未设置则用默认值
   const maxOutputTokens = llmConfig.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
   const maxSteps = llmConfig.maxSteps ?? DEFAULT_MAX_STEPS
+
+  // Microcompact 配置：默认启用，可通过 LLM 配置关闭
+  const microcompactEnabled = llmConfig.microcompact !== false
+  // Compaction 配置：默认启用，可通过 LLM 配置关闭
+  const compactionEnabled = llmConfig.compaction !== false
 
   // 后台异步执行 agent loop，边产生边通过 onChunk 输出
   ;(async () => {
@@ -469,6 +476,22 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
 
         // 将步骤结果追加到消息列表
         currentMessages = appendStepToMessages(currentMessages, stepCollect, conversationId, stepIndex, messageId)
+
+        // Microcompact: 清理旧的查询类工具结果，减少上下文 token 占用
+        // 保留最近 3 个工具结果不动，只清理更早的
+        if (microcompactEnabled) {
+          applyMicrocompactWithLogging(currentMessages, conversationId, messageId, stepIndex)
+        }
+
+        // Compaction: LLM 摘要压缩（在 Microcompact 之后检查，避免频繁触发）
+        // 当消息列表 token 数超过阈值时，将早期对话压缩为结构化摘要
+        if (compactionEnabled) {
+          const compactionResult = await compactMessages(currentMessages)
+          if (compactionResult.compressedCount > 0) {
+            currentMessages = compactionResult.messages
+          }
+        }
+
         stepIndex++
       }
 

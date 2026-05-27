@@ -19,6 +19,10 @@ export interface LLMConfig {
   maxOutputTokens?: number
   /** Agent Loop 最大步数上限，0 = 不限（默认 200） */
   maxSteps?: number
+  /** 是否启用 Microcompact（清理旧工具结果以节省 token），默认 true */
+  microcompact?: boolean
+  /** 是否启用 Compaction（LLM 摘要压缩，超长上下文时触发），默认 true */
+  compaction?: boolean
 }
 
 /** 单个模型配置 Profile — 带有 id、name、isDefault 等元信息 */
@@ -40,6 +44,10 @@ export interface ModelProfile {
   maxOutputTokens?: number
   /** Agent Loop 最大步数上限，0 = 不限（默认 200） */
   maxSteps?: number
+  /** 是否启用 Microcompact（清理旧工具结果以节省 token），默认 true */
+  microcompact?: boolean
+  /** 是否启用 Compaction（LLM 摘要压缩，超长上下文时触发），默认 true */
+  compaction?: boolean
 }
 
 /** 多模型配置列表（新存储格式） */
@@ -61,6 +69,8 @@ export function profileToLLMConfig(profile: ModelProfile): LLMConfig {
     maxTokens: profile.maxTokens,
     maxOutputTokens: profile.maxOutputTokens,
     maxSteps: profile.maxSteps,
+    microcompact: profile.microcompact,
+    compaction: profile.compaction,
   }
 }
 
