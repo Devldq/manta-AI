@@ -1,9 +1,10 @@
-/* 会话侧边栏 — 展示本次会话的修改内容和变更文件 */
+/* 工作区侧边栏 — 展示文件、变更、Session、会话日志 */
 'use client'
 
 import React, { useState, useEffect, useRef, memo } from 'react'
-import { FileEdit, FileText, ScrollText } from 'lucide-react'
+import { FileEdit, FileText, ScrollText, MonitorDot, Brain } from 'lucide-react'
 import SystemLogs from './SystemLogs'
+import { ContextView } from './ContextView'
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 
@@ -34,6 +35,7 @@ export interface ConversationData {
   title: string
   agentName: string
   messages: StoredMessage[]
+  context?: Record<string, unknown>
   createdAt: string
   updatedAt: string
 }
@@ -47,7 +49,7 @@ export interface FileChange {
 }
 
 /** 侧边栏标签页 */
-type TabId = 'changes' | 'files' | 'logs'
+type TabId = 'files' | 'changes' | 'session' | 'context' | 'logs'
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -184,20 +186,23 @@ export const SessionSidebar = memo(function SessionSidebar({
         {/* 标签切换 */}
         <div className="flex border-b border-border flex-shrink-0">
           {[
-            { id: 'changes' as TabId, label: '修改内容', icon: FileEdit },
-            { id: 'files' as TabId, label: '变更文件', icon: FileText },
-            { id: 'logs' as TabId, label: '会话日志', icon: ScrollText },
+            { id: 'files' as TabId, label: '文件', icon: FileText },
+            { id: 'changes' as TabId, label: '变更', icon: FileEdit },
+            { id: 'session' as TabId, label: 'Session', icon: MonitorDot },
+            { id: 'context' as TabId, label: '上下文', icon: Brain },
+            { id: 'logs' as TabId, label: '日志', icon: ScrollText },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setActiveTab(id)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
+              title={label}
+              className={`flex-1 flex items-center justify-center gap-1 py-2.5 text-[11px] font-medium transition-colors ${
                 activeTab === id
                   ? 'text-accent border-b-2 border-accent'
                   : 'text-text-muted hover:text-text-secondary'
               }`}
             >
-              <Icon size={14} />
+              <Icon size={13} />
               <span>{label}</span>
             </button>
           ))}
@@ -205,11 +210,17 @@ export const SessionSidebar = memo(function SessionSidebar({
 
         {/* 内容区 */}
         <div className="flex-1 overflow-hidden">
+          {activeTab === 'files' && (
+            <ChangedFiles conversation={conversation} />
+          )}
           {activeTab === 'changes' && (
             <FileChanges conversation={conversation} />
           )}
-          {activeTab === 'files' && (
-            <ChangedFiles conversation={conversation} />
+          {activeTab === 'session' && (
+            <SessionInfo conversation={conversation} />
+          )}
+          {activeTab === 'context' && (
+            <ContextView conversationId={conversation?.id} />
           )}
           {activeTab === 'logs' && (
             <SystemLogs conversationId={conversation?.id} />
@@ -300,7 +311,135 @@ function FileChanges({ conversation }: { conversation: ConversationData | null }
   )
 }
 
-// ─── 工具日志面板 ──────────────────────────────────────────────────────────────
+// ─── Session 面板 ──────────────────────────────────────────────────────────────
+
+function SessionInfo({ conversation }: { conversation: ConversationData | null }) {
+  if (!conversation) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center p-6">
+        <MonitorDot size={32} className="text-text-muted mb-3 opacity-50" />
+        <p className="text-sm text-text-muted">暂无会话信息</p>
+        <p className="text-xs text-text-muted mt-1">开始对话后将显示 Session 详情</p>
+      </div>
+    )
+  }
+
+  // 统计信息
+  const userMessages = conversation.messages.filter(m => m.role === 'user')
+  const assistantMessages = conversation.messages.filter(m => m.role === 'assistant')
+  const allToolCalls = assistantMessages.flatMap(m => m.toolCalls ?? [])
+  const fileOps = allToolCalls.filter(tc =>
+    tc.toolName === 'write' || tc.toolName === 'edit' || tc.toolName === 'multiEdit'
+  )
+  const errorOps = allToolCalls.filter(tc => tc.isError)
+
+  // Token 统计
+  let totalInput = 0, totalOutput = 0
+  for (const msg of assistantMessages) {
+    if (msg.usage) {
+      totalInput += msg.usage.inputTokens ?? 0
+      totalOutput += msg.usage.outputTokens ?? 0
+    }
+  }
+
+  // 工具使用统计
+  const toolUsageMap = new Map<string, number>()
+  for (const tc of allToolCalls) {
+    toolUsageMap.set(tc.toolName, (toolUsageMap.get(tc.toolName) ?? 0) + 1)
+  }
+  const toolUsageList = Array.from(toolUsageMap.entries())
+    .sort((a, b) => b[1] - a[1])
+
+  function formatTime(ts: string): string {
+    try { return new Date(ts).toLocaleString('zh-CN') } catch { return ts }
+  }
+
+  return (
+    <div className="h-full overflow-y-auto">
+      {/* 会话基本信息 */}
+      <div className="px-4 py-3 border-b border-border-subtle">
+        <h3 className="text-sm font-semibold text-text-primary mb-2">会话信息</h3>
+        <div className="space-y-1.5">
+          <InfoRow label="ID" value={conversation.id.slice(0, 8) + '…'} mono />
+          <InfoRow label="标题" value={conversation.title} />
+          <InfoRow label="Agent" value={conversation.agentName || '—'} />
+          <InfoRow label="创建时间" value={formatTime(conversation.createdAt)} />
+          <InfoRow label="更新时间" value={formatTime(conversation.updatedAt)} />
+        </div>
+      </div>
+
+      {/* 消息统计 */}
+      <div className="px-4 py-3 border-b border-border-subtle">
+        <h3 className="text-sm font-semibold text-text-primary mb-2">消息统计</h3>
+        <div className="grid grid-cols-2 gap-2">
+          <StatCard label="用户消息" value={userMessages.length} />
+          <StatCard label="助手消息" value={assistantMessages.length} />
+          <StatCard label="工具调用" value={allToolCalls.length} />
+          <StatCard label="文件操作" value={fileOps.length} />
+          <StatCard label="错误" value={errorOps.length} accent={errorOps.length > 0} />
+          <StatCard label="总消息" value={conversation.messages.length} />
+        </div>
+      </div>
+
+      {/* Token 用量 */}
+      {(totalInput > 0 || totalOutput > 0) && (
+        <div className="px-4 py-3 border-b border-border-subtle">
+          <h3 className="text-sm font-semibold text-text-primary mb-2">Token 用量</h3>
+          <div className="space-y-1.5">
+            <InfoRow label="输入" value={totalInput.toLocaleString()} mono />
+            <InfoRow label="输出" value={totalOutput.toLocaleString()} mono />
+            <InfoRow label="合计" value={(totalInput + totalOutput).toLocaleString()} mono />
+          </div>
+        </div>
+      )}
+
+      {/* 工具使用分布 */}
+      {toolUsageList.length > 0 && (
+        <div className="px-4 py-3 border-b border-border-subtle">
+          <h3 className="text-sm font-semibold text-text-primary mb-2">工具使用</h3>
+          <div className="space-y-1">
+            {toolUsageList.map(([name, count]) => (
+              <div key={name} className="flex items-center justify-between">
+                <span className="text-xs font-mono text-text-secondary">{name}</span>
+                <span className="text-xs text-text-muted">{count} 次</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 上下文 */}
+      {conversation.context && Object.keys(conversation.context).length > 0 && (
+        <div className="px-4 py-3 border-b border-border-subtle">
+          <h3 className="text-sm font-semibold text-text-primary mb-2">上下文</h3>
+          <pre className="text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+            {JSON.stringify(conversation.context, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs text-text-muted flex-shrink-0">{label}</span>
+      <span className={`text-xs text-text-secondary truncate text-right ${mono ? 'font-mono' : ''}`} title={value}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+function StatCard({ label, value, accent }: { label: string; value: number; accent?: boolean }) {
+  return (
+    <div className="px-2 py-1.5 rounded-md bg-surface/50 border border-border-subtle text-center">
+      <div className={`text-sm font-semibold ${accent ? 'text-status-failed' : 'text-text-primary'}`}>{value}</div>
+      <div className="text-[10px] text-text-muted">{label}</div>
+    </div>
+  )
+}
 
 
 
@@ -407,7 +546,7 @@ export function OpenSidebarLink({ onClick, children }: OpenSidebarLinkProps) {
     <button
       onClick={onClick}
       className="inline-flex items-center gap-1 text-accent hover:underline text-xs"
-      title="点击查看会话详情"
+      title="点击查看工作区"
     >
       {children}
     </button>

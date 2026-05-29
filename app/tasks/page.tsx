@@ -42,6 +42,7 @@ interface Conversation {
   title: string
   agentName: string
   messages: StoredMessage[]
+  context?: Record<string, unknown>
   createdAt: string
   updatedAt: string
   mode?: 'chat' | 'task'
@@ -1418,22 +1419,22 @@ function ChatView({
                 {reconnect.finished ? '已完成' : '生成中…'}
               </span>
             )}
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-fast"
-              style={{ border: '1px solid var(--color-border)', background: sidebarOpen ? 'var(--color-accent-subtle)' : 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
-              onMouseLeave={(e) => { if (!sidebarOpen) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' } }}
-              title={sidebarOpen ? '关闭会话详情' : '打开会话详情'}>
-              <PanelRight size={14} />
-              <span>{sidebarOpen ? '隐藏' : '详情'}</span>
-            </button>
             <button onClick={onNewChat}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-fast"
               style={{ border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
               onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
               onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
               + 新对话
+            </button>
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-fast"
+              style={{ border: '1px solid var(--color-border)', background: sidebarOpen ? 'var(--color-accent-subtle)' : 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
+              onMouseLeave={(e) => { if (!sidebarOpen) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' } }}
+              title={sidebarOpen ? '关闭工作区' : '打开工作区'}>
+              <PanelRight size={14} />
+              <span>{sidebarOpen ? '隐藏' : '工作区'}</span>
             </button>
           </div>
         </div>
