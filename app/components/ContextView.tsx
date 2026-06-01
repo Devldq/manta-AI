@@ -23,6 +23,8 @@ import {
   Zap,
   Layers,
   AlertTriangle,
+  Scissors,
+  Minimize2,
 } from 'lucide-react'
 
 // ─── 类型 ────────────────────────────────────────────────────────────────────
@@ -40,6 +42,8 @@ interface MessageSnapshot {
   charCount: number
   estimatedTokens: number
   cleared: boolean
+  truncated: boolean
+  compacted: boolean
   toolName?: string
   preview: string
 }
@@ -116,6 +120,7 @@ export const ContextView = memo(function ContextView({ conversationId }: Context
   const [error, setError] = useState<string | null>(null)
   const [expandedPipe, setExpandedPipe] = useState<string | null>(null)
   const [expandedTurn, setExpandedTurn] = useState<number | null>(null)
+  const [expandedStep, setExpandedStep] = useState<number | null>(null)
 
   const fetchContext = useCallback(async () => {
     if (!conversationId) return
@@ -245,28 +250,136 @@ export const ContextView = memo(function ContextView({ conversationId }: Context
         <div className="px-4 py-3 border-b border-border-subtle">
           <h3 className="text-sm font-semibold text-text-primary mb-2">Agent 步骤 ({steps.length} 步)</h3>
           <div className="space-y-1">
-            {steps.map(step => (
-              <div key={step.stepIndex} className="flex items-center gap-2 py-1 px-2 rounded-md bg-surface/40">
-                <span className="text-[10px] text-text-muted font-mono w-8">#{step.stepIndex + 1}</span>
-                <span className="text-xs text-text-secondary flex-1">
-                  {step.messageCount} 条消息 · {step.toolCallCount} 工具
-                </span>
-                <span className="text-[10px] text-text-muted font-mono">
-                  {step.inputTokens > 0 ? `${step.inputTokens.toLocaleString()}in` : ''}
-                  {step.outputTokens > 0 ? ` ${step.outputTokens.toLocaleString()}out` : ''}
-                </span>
-                {step.microcompactCleared !== undefined && step.microcompactCleared > 0 && (
-                  <span className="text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-500" title="Microcompact 清理">
-                    🧹{step.microcompactCleared}
-                  </span>
-                )}
-                {step.compactionCompressed !== undefined && step.compactionCompressed > 0 && (
-                  <span className="text-[10px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-500" title="Compaction 压缩">
-                    ✨{step.compactionCompressed}
-                  </span>
-                )}
-              </div>
-            ))}
+            {steps.map(step => {
+              const hasMessages = step.messages.length > 0
+              const totalStepTokens = step.messages.reduce((s, m) => s + m.estimatedTokens, 0)
+              const clearedCount = step.messages.filter(m => m.cleared).length
+              const truncatedCount = step.messages.filter(m => m.truncated).length
+              const compactedCount = step.messages.filter(m => m.compacted).length
+              return (
+                <div key={step.stepIndex}>
+                  <button
+                    className={`w-full flex items-center gap-2 py-1.5 px-2 rounded-md transition-colors text-left ${
+                      hasMessages ? 'hover:bg-surface/80 cursor-pointer' : 'bg-surface/40'
+                    }`}
+                    onClick={() => hasMessages && setExpandedStep(expandedStep === step.stepIndex ? null : step.stepIndex)}
+                    disabled={!hasMessages}
+                  >
+                    {hasMessages && (
+                      expandedStep === step.stepIndex
+                        ? <ChevronDown size={12} className="text-text-muted flex-shrink-0" />
+                        : <ChevronRight size={12} className="text-text-muted flex-shrink-0" />
+                    )}
+                    <span className="text-[10px] text-text-muted font-mono w-8 flex-shrink-0">#{step.stepIndex + 1}</span>
+                    <span className="text-xs text-text-secondary flex-1">
+                      {step.messageCount} 条消息 · {step.toolCallCount} 工具
+                      {totalStepTokens > 0 && (
+                        <span className="text-[10px] text-text-muted ml-1">~{totalStepTokens.toLocaleString()}t</span>
+                      )}
+                    </span>
+                    <span className="text-[10px] text-text-muted font-mono flex-shrink-0">
+                      {step.inputTokens > 0 ? `${step.inputTokens.toLocaleString()}in` : ''}
+                      {step.outputTokens > 0 ? ` ${step.outputTokens.toLocaleString()}out` : ''}
+                    </span>
+                    {step.microcompactCleared !== undefined && step.microcompactCleared > 0 && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-500 flex-shrink-0" title="Microcompact 清理">
+                        🧹{step.microcompactCleared}
+                      </span>
+                    )}
+                    {step.compactionCompressed !== undefined && step.compactionCompressed > 0 && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-500 flex-shrink-0" title="Compaction 压缩">
+                        ✨{step.compactionCompressed}
+                      </span>
+                    )}
+                    {truncatedCount > 0 && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-400 flex-shrink-0 flex items-center gap-0.5" title="动态截断 (Head/Tail)">
+                        <Scissors size={8} />{truncatedCount}
+                      </span>
+                    )}
+                    {compactedCount > 0 && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-orange-500/10 text-orange-400 flex-shrink-0 flex items-center gap-0.5" title="上下文预算清理">
+                        <Minimize2 size={8} />{compactedCount}
+                      </span>
+                    )}
+                    {clearedCount > 0 && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-red-500/10 text-red-400 flex-shrink-0 flex items-center gap-0.5">
+                        <Trash2 size={8} />{clearedCount}
+                      </span>
+                    )}
+                  </button>
+                  {/* 展开的消息详情 */}
+                  {expandedStep === step.stepIndex && hasMessages && (
+                    <div className="ml-6 mr-2 mt-0.5 mb-1 space-y-0.5">
+                      {/* 步骤统计条 */}
+                      <div className="flex items-center gap-3 px-2 py-1 text-[10px] text-text-muted">
+                        <span>{step.messages.length} 条消息</span>
+                        <span>~{totalStepTokens.toLocaleString()} tokens</span>
+                        <span className="capitalize">
+                          {Object.entries(
+                            step.messages.reduce((acc, m) => {
+                              acc[m.role] = (acc[m.role] || 0) + 1
+                              return acc
+                            }, {} as Record<string, number>)
+                          ).map(([role, count]) => `${role}:${count}`).join(' ')}
+                        </span>
+                        {truncatedCount > 0 && (
+                          <span className="text-blue-400">{truncatedCount} 已截断</span>
+                        )}
+                        {compactedCount > 0 && (
+                          <span className="text-orange-400">{compactedCount} 已压缩</span>
+                        )}
+                        {clearedCount > 0 && (
+                          <span className="text-red-400">{clearedCount} 已清理</span>
+                        )}
+                      </div>
+                      {/* 消息列表 */}
+                      {step.messages.map((msg, idx) => {
+                        const config = ROLE_CONFIG[msg.role] ?? ROLE_CONFIG.system
+                        const Icon = config.icon
+                        return (
+                          <div key={idx} className={`flex items-start gap-2 py-1.5 px-2 rounded ${msg.cleared ? 'bg-red-500/5 border border-red-500/10' : 'bg-surface/40'}`}>
+                            <Icon size={12} className={`${config.color} flex-shrink-0 mt-0.5`} />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className={`text-[10px] font-medium ${config.color}`}>{config.label}</span>
+                                {msg.toolName && (
+                                  <span className="text-[10px] px-1 py-0 rounded bg-amber-500/10 text-amber-500 font-mono">
+                                    {msg.toolName}
+                                  </span>
+                                )}
+                                {msg.cleared && (
+                                  <span className="text-[10px] px-1 py-0 rounded bg-red-500/10 text-red-400 flex items-center gap-0.5">
+                                    <Trash2 size={8} /> 已清理
+                                  </span>
+                                )}
+                                {msg.truncated && (
+                                  <span className="text-[10px] px-1 py-0 rounded bg-blue-500/10 text-blue-400 flex items-center gap-0.5" title="动态截断 (Head/Tail)">
+                                    <Scissors size={8} /> 已截断
+                                  </span>
+                                )}
+                                {msg.compacted && (
+                                  <span className="text-[10px] px-1 py-0 rounded bg-orange-500/10 text-orange-400 flex items-center gap-0.5" title="上下文预算清理">
+                                    <Minimize2 size={8} /> 已压缩
+                                  </span>
+                                )}
+                              </div>
+                              <p className={`text-[10px] mt-0.5 whitespace-pre-wrap break-all max-h-32 overflow-y-auto ${
+                                msg.cleared ? 'text-text-muted/50 line-through' : 'text-text-muted'
+                              }`}>
+                                {msg.preview}
+                              </p>
+                            </div>
+                            <span className="text-[10px] text-text-muted font-mono flex-shrink-0">
+                              {msg.estimatedTokens}t
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
@@ -312,6 +425,16 @@ export const ContextView = memo(function ContextView({ conversationId }: Context
                               {msg.cleared && (
                                 <span className="text-[10px] px-1 py-0 rounded bg-red-500/10 text-red-400 flex items-center gap-0.5">
                                   <Trash2 size={8} /> 已清理
+                                </span>
+                              )}
+                              {msg.truncated && (
+                                <span className="text-[10px] px-1 py-0 rounded bg-blue-500/10 text-blue-400 flex items-center gap-0.5" title="动态截断 (Head/Tail)">
+                                  <Scissors size={8} /> 已截断
+                                </span>
+                              )}
+                              {msg.compacted && (
+                                <span className="text-[10px] px-1 py-0 rounded bg-orange-500/10 text-orange-400 flex items-center gap-0.5" title="上下文预算清理">
+                                  <Minimize2 size={8} /> 已压缩
                                 </span>
                               )}
                             </div>

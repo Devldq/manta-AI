@@ -18,6 +18,7 @@ import type { ModelMessage } from 'ai'
 import { generateText } from 'ai'
 import { getAISDKModel } from '@/core/llm/ai-sdk-provider'
 import { logger } from '@/core/log'
+import { estimateTokensFromChars, getMessageCharCount } from './token-estimator'
 
 // ─── 配置常量 ────────────────────────────────────────────────────────────────
 
@@ -88,9 +89,9 @@ export interface CompactionResult {
 // ─── Token 估算 ───────────────────────────────────────────────────────────────
 
 /**
- * 粗略估算消息列表的 token 数。
+ * 估算消息列表的 token 数。
  *
- * 简化策略：每 4 个字符 ≈ 1 token（适用于中英文混合场景）。
+ * 统一使用 token-estimator 中的 estimateMessageTokens，公式为 chars/4 * 1.2（中文安全系数）。
  * 这不是精确计算，仅用于判断是否触发压缩，精度要求不高。
  *
  * @param messages - 消息列表
@@ -99,11 +100,7 @@ export interface CompactionResult {
 export function estimateTokens(messages: ModelMessage[]): number {
   let total = 0
   for (const msg of messages) {
-    const content = typeof msg.content === 'string'
-      ? msg.content
-      : JSON.stringify(msg.content)
-    // 粗略估算：4 chars ≈ 1 token
-    total += Math.ceil(content.length / 4)
+    total += estimateTokensFromChars(getMessageCharCount(msg))
   }
   return total
 }

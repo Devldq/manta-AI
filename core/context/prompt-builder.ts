@@ -8,6 +8,7 @@
 
 import { logger } from '@/core/log'
 import { getToolRegistry } from '@/core/tool-registry/mcp-setup'
+import { estimateTokensFromChars } from '@/core/chat/token-estimator'
 
 // ─── 类型定义 ──────────────────────────────────────────────────────────────────
 
@@ -47,10 +48,7 @@ export type PipeFn = (ctx: PromptContext) => string | null
 
 // ─── PromptBuilder ─────────────────────────────────────────────────────────────
 
-/** 估算 token 数：中英文混合场景，约 2.5 chars/token */
-function estimateTokens(chars: number): number {
-  return Math.ceil(chars / 2.5)
-}
+// estimateTokensFromChars 统一使用 token-estimator.ts（chars/4 * 1.2 中文安全系数）
 
 export class PromptBuilder {
   private pipes: Array<{ name: string; fn: PipeFn }> = []
@@ -81,7 +79,7 @@ export class PromptBuilder {
         name,
         enabled,
         charCount: enabled ? result!.length : 0,
-        estimatedTokens: enabled ? estimateTokens(result!.length) : 0,
+        estimatedTokens: enabled ? estimateTokensFromChars(result!.length) : 0,
       })
     }
 

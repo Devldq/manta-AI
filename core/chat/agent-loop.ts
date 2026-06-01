@@ -9,6 +9,10 @@ import type { LoopDetectionResult } from './loop-detector'
 import { formatAIError, formatErrorForSSE } from './error-formatter'
 import { applyMicrocompactWithLogging } from './microcompact'
 import { compactMessages } from './compaction'
+import { clearSnapshots, recordContextSnapshot } from './context-snapshot'
+import { createTokenTracker, type TokenTracker } from './token-tracker'
+import { truncateToolResultsWithLogging } from './truncate-tool-results'
+import { ttlPruneWithLogging, MessageTimestampTracker } from './ttl-prune'
 import { logger } from '@/core/log'
 import { recordTurn } from '@/core/metrics'
 import type { TurnMetrics, StepMetrics } from '@/core/metrics'
@@ -233,10 +237,12 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
   const maxOutputTokens = llmConfig.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
   const maxSteps = llmConfig.maxSteps ?? DEFAULT_MAX_STEPS
 
-  // Microcompact 配置：默认启用，可通过 LLM 配置关闭
-  const microcompactEnabled = llmConfig.microcompact !== false
-  // Compaction 配置：默认启用，可通过 LLM 配置关闭
-  const compactionEnabled = llmConfig.compaction !== false
+    // Microcompact 配置：默认启用，可通过 LLM 配置关闭
+    const microcompactEnabled = llmConfig.microcompact !== false
+    // Compaction 配置：默认启用，可通过 LLM 配置关闭
+    const compactionEnabled = llmConfig.compaction !== false
+    // TTL Prune 配置：默认启用，可通过 LLM 配置关闭
+    const ttlPruneEnabled = llmConfig.ttlPrune !== false
 
   // 后台异步执行 agent loop，边产生边通过 onChunk 输出
   ;(async () => {
@@ -246,6 +252,16 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
     let currentMessages: ModelMessage[] = [...messages]
     let stepIndex = 0
     let warningMessage: string | null = null
+
+    // ── 消息时间戳跟踪器（供 TTL 修剪使用） ──
+    const timestampTracker = new MessageTimestampTracker()
+    // 记录初始消息的时间戳
+    if (currentMessages.length > 0) {
+      timestampTracker.recordNewMessages(0, currentMessages.length)
+    }
+
+    // ── TokenTracker：精确基准 + 粗估增量 ──
+    const tokenTracker: TokenTracker = createTokenTracker(messages)
 
     // 使用上层传入的 messageId（由 startAgentLoop 提前生成），兜底自动生成
     const messageId = incomingMessageId || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -267,6 +283,11 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
     try {
       // 不再发送 start 事件 — AI SDK UIMessageChunk schema 不包含此类型
       // 循环开始时直接进入 while，由 AI SDK 自身的 text-start 事件触发消息创建
+
+      // 清空旧上下文快照（每次新 loop 重新记录）
+      if (conversationId) {
+        clearSnapshots(conversationId)
+      }
 
       while (true) {
         // 检查是否被用户停止
@@ -305,6 +326,11 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
             toolCount: stepTools ? Object.keys(stepTools).length : 0,
           },
         }, ['agent', 'loop', 'model-input'])
+
+        // 记录上下文快照：保存每一步实际传给 LLM 的完整消息列表
+        if (conversationId) {
+          recordContextSnapshot(conversationId, stepIndex, currentMessages)
+        }
 
         const result = streamText({
           model,
@@ -415,6 +441,8 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
                   cacheWriteTokens: details?.cacheWriteTokens ?? undefined,
                   noCacheTokens: details?.noCacheTokens ?? undefined,
                 }
+                // 用 API 返回的精确 prompt_tokens 校准 TokenTracker
+                tokenTracker.updateFromAPI(stepCollect.usage.inputTokens)
               }
               break
           }
@@ -474,8 +502,15 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
           }, ['agent', 'loop', 'warning'])
         }
 
+        // 记录追加前消息数量，用于时间戳追踪
+        const msgCountBefore = currentMessages.length
+
         // 将步骤结果追加到消息列表
         currentMessages = appendStepToMessages(currentMessages, stepCollect, conversationId, stepIndex, messageId)
+
+        // 记录新追加消息的时间戳
+        const msgCountAfter = currentMessages.length
+        timestampTracker.recordNewMessages(msgCountBefore, msgCountAfter - msgCountBefore)
 
         // Microcompact: 清理旧的查询类工具结果，减少上下文 token 占用
         // 保留最近 3 个工具结果不动，只清理更早的
@@ -483,11 +518,42 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
           applyMicrocompactWithLogging(currentMessages, conversationId, messageId, stepIndex)
         }
 
-        // Compaction: LLM 摘要压缩（在 Microcompact 之后检查，避免频繁触发）
+        // Layer 2 动态截断: 对剩余工具结果做双重约束截断
+        // Pass 1 — 单条超过窗口 50% 的做 Head/Tail 60/40 分割
+        // Pass 2 — 总字符数超过窗口 75% 时，从最老的 tool result 开始逐条 compact
+        const truncateResult = truncateToolResultsWithLogging(
+          currentMessages, conversationId, messageId, stepIndex,
+        )
+        if (truncateResult.truncated > 0 || truncateResult.compacted > 0) {
+          currentMessages = truncateResult.messages
+        }
+
+        // Layer 3 TTL 修剪: 时间衰减，老的工具结果自动退化
+        // 软修剪（5min）：Head/Tail 保留，中间替换
+        // 硬清除（10min）：整个结果替换为过期标记
+        if (ttlPruneEnabled) {
+          const ttlResult = ttlPruneWithLogging(
+            currentMessages,
+            timestampTracker.getTimestamps(),
+            conversationId,
+            messageId,
+            stepIndex,
+          )
+          if (ttlResult.softPruned > 0 || ttlResult.hardPruned > 0) {
+            currentMessages = ttlResult.messages
+          }
+        }
+
+        // Compaction: LLM 摘要压缩（在 Microcompact + 动态截断 + TTL 修剪之后检查，避免频繁触发）
         // 当消息列表 token 数超过阈值时，将早期对话压缩为结构化摘要
         if (compactionEnabled) {
           const compactionResult = await compactMessages(currentMessages)
           if (compactionResult.compressedCount > 0) {
+            // 通知 timestamp tracker 消息列表已被替换
+            timestampTracker.onCompaction(
+              currentMessages.length - compactionResult.messages.length + 1, // 被移除的消息数
+              1, // 插入的摘要消息数
+            )
             currentMessages = compactionResult.messages
           }
         }

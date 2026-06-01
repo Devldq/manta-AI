@@ -11,6 +11,8 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { getConversation } from '@/core/conversation/store'
+import { loadContextSnapshots, type ContextStepSnapshot as CoreContextStepSnapshot } from '@/core/chat/context-snapshot'
+import { estimateTokensFromChars } from '@/core/chat/token-estimator'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -31,6 +33,8 @@ interface MessageSnapshot {
   charCount: number
   estimatedTokens: number
   cleared: boolean
+  truncated: boolean
+  compacted: boolean
   toolName?: string
   preview: string
 }
@@ -62,9 +66,7 @@ interface ContextSnapshot {
 
 const CLEARED_PLACEHOLDER = '[tool result cleared]'
 
-function estimateTokensFromChars(chars: number): number {
-  return Math.ceil(chars / 2.5)
-}
+// estimateTokensFromChars 统一使用 token-estimator.ts（chars/4 * 1.2 中文安全系数）
 
 function getMessageCharCount(msg: unknown): number {
   if (!msg || typeof msg !== 'object') return 0
@@ -193,7 +195,7 @@ function extractContextFromLogs(conversationId: string): ContextSnapshot | null 
           outputTokens,
           messageCount: (extra.messageCount as number) ?? 0,
           toolCallCount: (extra.toolCount as number) ?? 0,
-          messages: [],
+          messages: [], // 稍后从快照文件填充
         })
       }
 
@@ -242,6 +244,49 @@ function extractContextFromLogs(conversationId: string): ContextSnapshot | null 
     }
   }
 
+  // 从上下文快照文件填充每个 step 的消息详情
+  const snapshots = loadContextSnapshots(conversationId)
+
+  // 将快照转为 MessageSnapshot 的辅助函数
+  function snapToMessageSnapshots(snap: CoreContextStepSnapshot): MessageSnapshot[] {
+    return snap.messages.map(m => ({
+      role: m.role,
+      charCount: m.charCount,
+      estimatedTokens: m.estimatedTokens,
+      cleared: m.cleared,
+      truncated: m.truncated,
+      compacted: m.compacted,
+      toolName: m.toolName,
+      preview: m.content.length > 150 ? m.content.slice(0, 150) + '…' : m.content,
+    }))
+  }
+
+  // 用快照数据填充 steps
+  if (snapshots.length > 0) {
+    if (steps.length === 0) {
+      // 日志中没有步骤信息，直接根据快照构建 steps
+      for (const snap of snapshots) {
+        steps.push({
+          stepIndex: snap.stepIndex,
+          inputTokens: 0,
+          outputTokens: 0,
+          messageCount: snap.messageCount,
+          toolCallCount: 0,
+          messages: snapToMessageSnapshots(snap),
+        })
+      }
+    } else {
+      // 用快照数据填充已有 steps
+      for (const step of steps) {
+        const matchingSnap = snapshots.find(s => s.stepIndex === step.stepIndex)
+        if (matchingSnap) {
+          step.messages = snapToMessageSnapshots(matchingSnap)
+          step.messageCount = matchingSnap.messageCount
+        }
+      }
+    }
+  }
+
   const totalSystemTokens = pipes.reduce((s, p) => s + p.estimatedTokens, 0)
   const totalStepTokens = steps.reduce((s, step) => s + step.inputTokens + step.outputTokens, 0)
 
@@ -284,6 +329,8 @@ function buildMessageContext(conversationId: string): { messages: MessageSnapsho
       charCount,
       estimatedTokens,
       cleared: false,
+      truncated: false,
+      compacted: false,
       preview,
     }
 
