@@ -50,6 +50,10 @@ export interface StepMetrics {
   usage: StepTokenUsage
   /** 性能计时 */
   timing: StepTiming
+  /** Prompt Cache 命中的 token 数（providerMetadata.openai.cachedPromptTokens） */
+  promptCacheHitTokens?: number
+  /** Prompt Cache 命中率（本步缓存命中 token / 输入 token） */
+  promptCacheHitRate?: number
 }
 
 // ─── 单轮（Turn）指标 ──────────────────────────────────────────────
@@ -94,6 +98,14 @@ export interface TurnMetrics {
   toolCallErrorCount: number
   /** 工具调用成功率 */
   toolCallSuccessRate: number
+
+  // Prompt Cache 指标
+  /** Prompt Cache 累计命中的 token 数 */
+  promptCacheHitTokens?: number
+  /** Prompt Cache 累计命中率 */
+  promptCacheHitRate?: number
+  /** 有 Prompt Cache 命中的步骤数 */
+  promptCacheStepsWithHit?: number
 
   // Agent 执行质量
   /** 循环检测触发次数 */

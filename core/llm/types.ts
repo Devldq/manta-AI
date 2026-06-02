@@ -25,6 +25,8 @@ export interface LLMConfig {
   compaction?: boolean
   /** 是否启用 TTL Prune（时间衰减修剪，老的工具结果自动退化），默认 true */
   ttlPrune?: boolean
+  /** 是否启用 Prompt Cache（利用 API 自动前缀缓存降低重复 prompt 的成本），默认 true */
+  promptCache?: boolean
 }
 
 /** 单个模型配置 Profile — 带有 id、name、isDefault 等元信息 */
@@ -52,6 +54,8 @@ export interface ModelProfile {
   compaction?: boolean
   /** 是否启用 TTL Prune（时间衰减修剪，老的工具结果自动退化），默认 true */
   ttlPrune?: boolean
+  /** 是否启用 Prompt Cache（利用 API 自动前缀缓存降低重复 prompt 的成本），默认 true */
+  promptCache?: boolean
 }
 
 /** 多模型配置列表（新存储格式） */
@@ -76,6 +80,7 @@ export function profileToLLMConfig(profile: ModelProfile): LLMConfig {
     microcompact: profile.microcompact,
     compaction: profile.compaction,
     ttlPrune: profile.ttlPrune,
+    promptCache: profile.promptCache,
   }
 }
 

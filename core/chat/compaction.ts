@@ -17,8 +17,10 @@
 import type { ModelMessage } from 'ai'
 import { generateText } from 'ai'
 import { getAISDKModel } from '@/core/llm/ai-sdk-provider'
+import { getLLMConfig } from '@/core/llm/config-store'
 import { logger } from '@/core/log'
 import { estimateTokensFromChars, getMessageCharCount } from './token-estimator'
+import { buildCacheProviderOptions } from './prompt-cache'
 
 // ─── 配置常量 ────────────────────────────────────────────────────────────────
 
@@ -190,6 +192,7 @@ function alignToUserBoundary(messages: ModelMessage[], splitIdx: number): number
 export async function compactMessages(
   messages: ModelMessage[],
   existingSummary?: string,
+  conversationId?: string,
 ): Promise<CompactionResult> {
   const tokenEstimate = estimateTokens(messages)
 
@@ -244,6 +247,12 @@ export async function compactMessages(
 
   try {
     const model = await getAISDKModel()
+    const llmConfig = getLLMConfig()
+
+    // 为 compaction 也启用 prompt cache（使用相同的会话 cache key）
+    const cacheProviderOptions = (llmConfig.promptCache !== false && conversationId)
+      ? buildCacheProviderOptions(llmConfig, conversationId)
+      : undefined
 
     const { text: summary } = await generateText({
       model,
@@ -251,6 +260,7 @@ export async function compactMessages(
       prompt: userPrompt,
       maxOutputTokens: 1000,
       temperature: 0.3, // 低温度，确保输出稳定、忠于原文
+      providerOptions: cacheProviderOptions,
     })
 
     const trimmedSummary = summary.length > MAX_SUMMARY_LENGTH
@@ -316,7 +326,7 @@ export async function compactMessagesWithLogging(
 ): Promise<CompactionResult> {
   const startTime = performance.now()
 
-  const result = await compactMessages(messages, existingSummary)
+  const result = await compactMessages(messages, existingSummary, conversationId)
 
   if (result.compressedCount > 0) {
     const durationMs = Math.round(performance.now() - startTime)

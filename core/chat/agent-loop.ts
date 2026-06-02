@@ -13,6 +13,12 @@ import { clearSnapshots, recordContextSnapshot } from './context-snapshot'
 import { createTokenTracker, type TokenTracker } from './token-tracker'
 import { truncateToolResultsWithLogging } from './truncate-tool-results'
 import { ttlPruneWithLogging, MessageTimestampTracker } from './ttl-prune'
+import {
+  buildCacheProviderOptions,
+  CacheStatsAccumulator,
+  extractCacheHit,
+  logCacheStrategy,
+} from './prompt-cache'
 import { logger } from '@/core/log'
 import { recordTurn } from '@/core/metrics'
 import type { TurnMetrics, StepMetrics } from '@/core/metrics'
@@ -64,6 +70,8 @@ interface StepCollect {
   toolResults: { toolCallId: string; toolName: string; output: unknown; isError?: boolean }[]
   usage: StepUsage
   finishReason: string
+  /** 本步的缓存命中统计（来自 providerMetadata） */
+  cacheHitStats?: { cachedPromptTokens: number; hitRate: number }
 }
 
 /** 退出条件判断结果 */
@@ -243,6 +251,19 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
     const compactionEnabled = llmConfig.compaction !== false
     // TTL Prune 配置：默认启用，可通过 LLM 配置关闭
     const ttlPruneEnabled = llmConfig.ttlPrune !== false
+    // Prompt Cache 配置：默认启用，可通过 LLM 配置关闭
+    const promptCacheEnabled = llmConfig.promptCache !== false
+
+    // ── Prompt Cache：构建 providerOptions ──
+    const cacheProviderOptions = promptCacheEnabled
+      ? buildCacheProviderOptions(llmConfig, conversationId)
+      : undefined
+    const cacheAccumulator = new CacheStatsAccumulator()
+
+    // 记录 cache 策略（首次 loop 启动时）
+    if (promptCacheEnabled) {
+      logCacheStrategy(llmConfig, conversationId)
+    }
 
   // 后台异步执行 agent loop，边产生边通过 onChunk 输出
   ;(async () => {
@@ -340,6 +361,7 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
           messages: currentMessages,
           abortSignal,  // 仅用户停止时触发（来自 LoopRegistry 的 AbortController）
           stopWhen: stepCountIs(1),
+          providerOptions: cacheProviderOptions,
         })
 
         // 收集本步结果
@@ -450,6 +472,26 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
 
         const stepDurationMs = Math.round(performance.now() - stepStartTime)
 
+        // ── 提取 Prompt Cache 命中信息 ──
+        if (promptCacheEnabled) {
+          try {
+            // result.providerMetadata 在 fullStream 消费完成后可用
+            const cacheHit = extractCacheHit(result.providerMetadata)
+            if (cacheHit) {
+              stepCollect.cacheHitStats = {
+                cachedPromptTokens: cacheHit.cachedPromptTokens,
+                hitRate: cacheHit.hitRate,
+              }
+              cacheAccumulator.record(cacheHit.cachedPromptTokens, stepCollect.usage.inputTokens)
+            } else {
+              // 没有缓存命中也记录（用于统计缓存失效率）
+              cacheAccumulator.record(0, stepCollect.usage.inputTokens)
+            }
+          } catch {
+            // providerMetadata 访问失败，不影响主流程
+          }
+        }
+
         // 记录工具调用到循环检测器
         for (const call of stepCollect.toolCalls) {
           const toolResult = stepCollect.toolResults.find(
@@ -472,7 +514,13 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
             cacheReadTokens: stepCollect.usage.cacheReadTokens,
             cacheWriteTokens: stepCollect.usage.cacheWriteTokens,
             noCacheTokens: stepCollect.usage.noCacheTokens,
-          }, { ...baseMeta })
+          }, {
+            ...baseMeta,
+            extra: {
+              promptCacheHitTokens: stepCollect.cacheHitStats?.cachedPromptTokens,
+              promptCacheHitRate: stepCollect.cacheHitStats?.hitRate,
+            },
+          })
         }
 
         logger.agentLoop(
@@ -604,8 +652,15 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
             noCacheTokens: sc.usage.noCacheTokens,
           },
           timing: { durationMs: 0 }, // per-step timing not tracked individually
+          promptCacheHitTokens: sc.cacheHitStats?.cachedPromptTokens,
+          promptCacheHitRate: sc.cacheHitStats?.hitRate,
         }
       })
+
+      // ── 获取累计 Prompt Cache 统计 ──
+      const cumulativeCacheStats = promptCacheEnabled
+        ? cacheAccumulator.getStats()
+        : null
 
       // ── 构建并记录 TurnMetrics ──
       const turnMetrics: TurnMetrics = {
@@ -621,6 +676,9 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
         cacheReadTokens: totalUsage.cacheReadTokens ?? 0,
         cacheWriteTokens: totalUsage.cacheWriteTokens ?? 0,
         cacheHitRate,
+        promptCacheHitTokens: cumulativeCacheStats?.totalCachedTokens,
+        promptCacheHitRate: cumulativeCacheStats?.overallHitRate,
+        promptCacheStepsWithHit: cumulativeCacheStats?.stepsWithCacheHit,
         totalToolCalls,
         toolCallSuccessCount: totalToolCalls - totalToolErrors,
         toolCallErrorCount: totalToolErrors,
@@ -637,10 +695,13 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
       const cacheStr = totalUsage.cacheReadTokens
         ? ` | cache:+${totalUsage.cacheReadTokens}`
         : ''
+      const promptCacheStr = cumulativeCacheStats && cumulativeCacheStats.totalCachedTokens > 0
+        ? ` | promptCache:${cumulativeCacheStats.totalCachedTokens}(${Math.round(cumulativeCacheStats.overallHitRate * 100)}%)`
+        : ''
       logger.info(
         `[AgentLoop] 完成 · ${totalSteps}步 · ${totalToolCalls}工具(${totalToolErrors}错) · ` +
         `${totalDurationMs}ms · TTFT=${ttftMs}ms · ` +
-        `token:${totalTokens}${cacheStr} · 停止:${turnMetrics.stopReason}`,
+        `token:${totalTokens}${cacheStr}${promptCacheStr} · 停止:${turnMetrics.stopReason}`,
         {
           ...baseMeta,
           durationMs: totalDurationMs,
@@ -656,6 +717,9 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
             cacheReadTokens: totalUsage.cacheReadTokens,
             cacheWriteTokens: totalUsage.cacheWriteTokens,
             cacheHitRate,
+            promptCacheHitTokens: cumulativeCacheStats?.totalCachedTokens,
+            promptCacheHitRate: cumulativeCacheStats?.overallHitRate,
+            promptCacheStepsWithHit: cumulativeCacheStats?.stepsWithCacheHit,
             loopDetectionCount,
             stopReason: turnMetrics.stopReason,
           },
