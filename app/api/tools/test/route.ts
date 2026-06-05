@@ -2,11 +2,12 @@
  * 直接调用 fs-tools 中的工具进行测试
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { fsToolDefs } from '@/core/tools/file-tools'
+import { createFsTools } from '@/core/tools'
 
 // 直接获取工具定义
-const tools = new Map<string, (typeof fsToolDefs)[0]>()
-for (const tool of fsToolDefs) {
+const fsTools = createFsTools()
+const tools = new Map<string, (typeof fsTools)[0]>()
+for (const tool of fsTools) {
   tools.set(tool.name, tool)
 }
 

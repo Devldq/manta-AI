@@ -177,12 +177,19 @@ const deleteConversationDef: ToolDefinition = {
   },
 }
 
-/** 导出所有工具定义，供 ToolRegistry 注册 */
-export const conversationToolDefs: ToolDefinition[] = [
-  createConversationDef,
-  listConversationsDef,
-  getConversationDef,
-  appendMessageDef,
-  updateConversationAgentDef,
-  deleteConversationDef,
-]
+// ─── 工厂函数 ────────────────────────────────────────────────────────────────
+
+/** 创建所有会话管理工具 */
+export function createConversationTools(): ToolDefinition[] {
+  return [
+    createConversationDef,
+    listConversationsDef,
+    getConversationDef,
+    appendMessageDef,
+    updateConversationAgentDef,
+    deleteConversationDef,
+  ]
+}
+
+/** @deprecated 使用 createConversationTools() 工厂函数替代 */
+export const conversationToolDefs: ToolDefinition[] = createConversationTools()

@@ -13,9 +13,7 @@ import { MCPClient, MockMCPClient, RemoteMCPClient } from './mcp-client';
 import { getEffectiveServers, getMCPToolVisibility } from './mcp-config';
 import { getValidAccessToken } from './mcp-oauth';
 import { resolveEnvVarsInObject, normalizeServerConfig } from './types';
-import { conversationToolDefs } from '@/core/tools/conversation-tools';
-import { fsToolDefs } from '@/core/tools/file-tools';
-import { ccToolDefs } from '@/core/tools/shell-tools';
+import { createAllTools } from '@/core/tools';
 import { createToolSearchTool } from './tool-search';
 
 import type {
@@ -40,7 +38,8 @@ let lastErrorMap = new Map<string, string>();
 export async function getToolRegistry(): Promise<ToolRegistry> {
   if (!registry) {
     registry = new ToolRegistry();
-    registry.register(...conversationToolDefs, ...fsToolDefs, ...ccToolDefs);
+    // 使用工厂函数注册所有内置工具
+    registry.register(...createAllTools());
     // tool_search 需要 registry 实例的引用，通过闭包注入
     registry.register(createToolSearchTool(registry));
   }
