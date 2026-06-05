@@ -1,43 +1,236 @@
-# Manta · Agent 调度操作系统
+# Manta · 与透明化的 Agent 对话
 
-> Humans steer. Agents execute. Drivers are pluggable.
+> 清晰看见你和 Agent 对话时，大模型的每一步动作和决策。
 
-多 Agent 协作调度桌面应用，基于 Next.js 15 + React 19 + TypeScript 全栈实现，支持 AI 聊天、MCP 工具集成、插件系统和 Electron 打包。
+Manta 是一个 Agent 可观测性平台，基于 Next.js 15 + React 19 + TypeScript 全栈实现。与黑盒式 AI 助手不同，Manta 将 Agent 的执行过程**完全透明化**——帮助你**学习 Agent 原理、理解运行机制、排查问题**。
 
-**版本**: v2.0.0 | **最新更新**: 2026-05-24
+**版本**: v2.0.0 | **技术栈**: Next.js 15 · React 19 · TypeScript · Electron · Tailwind CSS
+
+---
+
+## 核心理念：透明的 Agent 可观测性
+
+Manta 最大的特点不是"能做什么"，而是**让你看清 Agent 在做什么**。通过**日志系统 + 会话系统 + 上下文系统**三件套，你可以逐帧回放 Agent 的每一次思考、每一个工具调用、每一步决策过程。
+
+```
+用户提问
+   │
+   ▼
+┌─────────────────────────────────────────────────────────┐
+│                    Agent Loop                            │
+│                                                          │
+│  Step 1: 读取文件  →  Step 2: 搜索代码  →  Step 3: 修改 │
+│     │                      │                      │      │
+│     ▼                      ▼                      ▼      │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │              可观测性三件套                        │   │
+│  │                                                    │   │
+│  │  📋 日志系统    📁 会话系统    🧠 上下文系统       │   │
+│  │  每一步工具调用   完整消息历史    System Prompt 构建  │   │
+│  │  模型输入/输出    Token 用量     上下文压缩过程      │   │
+│  │  循环检测告警     工具使用分布    每步上下文快照      │   │
+│  │  性能耗时追踪     持久化存储      Prompt Pipe 管道   │   │
+│  │                                                    │   │
+│  │  → 学习 Agent 原理  → 排查执行问题  → 优化 Prompt  │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+```
+
+> **不只是黑盒调用 LLM，而是把 Agent 的"大脑"完全透明化。** 这对学习 Agent 原理、调试 Prompt、排查工具调用问题、分析 Token 成本至关重要。
 
 ---
 
 ## 核心特性
 
-### AI 聊天引擎
-- **Agent Loop 流式输出** — 多轮对话，真流式推理，实时展示工具调用过程，Markdown + 代码高亮渲染
+### Agent 执行引擎
+
+- **Agent Loop 流式输出** — 手动实现的 while 循环，每步调用 streamText 保持真流式推理，实时展示工具调用过程
 - **循环检测** — 内置指纹比对 + 语义分析，自动检测 Agent 陷入循环并中断，避免资源浪费
-- **Claude Code 风格工具集** — Bash / Read / Write / Edit / Glob / Grep / WebFetch / WebSearch / Todo，延迟加载与智能搜索
-- **会话管理** — 多会话独立上下文，历史持久化，Agent 切换
+- **Token 预算管理** — 支持输出 token 上限（默认 1M）和安全兜底步数（默认 200 步），防止无限循环
+- **上下文压缩** — 自动压缩长对话历史，支持 microcompact 和 TTL 过期清理
+- **Prompt Cache** — 支持 OpenAI 等 provider 的 prompt 缓存机制，降低重复上下文的计算成本
+
+### Claude Code 风格工具集
+
+Manta 实现了一套完整的工具系统，分为两个层级：
+
+**文件系统工具（带访问控制）**：
+- `readFile` — 读取文件内容（支持行号范围截取）
+- `lsDir` — 列出目录内容
+- `glob` — 按 glob 模式匹配文件
+- `grep` — 在文件内容中搜索正则模式
+
+**文件操作工具（无访问控制）**：
+- `read` — 读取文件内容
+- `write` — 写入/覆盖文件
+- `edit` — 精确字符串替换
+- `multiEdit` — 批量字符串替换（原子操作）
+
+**Bash 工具**：
+- `bash` — 执行 shell 命令（支持后台运行、超时控制）
+- `bashOutput` — 获取后台任务输出
+- `bashKill` — 终止后台任务
+
+**网络工具**：
+- `webFetch` — 抓取网页内容并提取关键信息
+- `webSearch` — 通过 DuckDuckGo 搜索互联网
+
+**任务管理工具**：
+- `todoRead` — 读取待办事项列表
+- `todoWrite` — 写入待办事项列表
+
+**会话管理工具**：
+- 会话 CRUD 操作、历史查询、上下文管理
 
 ### MCP 协议支持
-- **完整的 Model Context Protocol** — 支持 local（stdio）和 remote（HTTP + OAuth）MCP 服务器连接
-- **工具可见性控制** — 细粒度控制每个 MCP 服务器暴露的工具列表
-- **OAuth 认证流程** — 完整的 OAuth 2.0 授权码流程，支持远程 MCP 服务的身份认证
 
-### 插件系统
-- **可插拔 Runner / Agent 架构** — 通过 `plugin.yaml` 声明插件，自动扫描 Agent 并注入系统
-- **当前插件** — OpenClaw（原生 CLI Agent）、PlateCo（前端开发专用）
-- **npm 安装** — 支持通过 npm 安装社区插件，即装即用
+- **完整的 Model Context Protocol** — 支持 local（stdio）和 remote（HTTP + OAuth）MCP 服务器连接
+- **工具可见性控制** — 细粒度控制每个 MCP 服务器暴露的工具列表，支持 per-agent 的 glob 模式过滤
+- **OAuth 认证流程** — 完整的 OAuth 2.0 授权码流程，支持远程 MCP 服务的身份认证
+- **运行时动态管理** — 支持运行时动态连接/断开 MCP 服务器
+- **工具搜索** — 内置 tool_search 元工具，支持语义搜索可用工具
+
+### LLM 多模型支持
+
+- **OpenAI** — GPT-4o 等原生模型
+- **兼容 API** — DeepSeek / 通义千问 / Moonshot 等任意 OpenAI 兼容接口
+- **Ollama** — 本地模型（llama3、qwen、mistral 等）
+- **LM Studio** — 本地模型
+- **MiMo 适配** — 特殊适配小米 MiMo 模型的 reasoning_content 字段，支持推理过程回传
 
 ### 主题系统
-- **65 个设计主题** — 灵感来源于 Apple、Linear、Notion、Vercel、Stripe 等知名产品的设计规范
+
+- **65 个设计主题** — 灵感来源于 Apple、Linear、Notion、Vercel、Stripe、Figma、Shopify 等知名产品的设计规范
 - **亮暗双模** — CSS 变量驱动，主题切换即时生效
 - **自定义微调** — 在设置中自由修改颜色、字体、圆角等变量
 - **默认主题** — WorkBuddy 极简白底风格
 
+### Agent 可观测性三件套
+
+Manta 的杀手级特性：通过日志、会话、上下文三个系统联动，将 Agent 的执行过程**完全透明化**。无论是学习 Agent 原理、排查执行问题，还是优化 Prompt 设计，这套系统都能提供完整的数据支撑。
+
+---
+
+#### 📋 日志系统 — Agent 的"行车记录仪"
+
+覆盖 Agent Loop 的**每一步执行细节**，10 种日志类型、5 个日志级别、5 个日志来源：
+
+| 日志类型 | 记录内容 | 排障场景 |
+|---------|---------|---------|
+| `TOOL_CALL` | 工具名称、输入参数、输出结果、是否报错 | 工具调用失败、参数错误 |
+| `MODEL_OUTPUT` | 模型文本输出、Token 用量（input/output/cache） | Token 消耗异常、输出质量问题 |
+| `AGENT_LOOP` | 每步摘要（消息数、工具数、Token 数、耗时） | 步骤过多、循环检测 |
+| `SYSTEM` | 系统事件（启动、关闭、配置变更） | 环境问题 |
+| `PERFORMANCE` | 内存/CPU 使用、耗时分布 | 性能瓶颈 |
+| `METRICS` | 结构化指标数据 | 成本分析、质量评估 |
+| `ERROR` | 错误类型、消息、堆栈、错误码 | 异常排查 |
+| `SECURITY` | 安全检查事件 | 安全审计 |
+
+**日志元数据**：每条日志自动携带 `conversationId`、`messageId`、`stepIndex`、`toolCallId`、`toolName`，可精确定位到任意会话的任意步骤。
+
+**持久化策略**：
+- 全局日志：`~/.manta-data/system.log`（NDJSON 格式，可 grep/jq 分析）
+- 会话专属日志：`~/.manta-data/conversations/<id>/log.ndjson`（按会话隔离）
+- 内存缓存 10000 条，支持实时 WebSocket 推送
+
+**SystemLogs UI** — 功能丰富的日志查看器：
+- 按 **Turn（对话轮次）→ Step（执行步骤）** 两级分组
+- 每步头部显示彩色 Token 数字（输入 → 缓存 → 输出），格式如 `12k + 3k → 800`
+- 每条日志可展开查看完整详情（时间戳、类型、来源、消息体、details JSON、metadata JSON、标签）
+- 按级别/类型/来源/关键词过滤，支持搜索、导出、复制
+
+---
+
+#### 📁 会话系统 — Agent 的"黑匣子"
+
+每个会话保存**完整的执行记录**，后续可随时回放分析：
+
+**会话文件结构**：
+```
+~/.manta-data/conversations/<uuid>/
+├── session.json    # 完整消息历史 + 元数据
+└── log.ndjson      # 按时间线的执行日志
+```
+
+**session.json 包含**：
+- `messages[]` — 用户消息和助手回复的完整列表
+- `toolCalls[]` — 每条消息关联的工具调用记录（名称、参数、结果）
+- `usage` — Token 用量（input/output/cacheRead/cacheWrite/noCache）
+- `stepUsages[]` — 每一步的 Token 明细
+- `context` — 灵活的运行时上下文存储
+
+**SessionSidebar UI** 提供 5 个标签页：
+1. **文件** — Agent 创建/编辑的文件清单
+2. **变更** — 文件修改记录（create/edit/delete）
+3. **Session** — 会话信息 + 消息统计 + Token 用量 + 工具使用分布
+4. **上下文** — ContextView 面板
+5. **日志** — SystemLogs 面板
+
+**存储安全**：采用原子写入（先写 `.tmp` 再 `rename`），断电不损坏数据。
+
+---
+
+#### 🧠 上下文系统 — Agent 的"思维构建过程"
+
+Manta 不只是把用户输入发给 LLM，而是通过 **Prompt Pipe 管道模式**精心构建每一轮的 System Prompt。ContextView 让你**实时看到 Prompt 是如何组装的**。
+
+**Prompt Pipe 管道**（6 个标准 Pipe，按 KV Cache 优化顺序排列）：
+
+| Pipe | 内容 | 条件 |
+|------|------|------|
+| `coreRules` | 身份定位 + 通信风格 + 安全边界 + 代码风格 | 始终输出 |
+| `toolGuide` | 工具使用规则（支持延迟加载机制） | 有注册工具时 |
+| `workingDirectory` | 当前工作目录路径 | 始终输出 |
+| `deferredTools` | 延迟工具摘要列表 | 有延迟工具时 |
+| `agentSoul` | Agent SOUL.md 个性化内容 | SOUL.md 存在时 |
+| `sessionContext` | 会话历史消息数 | 有历史消息时 |
+
+**4 层上下文压缩策略**：长对话自动压缩，保持上下文在窗口限制内：
+
+| 策略 | 机制 | 触发条件 |
+|------|------|---------|
+| Microcompact | 清理旧的查询类工具结果，保留最近 3 个 | 步骤数过多 |
+| 动态截断 | 单条大结果 Head/Tail 60/40 分割，总量超窗口 75% 逐条 compact | 上下文接近窗口上限 |
+| TTL 修剪 | 5 分钟软修剪（Head/Tail 保留）、10 分钟硬清除 | 时间衰减 |
+| Compaction | LLM 摘要压缩早期对话为结构化摘要 | 上下文严重超限 |
+
+**ContextView UI**：
+- System Prompt 总览 — 各 Pipe 段的启用状态和 Token 估算
+- 上下文快照 — 每一步执行前的完整消息列表
+- Agent 步骤视图 — 每步的消息数/工具数/Token 数，标记被压缩/截断的消息
+- 5 秒自动刷新，实时观察上下文变化
+
+---
+
+#### 🔬 三系统联动：完整回溯 Agent 决策过程
+
+```
+Step 1: Agent 调用 grep 搜索代码
+  ├── 📋 日志：TOOL_CALL { toolName: "grep", input: { pattern: "login" }, output: "3 matches" }
+  ├── 📁 会话：session.json 中追加 toolCall 记录 + stepUsage
+  └── 🧠 上下文：ContextView 显示 System Prompt 包含 coreRules + toolGuide + workingDirectory
+
+Step 2: Agent 调用 read 读取匹配文件
+  ├── 📋 日志：TOOL_CALL { toolName: "read", output: "<file content>" }
+  ├── 📁 会话：消息列表新增一条助手消息，包含两个工具调用
+  └── 🧠 上下文：上下文快照记录第 1 步的结果已作为上下文注入
+
+... (循环直到任务完成)
+
+Turn 结束：
+  ├── 📋 日志：MODEL_OUTPUT + AGENT_LOOP（聚合摘要，一行看完所有关键指标）
+  ├── 📁 会话：session.json 写入磁盘，log.ndjson 追加全量日志
+  └── 🧠 上下文：Microcompact 清理旧查询结果，TTL 标记过期消息
+```
+
+> **这就是 Manta 的核心价值**：你不仅能看到 Agent 做了什么，还能理解它**为什么这么做**、**Prompt 是怎么构建的**、**每一步消耗了多少 Token**。
+
+---
+
 ### 更多特性
-- **LLM 多模型** — 支持 OpenAI（GPT-4o 等）、兼容 API（DeepSeek / 通义千问 / Moonshot 等）、Ollama 本地模型、LM Studio 本地模型
-- **日志系统** — 全链路日志采集、格式化、实时 WebSocket 推送、统计报告、导出
+
 - **通知系统** — macOS 系统通知 + Webhook（飞书 / Slack / 钉钉 / Discord）
 - **文件安全** — CWD 内自由访问，CWD 外需用户实时授权
-- **工作流引擎（核心就绪）** — 状态机 + 步骤编排引擎已实现，支持 sequential / parallel / human_in_loop / conditional / loop，YAML 定义
 - **Electron 桌面端** — 原生桌面应用打包，自动更新（GitHub Releases）
 - **敏感信息检测** — Git pre-commit 钩子，自动检测 API 密钥、Token、私钥等 15+ 类敏感信息
 
@@ -69,39 +262,68 @@ pnpm build
 |------|------|------|------|
 | AI 聊天 | `/tasks` | 已完成 | 流式聊天，Agent 选择，工具调用展示，会话管理，Markdown 渲染 |
 | MCP Server | `/mcp` | 已完成 | MCP 服务器管理（stdio / HTTP / OAuth），工具可见性控制 |
-| 设置 | `/settings` | 已完成 | LLM 配置、Runner 探测、Webhook 通知、插件管理、自动更新、主题微调 |
+| 设置 | `/settings` | 已完成 | LLM 配置、Webhook 通知、自动更新、主题微调 |
 | 主题选择 | `/themes` | 已完成 | 65 款设计主题浏览与一键切换 |
+
+---
+
+## 界面预览
+
+### AI 聊天界面
+
+核心交互界面，中间对话区展示 Agent 推理和工具调用过程，右侧**执行日志面板**实时显示每一步的详细信息。
+
+![AI 聊天界面](docs/screenshots/chat-interface.png)
+
+### 会话详情与统计
+
+每个会话的完整"黑匣子"——消息历史、工具调用记录、Token 用量统计，所有数据持久化可回溯。
+
+![会话详情](docs/screenshots/session-details.png)
+
+### Agent 执行日志
+
+按 Turn → Step 两级分组的**全链路执行日志**，每一步的工具调用、模型输出、Token 消耗、耗时都清晰可见。
+
+![执行日志](docs/screenshots/execution-log.png)
+
+### 上下文总览
+
+**System Prompt 的构建过程可视化**：Prompt Pipe 各段落的 Token 占比、每步上下文快照、消息被压缩/截断的标记。
+
+![上下文视图](docs/screenshots/context-view.png)
 
 ---
 
 ## 架构概览
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    app/ (Next.js UI)                 │
-│   pages: /tasks  /mcp  /settings  /themes            │
-│   api: agents chat conversations mcp logs plugins    │
-├─────────────────────────────────────────────────────┤
-│                    core/ (引擎层)                     │
-│                                                      │
-│  ┌──────────┐ ┌──────┐ ┌───────────────┐           │
-│  │  chat/   │ │ llm/ │ │ conversation/ │           │
-│  │Agent Loop│ │多模型│ │  会话+CC工具   │           │
-│  └──────────┘ └──────┘ └───────────────┘           │
-│                                                      │
-│  ┌──────────────┐ ┌──────────┐ ┌──────────┐        │
-│  │tool-registry/ │ │ runner/  │ │ channel/ │        │
-│  │ MCP客户端管理  │ │ CLI执行  │ │  通知层   │        │
-│  └──────────────┘ └──────────┘ └──────────┘        │
-│                                                      │
-│  ┌──────────────┐ ┌──────┐ ┌──────┐ ┌──────┐      │
-│  │workflow-engine│ │ log/ │ │ fs/  │ │config│      │
-│  │  工作流编排   │ │日志系统│ │文件安全│ │ 配置 │      │
-│  └──────────────┘ └──────┘ └──────┘ └──────┘      │
-├─────────────────────────────────────────────────────┤
-│              plugins/ (插件层)                        │
-│         openclaw  •  plateco  •  ...                 │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                      app/ (Next.js UI)                            │
+│  pages: /tasks  /mcp  /settings  /themes                          │
+│  components: SystemLogs  ContextView  SessionSidebar  MetricsDashboard│
+│  api: agents chat conversations mcp logs plugins fs config         │
+├──────────────────────────────────────────────────────────────────┤
+│                      core/ (引擎层)                                 │
+│                                                                    │
+│  ┌──────────┐  ┌──────┐  ┌───────────────┐  ┌─────────────────┐ │
+│  │  chat/   │  │ llm/ │  │ conversation/ │  │ workflow-engine/│ │
+│  │Agent Loop│  │多模型│  │  会话存储     │  │  工作流编排     │ │
+│  └────┬─────┘  └──────┘  └───────────────┘  └─────────────────┘ │
+│       │                                                            │
+│       │  ┌────────────────── 可观测性层 ───────────────────┐      │
+│       │  │                                                   │      │
+│       ├──┤  📋 log/        日志采集 · 格式化 · 持久化 · UI   │      │
+│       ├──┤  📁 conversation/ 会话 CRUD · 消息存储 · 统计    │      │
+│       └──┤  🧠 context/     Prompt Pipe · 压缩 · 快照       │      │
+│          │                                                   │      │
+│          └───────────────────────────────────────────────────┘      │
+│                                                                    │
+│  ┌──────────────┐  ┌──────────┐  ┌──────┐  ┌──────┐  ┌──────┐   │
+│  │tool-registry/ │  │ channel/ │  │tools/│  │ fs/  │  │config│   │
+│  │MCP客户端+OAuth│  │  通知层  │  │工具集│  │安全层│  │ 配置 │   │
+│  └──────────────┘  └──────────┘  └──────┘  └──────┘  └──────┘   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -111,29 +333,39 @@ pnpm build
 ```
 manta/
 ├── app/                  # Next.js 页面 + API 路由
-│   ├── tasks/            # AI 聊天页 (58KB)
-│   ├── mcp/              # MCP 服务器管理页 (49KB)
-│   ├── settings/         # 设置页 (42KB)
-│   ├── themes/           # 主题选择页 (23KB)
+│   ├── tasks/            # AI 聊天页
+│   ├── mcp/              # MCP 服务器管理页
+│   ├── settings/         # 设置页
+│   ├── themes/           # 主题选择页
 │   ├── components/       # SidebarNav, SessionSidebar, SettingsModal, SystemLogs
 │   └── api/              # REST API（agents, chat, conversations, mcp, logs, plugins, fs, config）
-├── core/                 # 核心引擎层（55 个文件，纯 TypeScript，零 UI 依赖）
-│   ├── chat/             # AI 聊天引擎 — Agent Loop、流式处理、循环检测、错误格式化
-│   ├── llm/              # LLM 提供商 — OpenAI / 兼容 API / Ollama / LM Studio
-│   ├── tool-registry/    # 工具注册中心 — MCP 客户端、OAuth、工具搜索、可见性控制
-│   ├── conversation/     # 会话管理 — Claude Code 风格工具集（31KB）、FS 工具、会话存储
-│   ├── log/              # 日志系统 — 采集、格式化、Hook、WebSocket 推送、统计报告
-│   ├── workflow-engine/  # 工作流引擎 — 状态机、步骤编排、YAML 加载器
-│   ├── runner/           # Agent Runner — 进程注册、CLI 执行
-│   ├── channel/          # 通知层 — macOS 系统通知 + Webhook
+├── core/                 # 核心引擎层（纯 TypeScript，零 UI 依赖）
+│   ├── chat/             # Agent Loop · 流式处理 · 循环检测 · 错误格式化
+│   │   ├── agent-loop.ts       # 核心执行循环（while + streamText，真流式）
+│   │   └── loop-detector/      # 指纹比对 + 语义分析 · 三级循环检测
+│   ├── llm/              # LLM 提供商 — OpenAI / 兼容 API / Ollama / LM Studio / MiMo
+│   ├── conversation/     # 📁 会话系统 — store.ts（会话CRUD + 原子写入 + 向后兼容迁移）
+│   ├── log/              # 📋 日志系统
+│   │   ├── types.ts            # 10种日志类型 · 5级 · 5来源 · LogMetadata
+│   │   ├── collector.ts        # 内存收集器（10000条缓存 · 过滤器 · 订阅机制）
+│   │   ├── formatter.ts        # 5种输出格式（JSON/CSV/Text/HTML/Terminal）
+│   │   └── hooks.ts            # React hooks（useLogs/useLogStats）
+│   ├── context/          # 🧠 上下文系统
+│   │   ├── prompt-builder.ts   # Prompt Pipe 管道模式（6个标准Pipe）
+│   │   ├── agent-soul.ts       # SOUL.md 个性化 System Prompt
+│   │   ├── microcompact.ts     # 旧查询结果清理
+│   │   ├── truncate-tool-results.ts  # Head/Tail 分割截断
+│   │   ├── ttl-prune.ts        # 时间衰减修剪（5min/10min）
+│   │   ├── compaction.ts       # LLM 摘要压缩
+│   │   └── context-snapshot.ts # 每步上下文快照
+│   ├── metrics/          # 指标系统 — StepMetrics · TurnMetrics · SessionMetrics
+│   ├── tool-registry/    # MCP 客户端 · OAuth · 工具搜索 · 可见性控制
+│   ├── tools/            # 工具实现 — Bash / FileOps / FsAccess / Web / Todo
+│   ├── channel/          # 通知层 — macOS 系统通知 + Webhook（飞书/Slack/钉钉/Discord）
+│   ├── workflow-engine/  # 工作流引擎 — 状态机 · 步骤编排 · YAML 加载器
 │   ├── fs/               # 文件安全 — CWD 访问控制
 │   └── config/           # 工作空间配置
 ├── design/               # 65 个设计规范主题（Apple、Linear、Notion、Vercel 等）
-├── plugins/              # 插件系统（openclaw, plateco）+ 加载器
-├── workflows/            # 工作流 YAML 定义
-│   ├── dev-standard.yaml            # 需求开发流
-│   ├── quick-fix.yaml               # 快速修复流
-│   └── plateco-frontend-dev.yaml    # 前端 14 阶段全流程
 ├── config/               # 敏感信息检测规则
 ├── electron/             # Electron 桌面端主进程
 ├── scripts/              # 构建、发布、敏感信息检测、版本管理
@@ -149,27 +381,11 @@ manta/
 
 | 提供商 | 说明 |
 |--------|------|
-| OpenAI | GPT-4o 等 |
+| OpenAI | GPT-4o 等原生模型 |
 | 兼容 API | DeepSeek / 通义千问 / Moonshot 等任意 OpenAI 兼容接口 |
 | Ollama | 本地模型（llama3、qwen、mistral 等） |
 | LM Studio | 本地模型 |
-
----
-
-## 插件系统使用
-
-### 内置插件
-
-- **OpenClaw** — 原生 CLI Agent Runner，支持 `brew install openclaw` 安装
-- **PlateCo** — 前端开发专用工作流插件
-
-### 通过 npm 安装新插件
-
-```bash
-npm install <plugin-package>
-```
-
-插件安装后自动扫描并注入系统，无需额外配置。管理入口：设置 → 插件管理。
+| MiMo | 小米推理模型（特殊适配 reasoning_content 字段） |
 
 ---
 
@@ -224,23 +440,23 @@ npm run check:sensitive
 ## 开发路线
 
 ### 已完成 (v2.0.0)
-- AI 聊天引擎（Agent Loop + 流式 + 循环检测）
+- **Agent 可观测性三件套**（日志系统 + 会话系统 + 上下文系统）— 完整回溯 Agent 决策过程
+- AI 聊天引擎（Agent Loop + 真流式 + 循环检测 + 4 层上下文压缩）
 - MCP 协议完整支持（stdio / HTTP / OAuth + 可见性控制）
-- 会话管理与 Claude Code 工具集
-- LLM 多模型配置（OpenAI / Ollama / LM Studio / 兼容 API）
-- 插件系统（加载器 + OpenClaw + PlateCo）
+- Claude Code 风格工具集（Bash / File / Web / Todo）
+- LLM 多模型配置（OpenAI / Ollama / LM Studio / 兼容 API / MiMo）
 - 65 款设计主题 + CSS 变量驱动
-- 日志系统（采集 / WebSocket / 统计 / 导出）
 - 文件安全（CWD 访问控制）
 - Electron 桌面打包 + 自动更新
 - 敏感信息检测
 
 ### 规划中
-- 任务看板（Kanban）与工作流可视化编辑器
 - Agent 管理页面（CRUD + AI 润色 UI）
 - Skills 技能库前端页面
-- 工作流 API 层接线（引擎已就绪）
 - Processing 处理中心
+- 本地 RAG 知识库
+- 语音控制 / 手表指挥
+- 多文件夹工作区 / 多 Git 项目索引
 
 ---
 
