@@ -9,6 +9,7 @@
 import { logger } from '@/core/log'
 import { getToolRegistry } from '@/core/tool-registry/mcp-setup'
 import { estimateTokensFromChars } from '@/core/chat/token-estimator'
+import { getMemoryStore } from '@/core/memory'
 
 // ─── 类型定义 ──────────────────────────────────────────────────────────────────
 
@@ -269,6 +270,21 @@ export function sessionContext(): PipeFn {
   }
 }
 
+/**
+ * 跨会话记忆 — 自包含闭包，每次 build 实时从 MemoryStore 读取。
+ *
+ * 这样每步 API 调用都能看到最新的记忆内容（刚存的记忆立即可用，刚删的立即消失）。
+ * "先静后动"原则：记忆在整轮对话中可能变化，放在靠后的位置。
+ */
+export function memoryContext(): PipeFn {
+  return () => {
+    const memoryStore = getMemoryStore()
+    const section = memoryStore.buildPromptSection()
+    // buildPromptSection 总是返回非空字符串（没有记忆时会给出引导提示）
+    return section
+  }
+}
+
 // ─── Builder 工厂 ──────────────────────────────────────────────────────────────
 
 /** 创建默认的 Manta PromptBuilder（包含所有标准 pipe） */
@@ -286,6 +302,7 @@ export function createMantaPromptBuilder(options: {
     .pipe('workingDirectory', workingDirectory(cwd))
     .pipe('deferredTools', deferredTools())
     .pipe('agentSoul', agentSoul(soulPrompt))
+    .pipe('memoryContext', memoryContext())
     .pipe('sessionContext', sessionContext())
 }
 

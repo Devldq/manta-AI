@@ -20,6 +20,8 @@ import { createFsTools } from './fs-access'
 import { createWebTools } from './web'
 import { createTodoTools } from './todo'
 import { createConversationTools } from './conversation-tools'
+import { createMemoryTool } from './memory-tools'
+import { getMemoryStore } from '@/core/memory'
 
 // ─── 汇总工厂函数 ────────────────────────────────────────────────────────────
 
@@ -32,6 +34,7 @@ export function createAllTools(): ToolDefinition[] {
     ...createFileOpsTools(),
     ...createWebTools(),
     ...createTodoTools(),
+    createMemoryTool(getMemoryStore()),
   ]
 }
 
@@ -59,3 +62,4 @@ export { createFsTools } from './fs-access'
 export { createWebTools } from './web'
 export { createTodoTools } from './todo'
 export { createConversationTools } from './conversation-tools'
+export { createMemoryTool } from './memory-tools'

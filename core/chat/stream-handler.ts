@@ -3,7 +3,12 @@ import { getLLMConfig } from '@/core/llm/config-store'
 import { appendMessage } from '@/core/conversation/store'
 import type { ToolCallRecord, StepUsageRecord } from '@/core/conversation/types'
 import { readAgentSoul } from '../context/agent-soul'
-import { buildSystemPromptWithStats } from '../context/prompt-builder'
+import {
+  buildSystemPromptWithStats,
+  createMantaPromptBuilder,
+  type PromptContext,
+} from '../context/prompt-builder'
+import { getToolRegistry } from '@/core/tool-registry/mcp-setup'
 import { parseMessagesToCore, type UIMessage } from './message-parser'
 import { runAgentLoop } from './agent-loop'
 import { getActiveLoop, registerLoop, emitLoopEvent } from './loop-registry'
@@ -48,11 +53,27 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
   // 提前生成 messageId（整轮 agent loop 共享，确保早期日志也能立即关联到会话）
   const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-  // 构建 system prompt（使用 Pipe 模式，附带统计）
+  // 构建 system prompt builder（每步 API 调用时重新 build，确保新存记忆立即可见）
   const soulPrompt = readAgentSoul(agentName)
+  const cwd = process.cwd()
+  const promptBuilder = createMantaPromptBuilder({ cwd, soulPrompt })
+
+  // 每步重建 system prompt 的闭包：memoryContext pipe 内部实时读 MemoryStore
+  const buildSystemPrompt = async (): Promise<string> => {
+    const registry = await getToolRegistry()
+    const ctx: PromptContext = {
+      toolCount: registry.getAll().length,
+      deferredToolSummary: registry.getDeferredToolSummary(),
+      sessionMessageCount: messages.length,
+      sessionId: conversationId,
+    }
+    return promptBuilder.build(ctx)
+  }
+
+  // 首次构建获取初始 system prompt + 统计
   const { prompt: systemPrompt, stats: pipeStats } = await buildSystemPromptWithStats({
     soulPrompt,
-    cwd: process.cwd(),
+    cwd,
     conversationId,
     messageId,
   })
@@ -85,6 +106,7 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
     runAgentLoop({
       messages: coreMessages,
       systemPrompt,
+      buildSystemPrompt,
       prompt: userPrompt,
       messageId,
       conversationId,

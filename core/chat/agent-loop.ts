@@ -32,7 +32,14 @@ const DEFAULT_MAX_STEPS = 200
 /** Agent Loop 选项 */
 export interface AgentLoopOptions {
   messages: ModelMessage[]
+  /** 初始 system prompt 字符串（用于第一步 + 日志输出） */
   systemPrompt?: string | null
+  /**
+   * 每步重建 system prompt 的函数。
+   * 传入则每步 API 调用前调用，确保记忆/工具等动态上下文保持最新。
+   * 不传则回退到 systemPrompt 静态字符串。
+   */
+  buildSystemPrompt?: () => Promise<string> | string
   /** 用户输入的原始提示词（用于日志记录） */
   prompt?: string
   /** 统一的消息ID（整轮 loop 共享，由上层调用方提前生成） */
@@ -237,7 +244,7 @@ function appendStepToMessages(
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户停止
  * - 不创建 ReadableStream 或 Response，不感知 HTTP 连接状态
  */
-export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, onChunk, onDone, onFinish, onError }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, onChunk, onDone, onFinish, onError }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
 
@@ -317,10 +324,16 @@ export async function runAgentLoop({ messages, systemPrompt, prompt, messageId: 
           return
         }
 
-        // 注入警告消息到 systemPrompt
+        // 每步重建 system prompt（通过 buildSystemPrompt 闭包实时获取最新记忆/上下文）
+        // 回退：没有 builder 时使用初始的静态 systemPrompt 字符串
+        const basePrompt = buildSystemPrompt
+          ? await buildSystemPrompt()
+          : (systemPrompt ?? undefined)
+
+        // 注入警告消息（循环检测等）
         const effectiveSystemPrompt = warningMessage
-          ? `${systemPrompt ?? ''}\n\n[系统提醒] ${warningMessage}`
-          : systemPrompt ?? undefined
+          ? `${typeof basePrompt === 'string' ? basePrompt : ''}\n\n[系统提醒] ${warningMessage}`
+          : basePrompt
         warningMessage = null
 
         // 每步调一次 streamText，stopWhen=[stepCountIs(1)] 强制单步执行
