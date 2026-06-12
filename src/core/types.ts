@@ -316,4 +316,105 @@ export interface DataStore {
   updateTask(id: string, patch: Partial<Task>): Promise<Task>
   deleteTask(id: string): Promise<void>
 }
+
+// ─── 智能体应用 ───────────────────────────────────────────────
+
+/** 应用状态 */
+export type AppStatus = 'draft' | 'published' | 'archived'
+
+/** Agent 参数覆盖 */
+export interface AgentOverride {
+  /** 覆盖 system prompt */
+  systemPrompt?: string
+  /** 覆盖 temperature */
+  temperature?: number
+  /** 覆盖 maxTokens */
+  maxTokens?: number
+  /** 覆盖模型 */
+  model?: string
+}
+
+/** RAG 知识库绑定 */
+export interface RagBinding {
+  /** 关联知识库 ID */
+  knowledgeBaseId: string
+  /** 检索 TopK，默认 5 */
+  topK: number
+  /** 相似度阈值，默认 0.7 */
+  similarityThreshold: number
+  /** 混合检索开关 */
+  hybridSearchEnabled: boolean
+  /** 混合检索向量权重，默认 0.7 */
+  vectorWeight: number
+}
+
+/** 自动化任务 */
+export interface Automation {
+  id: string
+  type: 'cron' | 'webhook' | 'manual'
+  name: string
+  description?: string
+  enabled: boolean
+  cronExpression?: string
+  timezone?: string
+  webhookUrl?: string
+  webhookSecret?: string
+  templateMessage?: string
+  createdAt: string
+  updatedAt: string
+  lastTriggeredAt?: string
+}
+
+/** 应用配置 */
+export interface AppConfig {
+  id: string
+  name: string
+  description: string
+  icon: string
+  tags: string[]
+  status: AppStatus
+
+  /** Agent 绑定 */
+  agentId: string
+  agentOverride: AgentOverride
+
+  /** 知识库绑定 */
+  ragBinding: RagBinding | null
+
+  /** 启用的工具 */
+  enabledTools: string[]
+
+  /** 自动化 */
+  automations: Automation[]
+
+  /** 时间戳 */
+  createdAt: string
+  updatedAt: string
+  publishedAt: string | null
+
+  /** 版本号（乐观锁） */
+  version: number
+}
+
+/** 创建应用的输入 */
+export interface CreateAppInput {
+  name: string
+  description?: string
+  icon?: string
+  tags?: string[]
+}
+
+/** 更新应用的输入 */
+export interface UpdateAppInput {
+  name?: string
+  description?: string
+  icon?: string
+  tags?: string[]
+  status?: AppStatus
+  agentId?: string
+  agentOverride?: Partial<AgentOverride>
+  ragBinding?: RagBinding | null
+  enabledTools?: string[]
+  automations?: Automation[]
+}
 /*  end: 核心类型定义结束 */

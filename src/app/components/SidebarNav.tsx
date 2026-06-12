@@ -13,6 +13,8 @@ import { SettingsModal } from './SettingsModal'
 const NAV_ITEMS = [
   { href: '/mcp', label: 'MCP', icon: '⎈' },
   { href: '/apps', label: '应用', icon: '⊡' },
+  { href: '/rag', label: '知识库', icon: '▣' },
+  { href: '/evaluation', label: '评估', icon: '◈' },
 ]
 
 // AI: LLM 聊天会话类型
