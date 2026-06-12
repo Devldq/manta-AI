@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(git clone *)",
+      "Read(//Users/link/.claude/skills/gstack/**)",
+      "Bash(./setup)",
+      "Bash(GSTACK_SKIP_COREUTILS=1 ./setup)"
+    ]
+  }
+}

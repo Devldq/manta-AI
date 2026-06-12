@@ -1,7 +1,7 @@
 /* 日志系统测试 */
 
-import { logger, logManager } from './core/log'
-import { LogLevel, LogType, LogSource } from './core/log/types'
+import { logger, logManager } from './src/core/observability/log'
+import { LogLevel, LogType, LogSource } from './src/core/observability/log/types'
 
 // 测试日志记录
 console.log('=== 测试日志系统 ===')
