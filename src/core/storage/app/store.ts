@@ -4,6 +4,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { type AppConfig, type CreateAppInput, type UpdateAppInput } from '@/core/types'
+import { ensureDir, atomicWrite, shortId, removeDir, readJsonFile } from '../shared/fs-utils'
 
 function appDataDir(): string {
   return path.join(os.homedir(), '.manta-data', 'apps')
@@ -15,24 +16,6 @@ function appDir(appId: string): string {
 
 function appFilePath(appId: string): string {
   return path.join(appDir(appId), 'app.json')
-}
-
-function ensureDir(dir: string): void {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
-  }
-}
-
-/** 原子写入：先写 .tmp 再 rename */
-function atomicWrite(filePath: string, data: string): void {
-  const tmp = filePath + '.tmp'
-  fs.writeFileSync(tmp, data, 'utf-8')
-  fs.renameSync(tmp, filePath)
-}
-
-/** 生成简短唯一 ID（取 uuid 前 8 位） */
-function shortId(): string {
-  return Math.random().toString(36).slice(2, 10)
 }
 
 /** 创建默认的应用配置 */

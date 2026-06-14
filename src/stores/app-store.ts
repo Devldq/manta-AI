@@ -30,11 +30,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (params?.sort) sp.set('sort', params.sort)
       const qs = sp.toString()
       const res = await fetch(`/api/apps${qs ? `?${qs}` : ''}`)
-      const data = await res.json()
-      if (data.apps) {
-        set({ apps: data.apps, loading: false })
+      const json = await res.json()
+      if (json.success && json.data?.apps) {
+        set({ apps: json.data.apps, loading: false })
       } else {
-        set({ loading: false, error: data.error ?? '获取应用列表失败' })
+        set({ loading: false, error: json.error?.message ?? '获取应用列表失败' })
       }
     } catch (err) {
       set({ loading: false, error: String(err) })
@@ -48,12 +48,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       })
-      const data = await res.json()
-      if (data.app) {
-        set((s) => ({ apps: [data.app, ...s.apps] }))
-        return data.app
+      const json = await res.json()
+      if (json.success && json.data?.app) {
+        set((s) => ({ apps: [json.data.app, ...s.apps] }))
+        return json.data.app
       }
-      set({ error: data.error ?? '创建失败' })
+      set({ error: json.error?.message ?? '创建失败' })
       return null
     } catch (err) {
       set({ error: String(err) })
@@ -69,18 +69,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...patch, version: existing?.version }),
       })
-      const data = await res.json()
-      if (data.app) {
+      const json = await res.json()
+      if (json.success && json.data?.app) {
         set((s) => ({
-          apps: s.apps.map((a) => (a.id === id ? data.app : a)),
+          apps: s.apps.map((a) => (a.id === id ? json.data.app : a)),
         }))
-        return data.app
+        return json.data.app
       }
       if (res.status === 409) {
         // 乐观锁冲突：重新获取列表
         await get().fetchApps()
       }
-      set({ error: data.error ?? '更新失败' })
+      set({ error: json.error?.message ?? '更新失败' })
       return null
     } catch (err) {
       set({ error: String(err) })
@@ -91,12 +91,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   deleteApp: async (id) => {
     try {
       const res = await fetch(`/api/apps/${id}`, { method: 'DELETE' })
-      const data = await res.json()
-      if (data.success) {
+      const json = await res.json()
+      if (json.success) {
         set((s) => ({ apps: s.apps.filter((a) => a.id !== id) }))
         return true
       }
-      set({ error: data.error ?? '删除失败' })
+      set({ error: json.error?.message ?? '删除失败' })
       return false
     } catch (err) {
       set({ error: String(err) })
@@ -111,12 +111,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       })
-      const data = await res.json()
-      if (data.app) {
-        set((s) => ({ apps: [data.app, ...s.apps] }))
-        return data.app
+      const json = await res.json()
+      if (json.success && json.data?.app) {
+        set((s) => ({ apps: [json.data.app, ...s.apps] }))
+        return json.data.app
       }
-      set({ error: data.error ?? '复制失败' })
+      set({ error: json.error?.message ?? '复制失败' })
       return null
     } catch (err) {
       set({ error: String(err) })
@@ -131,14 +131,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       })
-      const data = await res.json()
-      if (data.app) {
+      const json = await res.json()
+      if (json.success && json.data?.app) {
         set((s) => ({
-          apps: s.apps.map((a) => (a.id === id ? data.app : a)),
+          apps: s.apps.map((a) => (a.id === id ? json.data.app : a)),
         }))
-        return data.app
+        return json.data.app
       }
-      set({ error: data.error ?? '状态变更失败' })
+      set({ error: json.error?.message ?? '状态变更失败' })
       return null
     } catch (err) {
       set({ error: String(err) })

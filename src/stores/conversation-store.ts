@@ -45,11 +45,11 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
       const res = await fetch(`/api/conversations${qs ? `?${qs}` : ''}`, {
         signal: abortController.signal,
       })
-      const data = await res.json()
-      if (data.conversations) {
-        set({ items: data.conversations, loading: false })
+      const json = await res.json()
+      if (json.success && json.data?.conversations) {
+        set({ items: json.data.conversations, loading: false })
       } else {
-        set({ loading: false, error: data.error ?? '获取会话列表失败' })
+        set({ loading: false, error: json.error?.message ?? '获取会话列表失败' })
       }
     } catch (err) {
       if ((err as Error).name === 'AbortError') return
@@ -60,8 +60,8 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
   deleteConversation: async (id) => {
     try {
       const res = await fetch(`/api/conversations/${id}`, { method: 'DELETE' })
-      const data = await res.json()
-      if (data.success !== false) {
+      const json = await res.json()
+      if (json.success) {
         set((s) => ({
           items: s.items.filter((c) => c.id !== id),
           activeId: s.activeId === id ? null : s.activeId,

@@ -377,6 +377,8 @@ export interface AppConfig {
   /** Agent 绑定 */
   agentId: string
   agentOverride: AgentOverride
+  /** 关联工作流 ID（可选） */
+  workflowId?: string
 
   /** 知识库绑定 */
   ragBinding: RagBinding | null
@@ -451,6 +453,75 @@ export interface UpdateWorkspaceInput {
   agentAppIds?: string[]
   knowledgeBaseIds?: string[]
   workflowIds?: string[]
+}
+
+// ─── 会话类型 ───────────────────────────────────────────────
+
+/** 持久化的工具调用记录（一次工具调用的 input/output） */
+export interface ToolCallRecord {
+  toolCallId: string
+  toolName: string
+  input: unknown
+  output: unknown
+  isError: boolean
+  errorText?: string
+}
+
+/** 单步 token 用量（含缓存明细） */
+export interface StepUsageRecord {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  noCacheTokens?: number
+  toolNames?: string[]
+}
+
+/** 会话消息 */
+export interface ConversationMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp: string
+  toolCalls?: ToolCallRecord[]
+  usage?: {
+    inputTokens?: number
+    outputTokens?: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    noCacheTokens?: number
+  }
+  stepUsages?: StepUsageRecord[]
+  /** 关联的智能体应用 ID（@调用时使用） */
+  agentAppId?: string
+}
+
+/** 会话上下文 */
+export interface ConversationContext {
+  [key: string]: unknown
+}
+
+/** 会话 */
+export interface Conversation {
+  id: string
+  title: string
+  agentName: string
+  messages: ConversationMessage[]
+  context: ConversationContext
+  workspaceId?: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** 会话摘要（列表展示用） */
+export interface ConversationSummary {
+  id: string
+  title: string
+  agentName: string
+  createdAt: string
+  updatedAt: string
+  workspaceId?: string
+  messageCount?: number
 }
 
 // ─── @调用 ───────────────────────────────────────────────

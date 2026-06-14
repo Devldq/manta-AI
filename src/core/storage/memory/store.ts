@@ -12,6 +12,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import type { MemoryEntry, MemoryType, IndexEntry } from './types'
+import { slugify as sharedSlugify, atomicWrite as sharedAtomicWrite } from '../shared/fs-utils'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────────
 
@@ -22,14 +23,8 @@ const MAX_FILE_CHARS = 4000
 
 // ─── 工具函数 ──────────────────────────────────────────────────────────────────
 
-/** 生成文件名 slug：中文/英文/数字保留，其他字符替换为连字符 */
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .replace(/-+/g, '-')
-}
+/** 使用共享的 slugify 函数 */
+const slugify = sharedSlugify
 
 /** 简单 YAML frontmatter 解析器 — 只解析顶层字符串字段 */
 function parseFrontmatter(
@@ -131,9 +126,7 @@ export class MemoryStore {
 
     // 原子写入
     const content = lines.join('\n') + '\n'
-    const tmp = `${this.indexPath}.tmp`
-    fs.writeFileSync(tmp, content, 'utf-8')
-    fs.renameSync(tmp, this.indexPath)
+    sharedAtomicWrite(this.indexPath, content)
   }
 
   // ─── CRUD ────────────────────────────────────────────────────────────────────
@@ -164,9 +157,7 @@ export class MemoryStore {
     ].join('\n')
 
     // 原子写入
-    const tmp = `${filePath}.tmp`
-    fs.writeFileSync(tmp, fileContent, 'utf-8')
-    fs.renameSync(tmp, filePath)
+    sharedAtomicWrite(filePath, fileContent)
 
     this.updateIndex(entry.name, filename, entry.description)
 
@@ -253,9 +244,7 @@ export class MemoryStore {
     }
 
     const content = lines.join('\n') + '\n'
-    const tmp = `${this.indexPath}.tmp`
-    fs.writeFileSync(tmp, content, 'utf-8')
-    fs.renameSync(tmp, this.indexPath)
+    sharedAtomicWrite(this.indexPath, content)
 
     return true
   }

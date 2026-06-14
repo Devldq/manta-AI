@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { v4 as uuidv4 } from 'uuid'
-import type { Conversation, Message } from './types'
+import type { Conversation, ConversationMessage, ToolCallRecord, StepUsageRecord } from '@/core/types'
 
 const DATA_DIR = path.join(os.homedir(), '.manta-data', 'conversations')
 
@@ -137,14 +137,14 @@ export function appendMessage(
   convId: string,
   role: 'user' | 'assistant',
   content: string,
-  toolCalls?: import('./types').ToolCallRecord[],
+  toolCalls?: ToolCallRecord[],
   usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number },
-  stepUsages?: import('./types').StepUsageRecord[],
-): { conv: Conversation; message: Message } | null {
+  stepUsages?: StepUsageRecord[],
+): { conv: Conversation; message: ConversationMessage } | null {
   const conv = readConv(convId)
   if (!conv) return null
 
-  const msg: Message = {
+  const msg: ConversationMessage = {
     id: uuidv4(),
     role,
     content,

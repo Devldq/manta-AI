@@ -4,6 +4,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { type WorkspaceConfig, type CreateWorkspaceInput, type UpdateWorkspaceInput } from '@/core/types'
+import { ensureDir, atomicWrite, shortId, removeDir, readJsonFile } from '../shared/fs-utils'
 
 function workspaceDataDir(): string {
   return path.join(os.homedir(), '.manta-data', 'workspaces')
@@ -15,24 +16,6 @@ function workspaceDir(id: string): string {
 
 function workspaceFilePath(id: string): string {
   return path.join(workspaceDir(id), 'workspace.json')
-}
-
-function ensureDir(dir: string): void {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
-  }
-}
-
-/** 原子写入：先写 .tmp 再 rename */
-function atomicWrite(filePath: string, data: string): void {
-  const tmp = filePath + '.tmp'
-  fs.writeFileSync(tmp, data, 'utf-8')
-  fs.renameSync(tmp, filePath)
-}
-
-/** 生成简短唯一 ID */
-function shortId(): string {
-  return Math.random().toString(36).slice(2, 10)
 }
 
 // ─── 公开 API ───────────────────────────────────────────────
