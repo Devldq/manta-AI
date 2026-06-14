@@ -218,33 +218,105 @@ interface TabConfig {
 }
 ```
 
-### 4.3 工作空间
+### 4.3 工作空间配置页
 
 ```typescript
 // 页面结构
-interface WorkspacePage {
+interface WorkspaceConfigPage {
   header: {
-    back: "返回应用"
-    title: "工作空间 — {appName}"
-    actions: ["设置", "更多"]
+    title: "工作空间配置"
+    actions: ["保存"]
   }
+  sections: [
+    {
+      title: "基本信息"
+      fields: ["name", "description"]
+    },
+    {
+      title: "智能体应用"
+      component: AgentAppSelector
+      description: "选择要在工作空间中使用的智能体应用"
+    },
+    {
+      title: "知识库"
+      component: KnowledgeBaseSelector
+      description: "选择要绑定的知识库"
+    },
+    {
+      title: "工作流"
+      component: WorkflowSelector
+      description: "选择要绑定的工作流"
+    }
+  ]
+}
+
+// 智能体应用选择器
+interface AgentAppSelector {
+  availableApps: AppConfig[]
+  selectedApps: string[]
+  onChange: (appIds: string[]) => void
+}
+
+// 知识库选择器
+interface KnowledgeBaseSelector {
+  availableKBs: KnowledgeBase[]
+  selectedKBs: string[]
+  onChange: (kbIds: string[]) => void
+}
+
+// 工作流选择器
+interface WorkflowSelector {
+  availableWorkflows: WorkflowDef[]
+  selectedWorkflows: string[]
+  onChange: (workflowIds: string[]) => void
+}
+```
+
+### 4.4 会话页
+
+```typescript
+// 页面结构
+interface ConversationPage {
+  // 侧边栏导航
   sidebar: {
-    conversations: Conversation[]
-    newConversation: () => void
+    items: [
+      { id: 'conversations', label: '会话', icon: MessageSquare },
+      { id: 'workspace', label: '工作空间', icon: Settings },
+      { id: 'apps', label: '智能体应用', icon: Bot },
+      { id: 'rag', label: '知识库', icon: Database },
+      { id: 'workflow', label: '工作流', icon: GitBranch }
+    ]
+    activeItem: string
+    onItemClick: (id: string) => void
   }
-  main: {
-    messages: ConversationMessage[]
-    input: MessageInput
-  }
-  contextPanel: {
-    knowledge: KnowledgeBase[]
-    tools: string[]
-    workDir: string
+  
+  // 会话内容
+  content: {
+    // 会话列表
+    conversationList: {
+      conversations: Conversation[]
+      currentId: string | null
+      onSelect: (id: string) => void
+      onNew: () => void
+    }
+    
+    // 对话区域
+    chatArea: {
+      messages: ConversationMessage[]
+      input: MessageInput
+      onSend: (message: string) => void
+      // @调用相关
+      atMention: {
+        show: boolean
+        apps: AppConfig[]
+        onSelect: (app: AppConfig) => void
+      }
+    }
   }
 }
 ```
 
-### 4.4 知识库详情页
+### 4.5 知识库详情页
 
 ```typescript
 // 页面结构
@@ -265,7 +337,7 @@ interface KnowledgeBasePage {
 }
 ```
 
-### 4.5 工作流编辑器
+### 4.6 工作流编辑器
 
 ```typescript
 // 页面结构
@@ -286,7 +358,7 @@ interface WorkflowEditorPage {
 }
 ```
 
-### 4.6 评估报告页
+### 4.7 评估报告页
 
 ```typescript
 // 页面结构
@@ -445,6 +517,46 @@ interface StatsCardProps {
   trend?: 'up' | 'down' | 'neutral'
   icon?: React.ReactNode
 }
+
+// 会话列表组件
+interface ConversationListProps {
+  conversations: Conversation[]
+  currentId: string | null
+  onSelect: (id: string) => void
+  onNew: () => void
+  onDelete: (id: string) => void
+}
+
+// 会话项组件
+interface ConversationItemProps {
+  conversation: Conversation
+  isActive: boolean
+  onClick: () => void
+  onDelete: () => void
+}
+
+// 消息输入组件
+interface MessageInputProps {
+  onSend: (message: string) => void
+  onAtMention: (query: string) => void
+  disabled?: boolean
+  placeholder?: string
+}
+
+// @提及组件
+interface AtMentionProps {
+  apps: AppConfig[]
+  show: boolean
+  onSelect: (app: AppConfig) => void
+  onClose: () => void
+}
+
+// 工作空间配置表单组件
+interface WorkspaceConfigFormProps {
+  config: WorkspaceConfig
+  onChange: (config: WorkspaceConfig) => void
+  onSave: () => void
+}
 ```
 
 ### 5.3 布局组件
@@ -464,6 +576,14 @@ interface SidebarProps {
   activeItem?: string
   onItemClick: (id: string) => void
   collapsed?: boolean
+  // 新增：导航项
+  navigationItems: [
+    { id: 'conversations', label: '会话', icon: MessageSquare },
+    { id: 'workspace', label: '工作空间', icon: Settings },
+    { id: 'apps', label: '智能体应用', icon: Bot },
+    { id: 'rag', label: '知识库', icon: Database },
+    { id: 'workflow', label: '工作流', icon: GitBranch }
+  ]
 }
 
 // 顶部栏组件
@@ -932,6 +1052,7 @@ function ParentComponent() {
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
 | 2026-06-14 | v1.0 | 初始版本，基于PRD 09创建 |
+| 2026-06-14 | v1.1 | 更新为侧边栏布局，添加工作空间配置页和会话页，添加相关组件 |
 
 ---
 

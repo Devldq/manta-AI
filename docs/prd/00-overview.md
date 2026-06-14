@@ -28,15 +28,29 @@
 │                    Manta 核心概念模型                          │
 │                                                              │
 │   ┌──────────────┐                                           │
-│   │  智能体应用    │  ← 产品形态：绑定知识库、工具、工作流       │
+│   │   工作空间     │  ← 顶层运行环境：包含多个会话              │
+│   │  Workspace    │                                          │
+│   └──────┬───────┘                                           │
+│          │                                                   │
+│          │ 包含多个                                           │
+│          ▼                                                   │
+│   ┌──────────────┐                                           │
+│   │     会话      │  ← 独立任务对话：支持多个智能体应用          │
+│   │ Conversation  │                                          │
+│   └──────┬───────┘                                           │
+│          │                                                   │
+│          │ 使用一个或多个                                      │
+│          ▼                                                   │
+│   ┌──────────────┐                                           │
+│   │  智能体应用    │  ← 产品形态：以Manta AI为基础，拓展能力     │
 │   │  Agent App    │                                          │
 │   └──────┬───────┘                                           │
 │          │                                                   │
-│          │ 运行在                                             │
+│          │ 基于                                               │
 │          ▼                                                   │
 │   ┌──────────────┐                                           │
-│   │   工作空间     │  ← 运行环境：对话、上下文、记忆            │
-│   │  Workspace    │                                          │
+│   │   Manta AI    │  ← 通用智能体：默认AI助手，基础对话能力     │
+│   │               │                                          │
 │   └──────┬───────┘                                           │
 │          │                                                   │
 │          │ 使用                                               │
@@ -57,8 +71,10 @@
 
 | 概念 | 定义 | 说明 |
 |------|------|------|
-| **智能体应用 (Agent App)** | 产品形态 | 绑定知识库、工具、工作流，可发布和分享 |
-| **工作空间 (Workspace)** | 运行环境 | 智能体应用的对话、上下文、记忆存储 |
+| **工作空间 (Workspace)** | 顶层运行环境 | 包含多个会话，是用户的"工作台"，可配置智能体应用、知识库、工作流 |
+| **会话 (Conversation)** | 独立任务对话 | 支持一个或多个智能体应用进行对话完成任务 |
+| **Manta AI** | 通用智能体 | 默认AI助手，负责基础对话和任务，是智能体应用的基础 |
+| **智能体应用 (Agent App)** | 产品形态 | 以Manta AI为基础，绑定知识库、工具、工作流、定制提示词，可在会话中通过@调用 |
 | **知识库 (Knowledge Base)** | 数据源 | RAG 文档处理，支持多后端向量数据库 |
 | **工作流 (Workflow)** | 任务编排 | 独立可重用的任务流，支持串行/并行/条件/循环 |
 | **工具 (Tools)** | 能力扩展 | 内置工具 + MCP 工具，可插拔 |
@@ -136,8 +152,10 @@ The core philosophy is **Agent as Application**: each agent app is an independen
 
 | Concept | Definition | Description |
 |---------|------------|-------------|
-| **Agent App** | Product form | Binds knowledge base, tools, workflow; publishable |
-| **Workspace** | Runtime environment | Dialogue, context, memory for agent apps |
+| **Workspace** | Top-level runtime | Contains multiple conversations, user's "workbench", can configure agent apps, knowledge bases, workflows |
+| **Conversation** | Independent task dialogue | Supports one or more agent apps to complete tasks |
+| **Manta AI** | General agent | Default AI assistant, handles basic conversations and tasks, foundation for agent apps |
+| **Agent App** | Product form | Extends Manta AI capabilities with knowledge base, tools, workflow, custom prompts; invoked via @ in conversations |
 | **Knowledge Base** | Data source | RAG document processing, multi-backend vector DB |
 | **Workflow** | Task orchestration | Independent reusable task flows |
 | **Tools** | Capability extension | Built-in + MCP tools, pluggable |
@@ -173,6 +191,7 @@ The core philosophy is **Agent as Application**: each agent app is an independen
 
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
+| 2026-06-14 | v4.0 | 新增Manta AI概念，明确智能体应用以Manta AI为基础拓展能力 |
 | 2026-06-14 | v3.0 | 重新组织：明确核心概念（智能体应用、工作空间、知识库、工作流），移除过度设计 |
 | 2026-06-12 | v2.0 | 产品定位升级：从 Agent Operating System 升级为 AI Native Agent Application Platform |
 | 2026-06-12 | v1.0 | 初始版本 |

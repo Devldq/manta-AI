@@ -2,18 +2,21 @@
 
 ## 1. 概述
 
-智能体应用是Manta平台的**核心产品形态**，每个应用都是一个独立的产品，绑定知识库、工具、工作流，运行在自己的工作空间中。本文档详细描述智能体应用模块的技术实现方案。
+智能体应用是Manta平台的**核心产品形态**，以 Manta AI 为基础，拓展出更强大的能力。每个智能体应用可以绑定知识库、工具、工作流，并通过工作空间配置来管理。本文档详细描述智能体应用模块的技术实现方案。
 
 ### 1.1 设计目标
-- **Agent as Application**：每个Agent都是一个产品
+- **以 Manta AI 为基础**：智能体应用是 Manta AI 的能力拓展
 - **配置驱动**：通过配置定义应用行为
 - **生命周期管理**：支持草稿、发布、归档状态
 - **模块化绑定**：灵活绑定知识库、工具、工作流
+- **工作空间集成**：通过工作空间配置来管理应用
 
 ### 1.2 核心概念
+- **Manta AI**：默认通用智能体，是智能体应用的基础
 - **AppConfig**：应用配置，包含所有绑定关系
-- **AgentOverride**：Agent参数覆盖
+- **AgentOverride**：Agent参数覆盖（系统提示词、模型参数等）
 - **RagBinding**：知识库绑定配置
+- **WorkflowBinding**：工作流绑定配置
 - **Automation**：自动化任务配置
 - **AppBuilder**：应用搭建器，可视化配置界面
 
@@ -76,8 +79,7 @@ interface AppConfig {
   tags: string[]
   status: AppStatus
 
-  // Agent 绑定
-  agentId: string
+  // 基础 Agent 配置（以 Manta AI 为基础）
   agentOverride: AgentOverride
 
   // 知识库绑定
@@ -120,11 +122,6 @@ class AppConfigValidator {
     
     if (!config.description || config.description.trim().length === 0) {
       errors.push({ field: 'description', message: '应用描述不能为空' })
-    }
-    
-    // Agent绑定验证
-    if (!config.agentId) {
-      errors.push({ field: 'agentId', message: '必须选择一个Agent' })
     }
     
     // Agent覆盖参数验证
@@ -240,12 +237,6 @@ class AppLifecycleManager {
   }
   
   private async handleAppCreated(app: AppConfig): Promise<void> {
-    // 创建默认工作空间
-    await workspaceService.create(app.id, {
-      name: `${app.name} - 工作空间`,
-      appId: app.id
-    })
-    
     // 初始化默认配置
     await this.initializeDefaultConfig(app)
   }
@@ -279,9 +270,6 @@ class AppLifecycleManager {
     // 清理资源
     await this.cleanupResources(app)
     
-    // 删除工作空间
-    await workspaceService.delete(app.id)
-    
     // 删除事件
     await this.logActivity(app.id, 'deleted', '应用已删除')
   }
@@ -314,7 +302,6 @@ class AppBuilder {
       icon: '🤖',
       tags: [],
       status: 'draft',
-      agentId: '',
       agentOverride: {},
       ragBinding: null,
       enabledTools: [],
@@ -336,10 +323,9 @@ class AppBuilder {
   }
   
   // 更新Agent配置
-  updateAgent(agentId: string, override: AgentOverride): void {
+  updateAgent(override: AgentOverride): void {
     this.config = {
       ...this.config,
-      agentId,
       agentOverride: override,
       updatedAt: new Date().toISOString()
     }
@@ -543,7 +529,6 @@ class AppService {
       icon: data.icon || '🤖',
       tags: data.tags || [],
       status: 'draft',
-      agentId: data.agentId,
       agentOverride: data.agentOverride || {},
       ragBinding: data.ragBinding || null,
       enabledTools: data.enabledTools || [],
@@ -762,10 +747,9 @@ export function AppBuilder({ appId }: { appId?: string }) {
         
         {activeTab === 'agent' && (
           <AgentTab
-            agentId={builder?.config.agentId}
             override={builder?.config.agentOverride}
-            onChange={(agentId, override) => {
-              builder?.updateAgent(agentId, override)
+            onChange={(override) => {
+              builder?.updateAgent(override)
               setIsDirty(true)
             }}
           />
@@ -1010,22 +994,22 @@ export function appErrorHandler(error: Error): NextResponse {
 ## 8. 实现计划
 
 ### 8.1 第一阶段：基础功能（2周）
-1. 实现应用配置数据结构
+1. 实现应用配置数据结构（基于 Manta AI）
 2. 实现应用CRUD API
 3. 实现状态机和生命周期管理
 4. 完成应用列表和详情页
 
 ### 8.2 第二阶段：搭建器（2周）
 1. 实现应用搭建器框架
-2. 实现各个配置Tab组件
+2. 实现各个配置Tab组件（系统提示词、知识库、工作流、工具）
 3. 实现配置验证和预览
 4. 添加保存和发布功能
 
-### 8.3 第三阶段：增强功能（1周）
+### 8.3 第三阶段：工作空间集成（1周）
 1. 实现应用复制功能
 2. 添加搜索和筛选
 3. 优化错误处理
-4. 完善文档和示例
+4. 完善与工作空间配置的集成
 
 ---
 
@@ -1034,6 +1018,7 @@ export function appErrorHandler(error: Error): NextResponse {
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
 | 2026-06-14 | v1.0 | 初始版本，基于PRD 05创建 |
+| 2026-06-14 | v1.1 | 更新为以 Manta AI 为基础的智能体应用概念，移除 agentId 字段 |
 
 ---
 

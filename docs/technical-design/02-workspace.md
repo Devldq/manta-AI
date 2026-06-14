@@ -4,15 +4,15 @@
 
 ## 1. 功能概述
 
-本文档基于 PRD 02 — 工作空间，提供 Manta 平台工作空间的**详细技术实现方案**。工作空间是智能体应用的运行环境，为每个应用提供独立的对话、上下文和记忆存储。
+本文档基于 PRD 02 — 工作空间，提供 Manta 平台工作空间的**详细技术实现方案**。
 
 ### 1.1 核心理念
 
-每个智能体应用都有自己的工作空间，就像每个应用都有自己的"办公室"。工作空间包含三个核心组件：
-
-- **对话 (Conversations)**：消息历史、工具调用记录
-- **上下文 (Context)**：工作目录、文件、环境变量
-- **记忆 (Memory)**：短期记忆、长期记忆、知识片段
+- **工作空间 (Workspace)** 是 Manta 平台的顶层运行环境，包含多个会话
+- **Manta AI** 是默认的通用智能体，负责处理基础对话和任务
+- **智能体应用**以 Manta AI 为基础，拓展出更强大的能力（RAG、工作流、定制系统提示词等）
+- 每个工作空间可配置多个智能体应用，通过 `@应用名` 在会话中调用
+- 未配置智能体应用时，由 Manta AI 直接处理消息
 
 ### 1.2 技术架构
 
@@ -20,23 +20,58 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                    工作空间 (Workspace)                        │
 │                                                              │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │                    会话列表                           │   │
+│   │  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │   │
+│   │  │   会话 1      │  │   会话 2      │  │   会话 N    │ │   │
+│   │  │ ┌──────────┐ │  │ ┌──────────┐ │  │            │ │   │
+│   │  │ │ Manta AI │ │  │ │ 应用 A   │ │  │   ...      │ │   │
+│   │  │ │ 应用 A   │ │  │ │ 应用 B   │ │  │            │ │   │
+│   │  │ └──────────┘ │  │ └──────────┘ │  │            │ │   │
+│   │  └──────────────┘  └──────────────┘  └────────────┘ │   │
+│   └─────────────────────────────────────────────────────┘   │
+│                                                              │
 │   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│   │    对话       │  │    上下文     │  │    记忆       │      │
-│   │ Conversations│  │   Context    │  │   Memory     │      │
+│   │   工作空间    │  │    对话       │  │    记忆       │      │
+│   │   配置       │  │ Conversations│  │   Memory     │      │
 │   └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
 │          │                 │                 │               │
-│          │                 │                 │               │
 │   ┌──────┴───────┐  ┌──────┴───────┐  ┌──────┴───────┐      │
-│   │ 会话列表      │  │ 工作目录      │  │ 短期记忆      │      │
-│   │ 消息历史      │  │ 文件上下文    │  │ 长期记忆      │      │
-│   │ 工具调用记录  │  │ 环境变量      │  │ 知识片段      │      │
+│   │ 智能体应用    │  │ 会话列表      │  │ 短期记忆      │      │
+│   │ 知识库绑定    │  │ 消息历史      │  │ 长期记忆      │      │
+│   │ 工作流绑定    │  │ @调用记录     │  │ 知识片段      │      │
 │   └──────────────┘  └──────────────┘  └──────────────┘      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## 2. 核心数据结构
 
-### 2.1 会话数据结构
+### 2.1 工作空间配置
+
+```typescript
+// 工作空间配置
+interface WorkspaceConfig {
+  id: string                      // UUID v4
+  name: string                    // 工作空间名称
+  description?: string            // 描述
+  agentAppIds: string[]           // 已配置的智能体应用 ID 列表
+  knowledgeBaseIds: string[]      // 已绑定的知识库 ID 列表
+  workflowIds: string[]           // 已绑定的工作流 ID 列表
+  createdAt: string
+  updatedAt: string
+}
+
+// Manta AI 配置（内置，不可删除）
+interface MantaAIConfig {
+  id: 'manta-ai'                  // 固定 ID
+  name: 'Manta AI'
+  description: '默认通用智能体'
+  capabilities: ['conversation', 'qa', 'basic-tasks']
+  isBuiltIn: true
+}
+```
+
+### 2.2 会话数据结构
 
 ```typescript
 // 会话状态
@@ -45,8 +80,9 @@ type ConversationStatus = 'active' | 'archived' | 'deleted'
 // 会话
 interface Conversation {
   id: string                      // UUID v4
-  appId: string                   // 所属应用
+  workspaceId: string             // 所属工作空间
   title: string                   // 会话标题（从首条消息自动生成）
+  activeAgentAppIds: string[]     // 当前会话激活的智能体应用
   messages: ConversationMessage[]
   context: ConversationContext
   status: ConversationStatus
@@ -58,6 +94,7 @@ interface Conversation {
 interface ConversationMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
+  agentAppId?: string             // 响应此消息的智能体应用 ID（如 'manta-ai' 或具体应用 ID）
   content: string
   toolCalls?: ToolCall[]
   toolResults?: ToolResult[]
@@ -65,30 +102,16 @@ interface ConversationMessage {
   metadata?: Record<string, unknown>
 }
 
-// 工具调用
-interface ToolCall {
-  id: string
-  name: string
-  arguments: Record<string, unknown>
-}
-
-// 工具结果
-interface ToolResult {
-  toolCallId: string
-  result: unknown
-  error?: string
-}
-
-// 会话上下文
-interface ConversationContext {
-  workDir?: string                // 工作目录
-  envVars?: Record<string, string> // 环境变量
-  files?: string[]                // 相关文件列表
-  tokensUsed: number              // 总 token 消耗
+// @调用解析结果
+interface AtMention {
+  agentAppId: string              // 被@的智能体应用 ID
+  agentAppName: string            // 应用名称
+  startIndex: number              // 在消息中的起始位置
+  endIndex: number                // 在消息中的结束位置
 }
 ```
 
-### 2.2 上下文窗口管理
+### 2.3 上下文窗口管理
 
 ```typescript
 // 上下文窗口
@@ -103,14 +126,15 @@ type ContextCompressionStrategy =
   | 'truncate'    // 直接截断旧消息
   | 'summarize'   // 用 LLM 总结旧消息
   | 'sliding'     // 滑动窗口，保留最近 N 条
+```
 
 // 上下文管理器
 interface IContextManager {
   // 获取上下文
-  getContext(appId: string): Promise<ConversationContext>
+  getContext(workspaceId: string): Promise<ConversationContext>
   
   // 更新上下文
-  updateContext(appId: string, context: Partial<ConversationContext>): Promise<void>
+  updateContext(workspaceId: string, context: Partial<ConversationContext>): Promise<void>
   
   // 管理上下文窗口
   manageContextWindow(messages: ConversationMessage[], maxTokens: number): Promise<ConversationMessage[]>
@@ -120,44 +144,97 @@ interface IContextManager {
 }
 ```
 
-## 3. 对话管理
+## 3. 核心服务
 
-### 3.1 会话生命周期
+### 3.1 工作空间配置服务
+
+```typescript
+// services/workspace.service.ts
+interface IWorkspaceService {
+  // 工作空间 CRUD
+  get(): Promise<WorkspaceConfig>
+  update(patch: UpdateWorkspaceInput): Promise<WorkspaceConfig>
+  
+  // 智能体应用配置
+  addAgentApp(agentAppId: string): Promise<void>
+  removeAgentApp(agentAppId: string): Promise<void>
+  listAgentApps(): Promise<AgentAppConfig[]>
+  
+  // 知识库绑定
+  bindKnowledgeBase(kbId: string): Promise<void>
+  unbindKnowledgeBase(kbId: string): Promise<void>
+  listKnowledgeBases(): Promise<KnowledgeBaseConfig[]>
+  
+  // 工作流绑定
+  bindWorkflow(workflowId: string): Promise<void>
+  unbindWorkflow(workflowId: string): Promise<void>
+  listWorkflows(): Promise<WorkflowConfig[]>
+}
+```
+
+### 3.2 @调用解析服务
+
+```typescript
+// services/at-mention.service.ts
+interface IAtMentionService {
+  // 解析消息中的@调用
+  parseAtMentions(message: string): AtMention[]
+  
+  // 获取被@的智能体应用
+  getAgentApps(mentions: AtMention[]): Promise<AgentAppConfig[]>
+  
+  // 路由消息到对应的智能体应用
+  routeMessage(message: string, mentions: AtMention[]): MessageRouting
+}
+
+// 消息路由结果
+interface MessageRouting {
+  // 默认由 Manta AI 处理
+  defaultHandler: 'manta-ai'
+  // 被@的智能体应用列表
+  targetedAgents: {
+    agentAppId: string
+    messageFragment: string  // 该应用负责处理的消息片段
+  }[]
+}
+```
+
+### 3.3 会话生命周期
 
 ```
 创建会话 → 对话交互 → 会话结束 → 归档/删除
     │          │          │          │
     │          │          │          └── 可选保留或删除
     │          │          └── 手动结束或超时
-    │          └── 消息交换、工具调用、知识检索
-    └── 初始化上下文、加载记忆
+    │          └── 消息交换、@调用、工具调用、知识检索
+    └── 初始化上下文、加载工作空间配置
 ```
 
-### 3.2 对话管理服务
+### 3.4 对话管理服务
 
 ```typescript
 // services/conversation.service.ts
 interface IConversationService {
   // 会话 CRUD
-  create(appId: string, title?: string): Promise<Conversation>
-  getById(appId: string, convId: string): Promise<Conversation | null>
-  list(appId: string, filter?: ConversationFilter): Promise<Conversation[]>
-  update(appId: string, convId: string, patch: UpdateConversationInput): Promise<Conversation>
-  delete(appId: string, convId: string): Promise<void>
+  create(workspaceId: string, title?: string): Promise<Conversation>
+  getById(workspaceId: string, convId: string): Promise<Conversation | null>
+  list(workspaceId: string, filter?: ConversationFilter): Promise<Conversation[]>
+  update(workspaceId: string, convId: string, patch: UpdateConversationInput): Promise<Conversation>
+  delete(workspaceId: string, convId: string): Promise<void>
   
   // 消息管理
-  addMessage(appId: string, convId: string, message: Omit<ConversationMessage, 'id' | 'timestamp'>): Promise<ConversationMessage>
-  getMessages(appId: string, convId: string, limit?: number): Promise<ConversationMessage[]>
+  addMessage(workspaceId: string, convId: string, message: Omit<ConversationMessage, 'id' | 'timestamp'>): Promise<ConversationMessage>
+  getMessages(workspaceId: string, convId: string, limit?: number): Promise<ConversationMessage[]>
   
-  // 流式消息
-  streamMessage(appId: string, convId: string, message: string): AsyncGenerator<StreamChunk>
+  // 流式消息（支持@调用）
+  streamMessage(workspaceId: string, convId: string, message: string): AsyncGenerator<StreamChunk>
   
   // 会话操作
-  archive(appId: string, convId: string): Promise<void>
-  restore(appId: string, convId: string): Promise<void>
+  archive(workspaceId: string, convId: string): Promise<void>
+  restore(workspaceId: string, convId: string): Promise<void>
   
   // 搜索
-  search(appId: string, query: string): Promise<Conversation[]>
+  search(workspaceId: string, query: string): Promise<Conversation[]>
 }
 ```
 
@@ -377,34 +454,40 @@ interface IMemoryIntegration {
 
 ## 6. API 设计
 
-### 6.1 会话管理 API
+### 6.1 工作空间配置 API
 
 | 方法 | 路径 | 描述 |
 |------|------|------|
-| `GET` | `/api/apps/:appId/conversations` | 获取会话列表 |
-| `POST` | `/api/apps/:appId/conversations` | 创建新会话 |
-| `GET` | `/api/apps/:appId/conversations/:convId` | 获取会话详情 |
-| `DELETE` | `/api/apps/:appId/conversations/:convId` | 删除会话 |
-| `POST` | `/api/apps/:appId/conversations/:convId/messages` | 发送消息 |
-| `GET` | `/api/apps/:appId/conversations/:convId/stream` | SSE 流式响应 |
-| `GET` | `/api/apps/:appId/context` | 获取当前上下文 |
-| `PUT` | `/api/apps/:appId/context` | 更新上下文 |
+| `GET` | `/api/workspace` | 获取工作空间配置 |
+| `PUT` | `/api/workspace` | 更新工作空间配置 |
+| `GET` | `/api/workspace/agent-apps` | 获取已配置的智能体应用列表 |
+| `POST` | `/api/workspace/agent-apps` | 添加智能体应用到工作空间 |
+| `DELETE` | `/api/workspace/agent-apps/:appId` | 从工作空间移除智能体应用 |
+| `GET` | `/api/workspace/knowledge-bases` | 获取已绑定的知识库列表 |
+| `POST` | `/api/workspace/knowledge-bases` | 绑定知识库到工作空间 |
+| `DELETE` | `/api/workspace/knowledge-bases/:kbId` | 解绑知识库 |
+| `GET` | `/api/workspace/workflows` | 获取已绑定的工作流列表 |
+| `POST` | `/api/workspace/workflows` | 绑定工作流到工作空间 |
+| `DELETE` | `/api/workspace/workflows/:workflowId` | 解绑工作流 |
 
-### 6.2 API 实现示例
+### 6.2 会话管理 API
+
+| 方法 | 路径 | 描述 |
+|------|------|------|
+| `GET` | `/api/conversations` | 获取会话列表 |
+| `POST` | `/api/conversations` | 创建新会话 |
+| `GET` | `/api/conversations/:convId` | 获取会话详情 |
+| `DELETE` | `/api/conversations/:convId` | 删除会话 |
+| `POST` | `/api/conversations/:convId/messages` | 发送消息（支持@调用） |
+| `GET` | `/api/conversations/:convId/stream` | SSE 流式响应 |
+
+### 6.3 API 实现示例
 
 ```typescript
-// app/api/apps/[appId]/conversations/route.ts
+// app/api/conversations/route.ts
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
-    const appId = searchParams.get('appId')
-    
-    if (!appId) {
-      return NextResponse.json({
-        success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'appId is required' }
-      }, { status: 400 })
-    }
     
     const filter: ConversationFilter = {
       status: searchParams.get('status') as ConversationStatus,
@@ -412,7 +495,7 @@ export async function GET(request: Request) {
       sort: searchParams.get('sort') as SortField
     }
     
-    const conversations = await conversationService.list(appId, filter)
+    const conversations = await conversationService.list(filter)
     
     return NextResponse.json({
       success: true,
@@ -425,18 +508,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { searchParams } = new URL(request.url)
-    const appId = searchParams.get('appId')
-    
-    if (!appId) {
-      return NextResponse.json({
-        success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'appId is required' }
-      }, { status: 400 })
-    }
-    
     const input: CreateConversationInput = await request.json()
-    const conversation = await conversationService.create(appId, input.title)
+    const conversation = await conversationService.create(input.title)
     
     return NextResponse.json({
       success: true,
@@ -450,42 +523,68 @@ export async function POST(request: Request) {
 
 ## 7. 前端组件设计
 
-### 7.1 工作空间页面组件
+### 7.1 整体布局
+
+采用侧边栏导航布局：
 
 ```typescript
-// components/workspace/WorkspacePage.tsx
-interface WorkspacePageProps {
-  appId: string
+// components/layout/AppLayout.tsx
+export function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-screen">
+      {/* 侧边栏 */}
+      <Sidebar />
+      
+      {/* 主内容区 */}
+      <main className="flex-1 overflow-auto">
+        {children}
+      </main>
+    </div>
+  )
 }
 
-export function WorkspacePage({ appId }: WorkspacePageProps) {
+// components/layout/Sidebar.tsx
+export function Sidebar() {
+  return (
+    <nav className="w-64 border-r bg-gray-50">
+      <div className="p-4">
+        <h1 className="text-xl font-bold">Manta</h1>
+      </div>
+      
+      <ul className="space-y-1 px-2">
+        <SidebarItem href="/conversations" icon={MessageSquare} label="会话" />
+        <SidebarItem href="/workspace" icon={Settings} label="工作空间" />
+        <SidebarItem href="/apps" icon={Bot} label="智能体应用" />
+        <SidebarItem href="/rag" icon={Database} label="知识库" />
+        <SidebarItem href="/workflow" icon={GitBranch} label="工作流" />
+      </ul>
+    </nav>
+  )
+}
+```
+
+### 7.2 会话页面组件
+
+```typescript
+// components/conversations/ConversationsPage.tsx
+export function ConversationsPage() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null)
-  const [context, setContext] = useState<ConversationContext | null>(null)
   
   useEffect(() => {
     loadConversations()
-    loadContext()
-  }, [appId])
+  }, [])
   
   const loadConversations = async () => {
-    const response = await fetch(`/api/apps/${appId}/conversations`)
+    const response = await fetch('/api/conversations')
     const data = await response.json()
     if (data.success) {
       setConversations(data.data)
     }
   }
   
-  const loadContext = async () => {
-    const response = await fetch(`/api/apps/${appId}/context`)
-    const data = await response.json()
-    if (data.success) {
-      setContext(data.data)
-    }
-  }
-  
   const handleNewConversation = async () => {
-    const response = await fetch(`/api/apps/${appId}/conversations`, {
+    const response = await fetch('/api/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: 'New Conversation' })
@@ -502,7 +601,7 @@ export function WorkspacePage({ appId }: WorkspacePageProps) {
     
     // 使用 SSE 流式响应
     const eventSource = new EventSource(
-      `/api/apps/${appId}/conversations/${currentConversation.id}/stream?message=${encodeURIComponent(message)}`
+      `/api/conversations/${currentConversation.id}/stream?message=${encodeURIComponent(message)}`
     )
     
     eventSource.onmessage = (event) => {
@@ -522,7 +621,7 @@ export function WorkspacePage({ appId }: WorkspacePageProps) {
   }
   
   return (
-    <div className="flex h-screen">
+    <div className="flex h-full">
       {/* 会话列表 */}
       <div className="w-64 border-r">
         <ConversationList
@@ -537,11 +636,6 @@ export function WorkspacePage({ appId }: WorkspacePageProps) {
       <div className="flex-1 flex flex-col">
         <MessageList messages={currentConversation?.messages || []} />
         <MessageInput onSend={handleSendMessage} />
-      </div>
-      
-      {/* 上下文面板 */}
-      <div className="w-64 border-l">
-        <ContextPanel context={context} />
       </div>
     </div>
   )
@@ -559,6 +653,10 @@ export function WorkspacePage({ appId }: WorkspacePageProps) {
 | 工具调用失败 | 显示错误信息，允许重试 |
 | 知识库检索超时 | 降级为无知识库模式 |
 | 并发会话冲突 | 每个会话独立，互不干扰 |
+| 工作空间配置无效 | 验证配置并返回详细错误信息 |
+| 智能体应用不存在 | 提示用户应用不存在或已删除 |
+| @调用解析失败 | 降级为 Manta AI 处理 |
+| 工作空间资源不足 | 提示用户清理资源或升级配置 |
 
 ### 8.2 错误处理实现
 
@@ -583,7 +681,19 @@ export const WorkspaceErrors = {
     new WorkspaceError('TOOL_CALL_FAILED', `Tool call failed: ${toolName} - ${error}`, 500),
   
   MEMORY_SEARCH_TIMEOUT: () =>
-    new WorkspaceError('MEMORY_SEARCH_TIMEOUT', 'Memory search timeout', 504)
+    new WorkspaceError('MEMORY_SEARCH_TIMEOUT', 'Memory search timeout', 504),
+  
+  WORKSPACE_NOT_FOUND: (workspaceId: string) =>
+    new WorkspaceError('WORKSPACE_NOT_FOUND', `Workspace not found: ${workspaceId}`, 404),
+  
+  WORKSPACE_CONFIG_INVALID: (details: string) =>
+    new WorkspaceError('WORKSPACE_CONFIG_INVALID', `Workspace configuration invalid: ${details}`, 400),
+  
+  AGENT_APP_NOT_FOUND: (appId: string) =>
+    new WorkspaceError('AGENT_APP_NOT_FOUND', `Agent application not found: ${appId}`, 404),
+  
+  AT_MENTION_PARSE_FAILED: (message: string) =>
+    new WorkspaceError('AT_MENTION_PARSE_FAILED', `Failed to parse @mention in message: ${message}`, 400)
 }
 ```
 
@@ -607,6 +717,12 @@ export const WorkspaceErrors = {
 - **上下文窗口**：动态调整上下文窗口大小
 - **记忆检索**：使用向量检索提高相关性
 
+### 9.4 工作空间优化
+
+- **配置缓存**：缓存工作空间配置，减少数据库查询
+- **智能体应用预加载**：预加载常用智能体应用配置
+- **资源池化**：共享知识库和工作流实例，减少资源消耗
+
 ## 10. 测试策略
 
 ### 10.1 单元测试
@@ -614,18 +730,24 @@ export const WorkspaceErrors = {
 - 会话管理服务
 - 上下文管理器
 - 记忆集成服务
+- 工作空间配置服务
+- @调用解析服务
 
 ### 10.2 集成测试
 
 - API 端点测试
 - 流式响应测试
 - 会话生命周期测试
+- 工作空间配置管理测试
+- 智能体应用绑定测试
 
 ### 10.3 E2E 测试
 
 - 完整对话流程
 - 会话管理操作
 - 上下文切换测试
+- 工作空间配置流程
+- @调用智能体应用流程
 
 ---
 
@@ -634,6 +756,7 @@ export const WorkspaceErrors = {
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
 | 2026-06-14 | v1.0 | 初始版本，基于 PRD 02 生成工作空间技术方案 |
+| 2026-06-14 | v1.1 | 更新工作空间概念，添加 Manta AI、@调用机制、侧边栏布局、工作空间配置服务 |
 
 ---
 

@@ -195,8 +195,7 @@ interface AppConfig {
   tags: string[]
   status: AppStatus
 
-  // Agent 绑定
-  agentId: string
+  // 基础 Agent 配置（以 Manta AI 为基础）
   agentOverride: AgentOverride
 
   // 知识库绑定
@@ -455,6 +454,53 @@ interface Evaluation {
 }
 ```
 
+### 3.7 工作空间相关
+
+```typescript
+// 工作空间配置
+interface WorkspaceConfig {
+  id: string
+  name: string
+  description?: string
+  agentAppIds: string[]
+  knowledgeBaseIds: string[]
+  workflowIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+// Manta AI 配置（默认通用智能体）
+interface MantaAIConfig {
+  id: 'manta-ai'
+  name: 'Manta AI'
+  description: '默认通用智能体'
+  capabilities: ['conversation', 'qa', 'basic-tasks']
+  isBuiltIn: true
+}
+
+// @提及配置
+interface AtMention {
+  agentAppId: string
+  agentAppName: string
+  startIndex: number
+  endIndex: number
+}
+
+// 对话（更新：添加工作空间关联）
+interface Conversation {
+  id: string
+  workspaceId: string
+  agentAppIds: string[]
+  agentAppId?: string
+  title: string
+  messages: ConversationMessage[]
+  context: ConversationContext
+  status: ConversationStatus
+  createdAt: string
+  updatedAt: string
+}
+```
+
 ---
 
 ## 4. 存储目录结构
@@ -476,6 +522,16 @@ const STORAGE_STRUCTURE = {
       evaluations: 'evaluations/',
       tools: 'tools/',
       logs: 'logs/'
+    }
+  },
+  workspaces: {
+    path: 'workspaces/{workspace-id}',
+    files: {
+      config: 'workspace.json',
+      conversations: 'conversations/',
+      agentApps: 'agent-apps/',
+      knowledgeBases: 'knowledge-bases/',
+      workflows: 'workflows/'
     }
   },
   shared: {
@@ -561,6 +617,36 @@ class StorageManager {
   // 获取全局配置路径
   getGlobalConfigPath(): string {
     return path.join(this.basePath, 'config', 'settings.json')
+  }
+  
+  // 获取工作空间目录
+  getWorkspacePath(workspaceId: string): string {
+    return path.join(this.basePath, 'workspaces', workspaceId)
+  }
+  
+  // 获取工作空间配置路径
+  getWorkspaceConfigPath(workspaceId: string): string {
+    return path.join(this.getWorkspacePath(workspaceId), 'workspace.json')
+  }
+  
+  // 获取工作空间对话路径
+  getWorkspaceConversationPath(workspaceId: string, conversationId: string): string {
+    return path.join(this.getWorkspacePath(workspaceId), 'conversations', `${conversationId}.json`)
+  }
+  
+  // 获取工作空间智能体应用路径
+  getWorkspaceAgentAppsPath(workspaceId: string): string {
+    return path.join(this.getWorkspacePath(workspaceId), 'agent-apps')
+  }
+  
+  // 获取工作空间知识库路径
+  getWorkspaceKnowledgeBasesPath(workspaceId: string): string {
+    return path.join(this.getWorkspacePath(workspaceId), 'knowledge-bases')
+  }
+  
+  // 获取工作空间工作流路径
+  getWorkspaceWorkflowsPath(workspaceId: string): string {
+    return path.join(this.getWorkspacePath(workspaceId), 'workflows')
   }
 }
 ```
@@ -1214,6 +1300,7 @@ interface Permission {
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
 | 2026-06-14 | v1.0 | 初始版本，基于PRD 08创建 |
+| 2026-06-14 | v1.1 | 添加工作空间数据模型，更新 AppConfig 接口，添加工作空间存储路径 |
 
 ---
 

@@ -94,8 +94,10 @@
 
 | PRD 概念 | 技术实现 | 说明 |
 |----------|----------|------|
-| **智能体应用 (Agent App)** | `AppConfig` + 应用服务 | 应用配置管理、生命周期 |
-| **工作空间 (Workspace)** | 对话管理 + 记忆系统 | 会话、上下文、记忆存储 |
+| **工作空间 (Workspace)** | WorkspaceService + WorkspaceStore | 顶层运行环境，包含多个会话，配置智能体应用、知识库、工作流 |
+| **会话 (Conversation)** | ConversationService + 对话管理 | 独立任务对话，支持@调用智能体应用 |
+| **Manta AI** | MantaAIService + Agent Loop | 通用智能体，基础对话能力，是智能体应用的基础 |
+| **智能体应用 (Agent App)** | AppConfig + 应用服务 | 以Manta AI为基础，拓展RAG、工作流、定制提示词等能力 |
 | **知识库 (Knowledge Base)** | RAG 引擎 + 向量数据库 | 文档处理、检索 |
 | **工作流 (Workflow)** | 工作流引擎 + 执行器 | 任务编排、执行 |
 | **工具 (Tools)** | 工具注册表 + 执行器 | MCP 工具、内置工具 |

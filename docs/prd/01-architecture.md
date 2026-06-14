@@ -60,9 +60,15 @@ Manta 采用分层架构，从上到下分为：UI 层 → API 层 → 应用层
 - System Prompt 定制
 
 **Workspace**：工作空间
-- 独立对话历史（每个应用独立的会话列表）
+- 多会话管理（工作空间包含多个会话）
+- 每个会话支持多个智能体应用进行对话
+- 配置管理（绑定智能体应用、知识库、工作流）
 - 上下文管理（当前对话上下文、工作目录）
 - 记忆系统（短期记忆 + 长期记忆）
+
+**Manta AI**：通用智能体
+- 默认AI助手，负责基础对话和任务
+- 是智能体应用的基础，智能体应用以Manta AI为基础拓展能力
 
 #### 2.2 引擎层（Engine Layer）
 
@@ -175,7 +181,7 @@ Manta uses a layered architecture: UI Layer → API Layer → Application Layer 
 
 ### 2. Core Modules
 
-**Application Layer**: AppManager (CRUD), AppBuilder (configuration), Workspace (dialogue/context/memory)
+**Application Layer**: AppManager (CRUD), AppBuilder (configuration), Workspace (multi-conversation management with configuration for agent apps, knowledge bases, workflows), Manta AI (default general agent)
 
 **Engine Layer**: Agent Loop (existing), Workflow Engine, RAG Engine, Eval Engine, Memory System
 
@@ -199,6 +205,7 @@ Existing `src/core/types.ts` defines: Task, WorkflowDef, WorkflowStep, WorkflowE
 
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
+| 2026-06-14 | v3.0 | 新增Manta AI模块，更新Workspace配置管理 |
 | 2026-06-14 | v2.0 | 重新组织：明确分层架构，映射现有类型，移除 Pipeline 重复概念 |
 | 2026-06-12 | v1.0 | 初始版本 |
 
