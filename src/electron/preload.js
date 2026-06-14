@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // AI: 文件夹选择对话框（用于插件安装）
   selectDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
 
+  // AI: 数据管理
+  openDataDir: () => ipcRenderer.invoke('app:openDataDir'),
+  resetSystem: () => ipcRenderer.invoke('app:resetSystem'),
+
   // AI start: 自动更新相关 API
   // 检查更新
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),

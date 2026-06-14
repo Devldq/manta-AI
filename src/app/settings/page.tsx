@@ -40,6 +40,7 @@ const TOC = [
   { id: 'section-webhook', label: 'Webhook 通知' },
   { id: 'section-plugins', label: '插件管理' },
   { id: 'section-sysinfo', label: '系统信息' },
+  { id: 'section-data-manage', label: '数据管理' },
 ]
 
 export default function SettingsPage() {
@@ -771,8 +772,86 @@ export default function SettingsPage() {
             style={{ border: '1px solid var(--color-border)' }}
           >
             <InfoRow label="版本" value="Manta v2.0.0" />
-            <InfoRow label="数据目录" value="~/manta-data/" />
-            <InfoRow label="会话存储" value="~/manta-data/conversations/" />
+            <InfoRow label="数据目录" value="~/.manta-data/" />
+            <InfoRow label="会话存储" value="~/.manta-data/conversations/" />
+          </div>
+        </section>
+
+        {/* ─── 数据管理 ─── */}
+        <section id="section-data-manage" className="mb-10 mt-10 scroll-mt-8">
+          <h2 style={{ fontSize: '14px', fontWeight: 500, color: 'var(--color-text-primary)', margin: '0 0 16px' }}>
+            数据管理
+          </h2>
+          <div
+            className="rounded-lg p-5"
+            style={{ border: '1px solid var(--color-border)' }}
+          >
+            <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: '16px' }}>
+              管理本地数据存储目录（<code style={{ fontFamily: 'var(--font-mono)' }}>~/.manta-data</code>），包含会话记录、LLM 配置、插件设置、记忆等。
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={async () => {
+                  const electronAPI = (window as unknown as { electronAPI?: { openDataDir?: () => Promise<{ success: boolean }> } }).electronAPI
+                  if (electronAPI?.openDataDir) {
+                    await electronAPI.openDataDir()
+                  } else {
+                    alert('请手动打开数据目录：~/.manta-data')
+                  }
+                }}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-md)',
+                  color: 'var(--color-text-secondary)',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>📂</span>
+                <span>打开数据目录</span>
+              </button>
+              <button
+                onClick={async () => {
+                  if (!confirm('确定要重置系统吗？\n\n这将删除所有本地数据（~/.manta-data），包括会话记录、LLM 配置、插件设置、记忆等。\n\n此操作不可撤销！')) return
+
+                  const electronAPI = (window as unknown as { electronAPI?: { resetSystem?: () => Promise<{ success: boolean; canceled?: boolean; error?: string }> } }).electronAPI
+                  if (electronAPI?.resetSystem) {
+                    const result = await electronAPI.resetSystem()
+                    if (result.success) {
+                      alert('系统已重置。请重启应用以完成重置。')
+                      window.location.reload()
+                    } else if (!result.canceled) {
+                      alert(`重置失败：${result.error ?? '未知错误'}`)
+                    }
+                  } else {
+                    alert('重置系统功能仅在 Electron 桌面应用中可用。请手动删除 ~/.manta-data 目录。')
+                  }
+                }}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  border: '1px solid #ef4444',
+                  borderRadius: 'var(--radius-md)',
+                  color: '#ef4444',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>🔄</span>
+                <span>重置系统</span>
+              </button>
+            </div>
+            <p style={{ marginTop: '12px', fontSize: '11px', color: 'var(--color-status-failed)', lineHeight: '1.5' }}>
+              ⚠ 重置将删除所有会话、配置、记忆等数据，操作不可撤销。重置后需重启应用。
+            </p>
           </div>
         </section>
       </div>

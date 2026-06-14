@@ -942,14 +942,89 @@ function SettingsTab() {
       </section>
 
       {/* ─── 系统信息 ─── */}
-      <section>
+      <section style={{ marginBottom: '20px' }}>
         <h2 style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-primary)', margin: '0 0 10px' }}>
           系统信息
         </h2>
         <div style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--color-border)' }}>
           <InfoRow label="版本" value="Manta v2.0.0" />
-          <InfoRow label="数据目录" value="~/manta-data/" />
-          <InfoRow label="会话存储" value="~/manta-data/conversations/" />
+          <InfoRow label="数据目录" value="~/.manta-data/" />
+          <InfoRow label="会话存储" value="~/.manta-data/conversations/" />
+        </div>
+      </section>
+
+      {/* ─── 数据管理 ─── */}
+      <section>
+        <h2 style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-primary)', margin: '0 0 10px' }}>
+          数据管理
+        </h2>
+        <div style={{ borderRadius: '8px', padding: '14px', border: '1px solid var(--color-border)' }}>
+          <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginBottom: '12px', lineHeight: '1.5' }}>
+            管理本地数据存储目录（<code style={{ fontFamily: 'var(--font-mono)' }}>~/.manta-data</code>），包含会话记录、LLM 配置、插件设置、记忆等。
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              onClick={async () => {
+                const electronAPI = (window as unknown as { electronAPI?: { openDataDir?: () => Promise<{ success: boolean }> } }).electronAPI
+                if (electronAPI?.openDataDir) {
+                  await electronAPI.openDataDir()
+                } else {
+                  alert('请手动打开数据目录：~/.manta-data')
+                }
+              }}
+              style={{
+                padding: '7px 14px',
+                fontSize: '12px',
+                border: '1px solid var(--color-border)',
+                borderRadius: '6px',
+                color: 'var(--color-text-secondary)',
+                background: 'transparent',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+              }}
+            >
+              <span>📂</span>
+              <span>打开数据目录</span>
+            </button>
+            <button
+              onClick={async () => {
+                if (!confirm('确定要重置系统吗？\n\n这将删除所有本地数据（~/.manta-data），包括会话记录、LLM 配置、插件设置、记忆等。\n\n此操作不可撤销！')) return
+
+                const electronAPI = (window as unknown as { electronAPI?: { resetSystem?: () => Promise<{ success: boolean; canceled?: boolean; error?: string }> } }).electronAPI
+                if (electronAPI?.resetSystem) {
+                  const result = await electronAPI.resetSystem()
+                  if (result.success) {
+                    alert('系统已重置。请重启应用以完成重置。')
+                    window.location.reload()
+                  } else if (!result.canceled) {
+                    alert(`重置失败：${result.error ?? '未知错误'}`)
+                  }
+                } else {
+                  alert('重置系统功能仅在 Electron 桌面应用中可用。请手动删除 ~/.manta-data 目录。')
+                }
+              }}
+              style={{
+                padding: '7px 14px',
+                fontSize: '12px',
+                border: '1px solid #ef4444',
+                borderRadius: '6px',
+                color: '#ef4444',
+                background: 'transparent',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+              }}
+            >
+              <span>🔄</span>
+              <span>重置系统</span>
+            </button>
+          </div>
+          <p style={{ marginTop: '10px', fontSize: '10px', color: 'var(--color-status-failed)', lineHeight: '1.5' }}>
+            ⚠ 重置将删除所有会话、配置、记忆等数据，操作不可撤销。重置后需重启应用。
+          </p>
         </div>
       </section>
     </div>

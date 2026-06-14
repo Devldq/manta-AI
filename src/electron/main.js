@@ -3,6 +3,7 @@
 try {
   const { app, BrowserWindow, ipcMain, dialog } = require('electron');
   const path = require('path');
+  const fs = require('fs');
   const http = require('http');
 
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -124,6 +125,46 @@ try {
       }
     }
     return { success: false, error: 'Dev mode' };
+  });
+
+  // IPC 处理：打开数据目录
+  ipcMain.handle('app:openDataDir', async () => {
+    const { shell } = require('electron');
+    const os = require('os');
+    const dataDir = path.join(os.homedir(), '.manta-data');
+
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    await shell.openPath(dataDir);
+    return { success: true };
+  });
+
+  // IPC 处理：重置系统（删除 ~/.manta-data）
+  ipcMain.handle('app:resetSystem', async () => {
+    const os = require('os');
+    const dataDir = path.join(os.homedir(), '.manta-data');
+
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['取消', '确认重置'],
+      defaultId: 0,
+      cancelId: 0,
+      title: '重置系统',
+      message: '确定要重置系统吗？',
+      detail: '这将删除所有本地数据（~/.manta-data），包括会话记录、LLM 配置、插件设置、记忆等。此操作不可撤销。',
+    });
+
+    if (result.response !== 1) return { success: false, canceled: true };
+
+    try {
+      if (fs.existsSync(dataDir)) {
+        fs.rmSync(dataDir, { recursive: true, force: true });
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   });
 
   // 创建窗口
