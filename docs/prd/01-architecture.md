@@ -6,58 +6,44 @@
 
 ### 1. 架构总览
 
-升级后的 Manta 在现有三层架构（UI 层 → 引擎层 → 插件层）基础上，新增**应用层**和**知识层**：
+Manta 采用分层架构，从上到下分为：UI 层 → API 层 → 应用层 → 引擎层 → 存储层。
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │                        UI 层 (Next.js App Router)                      │
 │  ┌──────────┐ ┌─────────┐ ┌──────────┐ ┌─────────┐ ┌─────────────┐  │
-│  │  聊天页   │ │ 应用管理 │ │ 应用搭建器 │ │ 知识库  │ │  评估中心   │  │
-│  │ /tasks   │ │ /apps   │ │/apps/[id]│ │/rag     │ │/evaluation  │  │
-│  │ (已有)   │ │ (升级)  │ │  /builder │ │ (新增)  │ │  (新增)    │  │
+│  │  聊天页   │ │ 应用管理 │ │ 知识库   │ │ 工作流  │ │  评估中心   │  │
+│  │ /tasks   │ │ /apps   │ │ /rag     │ │/workflow│ │/evaluation  │  │
 │  └──────────┘ └─────────┘ └──────────┘ └─────────┘ └─────────────┘  │
 ├──────────────────────────────────────────────────────────────────────┤
-│                       API 层 (REST + SSE + WebSocket)                 │
+│                       API 层 (REST + SSE)                             │
 │  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌─────────┐ ┌─────────┐   │
-│  │/api/apps │ │/api/rag  │ │/api/eval  │ │/api/chat│ │/api/... │   │
-│  │  (新增)  │ │  (新增)   │ │  (新增)   │ │ (已有)  │ │ (已有)  │   │
+│  │/api/apps │ │/api/rag  │ │/api/work- │ │/api/chat│ │/api/eval│   │
+│  │          │ │          │ │  flow     │ │         │ │         │   │
 │  └──────────┘ └──────────┘ └───────────┘ └─────────┘ └─────────┘   │
 ├──────────────────────────────────────────────────────────────────────┤
-│                      应用层 / Application Layer (新增)                │
+│                      应用层 / Application Layer                        │
 │  ┌───────────────┐ ┌───────────────┐ ┌───────────────────────────┐   │
-│  │ AppManager    │ │ AppBuilder    │ │ AppWorkspace              │   │
-│  │ 应用CRUD管理   │ │ 应用搭建引擎   │ │ 应用运行空间(对话/知识库)  │   │
+│  │ AppManager    │ │ AppBuilder    │ │ Workspace                 │   │
+│  │ 应用CRUD管理   │ │ 应用搭建引擎   │ │ 工作空间（对话/记忆/上下文）│   │
 │  └───────────────┘ └───────────────┘ └───────────────────────────┘   │
 ├──────────────────────────────────────────────────────────────────────┤
-│                      知识层 / Knowledge Layer (新增)                   │
-│  ┌──────────────────┐ ┌──────────────────┐ ┌────────────────────┐   │
-│  │ DocumentPipeline │ │ IRagProvider     │ │ KnowledgeManager   │   │
-│  │ 文档处理流水线    │ │ RAG抽象接口       │ │ 知识库生命周期管理  │   │
-│  │ parse→chunk→embed│ │ (多后端实现)      │ │                    │   │
-│  └──────────────────┘ └──────────────────┘ └────────────────────┘   │
+│                      引擎层 / Engine Layer                             │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │
+│  │Agent Loop│ │Workflow  │ │RAG Engine│ │Eval Engine│ │ Memory   │  │
+│  │ (已有)   │ │ Engine   │ │ (已有)   │ │          │ │ System   │  │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘  │
 ├──────────────────────────────────────────────────────────────────────┤
-│                    评估层 / Evaluation Layer (新增)                    │
-│  ┌──────────────────┐ ┌──────────────────┐ ┌────────────────────┐   │
-│  │ EvalPipeline     │ │ RAGAsAdapter     │ │EvalReportGenerator │   │
-│  │ 评估流水线引擎    │ │ RAGAs框架适配     │ │ 评估报告生成        │   │
-│  └──────────────────┘ └──────────────────┘ └────────────────────┘   │
-├──────────────────────────────────────────────────────────────────────┤
-│                 引擎层 / Engine Layer (已有，升级)                      │
-│  ┌──────────┐ ┌──────┐ ┌──────────┐ ┌───────────────┐ ┌─────────┐  │
-│  │Agent Loop│ │ LLM  │ │ Context  │ │ Observability │ │ Tools   │  │
-│  │ (已有)   │ │(已有)│ │ (已有)   │ │ (已有)        │ │ (已有)  │  │
-│  └──────────┘ └──────┘ └──────────┘ └───────────────┘ └─────────┘  │
-├──────────────────────────────────────────────────────────────────────┤
-│               存储层 / Storage Layer (已有，扩展)                       │
+│               存储层 / Storage Layer                                   │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────────────┐  │
-│  │ DataStore│ │ ~/.manta │ │ ~/.manta │ │ ~/.manta-data/apps/    │  │
+│  │DataStore │ │ ~/.manta │ │ ~/.manta │ │ ~/.manta-data/apps/    │  │
 │  │ (已有)   │ │ -data/   │ │ -data/   │ │ {app-id}/              │  │
-│  │          │ │ (已有)   │ │ rag/     │ │ 独立应用数据目录 (新增)  │  │
+│  │          │ │ (已有)   │ │ rag/     │ │ 独立应用数据目录         │  │
 │  └──────────┘ └──────────┘ └──────────┘ └────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2. 核心新增模块详解
+### 2. 核心模块详解
 
 #### 2.1 应用层（Application Layer）
 
@@ -65,95 +51,85 @@
 - 创建/编辑/删除/复制应用
 - 应用元数据管理（名称、描述、图标、标签）
 - 应用状态管理（草稿、已发布、已归档）
-- 应用配置持久化（JSON/YAML）
 
 **AppBuilder**：应用搭建引擎
 - Agent 选择与配置（从注册表选择已有 Agent + 微调参数）
 - 知识库绑定（关联 RAG 知识库）
+- 工作流绑定（关联工作流定义）
 - 工具选择（从工具注册表选择可用工具）
-- 自动化任务（定时触发、Webhook 触发）
 - System Prompt 定制
-- 输出格式定义
 
-**AppWorkspace**：应用运行空间
+**Workspace**：工作空间
 - 独立对话历史（每个应用独立的会话列表）
-- 知识库管理入口
-- 工具使用记录
-- 应用级设置
+- 上下文管理（当前对话上下文、工作目录）
+- 记忆系统（短期记忆 + 长期记忆）
 
-#### 2.2 知识层（Knowledge Layer）
+#### 2.2 引擎层（Engine Layer）
 
-**DocumentPipeline**：文档处理流水线
-```
-上传 → 格式检测 → 文本提取 → 智能分块 → 向量化 → 索引入库
-  │        │          │          │          │          │
-  │   自动识别    PDF/DOCX   滑动窗口    Embedding   写入向量
-  │   文件类型    /MD/TXT   语义分块    Model选择   数据库
-```
+**Agent Loop**：智能体执行循环（已有）
+- LLM 调用、工具执行、上下文管理
 
-**IRagProvider**：可插拔 RAG 接口
-```typescript
-interface IRagProvider {
-  readonly id: string;
-  readonly name: string;
-  readonly description: string;
-  
-  // 生命周期
-  initialize(config: RagConfig): Promise<void>;
-  destroy(): Promise<void>;
-  
-  // 文档操作
-  indexDocument(doc: ProcessedDocument): Promise<IndexResult>;
-  indexBatch(docs: ProcessedDocument[]): Promise<IndexResult[]>;
-  deleteDocument(docId: string): Promise<void>;
-  
-  // 检索
-  search(query: string, options?: SearchOptions): Promise<SearchResult[]>;
-  hybridSearch(query: string, options?: HybridSearchOptions): Promise<SearchResult[]>;
-  
-  // 健康检查与统计
-  healthCheck(): Promise<HealthStatus>;
-  getStats(): Promise<RagStats>;
-}
-```
+**Workflow Engine**：工作流引擎
+- 工作流定义解析
+- 步骤执行（串行/并行/条件/循环）
+- 人工审核节点（human-in-the-loop）
+- 执行状态追踪
 
-**计划支持的 RAG Provider**：
+**RAG Engine**：知识库引擎
+- 文档处理流水线（解析→分块→向量化）
+- 多后端支持（SQLite-vec、Milvus、Chroma、BM25）
+- 混合检索（向量 + 关键词）
 
-| Provider | 引擎 | 特点 | 适用场景 |
-|----------|------|------|---------|
-| SQLiteVecProvider | sqlite-vec | 零配置本地向量库 | 小规模个人知识库 |
-| MilvusProvider | Milvus | 分布式高性能向量库 | 大规模企业知识库 |
-| ChromaProvider | ChromaDB | 开源嵌入式向量库 | 中型知识库 |
-| BM25Provider | SQLite + BM25 | 关键词检索 | 混合检索补充 |
-| LLMCompilerProvider | LLM 编译 | LLM 编译进知识库 | 结构化知识 |
+**Eval Engine**：评估引擎
+- RAGAs 7 维度评估
+- Agent 6 维度评估
+- 评估报告生成
 
-#### 2.3 评估层（Evaluation Layer）
+**Memory System**：记忆系统
+- 短期记忆（对话上下文）
+- 长期记忆（跨对话知识）
 
-详见 [PRD 05 — 评估流水线](./05-evaluation.md)
-
-#### 2.4 存储层扩展
-
-现有存储 `~/.manta-data/` 基础上，新增：
+#### 2.3 存储层（Storage Layer）
 
 ```
 ~/.manta-data/
-├── apps/                        # 新增：应用数据根目录
+├── apps/                        # 应用数据根目录
 │   └── {app-id}/                # 单个应用空间
 │       ├── app.json             # 应用配置
 │       ├── conversations/       # 对话数据
 │       │   └── {conv-id}.json
-│       ├── rag/                 # RAG 知识库数据
-│       │   ├── documents/       # 原始文档
-│       │   └── index/           # 向量索引
+│       ├── knowledge/           # 知识库数据
+│       │   ├── kb.json
+│       │   ├── documents/
+│       │   └── index/
+│       ├── workflows/           # 工作流数据
+│       │   └── {workflow-id}.json
+│       ├── memory/              # 记忆数据
+│       │   ├── short-term.json
+│       │   └── long-term.json
 │       ├── evaluations/         # 评估结果
-│       │   └── {eval-id}.json
 │       └── logs/                # 应用级日志
 ├── rag/                         # 共享 RAG 配置
-│   └── providers.json           # Provider 配置
+│   └── providers.json
 └── ...                          # 现有数据保持不变
 ```
 
-### 3. 前后端交互模式
+### 3. 核心类型映射
+
+现有 `src/core/types.ts` 已定义的核心类型：
+
+| 类型 | 说明 | PRD 文档 |
+|------|------|---------|
+| `Task` | 任务对象（轻量/工作流模式） | PRD 04 - 工作流 |
+| `WorkflowDef` | 工作流定义 | PRD 04 - 工作流 |
+| `WorkflowStep` | 工作流步骤 | PRD 04 - 工作流 |
+| `WorkflowExecution` | 工作流执行实例 | PRD 04 - 工作流 |
+| `AgentEntry` | Agent 注册表条目 | PRD 05 - 智能体应用 |
+| `AppConfig` | 应用配置 | PRD 05 - 智能体应用 |
+| `RagBinding` | RAG 知识库绑定 | PRD 03 - 知识库 |
+| `Automation` | 自动化任务 | PRD 05 - 智能体应用 |
+
+### 4. 前后端交互模式
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -167,20 +143,21 @@ interface IRagProvider {
 │                            │                           │
 └────────────────────────────┼───────────────────────────┘
                              │
-                    REST / SSE / WebSocket
+                    REST / SSE
                              │
 ┌────────────────────────────┼───────────────────────────┐
 │                后端 API Route Handlers                   │
 │  ┌──────────────────────────────────────────────────┐  │
 │  │ /api/apps/*     → AppManager (应用CRUD)           │  │
-│  │ /api/rag/*      → KnowledgeManager (知识库操作)    │  │
-│  │ /api/eval/*     → EvalPipeline (评估执行)         │  │
-│  │ /api/chat/*     → AgentLoop (聊天，已有)          │  │
+│  │ /api/rag/*      → RAG Engine (知识库操作)          │  │
+│  │ /api/workflow/* → Workflow Engine (工作流操作)      │  │
+│  │ /api/eval/*     → Eval Engine (评估执行)           │  │
+│  │ /api/chat/*     → Agent Loop (聊天，已有)          │  │
 │  └──────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 4. 技术约束
+### 5. 技术约束
 
 - **兼容性**：不影响现有 `/tasks`、`/mcp`、`/settings` 页面的功能
 - **渐进增强**：现有 Agent 运行能力保持不变，应用层是上层封装
@@ -194,81 +171,27 @@ interface IRagProvider {
 
 ### 1. Architecture Overview
 
-The upgraded Manta adds **Application Layer** and **Knowledge Layer** on top of the existing three-layer architecture (UI → Engine → Plugin):
+Manta uses a layered architecture: UI Layer → API Layer → Application Layer → Engine Layer → Storage Layer.
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                      UI Layer (Next.js App Router)                     │
-│  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌──────────┐  │
-│  │  Chat    │ │ App Mgmt │ │App Builder│ │Knowledge │ │Evaluation│  │
-│  │ (existing)│ │(upgraded)│ │  (new)    │ │  (new)   │ │  (new)   │  │
-│  └──────────┘ └──────────┘ └───────────┘ └──────────┘ └──────────┘  │
-├──────────────────────────────────────────────────────────────────────┤
-│                     API Layer (REST + SSE + WebSocket)                 │
-│  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌──────────┐  │
-│  │/api/apps │ │/api/rag  │ │/api/eval  │ │/api/chat │ │/api/...  │  │
-│  │  (new)   │ │  (new)   │ │  (new)    │ │(existing)│ │(existing) │  │
-│  └──────────┘ └──────────┘ └───────────┘ └──────────┘ └──────────┘  │
-├──────────────────────────────────────────────────────────────────────┤
-│                   Application Layer (New)                              │
-│  ┌───────────────┐ ┌───────────────┐ ┌───────────────────────────┐   │
-│  │ AppManager    │ │ AppBuilder    │ │ AppWorkspace              │   │
-│  │ App CRUD      │ │ Build Engine  │ │ Runtime space per app     │   │
-│  └───────────────┘ └───────────────┘ └───────────────────────────┘   │
-├──────────────────────────────────────────────────────────────────────┤
-│                    Knowledge Layer (New)                               │
-│  ┌──────────────────┐ ┌──────────────────┐ ┌────────────────────┐   │
-│  │ DocumentPipeline │ │ IRagProvider     │ │ KnowledgeManager   │   │
-│  │ parse→chunk→embed│ │ Pluggable RAG    │ │ KB lifecycle       │   │
-│  └──────────────────┘ └──────────────────┘ └────────────────────┘   │
-├──────────────────────────────────────────────────────────────────────┤
-│                   Evaluation Layer (New)                               │
-│  ┌──────────────────┐ ┌──────────────────┐ ┌────────────────────┐   │
-│  │ EvalPipeline     │ │ RAGAsAdapter     │ │EvalReportGenerator │   │
-│  └──────────────────┘ └──────────────────┘ └────────────────────┘   │
-├──────────────────────────────────────────────────────────────────────┤
-│              Engine Layer (Existing, to be upgraded)                   │
-│  ┌──────────┐ ┌──────┐ ┌──────────┐ ┌───────────────┐ ┌─────────┐  │
-│  │Agent Loop│ │ LLM  │ │ Context  │ │ Observability │ │ Tools   │  │
-│  └──────────┘ └──────┘ └──────────┘ └───────────────┘ └─────────┘  │
-├──────────────────────────────────────────────────────────────────────┤
-│             Storage Layer (Existing, to be extended)                   │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────────────┐  │
-│  │DataStore │ │~/.manta  │ │~/.manta  │ │~/.manta-data/apps/     │  │
-│  │(existing)│ │-data/    │ │-data/rag/│ │{app-id}/ (new)         │  │
-│  └──────────┘ └──────────┘ └──────────┘ └────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────┘
-```
+### 2. Core Modules
 
-### 2. Key New Modules
+**Application Layer**: AppManager (CRUD), AppBuilder (configuration), Workspace (dialogue/context/memory)
 
-#### 2.1 Application Layer
+**Engine Layer**: Agent Loop (existing), Workflow Engine, RAG Engine, Eval Engine, Memory System
 
-- **AppManager**: Lifecycle management (CRUD, metadata, states: draft/published/archived)
-- **AppBuilder**: Agent configurator (agent selection, KB binding, tool selection, automation tasks, system prompt customization)
-- **AppWorkspace**: Per-app runtime space (isolated conversation history, KB management, tool usage records)
+**Storage Layer**: Per-app isolated data directories under `~/.manta-data/apps/{app-id}/`
 
-#### 2.2 Knowledge Layer
+### 3. Core Type Mapping
 
-**DocumentPipeline**: Upload → Format Detection → Text Extraction → Smart Chunking → Vectorization → Indexing
+Existing `src/core/types.ts` defines: Task, WorkflowDef, WorkflowStep, WorkflowExecution, AgentEntry, AppConfig, RagBinding, Automation.
 
-**IRagProvider**: Pluggable interface supporting SQLite-vec, Milvus, ChromaDB, BM25, and LLM-compiled knowledge bases.
+### 4. Tech Constraints
 
-#### 2.3 Evaluation Layer
-
-See [PRD 05 — Evaluation Pipeline](./05-evaluation.md)
-
-#### 2.4 Storage Extension
-
-New per-app data directories under `~/.manta-data/apps/{app-id}/` with isolated conversations, RAG index, evaluations, and logs.
-
-### 3. Tech Constraints
-
-- **Compatibility**: Existing pages (`/tasks`, `/mcp`, `/settings`) remain unaffected
-- **Progressive Enhancement**: Existing agent capabilities unchanged; app layer is an upper abstraction
-- **Local First**: v1 stores all data locally without cloud dependency
-- **Electron Compatible**: All features work in Electron desktop
-- **Performance**: App list first paint < 1s (≤ 50 apps)
+- Backward compatible with existing pages
+- Progressive enhancement over existing Agent capabilities
+- Local-first for v1
+- Electron compatible
+- App list first paint < 1s
 
 ---
 
@@ -276,9 +199,10 @@ New per-app data directories under `~/.manta-data/apps/{app-id}/` with isolated 
 
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
+| 2026-06-14 | v2.0 | 重新组织：明确分层架构，映射现有类型，移除 Pipeline 重复概念 |
 | 2026-06-12 | v1.0 | 初始版本 |
 
 ---
 
 > 上一篇：[PRD 00 — 项目概述](./00-overview.md)
-> 下一篇：[PRD 02 — 应用管理](./02-app-management.md)
+> 下一篇：[PRD 02 — 工作空间](./02-workspace.md)

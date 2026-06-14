@@ -8,92 +8,119 @@
 
 **Manta** 是一个 **AI Native 智能体应用平台**（AI Native Agent Application Platform）。
 
-它不是一个 Agent 运行器，不是一个 RAG 框架，也不是一个评测工具——它是一个让 Agent 从「一次对话」升级为「一个产品」的完整平台。核心理念是 **Agent as Application**：每个 Agent 都拥有独立的知识体系、工具能力、质量标准和发布通道——而这一切都是按需启用、自由组合的。
+核心理念是 **Agent as Application**：每个智能体应用都是一个独立的产品，拥有自己的知识库、工具能力、工作流和运行空间。
 
-和传统 AI 助手的本质区别：
+与传统 AI 助手的本质区别：
 
 | 维度 | 传统 AI 助手 | Manta 智能体应用 |
 |------|------------|-----------------|
 | **形态** | 聊天框，用完即弃 | 持久化应用，持续迭代 |
 | **知识** | 依赖模型预训练 | 独立 RAG 知识库，可喂养专属领域知识 |
-| **能力** | 固定工具集 | 可插拔 MCP 工具 + 自定义 Agent 配置 |
-| **质量** | 靠感觉用 | RAGAs + Agent 双维度评估流水线 |
-| **上线** | 手动操作 | 定时任务、Webhook 触发、一键发布 |
-| **可观测** | 黑盒 | 全链路日志、会话回放、上下文快照 |
+| **能力** | 固定工具集 | 可插拔工具 + 自定义工作流 |
+| **运行** | 单次对话 | 独立工作空间，支持记忆和上下文 |
+| **质量** | 靠感觉用 | RAGAs + Agent 双维度评估 |
+| **可观测** | 黑盒 | 全链路日志、会话回放 |
 
-### 2. 核心价值主张
-
-Manta 提供四大能力模块，**没有固定顺序，可独立使用、自由组合**：
+### 2. 核心概念
 
 ```
- ┌──────────────────────────────────────────────────────────┐
- │               Manta 能力矩阵                              │
- │                                                           │
- │  ┌──────────────┐  ┌──────────────┐                       │
- │  │  应用搭建器   │  │  RAG 知识库  │                       │
- │  │              │  │              │                       │
- │  │ · Agent 绑定 │  │ · 文档上传   │                       │
- │  │ · 工具配置   │  │ · 智能分块   │                       │
- │  │ · Prompt 调优│  │ · 向量化     │                       │
- │  │ · 自动化编排 │  │ · 混合检索   │                       │
- │  └──────┬───────┘  └──────┬───────┘                       │
- │         │                 │                               │
- │         │    自由组合     │                               │
- │         │                 │                               │
- │  ┌──────┴───────┐  ┌──────┴───────┐                       │
- │  │  评估流水线   │  │  自动化发布   │                       │
- │  │              │  │              │                       │
- │  │ · RAGAs 7 维 │  │ · 定时任务   │                       │
- │  │ · Agent 评估 │  │ · Webhook    │                       │
- │  │ · 数据集管理 │  │ · 状态管理   │                       │
- │  │ · 对比实验   │  │ · 版本控制   │                       │
- │  └──────────────┘  └──────────────┘                       │
- │                                                           │
- │  ┌────────────────────────────────────────────────────┐  │
- │  │              可观测性引擎（全局覆盖）                │  │
- │  └────────────────────────────────────────────────────┘  │
- └──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    Manta 核心概念模型                          │
+│                                                              │
+│   ┌──────────────┐                                           │
+│   │  智能体应用    │  ← 产品形态：绑定知识库、工具、工作流       │
+│   │  Agent App    │                                          │
+│   └──────┬───────┘                                           │
+│          │                                                   │
+│          │ 运行在                                             │
+│          ▼                                                   │
+│   ┌──────────────┐                                           │
+│   │   工作空间     │  ← 运行环境：对话、上下文、记忆            │
+│   │  Workspace    │                                          │
+│   └──────┬───────┘                                           │
+│          │                                                   │
+│          │ 使用                                               │
+│          ▼                                                   │
+│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│   │   知识库      │  │    工作流     │  │    工具       │      │
+│   │  Knowledge   │  │  Workflow    │  │   Tools      │      │
+│   │   Base       │  │              │  │              │      │
+│   └──────────────┘  └──────────────┘  └──────────────┘      │
+│                                                              │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │              评估系统（全局覆盖）                       │   │
+│   └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**使用场景举例**：
+**核心概念说明**：
 
-- 只建一个知识库，不绑定任何应用 → 用 RAG 知识库
-- 已有 Agent，只想跑评估 → 用评估流水线
-- 搭一个简单应用，不需要 RAG → 用应用搭建器 + 自动化发布
-- 全套餐：搭建应用 → 绑定知识库 → 评估质量 → 定时上线
+| 概念 | 定义 | 说明 |
+|------|------|------|
+| **智能体应用 (Agent App)** | 产品形态 | 绑定知识库、工具、工作流，可发布和分享 |
+| **工作空间 (Workspace)** | 运行环境 | 智能体应用的对话、上下文、记忆存储 |
+| **知识库 (Knowledge Base)** | 数据源 | RAG 文档处理，支持多后端向量数据库 |
+| **工作流 (Workflow)** | 任务编排 | 独立可重用的任务流，支持串行/并行/条件/循环 |
+| **工具 (Tools)** | 能力扩展 | 内置工具 + MCP 工具，可插拔 |
+| **评估 (Evaluation)** | 质量保障 | RAGAs 7 维度 + Agent 6 维度评估 |
 
-四种能力全部内置在可观测性引擎之上——无论怎么组合，都能看清 Agent 每一步在做什么、为什么这么做。
+### 3. 产品边界
 
-### 3. 目标用户画像
+**包含**：
+- 智能体应用管理（创建、编辑、删除、发布）
+- 应用搭建器（Agent 配置、工具选择、RAG 绑定、工作流绑定）
+- 工作空间（独立对话、上下文管理、记忆系统）
+- RAG 知识库引擎（多后端：SQLite-vec、Milvus、Chroma、BM25）
+- 工作流引擎（串行/并行/条件/循环，支持 human-in-the-loop）
+- 评估流水线（RAG 评估 + Agent 评估）
+
+**不包含（v1）**：
+- 多租户 SaaS 化部署（v1 仅本地单用户）
+- 应用市场/模板商店（未来版本）
+- 应用付费/计费系统
+- 移动端原生 App
+- 复杂的多 Agent 编排系统（用工作流 + 智能体应用组合实现）
+
+### 4. 目标用户画像
 
 | 角色 | 描述 | 核心诉求 |
 |------|------|---------|
 | **应用搭建者** | 非技术业务专家、PM、运营 | 无需编码，通过页面配置搭建智能体应用 |
 | **知识管理者** | 领域专家、文档维护者 | 上传/管理知识库文档，可视化处理知识数据 |
 | **Agent 开发者** | 技术型用户、AI 工程师 | 自定义 Agent 逻辑、接入外部工具、调试评估 |
-| **应用使用者** | 终端用户 | 在应用空间内与 Agent 对话，完成业务任务 |
+| **应用使用者** | 终端用户 | 在工作空间内与 Agent 对话，完成业务任务 |
 
-### 4. 产品边界
+### 5. 使用场景
 
-**包含**：
-- 应用 CRUD 管理（创建、编辑、删除、复制应用）
-- 应用搭建器（Agent 配置、工具选择、RAG 绑定、自动化任务）
-- RAG 知识库引擎（多后端：SQLite、Milvus、Chrome、BM25 混合检索）
-- 可视化文档处理流水线（上传 → 解析 → 分块 → 向量化）
-- 评估流水线（RAG 评估 + Agent 评估）
-- 应用独立工作空间（对话、知识库管理、工具配置）
+**场景 1：简单对话应用**
+- 创建智能体应用 → 配置 Agent → 发布 → 在工作空间对话
 
-**不包含**：
-- 多租户 SaaS 化部署（v1 仅本地单用户）
-- 应用市场/模板商店（未来版本）
-- 应用付费/计费系统
-- 移动端原生 App
+**场景 2：知识增强应用**
+- 创建知识库 → 上传文档 → 创建应用 → 绑定知识库 → 发布
 
-### 5. 产品命名
+**场景 3：自动化工作流**
+- 创建工作流（定义步骤）→ 创建应用 → 绑定工作流 → 定时触发
 
-- **产品名**：Manta（不变）
-- **新 Tagline**：「Agent as Application — 按需组合，不设流程」
-- **应用概念**：用户搭建的 Agent 实例，拥有独立空间、知识库、工具和发布通道，四大能力模块按需启用
+**场景 4：全功能应用**
+- 创建知识库 → 创建工作流 → 创建应用 → 绑定知识库+工作流+工具 → 评估质量 → 发布
+
+### 6. 技术栈
+
+| 层级 | 技术选型 |
+|------|---------|
+| **前端框架** | Next.js 15 + React 19 + TypeScript |
+| **样式** | Tailwind CSS + CSS 变量（65 套主题） |
+| **状态管理** | Zustand |
+| **图标** | lucide-react |
+| **后端** | Next.js Route Handlers (API Routes) |
+| **存储** | 文件系统 (JSON) + SQLite-vec + 可选云向量库 |
+| **LLM** | OpenAI / Anthropic / Ollama（本地） |
+
+### 7. 产品命名
+
+- **产品名**：Manta
+- **Tagline**：「Agent as Application — 每个 Agent 都是一个产品」
+- **核心概念**：智能体应用 (Agent App) = 知识库 + 工具 + 工作流 + 工作空间
 
 ---
 
@@ -103,92 +130,42 @@ Manta 提供四大能力模块，**没有固定顺序，可独立使用、自由
 
 **Manta** is an **AI Native Agent Application Platform**.
 
-It's not an agent runner, not a RAG framework, not an evaluation tool — it's a complete platform that upgrades an Agent from "a conversation" to "a product". The core philosophy is **Agent as Application**: each agent owns its independent knowledge system, tool capabilities, quality standards, and release channels — all modular, opt-in, and freely combinable.
+The core philosophy is **Agent as Application**: each agent app is an independent product with its own knowledge base, tools, workflow, and workspace.
 
-Key differences from traditional AI assistants:
+### 2. Core Concepts
 
-| Dimension | Traditional AI Assistant | Manta Agent Application |
-|-----------|------------------------|------------------------|
-| **Form** | Chat box, disposable | Persistent app, iterated continuously |
-| **Knowledge** | Relies on model pretraining | Independent RAG KB, feedable with domain knowledge |
-| **Capabilities** | Fixed toolset | Pluggable MCP tools + custom Agent config |
-| **Quality** | Subjective feel | RAGAs + Agent dual-dimension evaluation pipeline |
-| **Deployment** | Manual operation | Cron jobs, Webhook triggers, one-click publish |
-| **Observability** | Black box | Full-chain logs, session replay, context snapshots |
+| Concept | Definition | Description |
+|---------|------------|-------------|
+| **Agent App** | Product form | Binds knowledge base, tools, workflow; publishable |
+| **Workspace** | Runtime environment | Dialogue, context, memory for agent apps |
+| **Knowledge Base** | Data source | RAG document processing, multi-backend vector DB |
+| **Workflow** | Task orchestration | Independent reusable task flows |
+| **Tools** | Capability extension | Built-in + MCP tools, pluggable |
+| **Evaluation** | Quality assurance | RAGAs 7-dim + Agent 6-dim evaluation |
 
-### 2. Core Value Proposition
+### 3. Product Scope
 
-Manta offers four capability modules — **no fixed order, use independently or combine freely**:
+**In Scope**: Agent app management, app builder, workspace, RAG knowledge engine, workflow engine, evaluation pipeline.
 
-```
- ┌──────────────────────────────────────────────────────────┐
- │               Manta Capability Matrix                     │
- │                                                           │
- │  ┌──────────────┐  ┌──────────────┐                       │
- │  │ App Builder  │  │   RAG KB     │                       │
- │  │              │  │              │                       │
- │  │ · Agent bind │  │ · Doc upload │                       │
- │  │ · Tool config│  │ · Chunking   │                       │
- │  │ · Prompt tune│  │ · Vectorize  │                       │
- │  │ · Automation │  │ · Hybrid srch│                       │
- │  └──────┬───────┘  └──────┬───────┘                       │
- │         │                 │                               │
- │         │  combine freely │                               │
- │         │                 │                               │
- │  ┌──────┴───────┐  ┌──────┴───────┐                       │
- │  │ Eval Pipeline│  │  Auto Deploy │                       │
- │  │              │  │              │                       │
- │  │ · RAGAs 7D   │  │ · Cron jobs  │                       │
- │  │ · Agent eval │  │ · Webhooks   │                       │
- │  │ · Datasets   │  │ · Status mgmt│                       │
- │  │ · A/B compare│  │ · Versioning │                       │
- │  └──────────────┘  └──────────────┘                       │
- │                                                           │
- │  ┌────────────────────────────────────────────────────┐  │
- │  │          Observability Engine (global coverage)     │  │
- │  └────────────────────────────────────────────────────┘  │
- └──────────────────────────────────────────────────────────┘
-```
+**Out of Scope (v1)**: Multi-tenant SaaS, app marketplace, billing, mobile apps, complex multi-agent orchestration.
 
-**Usage examples**:
-
-- Just build a knowledge base, no app needed → use RAG KB
-- Already have an agent, just want to evaluate → use Eval Pipeline
-- Build a simple app without RAG → use App Builder + Auto Deploy
-- Full combo: build app → bind KB → evaluate quality → schedule release
-
-All four modules sit on top of the observability engine — no matter how you combine them, you always see what your agent is doing at every step, and why.
-
-### 3. Target Personas
+### 4. Target Personas
 
 | Role | Description | Core Needs |
 |------|-------------|------------|
-| **App Builder** | Non-technical business experts, PMs, operations | Build agent apps via UI configuration, no coding required |
-| **Knowledge Manager** | Domain experts, documentation maintainers | Upload/manage KB documents, visually process knowledge data |
-| **Agent Developer** | Technical users, AI engineers | Customize agent logic, integrate external tools, debug & evaluate |
-| **App End User** | End users | Chat with agents in app workspace, complete business tasks |
+| **App Builder** | Non-technical experts, PMs | Build agent apps via UI, no coding |
+| **Knowledge Manager** | Domain experts | Upload/manage KB documents |
+| **Agent Developer** | AI engineers | Customize agent logic, integrate tools |
+| **App End User** | End users | Chat with agents in workspace |
 
-### 4. Product Scope
+### 5. Tech Stack
 
-**In Scope**:
-- App CRUD management (create, edit, delete, clone apps)
-- App Builder (Agent config, tool selection, RAG binding, automation tasks)
-- RAG knowledge engine (multi-backend: SQLite, Milvus, Chroma, BM25 hybrid)
-- Visual document processing pipeline (upload → parse → chunk → vectorize)
-- Evaluation pipeline (RAG evaluation + Agent evaluation)
-- Independent app workspace (chat history, KB management, tool config)
-
-**Out of Scope (v1)**:
-- Multi-tenant SaaS deployment (local single-user only for v1)
-- App marketplace / template store (future versions)
-- App payment / billing system
-- Native mobile apps
-
-### 5. Product Naming
-
-- **Product Name**: Manta (unchanged)
-- **New Tagline**: "Agent as Application — modular, not a pipeline"
-- **App Concept**: User-built agent instance with independent workspace, knowledge base, tools, and release channels — four capability modules that can be opted in freely
+- **Frontend**: Next.js 15 + React 19 + TypeScript
+- **Styling**: Tailwind CSS + CSS variables (65 themes)
+- **State**: Zustand
+- **Backend**: Next.js Route Handlers
+- **Storage**: File system (JSON) + SQLite-vec + optional cloud vector DB
+- **LLM**: OpenAI / Anthropic / Ollama (local)
 
 ---
 
@@ -196,6 +173,7 @@ All four modules sit on top of the observability engine — no matter how you co
 
 | 日期 | 版本 | 变更说明 |
 |------|------|---------|
+| 2026-06-14 | v3.0 | 重新组织：明确核心概念（智能体应用、工作空间、知识库、工作流），移除过度设计 |
 | 2026-06-12 | v2.0 | 产品定位升级：从 Agent Operating System 升级为 AI Native Agent Application Platform |
 | 2026-06-12 | v1.0 | 初始版本 |
 

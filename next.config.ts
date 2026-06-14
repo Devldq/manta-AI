@@ -1,1 +1,1 @@
-config/base/next.config.ts
+export { default } from "./config/base/next.config.ts";
