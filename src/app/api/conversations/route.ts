@@ -2,9 +2,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createConversation, listConversations } from '@storage/conversation/store'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const conversations = listConversations()
+    const { searchParams } = new URL(req.url)
+    const workspaceId = searchParams.get('workspaceId')
+
+    let conversations = listConversations()
+
+    // 按工作空间过滤（若指定）
+    if (workspaceId) {
+      conversations = conversations.filter((c) => c.workspaceId === workspaceId)
+    }
+
     return NextResponse.json({ conversations })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })

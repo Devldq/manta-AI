@@ -218,7 +218,222 @@ interface TabConfig {
 }
 ```
 
-### 4.3 工作空间配置页
+### 4.3 侧边栏 (Sidebar)
+
+采用极简深色主题设计，功能导航在顶部，会话/工作空间 Tab 在下方。
+
+#### 4.3.1 布局结构
+
+```
+┌───────────────────────────────┐
+│ ① 顶部操作栏                    │
+│ ☰ 🔍         + 新建会话 Ctrl N │
+├───────────────────────────────┤
+│ ② 功能导航                       │
+│ 🤖 智能体应用                    │
+│ 🗄 知识库                        │
+│ 🔀 工作流                        │
+├─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤
+│ ③ Tab 切换                       │
+│ 会话    工作空间                 │
+├───────────────────────────────┤
+│ ④ 内容列表（可滚动）            │
+│  · 帮我写 React 组件    刚刚    │
+│  · 解释 useEffect       10分钟  │
+│  · 优化代码性能          1小时  │
+├─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤
+│ ⑤ 底部用户栏                    │
+│ M Manta                  ⚙    │
+└───────────────────────────────┘
+```
+
+#### 4.3.2 设计配色
+
+| 语义 | 色值 | 用途 |
+|------|------|------|
+| 背景 | `#18181b` | 侧边栏整体背景 |
+| 表面 | `#27272a` | Tab 选中态、分割线 |
+| 主文字 | `#fafafa` | 选中项、活跃内容 |
+| 次要文字 | `#a1a1aa` | 导航项、默认文字 |
+| 辅助文字 | `#52525b` | 时间标签、图标 |
+| 品牌色 | `#6366f1` | 选中高亮、强调 |
+
+#### 4.3.3 数据结构
+
+```typescript
+// 侧边栏配置
+type TabMode = 'conversation' | 'workspace'
+
+interface SidebarConfig {
+  mode: TabMode
+  // 顶部操作栏
+  topBar: {
+    menuIcon: 'hamburger'
+    searchIcon: 'search'
+    createButton: {
+      label: string       // 根据 mode 动态切换
+      shortcut: 'Ctrl N'
+    }
+  }
+  // 功能导航
+  navItems: NavItem[]
+  // 内容区
+  content: ConversationModeContent | WorkspaceModeContent
+  // 底部栏
+  bottomBar: {
+    avatar: string
+    name: string
+    settingsIcon: 'settings'
+  }
+}
+
+interface NavItem {
+  id: string
+  label: string
+  icon: string
+  route: string
+  badge?: number
+}
+
+// 会话模式内容
+interface ConversationModeContent {
+  mode: 'conversation'
+  createLabel: '新建会话'
+  conversations: Conversation[]
+}
+
+// 工作空间模式内容
+interface WorkspaceModeContent {
+  mode: 'workspace'
+  createLabel: '新建空间'
+  workspaces: Workspace[]
+}
+```
+
+#### 4.3.4 Tab 切换逻辑
+
+```typescript
+// Tab 切换控制器
+class SidebarTabController {
+  private mode: TabMode = 'conversation'
+  
+  switchTab(mode: TabMode): void {
+    this.mode = mode
+    this.updateCreateButton()
+    this.updateContentList()
+  }
+  
+  private updateCreateButton(): void {
+    // 会话模式 → 「新建会话」
+    // 工作空间模式 → 「新建空间」
+  }
+  
+  private updateContentList(): void {
+    // 会话模式 → 显示 Manta AI 通用对话列表
+    // 工作空间模式 → 显示工作空间列表（可展开二级对话）
+  }
+}
+```
+
+#### 4.3.5 前端组件
+
+```tsx
+// components/layout/Sidebar.tsx
+export function Sidebar() {
+  const [mode, setMode] = useState<TabMode>('conversation')
+  
+  return (
+    <aside className="w-60 bg-[#18181b] flex flex-col h-screen">
+      {/* ① 顶部操作栏 */}
+      <div className="px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <MenuIcon />
+          <SearchIcon />
+        </div>
+        <CreateButton mode={mode} />
+      </div>
+      
+      {/* ② 功能导航 */}
+      <div className="px-3 pb-2">
+        <NavItem icon="Bot" label="智能体应用" route="/apps" />
+        <NavItem icon="Database" label="知识库" route="/rag" />
+        <NavItem icon="GitBranch" label="工作流" route="/workflow" />
+      </div>
+      
+      <div className="mx-4 border-t border-[#27272a]" />
+      
+      {/* ③ Tab 切换 */}
+      <div className="px-4 py-2">
+        <div className="flex gap-1 text-xs">
+          <TabButton label="会话" active={mode === 'conversation'} onClick={() => setMode('conversation')} />
+          <TabButton label="工作空间" active={mode === 'workspace'} onClick={() => setMode('workspace')} />
+        </div>
+      </div>
+      
+      {/* ④ 内容列表（可滚动） */}
+      <div className="flex-1 overflow-auto">
+        {mode === 'conversation' ? <ConversationList /> : <WorkspaceList />}
+      </div>
+      
+      {/* ⑤ 底部用户栏 */}
+      <div className="px-4 py-2 border-t border-[#27272a] flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Avatar name="Manta" />
+          <span className="text-xs text-[#a1a1aa]">Manta</span>
+        </div>
+        <SettingsIcon />
+      </div>
+    </aside>
+  )
+}
+
+// Tab 按钮组件
+function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      className={`px-2 py-1 rounded text-xs ${
+        active ? 'bg-[#27272a] text-white font-medium' : 'text-[#52525b] hover:text-[#a1a1aa]'
+      }`}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  )
+}
+
+// 会话列表组件
+function ConversationList() {
+  const conversations = useConversations()
+  return (
+    <div className="py-1">
+      <SectionHeader title="会话" />
+      {conversations.map(conv => (
+        <ListItem
+          key={conv.id}
+          title={conv.title}
+          time={conv.lastActiveAt}
+          active={conv.isActive}
+        />
+      ))}
+    </div>
+  )
+}
+
+// 工作空间列表组件（支持二级展开）
+function WorkspaceList() {
+  const workspaces = useWorkspaces()
+  return (
+    <div className="py-1">
+      <SectionHeader title="工作空间" />
+      {workspaces.map(ws => (
+        <WorkspaceItem key={ws.id} workspace={ws} />
+      ))}
+    </div>
+  )
+}
+```
+
+### 4.4 工作空间配置页
 
 ```typescript
 // 页面结构
@@ -272,51 +487,30 @@ interface WorkflowSelector {
 }
 ```
 
-### 4.4 会话页
+### 4.5 会话页
 
 ```typescript
-// 页面结构
+// 页面结构（侧边栏已在 4.3 定义）
 interface ConversationPage {
-  // 侧边栏导航
-  sidebar: {
-    items: [
-      { id: 'conversations', label: '会话', icon: MessageSquare },
-      { id: 'workspace', label: '工作空间', icon: Settings },
-      { id: 'apps', label: '智能体应用', icon: Bot },
-      { id: 'rag', label: '知识库', icon: Database },
-      { id: 'workflow', label: '工作流', icon: GitBranch }
-    ]
-    activeItem: string
-    onItemClick: (id: string) => void
-  }
+  // 侧边栏：Sidebar 组件（见 4.3）
+  sidebar: SidebarConfig
   
-  // 会话内容
-  content: {
-    // 会话列表
-    conversationList: {
-      conversations: Conversation[]
-      currentId: string | null
-      onSelect: (id: string) => void
-      onNew: () => void
-    }
-    
-    // 对话区域
-    chatArea: {
-      messages: ConversationMessage[]
-      input: MessageInput
-      onSend: (message: string) => void
-      // @调用相关
-      atMention: {
-        show: boolean
-        apps: AppConfig[]
-        onSelect: (app: AppConfig) => void
-      }
+  // 对话区域
+  chatArea: {
+    messages: ConversationMessage[]
+    input: MessageInput
+    onSend: (message: string) => void
+    // @调用相关
+    atMention: {
+      show: boolean
+      apps: AppConfig[]
+      onSelect: (app: AppConfig) => void
     }
   }
 }
 ```
 
-### 4.5 知识库详情页
+### 4.6 知识库详情页
 
 ```typescript
 // 页面结构
@@ -337,7 +531,7 @@ interface KnowledgeBasePage {
 }
 ```
 
-### 4.6 工作流编辑器
+### 4.7 工作流编辑器
 
 ```typescript
 // 页面结构
@@ -358,7 +552,7 @@ interface WorkflowEditorPage {
 }
 ```
 
-### 4.7 评估报告页
+### 4.8 评估报告页
 
 ```typescript
 // 页面结构
@@ -1053,6 +1247,7 @@ function ParentComponent() {
 |------|------|---------|
 | 2026-06-14 | v1.0 | 初始版本，基于PRD 09创建 |
 | 2026-06-14 | v1.1 | 更新为侧边栏布局，添加工作空间配置页和会话页，添加相关组件 |
+| 2026-06-14 | v1.2 | 新增侧边栏完整设计规范（4.3），极简深色风格，功能导航在顶部，Tab切换会话/工作空间 |
 
 ---
 

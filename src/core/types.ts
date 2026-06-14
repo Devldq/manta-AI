@@ -417,4 +417,50 @@ export interface UpdateAppInput {
   enabledTools?: string[]
   automations?: Automation[]
 }
+// ─── 工作空间配置 ───────────────────────────────────────────────
+
+/** 工作空间配置（顶层运行环境，包含多个会话） */
+export interface WorkspaceConfig {
+  id: string
+  name: string
+  description?: string
+
+  /** 绑定的智能体应用 ID 列表 */
+  agentAppIds: string[]
+
+  /** 绑定的知识库 ID 列表 */
+  knowledgeBaseIds: string[]
+
+  /** 绑定的工作流 ID 列表 */
+  workflowIds: string[]
+
+  createdAt: string
+  updatedAt: string
+}
+
+/** 创建工作空间的输入 */
+export interface CreateWorkspaceInput {
+  name: string
+  description?: string
+}
+
+/** 更新工作空间的输入 */
+export interface UpdateWorkspaceInput {
+  name?: string
+  description?: string
+  agentAppIds?: string[]
+  knowledgeBaseIds?: string[]
+  workflowIds?: string[]
+}
+
+// ─── @调用 ───────────────────────────────────────────────
+
+/** @调用提及信息 */
+export interface AtMention {
+  agentAppId: string
+  agentAppName: string
+  startIndex: number
+  endIndex: number
+}
+
 /*  end: 核心类型定义结束 */

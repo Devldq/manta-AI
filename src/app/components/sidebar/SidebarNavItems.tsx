@@ -1,0 +1,39 @@
+/* SidebarNavItems — 功能导航：智能体应用、知识库、工作流 */
+'use client'
+
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { Bot, Database, GitBranch } from 'lucide-react'
+
+const NAV_ITEMS = [
+  { href: '/apps', label: '智能体应用', icon: Bot },
+  { href: '/rag', label: '知识库', icon: Database },
+  { href: '/workflow', label: '工作流', icon: GitBranch },
+]
+
+export function SidebarNavItems() {
+  const pathname = usePathname()
+
+  return (
+    <div className="px-3 pb-2 space-y-0.5 flex-shrink-0">
+      {NAV_ITEMS.map((item) => {
+        const isActive = pathname.startsWith(item.href)
+        const Icon = item.icon
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${
+              isActive
+                ? 'bg-[#27272a] text-[#fafafa]'
+                : 'text-[#a1a1aa] hover:bg-[#27272a]/50 hover:text-[#fafafa]'
+            }`}
+          >
+            <Icon size={13} className={isActive ? 'text-[#6366f1]' : 'text-[#52525b]'} />
+            <span className={isActive ? 'font-medium' : ''}>{item.label}</span>
+          </Link>
+        )
+      })}
+    </div>
+  )
+}

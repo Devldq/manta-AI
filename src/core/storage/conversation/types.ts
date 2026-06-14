@@ -44,6 +44,8 @@ export interface Conversation {
   agentName: string
   messages: Message[]
   context: ConversationContext
+  /** 所属工作空间 ID（可选，向后兼容旧数据） */
+  workspaceId?: string
   createdAt: string
   updatedAt: string
 }
