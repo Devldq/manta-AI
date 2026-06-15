@@ -3,7 +3,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { type WorkspaceConfig, type CreateWorkspaceInput, type UpdateWorkspaceInput } from '@/core/types'
+import { v4 as uuidv4 } from 'uuid'
+import { type WorkspaceConfig, type CreateWorkspaceInput, type UpdateWorkspaceInput, type Conversation, type ConversationMessage, type ToolCallRecord, type StepUsageRecord } from '@/core/types'
 import { ensureDir, atomicWrite, shortId, removeDir, readJsonFile } from '../shared/fs-utils'
 
 function workspaceDataDir(): string {
@@ -16,6 +17,21 @@ function workspaceDir(id: string): string {
 
 function workspaceFilePath(id: string): string {
   return path.join(workspaceDir(id), 'workspace.json')
+}
+
+/** 工作空间会话目录 */
+function workspaceConversationsDir(workspaceId: string): string {
+  return path.join(workspaceDir(workspaceId), 'conversations')
+}
+
+/** 工作空间会话文件夹路径 */
+function workspaceConvDir(workspaceId: string, conversationId: string): string {
+  return path.join(workspaceConversationsDir(workspaceId), conversationId)
+}
+
+/** 工作空间会话 JSON 文件路径 */
+function workspaceConvSessionFilePath(workspaceId: string, conversationId: string): string {
+  return path.join(workspaceConvDir(workspaceId, conversationId), 'session.json')
 }
 
 // ─── 公开 API ───────────────────────────────────────────────
@@ -93,6 +109,120 @@ export function deleteWorkspace(id: string): boolean {
   try {
     if (fs.existsSync(dir)) {
       fs.rmSync(dir, { recursive: true, force: true })
+      return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
+// ─── 工作空间会话 API ───────────────────────────────────────────────
+
+/** 创建工作空间会话 */
+export function createWorkspaceConversation(workspaceId: string, agentName: string, title?: string): Conversation | null {
+  const wsDir = workspaceDir(workspaceId)
+  if (!fs.existsSync(wsDir)) return null
+
+  const now = new Date().toISOString()
+  const conv: Conversation = {
+    id: uuidv4(),
+    title: title ?? '新对话',
+    agentName,
+    messages: [],
+    context: {},
+    workspaceId,
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  const convDir = workspaceConvDir(workspaceId, conv.id)
+  ensureDir(convDir)
+  atomicWrite(workspaceConvSessionFilePath(workspaceId, conv.id), JSON.stringify(conv, null, 2))
+  return conv
+}
+
+/** 获取工作空间会话列表 */
+export function listWorkspaceConversations(workspaceId: string): Conversation[] {
+  const convsDir = workspaceConversationsDir(workspaceId)
+  if (!fs.existsSync(convsDir)) return []
+
+  const conversations: Conversation[] = []
+  try {
+    const entries = fs.readdirSync(convsDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const sessionPath = workspaceConvSessionFilePath(workspaceId, entry.name)
+      if (fs.existsSync(sessionPath)) {
+        try {
+          const conv = JSON.parse(fs.readFileSync(sessionPath, 'utf-8')) as Conversation
+          conversations.push(conv)
+        } catch { /* skip corrupt files */ }
+      }
+    }
+  } catch { /* directory might not exist yet */ }
+
+  return conversations.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+}
+
+/** 获取单个工作空间会话 */
+export function getWorkspaceConversation(workspaceId: string, conversationId: string): Conversation | null {
+  const sessionPath = workspaceConvSessionFilePath(workspaceId, conversationId)
+  try {
+    if (!fs.existsSync(sessionPath)) return null
+    return JSON.parse(fs.readFileSync(sessionPath, 'utf-8')) as Conversation
+  } catch {
+    return null
+  }
+}
+
+/** 更新工作空间会话 */
+export function updateWorkspaceConversation(workspaceId: string, conversationId: string, conv: Conversation): void {
+  const sessionPath = workspaceConvSessionFilePath(workspaceId, conversationId)
+  atomicWrite(sessionPath, JSON.stringify(conv, null, 2))
+}
+
+/** 追加消息到工作空间会话 */
+export function appendWorkspaceMessage(
+  workspaceId: string,
+  conversationId: string,
+  role: 'user' | 'assistant',
+  content: string,
+  toolCalls?: ToolCallRecord[],
+  usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number },
+  stepUsages?: StepUsageRecord[],
+  agentAppId?: string,
+): { conv: Conversation; message: ConversationMessage } | null {
+  const conv = getWorkspaceConversation(workspaceId, conversationId)
+  if (!conv) return null
+
+  const msg: ConversationMessage = {
+    id: uuidv4(),
+    role,
+    content,
+    timestamp: new Date().toISOString(),
+    ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(usage ? { usage } : {}),
+    ...(stepUsages && stepUsages.length > 0 ? { stepUsages } : {}),
+    ...(agentAppId ? { agentAppId } : {}),
+  }
+  conv.messages.push(msg)
+  conv.updatedAt = new Date().toISOString()
+
+  if (role === 'user' && conv.title === '新对话') {
+    conv.title = content.slice(0, 30) + (content.length > 30 ? '…' : '')
+  }
+
+  updateWorkspaceConversation(workspaceId, conversationId, conv)
+  return { conv, message: msg }
+}
+
+/** 删除工作空间会话 */
+export function deleteWorkspaceConversation(workspaceId: string, conversationId: string): boolean {
+  const convDir = workspaceConvDir(workspaceId, conversationId)
+  try {
+    if (fs.existsSync(convDir)) {
+      fs.rmSync(convDir, { recursive: true, force: true })
       return true
     }
     return false

@@ -70,7 +70,7 @@ function migrateOldFormat(id: string): boolean {
 }
 
 /** 创建新会话 */
-export function createConversation(agentName: string, title?: string): Conversation {
+export function createConversation(agentName: string, title?: string, workspaceId?: string): Conversation {
   ensureDir()
   const now = new Date().toISOString()
   const conv: Conversation = {
@@ -79,6 +79,7 @@ export function createConversation(agentName: string, title?: string): Conversat
     agentName,
     messages: [],
     context: {},
+    workspaceId,
     createdAt: now,
     updatedAt: now,
   }

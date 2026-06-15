@@ -22,7 +22,7 @@ export function fetchConversations(params?: { workspaceId?: string }): Conversat
 
 export function createNewConversation(input: unknown): Conversation {
   const data = validateWithZod(CreateConversationSchema, input)
-  return createConversation(data.agentName, data.title)
+  return createConversation(data.agentName, data.title, data.workspaceId)
 }
 
 export function getConversationById(id: string): Conversation | null {

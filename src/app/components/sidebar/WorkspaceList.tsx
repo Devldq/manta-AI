@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Plus } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { useWorkspaceStore } from '@/stores/workspace-store'
@@ -27,29 +27,44 @@ export function WorkspaceList() {
     fetchList()
   }, [fetchList])
 
-  // 展开时加载该工作空间的会话
+  // 工作空间列表加载后，自动加载所有会话
+  useEffect(() => {
+    if (items.length > 0) {
+      items.forEach((ws) => {
+        if (!wsConversations[ws.id] && !loadingWs.has(ws.id)) {
+          loadConversations(ws.id)
+        }
+      })
+    }
+  }, [items])
+
+  async function loadConversations(wsId: string) {
+    setLoadingWs((prev) => new Set(prev).add(wsId))
+    try {
+      const res = await fetch(`/api/workspaces/${wsId}/conversations`)
+      if (res.ok) {
+        const data = await res.json()
+        setWsConversations((prev) => ({ ...prev, [wsId]: data.conversations ?? [] }))
+      }
+    } catch {
+      setWsConversations((prev) => ({ ...prev, [wsId]: [] }))
+    } finally {
+      setLoadingWs((prev) => {
+        const next = new Set(prev)
+        next.delete(wsId)
+        return next
+      })
+    }
+  }
+
+  // 展开/折叠时加载该工作空间的会话
   async function handleToggle(wsId: string) {
     const wasExpanded = expandedIds.has(wsId)
     toggleExpand(wsId)
 
     if (!wasExpanded && !wsConversations[wsId]) {
       // 首次展开，加载会话
-      setLoadingWs((prev) => new Set(prev).add(wsId))
-      try {
-        const res = await fetch(`/api/workspaces/${wsId}/conversations`)
-        if (res.ok) {
-          const data = await res.json()
-          setWsConversations((prev) => ({ ...prev, [wsId]: data.conversations ?? [] }))
-        }
-      } catch {
-        setWsConversations((prev) => ({ ...prev, [wsId]: [] }))
-      } finally {
-        setLoadingWs((prev) => {
-          const next = new Set(prev)
-          next.delete(wsId)
-          return next
-        })
-      }
+      await loadConversations(wsId)
     }
   }
 
@@ -67,6 +82,30 @@ export function WorkspaceList() {
   function handleConvClick(convId: string) {
     setActiveId(convId)
     router.push(`/tasks?convId=${convId}`)
+  }
+
+  async function handleNewConversation(wsId: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    try {
+      const res = await fetch(`/api/workspaces/${wsId}/conversations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentName: 'default',
+          title: '新会话',
+        }),
+      })
+      const json = await res.json()
+      if (json.success && json.data?.conversation) {
+        const convId = json.data.conversation.id
+        setActiveId(convId)
+        // 刷新该工作空间的会话列表
+        loadConversations(wsId)
+        router.push(`/tasks?convId=${convId}`)
+      }
+    } catch {
+      // 忽略错误
+    }
   }
 
   if (loading && items.length === 0) {
@@ -109,6 +148,14 @@ export function WorkspaceList() {
               <span className="text-[10px] text-[#52525b]">
                 {conversations ? `${conversations.length}` : ws.conversationCount > 0 ? `${ws.conversationCount}` : ''}
               </span>
+              {/* 新建会话按钮 */}
+              <button
+                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-[#27272a] text-[#52525b] hover:text-[#a1a1aa]"
+                onClick={(e) => handleNewConversation(ws.id, e)}
+                title="新建会话"
+              >
+                <Plus size={12} />
+              </button>
             </div>
 
             {/* 二级会话列表（展开时） */}

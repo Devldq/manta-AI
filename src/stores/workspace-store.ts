@@ -41,7 +41,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       }
       const json = await res.json()
       if (json.success && json.data?.workspaces) {
-        set({ items: json.data.workspaces, loading: false })
+        // 默认展开所有工作空间
+        const allIds = new Set(json.data.workspaces.map((ws: WorkspaceSummary) => ws.id))
+        set({ items: json.data.workspaces, loading: false, expandedIds: allIds })
       } else {
         set({ items: [], loading: false })
       }

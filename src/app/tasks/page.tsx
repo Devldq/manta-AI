@@ -1419,13 +1419,7 @@ function ChatView({
                 {reconnect.finished ? '已完成' : '生成中…'}
               </span>
             )}
-            <button onClick={onNewChat}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-fast"
-              style={{ border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
-              + 新对话
-            </button>
+
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-fast"
@@ -1520,7 +1514,7 @@ function NewChatDraft({
         body: JSON.stringify({ agentName, mode: 'chat', title: msg.slice(0, 30) }),
       })
       const data = await res.json()
-      const convId: string = data.conversation?.id
+      const convId: string = data.data?.conversation?.id
       if (!convId) throw new Error('创建会话失败')
       onCreated(convId, msg)
     } catch (err) {

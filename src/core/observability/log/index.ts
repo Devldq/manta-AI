@@ -6,6 +6,7 @@ export * from './formatter'
 
 import { DefaultLogCollector, defaultLogCollector } from './collector'
 import { DefaultLogFormatter, defaultLogFormatter, LogExporter } from './formatter'
+import { logFileWriter } from './file-writer'
 import {
   LogEntry,
   LogLevel,
@@ -73,56 +74,17 @@ export class LogManager {
 
   /** 获取系统日志文件路径 */
   static getLogFilePath(): string {
-    // 动态 require 避免客户端打包 fs/os/path
-    if (typeof window !== 'undefined') return ''
-    try {
-      const path = require('path')
-      const os = require('os')
-      return path.join(os.homedir(), '.manta-data', 'system.log')
-    } catch {
-      return ''
-    }
+    return logFileWriter.getLogFilePath()
   }
 
   /** 获取会话专属日志文件路径 */
   static getSessionLogFilePath(conversationId: string): string {
-    if (typeof window !== 'undefined') return ''
-    try {
-      const path = require('path')
-      const os = require('os')
-      const dir = path.join(os.homedir(), '.manta-data', 'conversations', conversationId)
-      return path.join(dir, 'log.ndjson')
-    } catch {
-      return ''
-    }
+    return logFileWriter.getSessionLogFilePath(conversationId)
   }
 
   /** 将日志追加写入文件（仅服务端生效）— 双写：全局 system.log + 会话专属 log.ndjson */
   private appendToFile(entry: LogEntry): void {
-    if (typeof window !== 'undefined') return
-    try {
-      const fs = require('fs')
-      const path = require('path')
-
-      // 1. 写入全局日志文件
-      const globalLog = LogManager.getLogFilePath()
-      if (globalLog) {
-        const globalDir = path.dirname(globalLog)
-        if (!fs.existsSync(globalDir)) fs.mkdirSync(globalDir, { recursive: true })
-        fs.appendFileSync(globalLog, JSON.stringify(entry) + '\n')
-      }
-
-      // 2. 如果有关联的会话ID，同时写入会话专属日志文件
-      const conversationId = entry.metadata?.conversationId
-      if (conversationId) {
-        const sessionLog = LogManager.getSessionLogFilePath(conversationId)
-        if (sessionLog) {
-          const sessionDir = path.dirname(sessionLog)
-          if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true })
-          fs.appendFileSync(sessionLog, JSON.stringify(entry) + '\n')
-        }
-      }
-    } catch { /* 写入失败不影响内存日志 */ }
+    logFileWriter.appendToFile(entry)
   }
 
   /** 添加日志 */
