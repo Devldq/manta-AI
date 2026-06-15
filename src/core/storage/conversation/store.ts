@@ -140,6 +140,7 @@ export function appendMessage(
   toolCalls?: ToolCallRecord[],
   usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number },
   stepUsages?: StepUsageRecord[],
+  agentAppId?: string,
 ): { conv: Conversation; message: ConversationMessage } | null {
   const conv = readConv(convId)
   if (!conv) return null
@@ -152,6 +153,7 @@ export function appendMessage(
     ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
     ...(usage ? { usage } : {}),
     ...(stepUsages && stepUsages.length > 0 ? { stepUsages } : {}),
+    ...(agentAppId ? { agentAppId } : {}),
   }
   conv.messages.push(msg)
   conv.updatedAt = new Date().toISOString()

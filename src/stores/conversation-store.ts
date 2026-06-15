@@ -19,6 +19,7 @@ interface ConversationStore {
 
   fetchList: (params?: { workspaceId?: string }) => Promise<void>
   deleteConversation: (id: string) => Promise<boolean>
+  sendMessage: (conversationId: string, content: string, agentAppId?: string) => Promise<boolean>
   setActiveId: (id: string | null) => void
 }
 
@@ -70,6 +71,26 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
       }
       return false
     } catch {
+      return false
+    }
+  },
+
+  sendMessage: async (conversationId, content, agentAppId) => {
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, agentAppId }),
+      })
+      const json = await res.json()
+      if (json.success && json.data?.message) {
+        // 可以更新会话的最后消息时间等
+        return true
+      }
+      set({ error: json.error?.message ?? '发送消息失败' })
+      return false
+    } catch (err) {
+      set({ error: String(err) })
       return false
     }
   },

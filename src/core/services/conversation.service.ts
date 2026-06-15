@@ -38,7 +38,15 @@ export function addMessage(
   input: unknown
 ): { conversation: Conversation; message: ConversationMessage } | null {
   const data = validateWithZod(SendMessageSchema, input)
-  const result = appendMessage(conversationId, data.role as 'user' | 'assistant', data.content)
+  const result = appendMessage(
+    conversationId,
+    data.role as 'user' | 'assistant',
+    data.content,
+    undefined,
+    undefined,
+    undefined,
+    data.agentAppId
+  )
   if (!result) return null
   return { conversation: result.conv, message: result.message }
 }

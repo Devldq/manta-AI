@@ -455,6 +455,36 @@ export interface UpdateWorkspaceInput {
   workflowIds?: string[]
 }
 
+// ─── 知识库类型 ───────────────────────────────────────────────
+
+/** 知识库配置 */
+export interface KnowledgeBase {
+  id: string
+  name: string
+  description?: string
+  /** 使用的 RAG Provider ID */
+  providerId: string
+  /** 知识库配置 */
+  config: {
+    dimensions?: number
+    similarityThreshold?: number
+    topK?: number
+    hybridSearch?: {
+      enabled: boolean
+      vectorWeight: number
+      keywordWeight: number
+    }
+  }
+  /** 文档数量 */
+  documentCount: number
+  /** 块数量 */
+  chunkCount: number
+  /** 创建时间 */
+  createdAt: string
+  /** 更新时间 */
+  updatedAt: string
+}
+
 // ─── 会话类型 ───────────────────────────────────────────────
 
 /** 持久化的工具调用记录（一次工具调用的 input/output） */
