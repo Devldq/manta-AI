@@ -1,6 +1,7 @@
 /* AI start: 流式聊天核心处理逻辑 */
 import { getLLMConfig } from '@llm/config-store'
 import { appendMessage } from '@storage/conversation/store'
+import { appendWorkspaceMessage } from '@storage/workspace/store'
 import type { ToolCallRecord, StepUsageRecord } from '@storage/conversation/types'
 import { readAgentSoul } from '@context/agent-soul'
 import {
@@ -19,6 +20,7 @@ export interface StreamChatOptions {
   messages: UIMessage[]
   agentName: string
   conversationId: string
+  workspaceId?: string
 }
 
 /** 启动结果的返回类型 */
@@ -31,7 +33,7 @@ export interface StreamChatResult {
  * 启动流式聊天 Agent Loop（如果该会话已有活跃循环则不重复启动）
  * Loop 与 HTTP 连接完全解耦，通过 LoopRegistry 广播事件
  */
-export async function startAgentLoop({ messages, agentName, conversationId }: StreamChatOptions): Promise<StreamChatResult> {
+export async function startAgentLoop({ messages, agentName, conversationId, workspaceId }: StreamChatOptions): Promise<StreamChatResult> {
   // 如果已有活跃循环，不重复启动
   if (getActiveLoop(conversationId)) {
     return { isNew: false }
@@ -148,7 +150,11 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
         const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
         const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
         if (userText) {
-          appendMessage(conversationId, 'user', userText)
+          if (workspaceId) {
+            appendWorkspaceMessage(workspaceId, conversationId, 'user', userText)
+          } else {
+            appendMessage(conversationId, 'user', userText)
+          }
         }
         if (text || toolCalls.length > 0) {
           const usage = event.usage
@@ -160,7 +166,11 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
                 noCacheTokens: event.usage.noCacheTokens ?? undefined,
               }
             : undefined
-          appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined)
+          if (workspaceId) {
+            appendWorkspaceMessage(workspaceId, conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined)
+          } else {
+            appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined)
+          }
         }
 
         logManager.closeConversation(conversationId)
@@ -173,12 +183,19 @@ export async function startAgentLoop({ messages, agentName, conversationId }: St
           errorText: errorText.slice(0, 200),
         }, ['agent', 'loop', 'error'])
 
+        // 根据是否有 workspaceId 选择正确的存储函数
+        const appendMsg = workspaceId
+          ? (role: 'user' | 'assistant', content: string) =>
+              appendWorkspaceMessage(workspaceId, conversationId, role, content)
+          : (role: 'user' | 'assistant', content: string) =>
+              appendMessage(conversationId, role, content)
+
         const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
         const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
         if (userText) {
-          appendMessage(conversationId, 'user', userText)
+          appendMsg('user', userText)
         }
-        appendMessage(conversationId, 'assistant', errorText)
+        appendMsg('assistant', errorText)
 
         logManager.closeConversation(conversationId)
       },

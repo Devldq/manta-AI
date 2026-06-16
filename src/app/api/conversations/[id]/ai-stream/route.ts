@@ -8,9 +8,11 @@
  */
 import { NextRequest } from 'next/server'
 import { getConversation } from '@storage/conversation/store'
+import { getWorkspaceConversation } from '@storage/workspace/store'
 import { startAgentLoop } from '@engine/stream-handler'
 import { formatAIError, formatErrorForSSE } from '@engine/error-formatter'
 import { getActiveLoop, subscribeToLoop } from '@engine/loop-registry'
+import type { ConversationType } from '@/core/types'
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -86,8 +88,17 @@ function createSSEResponse(conversationId: string, fromSeq: number): Response {
 export async function POST(req: NextRequest, { params }: RouteContext) {
   const { id } = await params
 
+  // 从查询参数获取会话类型
+  const type = (req.nextUrl.searchParams.get('type') as ConversationType) || 'global'
+  const workspaceId = req.nextUrl.searchParams.get('workspaceId') ?? undefined
+
   // 验证会话存在
-  const conv = getConversation(id)
+  let conv = null
+  if (type === 'workspace' && workspaceId) {
+    conv = getWorkspaceConversation(workspaceId, id)
+  } else {
+    conv = getConversation(id)
+  }
   if (!conv) {
     return new Response(JSON.stringify({ error: '会话不存在' }), {
       status: 404,
@@ -125,6 +136,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       messages,
       agentName: effectiveAgentName,
       conversationId: id,
+      workspaceId: workspaceId,
     })
 
     // 创建 SSE 流，从当前已广播的事件开始

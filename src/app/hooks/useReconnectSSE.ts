@@ -29,8 +29,9 @@ export interface ReconnectStreamState {
  * 自动重连到活跃 agent loop 的 SSE 流
  * @param convId 会话 ID
  * @param enabled 是否启用重连（通常当 useChat 处于 ready 状态时启用）
+ * @param workspaceId 工作空间 ID（可选，用于工作空间会话）
  */
-export function useReconnectSSE(convId: string, enabled: boolean) {
+export function useReconnectSSE(convId: string, enabled: boolean, workspaceId?: string | null) {
   const [state, setState] = useState<ReconnectStreamState>({
     connected: false,
     reconnecting: false,
@@ -59,8 +60,13 @@ export function useReconnectSSE(convId: string, enabled: boolean) {
     // 如果当前 ref 中有更新的 seq，优先使用
     const fromSeq = Math.max(lastSeqRef.current, storedSeq)
 
+    // 构建 URL，支持工作空间会话
+    const typeParam = workspaceId ? '&type=workspace' : ''
+    const wsParam = workspaceId ? `&workspaceId=${workspaceId}` : ''
+    const url = `/api/conversations/${convId}/ai-stream?fromSeq=${fromSeq}${typeParam}${wsParam}`
+
     try {
-      const res = await fetch(`/api/conversations/${convId}/ai-stream?fromSeq=${fromSeq}`, {
+      const res = await fetch(url, {
         method: 'GET',
         signal: controller.signal,
       })
@@ -147,7 +153,7 @@ export function useReconnectSSE(convId: string, enabled: boolean) {
       sessionStorage.setItem(storedSeqKey, String(lastSeqRef.current))
       setState(s => ({ ...s, reconnecting: false, error: (err as Error).message }))
     }
-  }, [convId, storedSeqKey])
+  }, [convId, storedSeqKey, workspaceId])
 
   useEffect(() => {
     if (!enabled) return

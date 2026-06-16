@@ -114,7 +114,9 @@ export function listConversations(): Conversation[] {
       }
     }
 
-    return convs.sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
+    // 排除带 workspaceId 的会话（这些应该在工作空间存储中）
+    const globalConvs = convs.filter(c => !c.workspaceId)
+    return globalConvs.sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
   } catch { return [] }
 }
 
@@ -128,6 +130,16 @@ export function updateConversationAgent(id: string, agentName: string): Conversa
   const conv = readConv(id)
   if (!conv) return null
   conv.agentName = agentName
+  conv.updatedAt = new Date().toISOString()
+  writeConv(conv)
+  return conv
+}
+
+/** 更新会话标题 */
+export function updateConversationTitle(id: string, title: string): Conversation | null {
+  const conv = readConv(id)
+  if (!conv) return null
+  conv.title = title
   conv.updatedAt = new Date().toISOString()
   writeConv(conv)
   return conv

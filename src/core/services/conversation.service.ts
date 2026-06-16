@@ -1,4 +1,4 @@
-import type { Conversation, ConversationMessage } from '@/core/types'
+import type { Conversation, ConversationMessage, ConversationType, CreateConversationInput } from '@/core/types'
 import {
   createConversation,
   listConversations,
@@ -6,30 +6,42 @@ import {
   deleteConversation,
   appendMessage,
 } from '@/core/storage/conversation/store'
+import {
+  createWorkspaceConversation,
+  listWorkspaceConversations,
+  deleteWorkspaceConversation,
+} from '@/core/storage/workspace/store'
 import { validateWithZod } from '@/core/api/error-handler'
 import { CreateConversationSchema, SendMessageSchema } from '@/core/api/schemas/conversation.schema'
 
-export function fetchConversations(params?: { workspaceId?: string }): Conversation[] {
-  let conversations = listConversations()
-
-  // 按工作空间过滤（若指定）
-  if (params?.workspaceId) {
-    conversations = conversations.filter((c) => c.workspaceId === params.workspaceId)
+export function fetchConversations(params: { type: ConversationType; workspaceId?: string }): Conversation[] {
+  if (params.type === 'workspace' && params.workspaceId) {
+    // 从工作空间存储获取
+    return listWorkspaceConversations(params.workspaceId)
   }
-
-  return conversations
+  // 从全局存储获取
+  return listConversations()
 }
 
-export function createNewConversation(input: unknown): Conversation {
-  const data = validateWithZod(CreateConversationSchema, input)
-  return createConversation(data.agentName, data.title, data.workspaceId)
+export function createNewConversation(input: CreateConversationInput): Conversation {
+  if (input.type === 'workspace' && input.workspaceId) {
+    // 创建工作空间会话
+    const conv = createWorkspaceConversation(input.workspaceId, input.agentName, input.title)
+    if (!conv) throw new Error('创建工作空间会话失败')
+    return conv
+  }
+  // 创建全局会话
+  return createConversation(input.agentName, input.title)
 }
 
 export function getConversationById(id: string): Conversation | null {
   return getConversation(id)
 }
 
-export function deleteExistingConversation(id: string): boolean {
+export function deleteExistingConversation(id: string, type?: ConversationType, workspaceId?: string): boolean {
+  if (type === 'workspace' && workspaceId) {
+    return deleteWorkspaceConversation(workspaceId, id)
+  }
   return deleteConversation(id)
 }
 

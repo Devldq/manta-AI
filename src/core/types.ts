@@ -487,6 +487,17 @@ export interface KnowledgeBase {
 
 // ─── 会话类型 ───────────────────────────────────────────────
 
+/** 会话类型 */
+export type ConversationType = 'global' | 'workspace'
+
+/** 创建会话的输入 */
+export interface CreateConversationInput {
+  agentName: string
+  title?: string
+  type: ConversationType
+  workspaceId?: string  // type='workspace' 时必填
+}
+
 /** 持久化的工具调用记录（一次工具调用的 input/output） */
 export interface ToolCallRecord {
   toolCallId: string

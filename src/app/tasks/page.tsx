@@ -1187,18 +1187,64 @@ function CapabilityTags({ onSelect }: { onSelect: (label: string) => void }) {
 // ─── ChatView（有会话时） ─────────────────────────────────────────────────────
 
 function ChatView({
-  convId, agentName, initialMessages, onAgentChange, onNewChat, title, agents, conversation,
+  convId, agentName, initialMessages, onAgentChange, onNewChat, title, agents, conversation, workspaceId,
 }: {
   convId: string; agentName: string; initialMessages: UIMessage[]
   onAgentChange: (name: string) => void; onNewChat: () => void; title: string; agents: AgentEntry[]
   conversation: Conversation | null
+  workspaceId?: string | null
 }) {
   const router = useRouter()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [inputText, setInputText] = useState('')
+
+  // 构建 API URL 的辅助函数，自动添加 workspace 参数
+  const buildConvUrl = useCallback((path: string = '') => {
+    const typeParam = workspaceId ? 'type=workspace' : ''
+    const wsParam = workspaceId ? `workspaceId=${workspaceId}` : ''
+    const params = [typeParam, wsParam].filter(Boolean).join('&')
+    return `/api/conversations/${convId}${path}${params ? `?${params}` : ''}`
+  }, [convId, workspaceId])
   // 本地 conversation 状态：初始值来自父组件，流式结束后从 API 刷新同步更新
   const [sidebarConv, setSidebarConv] = useState<Conversation | null>(conversation)
   useEffect(() => { setSidebarConv(conversation) }, [conversation])
+
+  // 会话标题编辑状态
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleValue, setTitleValue] = useState(title)
+  const titleInputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { setTitleValue(title) }, [title])
+
+  // 保存标题
+  const handleSaveTitle = useCallback(async () => {
+    const trimmed = titleValue.trim()
+    if (!trimmed || trimmed === title) {
+      setEditingTitle(false)
+      setTitleValue(title)
+      return
+    }
+    try {
+      const res = await fetch(buildConvUrl(), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      })
+      if (res.ok) {
+        setSidebarConv((prev) => prev ? { ...prev, title: trimmed } : prev)
+      }
+    } catch {
+      // 忽略错误
+    }
+    setEditingTitle(false)
+  }, [titleValue, title, buildConvUrl])
+
+  // 编辑模式下聚焦输入框
+  useEffect(() => {
+    if (editingTitle && titleInputRef.current) {
+      titleInputRef.current.focus()
+      titleInputRef.current.select()
+    }
+  }, [editingTitle])
   const SIDEBAR_OPEN_KEY = 'manta:session-sidebar-open'
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -1211,7 +1257,9 @@ function ChatView({
 
   const { messages, setMessages, sendMessage, stop, status, error } = useChat({
     transport: new DefaultChatTransport({
-      api: `/api/conversations/${convId}/ai-stream`,
+      api: workspaceId
+        ? `/api/conversations/${convId}/ai-stream?type=workspace&workspaceId=${workspaceId}`
+        : `/api/conversations/${convId}/ai-stream`,
       body: { agentName },
     }),
     messages: initialMessages,
@@ -1221,7 +1269,7 @@ function ChatView({
   const isLoading = status === 'submitted' || status === 'streaming'
 
   // ─── SSE 重连：页面刷新 / 切换回有活跃循环的会话时自动重连 ─────────────────
-  const reconnect = useReconnectSSE(convId, !isLoading && status === 'ready')
+  const reconnect = useReconnectSSE(convId, !isLoading && status === 'ready', workspaceId)
 
   // 当发送新消息时，重置重连状态（新的 loop 会通过 POST 启动）
   useEffect(() => {
@@ -1236,7 +1284,7 @@ function ChatView({
   useEffect(() => {
     if (reconnect.finished && !reconnectFinishedRef.current) {
       reconnectFinishedRef.current = true
-      fetch(`/api/conversations/${convId}`)
+      fetch(buildConvUrl())
         .then((r) => r.json())
         .then((data) => {
           const conv = data.conversation
@@ -1286,39 +1334,31 @@ function ChatView({
     const prev = prevStatusRef.current
     prevStatusRef.current = status
     if ((prev === 'streaming' || prev === 'submitted') && status === 'ready') {
-      fetch(`/api/conversations/${convId}`)
+      fetch(buildConvUrl())
         .then((r) => r.json())
         .then((data) => {
           const conv = data.conversation
           if (!conv) return
           // 同步更新侧边栏的 conversation 数据（含 toolCall 记录）
           setSidebarConv(conv)
-          const refreshed: UIMessage[] = conv.messages
-            .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
-            .map((m: { id: string; role: string; content: string; timestamp: string; toolCalls?: unknown[]; usage?: Record<string, unknown> | null; stepUsages?: Array<Record<string, unknown>> | null }) => {
-              const parts: UIMessage['parts'] = []
-              if (m.toolCalls && m.toolCalls.length > 0) {
-                for (const tc of m.toolCalls as { toolCallId: string; toolName: string; isError: boolean; input: unknown; output: unknown; errorText?: string }[]) {
-                  parts.push({
-                    type: 'dynamic-tool',
-                    toolCallId: tc.toolCallId,
-                    toolName: tc.toolName,
-                    state: tc.isError ? 'output-error' : 'output-available',
-                    input: tc.input,
-                    output: tc.isError ? undefined : tc.output,
-                    errorText: tc.errorText,
-                  } as unknown as NonNullable<UIMessage['parts']>[number])
+          // 只更新 metadata，不替换整个消息列表，避免闪烁
+          setMessages((prevMessages) => {
+            return prevMessages.map((msg) => {
+              // 找到对应的服务端消息
+              const serverMsg = conv.messages.find((m: { id: string }) => m.id === msg.id)
+              if (serverMsg) {
+                return {
+                  ...msg,
+                  metadata: {
+                    timestamp: serverMsg.timestamp,
+                    usage: serverMsg.usage ?? null,
+                    stepUsages: serverMsg.stepUsages ?? null,
+                  },
                 }
               }
-              if (m.content) parts.push({ type: 'text' as const, text: m.content })
-              return {
-                id: m.id,
-                role: m.role as 'user' | 'assistant',
-                parts,
-                metadata: { timestamp: m.timestamp, usage: m.usage ?? null, stepUsages: m.stepUsages ?? null },
-              }
+              return msg
             })
-          setMessages(refreshed)
+          })
         })
         .catch(() => { })
     }
@@ -1350,7 +1390,7 @@ function ChatView({
   // ─── 自定义停止：调用专用 stop API 停止后台 loop ────────────────────────────
   async function handleStop() {
     // 先调用 stop API 停止后台 agent loop
-    await fetch(`/api/conversations/${convId}/stop`, { method: 'POST' }).catch(() => {})
+    await fetch(buildConvUrl('/stop'), { method: 'POST' }).catch(() => {})
     // 再调用 useChat 的 stop（中断前端 fetch）
     stop()
   }
@@ -1407,9 +1447,35 @@ function ChatView({
               title="返回仪表盘">
               <ArrowLeft size={14} />
             </button>
-            <h3 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px' }} title={title}>
-              {title}
-            </h3>
+            {editingTitle ? (
+              <input
+                ref={titleInputRef}
+                value={titleValue}
+                onChange={(e) => setTitleValue(e.target.value)}
+                onBlur={handleSaveTitle}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveTitle()
+                  if (e.key === 'Escape') {
+                    setEditingTitle(false)
+                    setTitleValue(title)
+                  }
+                }}
+                style={{
+                  fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)',
+                  background: 'var(--color-bg-secondary, #f5f5f5)',
+                  border: '1px solid var(--color-accent)', borderRadius: '4px',
+                  padding: '2px 6px', outline: 'none', maxWidth: '280px',
+                }}
+              />
+            ) : (
+              <h3
+                onClick={() => setEditingTitle(true)}
+                style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px', cursor: 'pointer' }}
+                title="点击编辑标题"
+              >
+                {sidebarConv?.title || title}
+              </h3>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {/* 重连状态指示 */}
@@ -1495,10 +1561,11 @@ function ChatView({
 // ─── 新建草稿态 ───────────────────────────────────────────────────────────────
 
 function NewChatDraft({
-  agentName, onAgentChange, onCreated, agents,
+  agentName, onAgentChange, onCreated, agents, workspaceId,
 }: {
   agentName: string; onAgentChange: (name: string) => void
   onCreated: (convId: string, firstMsg: string) => void; agents: AgentEntry[]
+  workspaceId?: string | null
 }) {
   const [input, setInput] = useState('')
   const [creating, setCreating] = useState(false)
@@ -1511,7 +1578,12 @@ function NewChatDraft({
       const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentName, mode: 'chat', title: msg.slice(0, 30) }),
+        body: JSON.stringify({
+          agentName,
+          mode: 'chat',
+          title: msg.slice(0, 30),
+          ...(workspaceId ? { type: 'workspace', workspaceId } : { type: 'global' }),
+        }),
       })
       const data = await res.json()
       const convId: string = data.data?.conversation?.id
@@ -1560,6 +1632,7 @@ function TasksPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const convIdParam = searchParams.get('convId')
+  const workspaceIdParam = searchParams.get('workspaceid') || searchParams.get('workspaceId')
 
   const [draftAgent, setDraftAgent] = useState(DEFAULT_AGENT)
   const [conv, setConv] = useState<Conversation | null>(null)
@@ -1577,20 +1650,27 @@ function TasksPage() {
   const loadConv = useCallback(async (id: string) => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/conversations/${id}`)
+      // 根据是否有 workspaceId 参数决定请求方式
+      const typeParam = workspaceIdParam ? 'workspace' : 'global'
+      const wsParam = workspaceIdParam ? `&workspaceId=${workspaceIdParam}` : ''
+      const url = `/api/conversations/${id}?type=${typeParam}${wsParam}`
+      console.log('[loadConv] url:', url, 'workspaceIdParam:', workspaceIdParam)
+      const res = await fetch(url)
       if (res.ok) {
         const data = await res.json()
         setConv(data.conversation)
       } else {
+        console.log('[loadConv] failed:', res.status, 'url:', url)
         setConv(null)
-        router.replace('/tasks', { scroll: false })
+        // 不立即重定向，避免丢失参数
       }
-    } catch {
+    } catch (err) {
+      console.log('[loadConv] error:', err)
       setConv(null)
     } finally {
       setLoading(false)
     }
-  }, [router])
+  }, [router, workspaceIdParam])
 
   useEffect(() => {
     if (convIdParam) loadConv(convIdParam)
@@ -1601,7 +1681,11 @@ function TasksPage() {
     setDraftAgent(agentName)
     if (!conv) return
     try {
-      const res = await fetch(`/api/conversations/${conv.id}/agent`, {
+      const typeParam = workspaceIdParam ? 'type=workspace' : ''
+      const wsParam = workspaceIdParam ? `workspaceId=${workspaceIdParam}` : ''
+      const params = [typeParam, wsParam].filter(Boolean).join('&')
+      const url = `/api/conversations/${conv.id}/agent${params ? `?${params}` : ''}`
+      const res = await fetch(url, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentName }),
@@ -1612,7 +1696,8 @@ function TasksPage() {
 
   function handleConvCreated(convId: string, firstMsg: string) {
     sessionStorage.setItem(`manta:pending-msg:${convId}`, firstMsg)
-    router.replace(`/tasks?convId=${convId}`, { scroll: false })
+    const wsParam = workspaceIdParam ? `workspaceId=${workspaceIdParam}&` : ''
+    router.replace(`/tasks?${wsParam}convId=${convId}`, { scroll: false })
   }
 
   if (loading) {
@@ -1665,9 +1750,14 @@ function TasksPage() {
         initialMessages={initialMessages}
         title={conv.title}
         onAgentChange={handleAgentChange}
-        onNewChat={() => { setConv(null); router.replace('/tasks', { scroll: false }) }}
+        onNewChat={() => {
+          setConv(null)
+          const wsParam = workspaceIdParam ? `?workspaceId=${workspaceIdParam}` : ''
+          router.replace(`/tasks${wsParam}`, { scroll: false })
+        }}
         agents={agents}
         conversation={conv}
+        workspaceId={workspaceIdParam}
       />
     )
   }
@@ -1678,6 +1768,7 @@ function TasksPage() {
       onAgentChange={setDraftAgent}
       onCreated={handleConvCreated}
       agents={agents}
+      workspaceId={workspaceIdParam}
     />
   )
 }

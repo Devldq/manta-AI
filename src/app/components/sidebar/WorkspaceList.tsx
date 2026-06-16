@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronRight, Plus } from 'lucide-react'
+import { ChevronRight, Plus, Trash2 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { useWorkspaceStore } from '@/stores/workspace-store'
@@ -41,10 +41,10 @@ export function WorkspaceList() {
   async function loadConversations(wsId: string) {
     setLoadingWs((prev) => new Set(prev).add(wsId))
     try {
-      const res = await fetch(`/api/workspaces/${wsId}/conversations`)
+      const res = await fetch(`/api/conversations?type=workspace&workspaceId=${wsId}`)
       if (res.ok) {
         const data = await res.json()
-        setWsConversations((prev) => ({ ...prev, [wsId]: data.conversations ?? [] }))
+        setWsConversations((prev) => ({ ...prev, [wsId]: data.data?.conversations ?? [] }))
       }
     } catch {
       setWsConversations((prev) => ({ ...prev, [wsId]: [] }))
@@ -79,29 +79,54 @@ export function WorkspaceList() {
     }
   }
 
-  function handleConvClick(convId: string) {
+  function handleConvClick(convId: string, wsId: string) {
     setActiveId(convId)
-    router.push(`/tasks?convId=${convId}`)
+    router.push(`/tasks?workspaceId=${wsId}&convId=${convId}`)
   }
 
   async function handleNewConversation(wsId: string, e: React.MouseEvent) {
     e.stopPropagation()
     try {
-      const res = await fetch(`/api/workspaces/${wsId}/conversations`, {
+      const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agentName: 'default',
-          title: '新会话',
+          title: '新对话',
+          type: 'workspace',
+          workspaceId: wsId,
         }),
       })
       const json = await res.json()
+      console.log('[handleNewConversation] response:', json)
       if (json.success && json.data?.conversation) {
         const convId = json.data.conversation.id
         setActiveId(convId)
-        // 刷新该工作空间的会话列表
-        loadConversations(wsId)
-        router.push(`/tasks?convId=${convId}`)
+        // 刷新该工作空间的会话列表，等待完成后再跳转
+        await loadConversations(wsId)
+        const targetUrl = `/tasks?workspaceId=${wsId}&convId=${convId}`
+        console.log('[handleNewConversation] navigating to:', targetUrl)
+        router.push(targetUrl)
+      }
+    } catch {
+      // 忽略错误
+    }
+  }
+
+  async function handleDeleteConversation(wsId: string, convId: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    try {
+      const res = await fetch(`/api/conversations/${convId}?type=workspace&workspaceId=${wsId}`, {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        // 刷新该工作空间的会话列表，等待完成后再跳转
+        await loadConversations(wsId)
+        // 如果删除的是当前活跃会话，跳转到工作空间任务页
+        const activeId = useConversationStore.getState().activeId
+        if (activeId === convId) {
+          router.push(`/tasks?workspaceId=${wsId}`)
+        }
       }
     } catch {
       // 忽略错误
@@ -173,16 +198,23 @@ export function WorkspaceList() {
                   conversations.map((conv) => (
                     <div
                       key={conv.id}
-                      className="flex items-center gap-2 px-3 py-1 mx-1 rounded cursor-pointer text-[#a1a1aa] hover:bg-[#27272a]/50 transition-colors"
-                      onClick={() => handleConvClick(conv.id)}
+                      className="group/conv flex items-center gap-2 px-3 py-1 mx-1 rounded cursor-pointer text-[#a1a1aa] hover:bg-[#27272a]/50 transition-colors"
+                      onClick={() => handleConvClick(conv.id, ws.id)}
                     >
                       <span className="w-1 h-1 rounded-full bg-[#52525b] opacity-40 flex-shrink-0" />
                       <span className="text-[11px] flex-1 truncate" title={conv.title}>
                         {conv.title}
                       </span>
-                      <span className="text-[9px] text-[#52525b] flex-shrink-0">
+                      <span className="text-[9px] text-[#52525b] flex-shrink-0 group-hover/conv:hidden">
                         {formatTime(conv.updatedAt)}
                       </span>
+                      <button
+                        className="hidden group-hover/conv:flex items-center justify-center w-4 h-4 rounded flex-shrink-0 text-[#52525b] hover:text-red-400 transition-colors"
+                        onClick={(e) => handleDeleteConversation(ws.id, conv.id, e)}
+                        title="删除会话"
+                      >
+                        <Trash2 size={11} />
+                      </button>
                     </div>
                   ))
                 )}

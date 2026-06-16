@@ -182,6 +182,16 @@ export function updateWorkspaceConversation(workspaceId: string, conversationId:
   atomicWrite(sessionPath, JSON.stringify(conv, null, 2))
 }
 
+/** 更新工作空间会话标题 */
+export function updateWorkspaceConversationTitle(workspaceId: string, conversationId: string, title: string): Conversation | null {
+  const conv = getWorkspaceConversation(workspaceId, conversationId)
+  if (!conv) return null
+  conv.title = title
+  conv.updatedAt = new Date().toISOString()
+  updateWorkspaceConversation(workspaceId, conversationId, conv)
+  return conv
+}
+
 /** 追加消息到工作空间会话 */
 export function appendWorkspaceMessage(
   workspaceId: string,
