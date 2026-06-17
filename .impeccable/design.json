@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-16T17:55:00.000Z",
+  "title": "Design System: Manta",
+  "extensions": {
+    "colorMeta": {
+      "warm-stone-bg": {
+        "role": "neutral",
+        "displayName": "Warm Stone Background",
+        "canonical": "oklch(97.5% 0.003 95)",
+        "tonalRamp": ["oklch(15% 0.003 95)", "oklch(25% 0.003 95)", "oklch(35% 0.003 95)", "oklch(45% 0.003 95)", "oklch(55% 0.003 95)", "oklch(65% 0.003 95)", "oklch(75% 0.003 95)", "oklch(85% 0.003 95)"]
+      },
+      "deep-abyss-bg": {
+        "role": "neutral",
+        "displayName": "Deep Abyss Background",
+        "canonical": "oklch(4% 0.004 260)",
+        "tonalRamp": ["oklch(15% 0.004 260)", "oklch(25% 0.004 260)", "oklch(35% 0.004 260)", "oklch(45% 0.004 260)", "oklch(55% 0.004 260)", "oklch(65% 0.004 260)", "oklch(75% 0.004 260)", "oklch(85% 0.004 260)"]
+      },
+      "emerald-accent": {
+        "role": "primary",
+        "displayName": "Emerald Accent",
+        "canonical": "oklch(55% 0.16 160)",
+        "tonalRamp": ["oklch(15% 0.16 160)", "oklch(25% 0.16 160)", "oklch(35% 0.16 160)", "oklch(45% 0.16 160)", "oklch(55% 0.16 160)", "oklch(65% 0.16 160)", "oklch(75% 0.16 160)", "oklch(85% 0.16 160)"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "仅用于页面主标题，最大不超过 3.5rem。"
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "区域标题，用于主要章节。"
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "卡片标题、面板标题。"
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "正文内容，最大行宽 65-75ch。"
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "标签、按钮文本、表单标签。"
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "代码、数据、时间戳、精确信息。"
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "ease-out-quart",
+        "value": "cubic-bezier(0.25, 1, 0.5, 1)",
+        "purpose": "主要过渡缓动，用于状态变化、交互反馈。"
+      },
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "快速过渡缓动，用于微交互、工具提示。"
+      },
+      {
+        "name": "ease-in-out-quart",
+        "value": "cubic-bezier(0.76, 0, 0.24, 1)",
+        "purpose": "对称缓动，用于呼吸动画、循环效果。"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "主要操作按钮，用于确认、提交、运行等关键操作。",
+      "html": "<button class=\"ds-btn-primary\">确认</button>",
+      "css": ".ds-btn-primary { background: #2d8a4e; color: #ffffff; padding: 10px 20px; border-radius: 8px; border: none; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: background-color 100ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-btn-primary:hover { background: #256f3e; } .ds-btn-primary:focus-visible { outline: 2px solid #2d8a4e; outline-offset: 2px; } .ds-btn-primary:active { background: #1e5a32; } .ds-btn-primary:disabled { background: #a0a0a0; cursor: not-allowed; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "次要操作按钮，用于取消、返回等辅助操作。",
+      "html": "<button class=\"ds-btn-ghost\">取消</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: #1a1a1a; padding: 10px 20px; border-radius: 8px; border: 1px solid #ece9e1; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: border-color 100ms cubic-bezier(0.25, 1, 0.5, 1), color 100ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-btn-ghost:hover { border-color: #2d8a4e; color: #2d8a4e; } .ds-btn-ghost:focus-visible { outline: 2px solid #2d8a4e; outline-offset: 2px; } .ds-btn-ghost:active { background: #e8f5e9; } .ds-btn-ghost:disabled { color: #a0a0a0; border-color: #e0ddd5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "通用卡片容器，用于任务卡片、内容面板等。",
+      "html": "<div class=\"ds-card\"><h3>任务标题</h3><p>任务描述</p></div>",
+      "css": ".ds-card { background: #ffffff; border: 1px solid #ece9e1; border-radius: 12px; padding: 16px; transition: border-color 100ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-card:hover { border-color: #2d8a4e; } .ds-card h3 { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px 0; color: #1a1a1a; } .ds-card p { font-size: 1rem; margin: 0; color: #5a5a5a; line-height: 1.6; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "文本输入框，用于表单、搜索等。",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"输入内容...\">",
+      "css": ".ds-input { background: #ffffff; border: 1px solid #e0ddd5; border-radius: 8px; padding: 10px 12px; font-size: 1rem; color: #1a1a1a; width: 100%; transition: border-color 100ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-input::placeholder { color: #8a8a8a; } .ds-input:hover { border-color: #d0cdc5; } .ds-input:focus { outline: none; border-color: #2d8a4e; } .ds-input:focus-visible { outline: 2px solid #2d8a4e; outline-offset: 2px; } .ds-input:disabled { background: #f5f3ef; color: #a0a0a0; cursor: not-allowed; }"
+    },
+    {
+      "name": "Task Card",
+      "kind": "custom",
+      "refersTo": "task-card",
+      "description": "任务卡片，Manta 的核心组件，用于显示并行任务状态。",
+      "html": "<div class=\"ds-task-card\"><div class=\"ds-task-status\"></div><div class=\"ds-task-content\"><h4>任务标题</h4><p>运行中...</p></div><button class=\"ds-task-stop\">停止</button></div>",
+      "css": ".ds-task-card { display: flex; align-items: flex-start; gap: 8px; padding: 12px 16px; border-radius: 12px; border: 1px solid #ece9e1; background: #ffffff; cursor: pointer; transition: border-color 100ms cubic-bezier(0.25, 1, 0.5, 1), background-color 100ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-task-card:hover { border-color: #2d8a4e; } .ds-task-card:active { background: #e8f5e9; } .ds-task-status { width: 3px; height: 3px; border-radius: 50%; background: #3b82f6; margin-top: 8px; flex-shrink: 0; } .ds-task-content { flex: 1; min-width: 0; } .ds-task-content h4 { font-size: 0.875rem; font-weight: 500; margin: 0 0 4px 0; color: #1a1a1a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-task-content p { font-size: 0.75rem; margin: 0; color: #8a8a8a; } .ds-task-stop { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 5px; border: 1px solid #ece9e1; background: transparent; color: #8a8a8a; cursor: pointer; opacity: 0; transition: opacity 100ms cubic-bezier(0.25, 1, 0.5, 1), color 100ms cubic-bezier(0.25, 1, 0.5, 1), border-color 100ms cubic-bezier(0.25, 1, 0.5, 1); } .ds-task-card:hover .ds-task-stop { opacity: 1; } .ds-task-stop:hover { color: #dc2626; border-color: #dc2626; background: rgba(220, 38, 38, 0.08); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Task Commander",
+    "overview": "Manta 的设计系统以「任务指挥官」为核心隐喻——用户是指挥官，界面是指挥中心。每个 UI 元素都服务于并行任务管理：紧凑但可区分，状态一目了然，信息密度高但无冗余。\n\n这套系统拒绝通用 AI 生成界面的陈词滥调：不用 Inter 字体，不用青紫渐变，不用毛玻璃效果，不用发光点缀。它追求的是精密工具感——像手术器械或航空仪表盘，每条数据都有其位置，每个交互都有其目的。",
+    "keyCharacteristics": ["Parallel-first: 每个组件都考虑「同时有 N 个实例在运行」", "Content-first: 界面服务于信息，不反向", "Tinted neutrals: 绝不用纯黑/纯白/纯灰，所有中性色带 subtle 色调", "Named easing: 所有过渡使用命名缓动曲线（ease-out-quart/expo）", "Focus for all: 所有可交互元素必须有 focus-visible 指示器", "Space with rhythm: 分组紧凑（4-8px），区间慷慨（24-48px）"],
+    "rules": [
+      {
+        "name": "The One Voice Rule",
+        "body": "主强调色（Emerald）仅用于 ≤10% 的屏幕面积。其稀有性是重点——它只出现在需要用户注意的关键交互点。",
+        "section": "colors"
+      },
+      {
+        "name": "The Tinted Neutral Rule",
+        "body": "绝不用纯黑（#000）、纯白（#fff）或纯灰（#808080）。所有中性色必须带 subtle 色调（chroma ≥ 0.003），亮色主题偏暖（hue 95），暗色主题偏冷（hue 260）。",
+        "section": "colors"
+      },
+      {
+        "name": "The System Font Rule",
+        "body": "不使用外部字体服务（Google Fonts、Adobe Fonts）。系统字体栈提供最佳性能和跨平台一致性，同时避免 FOUT（Flash of Unstyled Text）。",
+        "section": "typography"
+      },
+      {
+        "name": "The Mono Precision Rule",
+        "body": "等宽字体仅用于代码、数据和需要精确对齐的信息。不要用于普通文本，那会破坏阅读节奏。",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "表面默认是平坦的。层级差异通过色调（surface vs surface-elevated）和边框（border vs border-subtle）传达，而非阴影。",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "使用命名缓动曲线（ease-out-quart/expo），不用 CSS 默认 ease。",
+      "为所有可交互元素添加 focus-visible 指示器（2px solid accent，offset 2px）。",
+      "使用 4pt 间距系统（4/8/12/16/24/32/48/64px），保持节奏感。",
+      "使用系统字体栈，避免外部字体加载。",
+      "使用 OKLCH 色彩空间进行颜色变换，确保感知均匀。",
+      "支持 reduced-motion，所有动画在 `prefers-reduced-motion: reduce` 时禁用。",
+      "使用 `text-wrap: balance` 优化标题换行，`text-wrap: pretty` 优化长文本。"
+    ],
+    "donts": [
+      "使用 Inter 字体——这是 2024-2025 年 AI 生成界面的头号特征。",
+      "使用青紫渐变（purple-to-blue gradients）——这是 AI 生成界面的典型套路。",
+      "使用毛玻璃效果（glassmorphism）作为默认装饰——罕见且有目的时才用。",
+      "使用发光点缀（glowing dots、neon accents）——这是 AI 生成界面的陈词滥调。",
+      "使用 hero metrics 模板（大数字 + 小标签 + 渐变强调）——SaaS cliché。",
+      "使用嵌套卡片（cards nested inside cards）——总是错误的。",
+      "使用弹跳/弹性缓动（bounce/elastic easing）——感觉过时。",
+      "使用纯黑（#000）、纯白（#fff）或纯灰（#808080）——所有中性色必须带色调。",
+      "在彩色背景上使用灰色文本——看起来褪色，使用背景色自身的深色变体。",
+      "使用侧边条纹边框（border-left/right > 1px 作为彩色强调）——总是无意的。",
+      "使用渐变文本（background-clip: text + gradient）——装饰性，无意义。"
+    ]
+  }
+}
