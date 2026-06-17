@@ -9,6 +9,7 @@ import { NodeConfigPanel } from '@/app/components/workflow/NodeConfigPanel'
 import { WorkflowToolbar } from '@/app/components/workflow/WorkflowToolbar'
 import { WorkflowEditor } from '@/app/components/workflow/WorkflowEditor'
 import type { WorkflowStepType } from '@/core/types'
+import { SkeletonPage } from '@/app/components/skeleton'
 
 export default function WorkflowPage() {
   const router = useRouter()
@@ -261,17 +262,7 @@ export default function WorkflowPage() {
       )}
 
       {/* 加载状态 */}
-      {loading && (
-        <div className="text-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
-          <p
-            className="mt-2"
-            style={{ color: 'var(--color-text-muted)' }}
-          >
-            加载中...
-          </p>
-        </div>
-      )}
+      {loading && <SkeletonPage titleLines={1} cardCount={6} gridClassName="grid-cols-1 md:grid-cols-2 lg:grid-cols-3" showActionBar />}
 
       {/* 错误信息 */}
       {error && (

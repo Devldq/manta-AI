@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Save, Send, Eye } from 'lucide-react'
 import type { AppConfig, AppStatus } from '@/core/types'
 import { useAppStore } from '@/stores/app-store'
+import { SkeletonDetailPage } from '@/app/components/skeleton'
 
 const TABS = [
   { id: 'basic', label: '基础信息', icon: '📋' },
@@ -112,11 +113,7 @@ export default function AppBuilderPage() {
   }
 
   if (loading) {
-    return (
-      <div className="p-8 flex items-center justify-center min-h-[60vh]">
-        <span style={{ color: 'var(--color-text-muted)', fontSize: '14px' }}>加载中...</span>
-      </div>
-    )
+    return <SkeletonDetailPage showSidebar sidebarWidth="320px" />
   }
 
   if (!app) {

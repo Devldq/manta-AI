@@ -183,7 +183,7 @@ export function transformChunk(
       logger.warn(`[stream-transformer] Unknown chunk type: ${chunk.type}, skipping`, {
         conversationId,
         messageId,
-        chunkType: chunk.type,
+        extra: { chunkType: chunk.type },
       }, ['stream', 'transformer', 'unknown-chunk'])
       return null
   }

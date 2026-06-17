@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import type { WorkflowDef, WorkflowStep, WorkflowStepType } from '@/core/types'
+import { swrFetch, invalidateCache } from '@/stores/lib/swr-fetch'
 
 /** 可视化节点（前端扩展类型） */
 export interface WorkflowNode {
@@ -101,13 +102,16 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   // === 工作流列表操作 ===
   fetchWorkflows: async (params) => {
-    set({ loading: true, error: null })
+    const hasData = get().workflows.length > 0
+    if (!hasData) set({ loading: true, error: null }) // 有数据时不阻塞 UI
     try {
       const sp = new URLSearchParams()
       if (params?.search) sp.set('search', params.search)
       const qs = sp.toString()
-      const res = await fetch(`/api/workflow${qs ? `?${qs}` : ''}`)
-      const json = await res.json()
+      const key = `workflows:${qs}`
+      const json = await swrFetch(key, () =>
+        fetch(`/api/workflow${qs ? `?${qs}` : ''}`).then(r => r.json())
+      )
       if (json.success && json.data?.workflows) {
         set({ workflows: json.data.workflows, loading: false })
       } else {
@@ -127,6 +131,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       })
       const json = await res.json()
       if (json.success && json.data?.workflow) {
+        invalidateCache('workflows:') // 清除缓存
         await get().fetchWorkflows()
         return json.data.workflow
       }
@@ -143,6 +148,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       const res = await fetch(`/api/workflow/${id}`, { method: 'DELETE' })
       const json = await res.json()
       if (json.success) {
+        invalidateCache('workflows:') // 清除缓存
         await get().fetchWorkflows()
         return true
       }

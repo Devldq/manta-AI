@@ -1,6 +1,7 @@
 /* RAG Zustand Store — 知识库状态管理 */
 
 import { create } from 'zustand'
+import { swrFetch, invalidateCache } from '@/stores/lib/swr-fetch'
 
 export interface KnowledgeBaseSummary {
   id: string
@@ -34,13 +35,16 @@ export const useRAGStore = create<RAGStore>((set, get) => ({
   error: null,
 
   fetchKnowledgeBases: async (params) => {
-    set({ loading: true, error: null })
+    const hasData = get().knowledgeBases.length > 0
+    if (!hasData) set({ loading: true, error: null }) // 有数据时不阻塞 UI
     try {
       const sp = new URLSearchParams()
       if (params?.search) sp.set('search', params.search)
       const qs = sp.toString()
-      const res = await fetch(`/api/rag/knowledge-bases${qs ? `?${qs}` : ''}`)
-      const json = await res.json()
+      const key = `knowledge-bases:${qs}`
+      const json = await swrFetch(key, () =>
+        fetch(`/api/rag/knowledge-bases${qs ? `?${qs}` : ''}`).then(r => r.json())
+      )
       if (json.success && json.data?.knowledgeBases) {
         set({ knowledgeBases: json.data.knowledgeBases, loading: false })
       } else {
@@ -60,6 +64,7 @@ export const useRAGStore = create<RAGStore>((set, get) => ({
       })
       const json = await res.json()
       if (json.success && json.data?.knowledgeBase) {
+        invalidateCache('knowledge-bases:') // 清除缓存
         await get().fetchKnowledgeBases()
         return true
       }
@@ -76,6 +81,7 @@ export const useRAGStore = create<RAGStore>((set, get) => ({
       const res = await fetch(`/api/rag/knowledge-bases/${id}`, { method: 'DELETE' })
       const json = await res.json()
       if (json.success) {
+        invalidateCache('knowledge-bases:') // 清除缓存
         await get().fetchKnowledgeBases()
         return true
       }

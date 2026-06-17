@@ -1,6 +1,7 @@
 /* Conversation Zustand Store — 会话列表状态管理 */
 
 import { create } from 'zustand'
+import { swrFetch, invalidateCache } from '@/stores/lib/swr-fetch'
 
 export interface ConversationSummary {
   id: string
@@ -23,7 +24,8 @@ interface ConversationStore {
   setActiveId: (id: string | null) => void
 }
 
-let abortController: AbortController | null = null
+// 正在进行中的 fetchList 调用（防止并发竞态）
+let inflightFetch: Promise<void> | null = null
 
 export const useConversationStore = create<ConversationStore>((set, get) => ({
   items: [],
@@ -32,30 +34,35 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
   error: null,
 
   fetchList: async (params) => {
-    // 取消上次未完成的请求
-    if (abortController) {
-      abortController.abort()
-    }
-    abortController = new AbortController()
+    // 如果已有相同参数的请求在进行中，直接复用
+    if (inflightFetch) return inflightFetch
 
-    set({ loading: true, error: null })
-    try {
-      const sp = new URLSearchParams()
-      if (params?.workspaceId) sp.set('workspaceId', params.workspaceId)
-      const qs = sp.toString()
-      const res = await fetch(`/api/conversations${qs ? `?${qs}` : ''}`, {
-        signal: abortController.signal,
-      })
-      const json = await res.json()
-      if (json.success && json.data?.conversations) {
-        set({ items: json.data.conversations, loading: false })
-      } else {
-        set({ loading: false, error: json.error?.message ?? '获取会话列表失败' })
+    const hasData = get().items.length > 0
+    if (!hasData) set({ loading: true, error: null }) // 有数据时不阻塞 UI
+
+    const fetchPromise = (async () => {
+      try {
+        const sp = new URLSearchParams()
+        if (params?.workspaceId) sp.set('workspaceId', params.workspaceId)
+        const qs = sp.toString()
+        const key = `conversations:${qs}`
+        const json = await swrFetch(key, () =>
+          fetch(`/api/conversations${qs ? `?${qs}` : ''}`).then(res => res.json())
+        )
+        if (json.success && json.data?.conversations) {
+          set({ items: json.data.conversations, loading: false })
+        } else {
+          set({ loading: false, error: json.error?.message ?? '获取会话列表失败' })
+        }
+      } catch (err) {
+        set({ loading: false, error: String(err) })
+      } finally {
+        inflightFetch = null
       }
-    } catch (err) {
-      if ((err as Error).name === 'AbortError') return
-      set({ loading: false, error: String(err) })
-    }
+    })()
+
+    inflightFetch = fetchPromise
+    return fetchPromise
   },
 
   deleteConversation: async (id) => {
@@ -63,6 +70,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
       const res = await fetch(`/api/conversations/${id}`, { method: 'DELETE' })
       const json = await res.json()
       if (json.success) {
+        invalidateCache('conversations:') // 清除缓存
         set((s) => ({
           items: s.items.filter((c) => c.id !== id),
           activeId: s.activeId === id ? null : s.activeId,

@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import type { AppConfig, CreateAppInput, UpdateAppInput, AppStatus } from '@/core/types'
+import { swrFetch, invalidateCache } from '@/stores/lib/swr-fetch'
 
 interface AppStore {
   apps: AppConfig[]
@@ -22,15 +23,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
   error: null,
 
   fetchApps: async (params) => {
-    set({ loading: true, error: null })
+    const hasData = get().apps.length > 0
+    if (!hasData) set({ loading: true, error: null }) // 有数据时不阻塞 UI
     try {
       const sp = new URLSearchParams()
       if (params?.search) sp.set('search', params.search)
       if (params?.status) sp.set('status', params.status)
       if (params?.sort) sp.set('sort', params.sort)
       const qs = sp.toString()
-      const res = await fetch(`/api/apps${qs ? `?${qs}` : ''}`)
-      const json = await res.json()
+      const key = `apps:${qs}`
+      const json = await swrFetch(key, () =>
+        fetch(`/api/apps${qs ? `?${qs}` : ''}`).then(r => r.json())
+      )
       if (json.success && json.data?.apps) {
         set({ apps: json.data.apps, loading: false })
       } else {
@@ -50,6 +54,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       })
       const json = await res.json()
       if (json.success && json.data?.app) {
+        invalidateCache('apps:') // 清除缓存
         set((s) => ({ apps: [json.data.app, ...s.apps] }))
         return json.data.app
       }
@@ -71,6 +76,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       })
       const json = await res.json()
       if (json.success && json.data?.app) {
+        invalidateCache('apps:') // 清除缓存
         set((s) => ({
           apps: s.apps.map((a) => (a.id === id ? json.data.app : a)),
         }))
@@ -93,6 +99,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const res = await fetch(`/api/apps/${id}`, { method: 'DELETE' })
       const json = await res.json()
       if (json.success) {
+        invalidateCache('apps:') // 清除缓存
         set((s) => ({ apps: s.apps.filter((a) => a.id !== id) }))
         return true
       }
@@ -113,6 +120,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       })
       const json = await res.json()
       if (json.success && json.data?.app) {
+        invalidateCache('apps:') // 清除缓存
         set((s) => ({ apps: [json.data.app, ...s.apps] }))
         return json.data.app
       }
@@ -133,6 +141,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       })
       const json = await res.json()
       if (json.success && json.data?.app) {
+        invalidateCache('apps:') // 清除缓存
         set((s) => ({
           apps: s.apps.map((a) => (a.id === id ? json.data.app : a)),
         }))

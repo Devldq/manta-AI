@@ -13,6 +13,8 @@ import { ConversationList } from './sidebar/ConversationList'
 import { WorkspaceList } from './sidebar/WorkspaceList'
 import { SidebarBottomBar } from './sidebar/SidebarBottomBar'
 import { useSidebarStore } from '@/stores/sidebar-store'
+import { useConversationStore } from '@/stores/conversation-store'
+import { useWorkspaceStore } from '@/stores/workspace-store'
 
 export function SidebarNav() {
   const router = useRouter()
@@ -26,6 +28,12 @@ export function SidebarNav() {
   useEffect(() => {
     const stored = localStorage.getItem('manta:color-mode') as 'light' | 'dark' | null
     setColorMode(stored === 'light' || stored === 'dark' ? stored : getSystemColorMode())
+  }, [])
+
+  // 预触发数据加载（在组件树最顶层开始加载，而非等待子组件挂载后各自触发）
+  useEffect(() => {
+    useConversationStore.getState().fetchList()
+    useWorkspaceStore.getState().fetchList()
   }, [])
 
   // 新建操作（根据 Tab 模式动态切换）
@@ -64,7 +72,7 @@ export function SidebarNav() {
 
   return (
     <>
-      <aside className="w-60 bg-[#18181b] flex flex-col h-screen flex-shrink-0">
+      <aside className="w-60 bg-surface flex flex-col h-screen flex-shrink-0">
         {/* ① 顶部操作栏 */}
         <SidebarTopBar
           searchQuery={searchQuery}
@@ -76,7 +84,7 @@ export function SidebarNav() {
         <SidebarNavItems />
 
         {/* 分割线 */}
-        <div className="mx-3 border-t border-[#27272a]" />
+        <div className="mx-3 border-t border-border-subtle" />
 
         {/* ③ Tab 切换 */}
         <SidebarTabs />

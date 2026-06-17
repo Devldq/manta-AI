@@ -154,7 +154,7 @@ function softPruneMessage(
     return { ...part, output: newOutput }
   })
 
-  return { ...msg, content: newContent }
+  return { ...msg, content: newContent } as ModelMessage
 }
 
 /**

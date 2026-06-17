@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import React from 'react'
+import { createPortal } from 'react-dom'
 import {
   DESIGN_THEMES,
   DesignTheme,
@@ -54,6 +55,12 @@ interface SettingsModalProps {
 
 export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>('theme')
+  const [mounted, setMounted] = useState(false)
+
+  // AI: 确保客户端挂载后再渲染 Portal
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   // AI: 点击遮罩关闭
   function handleBackdropClick(e: React.MouseEvent) {
@@ -70,9 +77,10 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [open, onClose])
 
-  if (!open) return null
+  if (!open || !mounted) return null
 
-  return (
+  // AI: 使用 Portal 渲染到 body，避免父容器层叠上下文截断
+  return createPortal(
     <div
       onClick={handleBackdropClick}
       style={{
@@ -223,7 +231,8 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
           {activeTab === 'llm' && <LLMTab />}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

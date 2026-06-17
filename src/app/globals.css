@@ -433,6 +433,119 @@ pre {
   animation: card-enter 0.3s var(--ease-out-quart) both;
 }
 
+/* ─── 移动端抽屉动画 ─── */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* ─── 响应式工具类 ─── */
+
+/* 隐藏/显示 */
+.mobile-only { display: none; }
+.desktop-only { display: block; }
+
+@media (max-width: 767px) {
+  .mobile-only { display: block; }
+  .desktop-only { display: none; }
+}
+
+/* 触摸目标尺寸 (44x44px minimum) */
+@media (pointer: coarse) {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* 安全区域 */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-area-left {
+  padding-left: env(safe-area-inset-left);
+}
+.safe-area-right {
+  padding-right: env(safe-area-inset-right);
+}
+
+/* ─── 触摸优化 ─── */
+
+/* 触摸设备增加点击区域 */
+@media (pointer: coarse) {
+  /* 按钮增加触摸区域 */
+  button, a, [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* 输入框增加高度 */
+  input, textarea, select {
+    min-height: 44px;
+    font-size: 16px; /* 防止 iOS 缩放 */
+  }
+  
+  /* 增加间距 */
+  .task-card {
+    padding: var(--space-lg) var(--space-xl);
+  }
+  
+  /* 禁用 hover 效果 */
+  .task-card:hover {
+    border-color: var(--color-border-subtle);
+  }
+  
+  /* 使用 active 替代 hover */
+  .task-card:active {
+    border-color: var(--color-accent);
+    background: var(--color-accent-subtle);
+  }
+  
+  .dashboard-back-btn:hover {
+    color: var(--color-text-muted);
+    border-color: var(--color-border-subtle);
+  }
+  
+  .dashboard-back-btn:active {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+  }
+}
+
+/* ─── 移动端布局调整 ─── */
+
+@media (max-width: 767px) {
+  /* 减少内边距 */
+  .manta-main-container > main {
+    padding-top: 60px; /* 为汉堡菜单按钮留空间 */
+  }
+  
+  /* 任务卡片网格单列显示 */
+  .task-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  /* 消息列表减少间距 */
+  .msg-list {
+    padding: var(--space-sm) var(--space-md);
+    gap: var(--space-md);
+  }
+}
+
 /* ─── reduced-motion ─── */
 @media (prefers-reduced-motion: reduce) {
   *,

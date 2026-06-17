@@ -73,7 +73,8 @@ export class LogFileWriter {
       }
 
       // 2. 如果有关联的会话ID，同时写入会话专属日志文件
-      const conversationId = entry.metadata?.conversationId
+      const metadata = entry.metadata as Record<string, unknown> | undefined
+      const conversationId = metadata?.conversationId
       if (conversationId) {
         const sessionLog = this.getSessionLogFilePath(conversationId as string)
         if (sessionLog) {

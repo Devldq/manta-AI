@@ -92,7 +92,7 @@ function createBashTool(): ToolDefinition {
 
       return new Promise<{ command: string; stdout: string; stderr: string; exitCode: number | null; error?: string }>((resolve) => {
         child_process.exec(command, { cwd: targetCwd, timeout }, (err, stdout, stderr) => {
-          if (err && (err as NodeJS.ErrnoException & { killed?: boolean }).killed) {
+          if (err && (err as unknown as { killed?: boolean }).killed) {
             resolve({ command, stdout, stderr, exitCode: null, error: `命令超时（${timeout}ms）` })
             return
           }

@@ -6,6 +6,23 @@ module.exports = {
   darkMode: 'class',
   theme: {
     extend: {
+      screens: {
+        'xs': '375px',
+        'sm': '640px',
+        'md': '768px',
+        'lg': '1024px',
+        'xl': '1280px',
+        '2xl': '1536px',
+        // 横竖屏
+        'portrait': { 'raw': '(orientation: portrait)' },
+        'landscape': { 'raw': '(orientation: landscape)' },
+        // 触摸设备
+        'touch': { 'raw': '(pointer: coarse)' },
+        'mouse': { 'raw': '(pointer: fine)' },
+        // hover 支持
+        'hoverable': { 'raw': '(hover: hover)' },
+        'no-hover': { 'raw': '(hover: none)' },
+      },
       colors: {
         background: 'var(--color-background)',
         surface: 'var(--color-surface)',

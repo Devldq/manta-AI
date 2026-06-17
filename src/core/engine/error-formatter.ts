@@ -31,7 +31,7 @@ function getCauseCode(err: unknown): string {
  */
 export function formatAIError(err: unknown): ErrorInfo {
   const error = err instanceof Error ? err : new Error(String(err))
-  const errRecord = error as Record<string, unknown>
+  const errRecord = error as unknown as Record<string, unknown>
 
   // ─── RetryError（重试耗尽，AI SDK v4=AI_RetryError, v5+=RetryError）──
   const hasLastError = errRecord.lastError !== undefined

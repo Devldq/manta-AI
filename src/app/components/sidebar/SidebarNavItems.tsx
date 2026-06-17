@@ -25,11 +25,11 @@ export function SidebarNavItems() {
             href={item.href}
             className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${
               isActive
-                ? 'bg-[#27272a] text-[#fafafa]'
-                : 'text-[#a1a1aa] hover:bg-[#27272a]/50 hover:text-[#fafafa]'
+                ? 'bg-border text-sidebar-text'
+                : 'text-sidebar-text-secondary hover:bg-border/50 hover:text-sidebar-text'
             }`}
           >
-            <Icon size={13} className={isActive ? 'text-[#6366f1]' : 'text-[#52525b]'} />
+            <Icon size={13} className={isActive ? 'text-accent' : 'text-text-muted'} />
             <span className={isActive ? 'font-medium' : ''}>{item.label}</span>
           </Link>
         )

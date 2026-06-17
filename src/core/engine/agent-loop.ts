@@ -390,7 +390,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         const result = streamText({
           model,
           system: effectiveSystemPrompt,
-          tools: stepTools,
+          tools: stepTools as Parameters<typeof streamText>[0]['tools'],
           temperature: effectiveTemperature,
           messages: currentMessages,
           abortSignal,  // 仅用户停止时触发（来自 LoopRegistry 的 AbortController）

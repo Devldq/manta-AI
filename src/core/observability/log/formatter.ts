@@ -26,11 +26,13 @@ const LEVEL_COLORS: Record<LogLevel, string> = {
 /** 日志类型图标映射 */
 const TYPE_ICONS: Record<LogType, string> = {
   [LogType.TOOL_CALL]: '🔧',
+  [LogType.MODEL_OUTPUT]: '🤖',
   [LogType.SYSTEM]: '⚙️',
   [LogType.AGENT_LOOP]: '🔄',
   [LogType.WORKFLOW]: '📋',
   [LogType.USER_ACTION]: '👤',
   [LogType.PERFORMANCE]: '⚡',
+  [LogType.METRICS]: '📊',
   [LogType.ERROR]: '❌',
   [LogType.SECURITY]: '🔒',
 }

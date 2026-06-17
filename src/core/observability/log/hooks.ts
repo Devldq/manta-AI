@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { logger } from './index'
-import type { LogEntry, LogLevel, LogType, LogSource, LogFilter, LogStats, LogReportConfig, LogExportOptions, LogExportResult } from './types'
+import { LogLevel, LogType } from './types'
+import type { LogEntry, LogSource, LogFilter, LogStats, LogReportConfig, LogExportOptions, LogExportResult } from './types'
 
 /** 前端过滤日志条目 */
 function matchFilter(entry: LogEntry, filter: LogFilter): boolean {
@@ -42,12 +43,31 @@ export function useLogState(filter?: LogFilter, conversationId?: string) {
   const { logs, stats } = useMemo(() => {
     const filtered = filter ? rawLogs.filter(l => matchFilter(l, filter)) : rawLogs
     const errorCount = filtered.filter(l => l.level === 'error' || l.level === 'fatal').length
+
+    // 计算 byLevel、byType、bySource 统计
+    const byLevel: Record<string, number> = {}
+    const byType: Record<string, number> = {}
+    const bySource: Record<string, number> = {}
+    const recentErrors: typeof filtered = []
+
+    for (const log of filtered) {
+      byLevel[log.level] = (byLevel[log.level] || 0) + 1
+      byType[log.type] = (byType[log.type] || 0) + 1
+      bySource[log.source] = (bySource[log.source] || 0) + 1
+      if ((log.level === 'error' || log.level === 'fatal') && recentErrors.length < 10) {
+        recentErrors.push(log)
+      }
+    }
+
     return {
       logs: filtered,
       stats: {
         total: filtered.length,
-        errorCount,
+        byLevel,
+        byType,
+        bySource,
         errorRate: filtered.length > 0 ? errorCount / filtered.length : 0,
+        recentErrors,
       } as LogStats,
     }
   }, [rawLogs, filterKey])

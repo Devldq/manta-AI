@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react'
 import React from 'react'
 import Link from 'next/link'
+import { SkeletonList } from '@/app/components/skeleton'
 
 interface RunnerStatus {
   id: string
@@ -72,8 +73,10 @@ export default function SettingsPage() {
   useEffect(() => {
     const api = (window as Window & { electronAPI?: { selectDirectory?: unknown } }).electronAPI
     setIsElectron(typeof api?.selectDirectory === 'function')
-    probeRunners()
-    loadPlugins()
+    
+    // 并行执行数据获取
+    Promise.allSettled([probeRunners(), loadPlugins()])
+    
     const saved = localStorage.getItem('manta:webhook')
     if (saved) {
       try { setWebhook(JSON.parse(saved)) } catch {}
@@ -342,7 +345,9 @@ export default function SettingsPage() {
             }}
           >
             {readmeLoading ? (
-              <div className="p-6" style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>加载中...</div>
+              <div className="p-6">
+                <SkeletonList itemCount={4} itemHeight="20px" showAvatar={false} showSubtitle={false} />
+              </div>
             ) : (
               <MarkdownView content={readme} />
             )}

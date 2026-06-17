@@ -23,8 +23,8 @@ export function SidebarTabs() {
               onClick={() => setMode(tab.key)}
               className={`px-2 py-1 rounded text-xs transition-colors ${
                 isActive
-                  ? 'bg-[#27272a] text-white font-medium'
-                  : 'text-[#52525b] hover:text-[#a1a1aa]'
+                  ? 'bg-border text-sidebar-text font-medium'
+                  : 'text-text-muted hover:text-sidebar-text-secondary'
               }`}
             >
               {tab.label}
