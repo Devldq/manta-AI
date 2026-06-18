@@ -1,0 +1,33 @@
+
+> @manta/desktop@1.0.0 build /Users/link/manta-AI/packages/desktop
+> electron-builder
+
+  [34m•[39m electron-builder  [34mversion[39m=26.8.1 [34mos[39m=25.4.0
+  [34m•[39m loaded configuration  [34mfile[39m=package.json ("build" field)
+  [33m•[39m description is missed in the package.json  [33mappPackageFile[39m=/Users/link/manta-AI/packages/desktop/package.json
+  [33m•[39m author is missed in the package.json  [33mappPackageFile[39m=/Users/link/manta-AI/packages/desktop/package.json
+  [34m•[39m writing effective config  [34mfile[39m=dist/builder-effective-config.yaml
+  [34m•[39m packageManager not detected by file, falling back to environment detection  [34mresolvedPackageManager[39m=pnpm [34mdetected[39m=/Users/link/manta-AI/packages/desktop
+  [34m•[39m detected workspace root for project using packageManager field  [34mpm[39m=pnpm [34mconfig[39m=pnpm@9.0.0 [34mresolved[39m=/Users/link/manta-AI [34mprojectDir[39m=/Users/link/manta-AI/packages/desktop
+  [34m•[39m executing @electron/rebuild  [34melectronVersion[39m=41.0.4 [34march[39m=arm64 [34mbuildFromSource[39m=false [34mworkspaceRoot[39m=/Users/link/manta-AI [34mprojectDir[39m=./ [34mappDir[39m=./
+  [34m•[39m installing native dependencies  [34march[39m=arm64
+  [34m•[39m completed installing native dependencies
+  [34m•[39m packaging       [34mplatform[39m=darwin [34march[39m=arm64 [34melectron[39m=41.0.4 [34mappOutDir[39m=dist/mac-arm64
+  [34m•[39m searching for node modules  [34mpm[39m=pnpm [34msearchDir[39m=/Users/link/manta-AI/packages/desktop
+  [33m•[39m default Electron icon is used  [33mreason[39m=application icon is not set
+  [34m•[39m signing         [34mfile[39m=dist/mac-arm64/Manta.app [34mplatform[39m=darwin [34mtype[39m=distribution [34midentityName[39m=Apple Development: link0627@163.com (3KRLWLG33H) [34midentityHash[39m=6D12245C67B0953C5FA5BCBD3013F49FE405060E [34mprovisioningProfile[39m=none
+  [33m•[39m skipped macOS notarization  [33mreason[39m=`notarize` options were unable to be generated
+  [34m•[39m building        [34mtarget[39m=macOS zip [34march[39m=arm64 [34mfile[39m=dist/Manta-1.0.0-arm64-mac.zip
+  [34m•[39m building        [34mtarget[39m=DMG [34march[39m=arm64 [34mfile[39m=dist/Manta-1.0.0-arm64.dmg
+  [34m•[39m building block map  [34mblockMapFile[39m=dist/Manta-1.0.0-arm64.dmg.blockmap
+  [34m•[39m building block map  [34mblockMapFile[39m=dist/Manta-1.0.0-arm64-mac.zip.blockmap
+-sign/src/sign.ts:48:3)
+    at signApp (/Users/link/manta-AI/node_modules/.pnpm/@electron+osx-sign@1.3.3/node_modules/@electron/osx-sign/src/sign.ts:325:25)
+    at retry (/Users/link/manta-AI/node_modules/.pnpm/builder-util-runtime@9.5.1/node_modules/builder-util-runtime/src/retry.ts:9:12)
+    at retry (/Users/link/manta-AI/node_modules/.pnpm/builder-util-runtime@9.5.1/node_modules/builder-util-runtime/src/retry.ts:13:14)
+    at retry (/Users/link/manta-AI/node_modules/.pnpm/builder-util-runtime@9.5.1/node_modules/builder-util-runtime/src/retry.ts:13:14)
+    at retry (/Users/link/manta-AI/node_modules/.pnpm/builder-util-runtime@9.5.1/node_modules/builder-util-runtime/src/retry.ts:13:14)
+    at MacPackager.sign (/Users/link/manta-AI/node_modules/.pnpm/app-builder-lib@26.8.1_dmg-builder@26.8.1_electron-builder-squirrel-windows@26.8.1_dmg-builde_24uv3nwg37v6agkno6ngdxz5l4/node_modules/app-builder-lib/src/macPackager.ts:396:5)
+    at /Users/link/manta-AI/node_modules/.pnpm/app-builder-lib@26.8.1_dmg-builder@26.8.1_electron-builder-squirrel-windows@26.8.1_dmg-builde_24uv3nwg37v6agkno6ngdxz5l4/node_modules/app-builder-lib/src/macPackager.ts:596:13
+    at async Promise.all (index 0)
+[41m[30m ELIFECYCLE [39m[49m [31mCommand failed with exit code 1.[39m

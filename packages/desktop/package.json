@@ -1,0 +1,43 @@
+{
+  "name": "@manta/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./src/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build": "electron-builder",
+    "start": "electron .",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@manta/server": "workspace:*",
+    "@manta/web": "workspace:*",
+    "electron-updater": "^6.8.3"
+  },
+  "devDependencies": {
+    "electron": "^41.0.4",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.manta.desktop",
+    "productName": "Manta",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "packages/server/dist/**/*",
+      "packages/web/dist/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"]
+    }
+  }
+}
