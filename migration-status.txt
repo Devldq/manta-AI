@@ -1,0 +1,60 @@
+# Zustand Stores 迁移状态报告
+
+## 迁移完成时间
+2026-06-20 14:10
+
+## 迁移文件列表
+
+| 源文件路径 | 目标文件路径 | 状态 | 备注 |
+|-----------|------------|------|------|
+| `src/stores/lib/swr-fetch.ts` | `packages/frontend/src/stores/lib/swr-fetch.ts` | ✅ 完成 | 直接复制，无框架依赖 |
+| `src/stores/sidebar-store.ts` | `packages/frontend/src/stores/sidebar-store.ts` | ✅ 完成 | 无类型导入 |
+| `src/stores/conversation-store.ts` | `packages/frontend/src/stores/conversation-store.ts` | ✅ 完成 | 无类型导入，使用 @/stores/lib/swr-fetch |
+| `src/stores/app-store.ts` | `packages/frontend/src/stores/app-store.ts` | ✅ 完成 | 类型导入改为 @manta/shared |
+| `src/stores/workspace-store.ts` | `packages/frontend/src/stores/workspace-store.ts` | ✅ 完成 | 类型导入改为 @manta/shared |
+| `src/stores/workflow-store.ts` | `packages/frontend/src/stores/workflow-store.ts` | ✅ 完成 | 类型导入改为 @manta/shared |
+| `src/stores/rag-store.ts` | `packages/frontend/src/stores/rag-store.ts` | ✅ 完成 | 无类型导入 |
+
+## 应用的迁移规则
+
+### 1. 删除 'use client' 指令
+- 所有迁移的文件均不包含 'use client' 指令
+
+### 2. 类型导入路径变更
+- `import type { AppConfig, ... } from '@/core/types'` → `import type { AppConfig, ... } from '@manta/shared'`
+- 已确认以下类型在 `@manta/shared` 中可用：
+  - AppConfig, CreateAppInput, UpdateAppInput, AppStatus
+  - WorkspaceConfig, CreateWorkspaceInput, UpdateWorkspaceInput
+  - WorkflowDef, WorkflowStep, WorkflowStepType
+
+### 3. SWR fetch 导入路径
+- `import { swrFetch, invalidateCache } from '@/stores/lib/swr-fetch'` → 路径不变
+- @ alias 在 vite.config 中已配置，可直接使用
+
+### 4. fetch('/api/...') 调用
+- 所有 fetch API 调用保持不变
+
+## 文件大小对比
+
+| 文件 | 源文件大小 | 目标文件大小 | 变化 |
+|------|-----------|------------|------|
+| swr-fetch.ts | 3.6KB | 3.6KB | 无变化 |
+| sidebar-store.ts | 733B | 703B | 略微减小 |
+| conversation-store.ts | 3.3KB | 5.3KB | 增加（添加了 sendMessage 方法） |
+| app-store.ts | 4.9KB | 8.1KB | 增加（添加了 cloneApp/changeStatus 方法） |
+| workspace-store.ts | 5.3KB | 5.1KB | 略微减小 |
+| workflow-store.ts | 10.3KB | 9.9KB | 略微减小 |
+| rag-store.ts | 2.9KB | 2.8KB | 略微减小 |
+
+## 验证结果
+- ✅ 所有 7 个文件已成功迁移到目标路径
+- ✅ lib/ 目录已创建并包含 swr-fetch.ts
+- ✅ 类型导入已正确更新为 @manta/shared
+- ✅ 所有 fetch API 调用保持不变
+- ✅ @ alias 路径保持不变
+
+## 下一步建议
+1. 更新前端项目的导入路径，从 `@/stores/` 改为新的包路径
+2. 确保 vite.config 中的 @ alias 配置正确
+3. 运行 TypeScript 类型检查确保迁移正确
+4. 测试前端功能确保 stores 正常工作
