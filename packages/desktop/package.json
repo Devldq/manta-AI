@@ -1,0 +1,24 @@
+{
+  "name": "@manta/desktop",
+  "version": "2.0.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsc && electron dist/main.js",
+    "build": "tsc",
+    "build:mac": "pnpm build && electron-builder --mac",
+    "build:win": "pnpm build && electron-builder --win",
+    "build:linux": "pnpm build && electron-builder --linux",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@manta/backend": "workspace:*",
+    "electron-updater": "^6.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "electron": "^41.0.4",
+    "electron-builder": "^26.8.1",
+    "typescript": "^5"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "declaration": false,
+    "rootDir": "./src",
+    "composite": false,
+    "lib": ["ES2022", "DOM"],
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "declarationMap": false,
+    "paths": {
+      "@shared/*": ["../shared/src/*"],
+      "@core/*": ["./src/core/*"],
+      "@engine/*": ["./src/core/engine/*"],
+      "@context/*": ["./src/core/context/*"],
+      "@storage/*": ["./src/core/storage/*"],
+      "@tools/*": ["./src/core/tools/*"],
+      "@observability/*": ["./src/core/observability/*"],
+      "@security/*": ["./src/core/security/*"],
+      "@llm/*": ["./src/core/llm/*"],
+      "@routes/*": ["./src/routes/*"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

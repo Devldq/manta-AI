@@ -1,0 +1,8 @@
+id: plateco
+name: Plateco Frontend Dev Agents
+runnerId: openclaw
+description: 前端需求开发全流程专用 Agent 集合，包含环境配置、需求分析、架构设计、开发、运维、测试、发布等角色
+
+# AI: 使用 openclaw-json 格式，agents 定义在 openclawConfigFile 中
+agentFormat: openclaw-json
+openclawConfigFile: ~/.openclaw/openclaw.json

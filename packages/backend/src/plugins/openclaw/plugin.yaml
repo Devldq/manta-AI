@@ -1,0 +1,10 @@
+id: openclaw
+name: OpenClaw
+runnerId: openclaw
+description: OpenClaw Agent 执行器，通过 ~/.openclaw/openclaw.json 加载所有已注册 Agent
+
+# AI: openclaw 的权威配置文件，agents.list 包含所有已注册 agent
+# Manta 读此文件获取 agent 列表（id/name），不读 models.json（含 API keys）
+agentsDirs: []
+agentFormat: openclaw-json
+openclawConfigFile: ~/.openclaw/openclaw.json
