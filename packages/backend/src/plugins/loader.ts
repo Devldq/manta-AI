@@ -4,7 +4,12 @@ import * as path from 'path'
 import * as os from 'os'
 import * as yaml from 'js-yaml'
 import type { AgentEntry, AgentOps, PluginManifest } from '../core/types'
-import { openclawAgentOps } from './openclaw/agent-ops'
+
+// 使用 require() 同步加载，避免 tsx + Node 18 ESM named export 丢失 bug
+function getOpenclawAgentOps(): AgentOps {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('./openclaw/agent-ops').openclawAgentOps as AgentOps
+}
 
 // AI: 插件根目录（项目内的 plugins/ 文件夹）
 const PLUGINS_DIR = path.join(process.cwd(), 'plugins')
@@ -163,7 +168,7 @@ export function listPlugins(): PluginManifest[] {
  */
 export function getAgentOps(pluginId: string): AgentOps | null {
   if (pluginId === 'openclaw') {
-    return openclawAgentOps
+    return getOpenclawAgentOps()
   }
   return null
 }

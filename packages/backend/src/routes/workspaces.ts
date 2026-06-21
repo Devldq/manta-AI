@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { fetchWorkspaces, createNewWorkspace, updateExistingWorkspace, deleteExistingWorkspace } from '../core/services/workspace.service'
+import { fetchWorkspaces, createNewWorkspace } from '../core/services/workspace.service'
 import { apiSuccess, apiError } from '../core/api/error-handler'
 
 export async function workspaceRoutes(app: FastifyInstance) {
@@ -19,29 +19,6 @@ export async function workspaceRoutes(app: FastifyInstance) {
       const body = request.body as Parameters<typeof createNewWorkspace>[0]
       const workspace = createNewWorkspace(body)
       return reply.status(201).send(apiSuccess(workspace))
-    } catch (err) {
-      return apiError(reply, err)
-    }
-  })
-
-  // PUT /api/workspaces/:id — 更新工作空间
-  app.put('/api/workspaces/:id', async (request, reply) => {
-    try {
-      const { id } = request.params as { id: string }
-      const body = request.body as Parameters<typeof updateExistingWorkspace>[1]
-      const workspace = updateExistingWorkspace(id, body)
-      return reply.send(apiSuccess(workspace))
-    } catch (err) {
-      return apiError(reply, err)
-    }
-  })
-
-  // DELETE /api/workspaces/:id — 删除工作空间
-  app.delete('/api/workspaces/:id', async (request, reply) => {
-    try {
-      const { id } = request.params as { id: string }
-      deleteExistingWorkspace(id)
-      return reply.send(apiSuccess({ deleted: true }))
     } catch (err) {
       return apiError(reply, err)
     }
