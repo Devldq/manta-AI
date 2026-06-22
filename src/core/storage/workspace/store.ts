@@ -75,6 +75,7 @@ export function createWorkspace(input: CreateWorkspaceInput): WorkspaceConfig {
     id: shortId(),
     name: input.name,
     description: input.description,
+    folderPath: input.folderPath,
     agentAppIds: [],
     knowledgeBaseIds: [],
     workflowIds: [],
@@ -96,6 +97,7 @@ export function updateWorkspace(id: string, patch: UpdateWorkspaceInput): Worksp
   const updated: WorkspaceConfig = {
     ...existing,
     ...patch,
+    folderPath: patch.folderPath !== undefined ? patch.folderPath : existing.folderPath,
     updatedAt: now,
   }
 

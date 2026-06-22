@@ -16,6 +16,7 @@ import {
   CapabilityTags,
   KimInputBar,
 } from './components'
+import type { WorkspaceEntry } from './components/WorkspaceSelector'
 import type { Conversation, AgentEntry } from './utils'
 
 const DEFAULT_AGENT = 'main'
@@ -24,11 +25,14 @@ const DEFAULT_AGENT = 'main'
 
 function ChatView({
   convId, agentName, initialMessages, onAgentChange, onNewChat, title, agents, conversation, workspaceId,
+  workspaces, onSwitchWorkspace,
 }: {
   convId: string; agentName: string; initialMessages: UIMessage[]
   onAgentChange: (name: string) => void; onNewChat: () => void; title: string; agents: AgentEntry[]
   conversation: Conversation | null
   workspaceId?: string | null
+  workspaces: WorkspaceEntry[]
+  onSwitchWorkspace: (workspaceId: string | null) => void
 }) {
   const navigate = useNavigate()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -372,6 +376,9 @@ function ChatView({
           agentName={agentName}
           agents={agents}
           onAgentChange={onAgentChange}
+          workspaces={workspaces}
+          currentWorkspaceId={workspaceId}
+          onWorkspaceChange={onSwitchWorkspace}
         />
       </div>
 
@@ -389,14 +396,17 @@ function ChatView({
 // ─── 新建草稿态 ───────────────────────────────────────────────────────────────
 
 function NewChatDraft({
-  agentName, onAgentChange, onCreated, agents, workspaceId,
+  agentName, onAgentChange, onCreated, agents, workspaceId, workspaces, onSwitchWorkspace,
 }: {
   agentName: string; onAgentChange: (name: string) => void
   onCreated: (convId: string, firstMsg: string) => void; agents: AgentEntry[]
   workspaceId?: string | null
+  workspaces: WorkspaceEntry[]
+  onSwitchWorkspace: (workspaceId: string | null) => void
 }) {
   const [input, setInput] = useState('')
   const [creating, setCreating] = useState(false)
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | undefined>(workspaceId || undefined)
 
   async function handleSend() {
     const msg = input.trim()
@@ -410,7 +420,7 @@ function NewChatDraft({
           agentName,
           mode: 'chat',
           title: msg.slice(0, 30),
-          ...(workspaceId ? { type: 'workspace', workspaceId } : { type: 'global' }),
+          ...(selectedWorkspaceId ? { type: 'workspace', workspaceId: selectedWorkspaceId } : { type: 'global' }),
         }),
       })
       const data = await res.json()
@@ -449,6 +459,12 @@ function NewChatDraft({
         agentName={agentName}
         agents={agents}
         onAgentChange={onAgentChange}
+        workspaces={workspaces}
+        currentWorkspaceId={selectedWorkspaceId}
+        onWorkspaceChange={(id) => {
+          setSelectedWorkspaceId(id || undefined)
+          onSwitchWorkspace(id)
+        }}
       />
     </div>
   )
@@ -466,6 +482,7 @@ function TasksPage() {
   const [conv, setConv] = useState<Conversation | null>(null)
   const [loading, setLoading] = useState(false)
   const [agents, setAgents] = useState<AgentEntry[]>([])
+  const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([])
 
   // 加载 agent 列表
   useEffect(() => {
@@ -474,6 +491,33 @@ function TasksPage() {
       .then((d) => setAgents((d.agents ?? []).filter((a: AgentEntry) => a.enabled)))
       .catch(() => {})
   }, [])
+
+  // 加载工作空间列表
+  useEffect(() => {
+    fetch('/api/workspaces')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success && d.data) {
+          const list = Array.isArray(d.data) ? d.data : d.data.workspaces || []
+          setWorkspaces(list.map((ws: any) => ({
+            id: ws.id,
+            name: ws.name,
+            folderPath: ws.folderPath,
+            taskCount: ws.taskCount ?? 0,
+          })))
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // 切换工作空间
+  function handleSwitchWorkspace(workspaceId: string | null) {
+    if (workspaceId) {
+      navigate(`/tasks?workspaceId=${workspaceId}`, { replace: true })
+    } else {
+      navigate('/tasks', { replace: true })
+    }
+  }
 
   const loadConv = useCallback(async (id: string) => {
     setLoading(true)
@@ -582,6 +626,8 @@ function TasksPage() {
         agents={agents}
         conversation={conv}
         workspaceId={workspaceIdParam}
+        workspaces={workspaces}
+        onSwitchWorkspace={handleSwitchWorkspace}
       />
     )
   }
@@ -593,6 +639,8 @@ function TasksPage() {
       onCreated={handleConvCreated}
       agents={agents}
       workspaceId={workspaceIdParam}
+      workspaces={workspaces}
+      onSwitchWorkspace={handleSwitchWorkspace}
     />
   )
 }

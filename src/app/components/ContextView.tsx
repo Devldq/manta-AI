@@ -111,10 +111,10 @@ const PIPE_LABELS: Record<string, string> = {
 // ─── 主组件 ──────────────────────────────────────────────────────────────────
 
 interface ContextViewProps {
-  conversationId?: string
+  taskId?: string
 }
 
-export const ContextView = memo(function ContextView({ conversationId }: ContextViewProps) {
+export const ContextView = memo(function ContextView({ taskId }: ContextViewProps) {
   const [data, setData] = useState<ContextData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -123,11 +123,11 @@ export const ContextView = memo(function ContextView({ conversationId }: Context
   const [expandedStep, setExpandedStep] = useState<number | null>(null)
 
   const fetchContext = useCallback(async () => {
-    if (!conversationId) return
+    if (!taskId) return
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/conversations/${conversationId}/context`)
+      const res = await fetch(`/api/tasks/${taskId}/context`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json()
       setData(json)
@@ -136,7 +136,7 @@ export const ContextView = memo(function ContextView({ conversationId }: Context
     } finally {
       setLoading(false)
     }
-  }, [conversationId])
+  }, [taskId])
 
   useEffect(() => {
     fetchContext()
@@ -148,7 +148,7 @@ export const ContextView = memo(function ContextView({ conversationId }: Context
     return () => clearInterval(timer)
   }, [fetchContext])
 
-  if (!conversationId) {
+  if (!taskId) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-6">
         <Brain size={32} className="text-text-muted mb-3 opacity-50" />

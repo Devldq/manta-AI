@@ -5,7 +5,7 @@
  * - Agent loop 与 HTTP 连接完全解耦，运行在独立的后台异步任务中
  * - Loop 输出通过 EventEmitter 广播，任意数量的 SSE 连接可订阅
  * - 客户端断开后 loop 继续执行，重连时从缓冲区补发缺失事件
- * - 每个对话最多一个活跃 loop，通过 conversationId 索引
+ * - 每个对话最多一个活跃 loop，通过 taskId 索引
  */
 import { EventEmitter } from 'events'
 
@@ -42,35 +42,35 @@ export interface ActiveLoop {
 /** 事件缓冲区最大条数（避免内存无限增长） */
 const MAX_BUFFER_SIZE = 1000
 
-// ─── 注册表 ────────────────────────────────────────────────────────────────────
+// ─── 注册表 ──────────────────────────────────────────────────────────────────────
 
-/** conversationId → ActiveLoop */
+/** taskId → ActiveLoop */
 const loops = new Map<string, ActiveLoop>()
 
 /**
- * 检查指定会话是否有活跃的 agent 循环
+ * 检查指定任务是否有活跃的 agent 循环
  */
-export function hasActiveLoop(conversationId: string): boolean {
-  const loop = loops.get(conversationId)
+export function hasActiveLoop(taskId: string): boolean {
+  const loop = loops.get(taskId)
   return !!loop && !loop.finished
 }
 
 /**
- * 获取指定会话的活跃循环（不存在则返回 undefined）
+ * 获取指定任务的活跃循环（不存在则返回 undefined）
  */
-export function getActiveLoop(conversationId: string): ActiveLoop | undefined {
-  const loop = loops.get(conversationId)
+export function getActiveLoop(taskId: string): ActiveLoop | undefined {
+  const loop = loops.get(taskId)
   if (loop && !loop.finished) return loop
   return undefined
 }
 
 /**
  * 注册一个新的活跃循环
- * 如果该会话已有活跃循环则抛出错误（调用方应先检查）
+ * 如果该任务已有活跃循环则抛出错误（调用方应先检查）
  */
-export function registerLoop(conversationId: string, running: Promise<void>): ActiveLoop {
-  if (loops.has(conversationId) && !loops.get(conversationId)!.finished) {
-    throw new Error(`Conversation ${conversationId} already has an active loop`)
+export function registerLoop(taskId: string, running: Promise<void>): ActiveLoop {
+  if (loops.has(taskId) && !loops.get(taskId)!.finished) {
+    throw new Error(`Task ${taskId} already has an active loop`)
   }
 
   const loop: ActiveLoop = {
@@ -82,7 +82,7 @@ export function registerLoop(conversationId: string, running: Promise<void>): Ac
     seq: 0,
   }
 
-  loops.set(conversationId, loop)
+  loops.set(taskId, loop)
 
   // 当 loop 完成（成功或失败）时标记 finished
   running
@@ -101,8 +101,8 @@ export function registerLoop(conversationId: string, running: Promise<void>): Ac
 /**
  * 向活跃循环推送一个事件（由 agent loop 调用）
  */
-export function emitLoopEvent(conversationId: string, data: string): void {
-  const loop = loops.get(conversationId)
+export function emitLoopEvent(taskId: string, data: string): void {
+  const loop = loops.get(taskId)
   if (!loop || loop.finished) return
 
   const event: LoopEvent = {
@@ -123,18 +123,18 @@ export function emitLoopEvent(conversationId: string, data: string): void {
 
 /**
  * 订阅活跃循环的事件流
- * @param conversationId 会话 ID
+ * @param taskId 任务 ID
  * @param fromSeq 从该序号开始接收事件（用于重连），0 表示从头开始
  * @param onEvent 事件回调
  * @returns 取消订阅函数
  */
 export function subscribeToLoop(
-  conversationId: string,
+  taskId: string,
   fromSeq: number,
   onEvent: (event: LoopEvent) => void,
 ): () => void {
-  const loop = loops.get(conversationId)
-  if (!loop) throw new Error(`No active loop for conversation ${conversationId}`)
+  const loop = loops.get(taskId)
+  if (!loop) throw new Error(`No active loop for task ${taskId}`)
 
   // 1. 补发缓冲区中的历史事件
   for (const event of loop.buffer) {
@@ -166,16 +166,16 @@ export function subscribeToLoop(
 /**
  * 获取活跃循环的当前最新序号
  */
-export function getCurrentSeq(conversationId: string): number {
-  const loop = loops.get(conversationId)
+export function getCurrentSeq(taskId: string): number {
+  const loop = loops.get(taskId)
   return loop?.seq ?? 0
 }
 
 /**
- * 用户主动停止指定会话的 agent 循环
+ * 用户主动停止指定任务的 agent 循环
  */
-export function stopLoop(conversationId: string): boolean {
-  const loop = loops.get(conversationId)
+export function stopLoop(taskId: string): boolean {
+  const loop = loops.get(taskId)
   if (!loop || loop.finished) return false
   loop.abortController.abort()
   return true
@@ -186,12 +186,12 @@ export function stopLoop(conversationId: string): boolean {
  * 注意：不立即清理，因为重连客户端可能还需要缓冲区
  * 延迟 30 秒后自动清理
  */
-export function scheduleCleanup(conversationId: string): void {
+export function scheduleCleanup(taskId: string): void {
   setTimeout(() => {
-    const loop = loops.get(conversationId)
+    const loop = loops.get(taskId)
     if (loop?.finished) {
       loop.emitter.removeAllListeners()
-      loops.delete(conversationId)
+      loops.delete(taskId)
     }
   }, 30_000) // 30 秒保留期
 }

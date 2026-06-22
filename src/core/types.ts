@@ -1,7 +1,7 @@
 /*  start: Manta 核心类型定义 — 所有模块共享，单向依赖（不导入任何内部模块）*/
 
 // ─── 任务状态机 ───────────────────────────────────────────────
-export type TaskStatus =
+export type JobStatus =
   | 'inbox'      // 待处理（初始状态）
   | 'planning'   // 规划中（工作流分配中）
   | 'running'    // 进行中（Agent 执行中）
@@ -10,17 +10,17 @@ export type TaskStatus =
   | 'archived'   // 已归档
 
 // ─── 任务模式 ───────────────────────────────────────────────
-export type TaskMode =
-  | 'lightweight'  // 轻量模式：Task → Runner → 结果（无工作流）
-  | 'workflow'     // 完整模式：Task → Workflow → Runner
+export type JobMode =
+  | 'lightweight'  // 轻量模式：Job → Runner → 结果（无工作流）
+  | 'workflow'     // 完整模式：Job → Workflow → Runner
 
-// ─── 任务对象 ───────────────────────────────────────────────
-export interface Task {
+// ─── 任务对象（工作流任务状态机）───────────────────────────────────────
+export interface Job {
   id: string
   title: string
   description?: string
-  status: TaskStatus
-  mode: TaskMode
+  status: JobStatus
+  mode: JobMode
 
   // 轻量模式：直接指定 Agent
   agentName?: string
@@ -34,7 +34,7 @@ export interface Task {
   workDir?: string
 
   // 执行结果
-  outputDir?: string  // ~/.manta-data/tasks/{id}/
+  outputDir?: string  // ~/.manta-data/jobs/{id}/
   error?: string
 
   // 时间戳
@@ -190,7 +190,7 @@ export interface RunParams {
   agent: AgentEntry
 
   /** 任务 */
-  task: Task
+  task: Job
 
   /** 输出目录 */
   outputDir: string
@@ -310,11 +310,11 @@ export interface WorkflowExecution {
 
 // ─── 数据存储 ───────────────────────────────────────────────
 export interface DataStore {
-  getTasks(): Promise<Task[]>
-  getTask(id: string): Promise<Task | null>
-  createTask(task: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>): Promise<Task>
-  updateTask(id: string, patch: Partial<Task>): Promise<Task>
-  deleteTask(id: string): Promise<void>
+  getJobs(): Promise<Job[]>
+  getJob(id: string): Promise<Job | null>
+  createJob(job: Omit<Job, 'id' | 'createdAt' | 'updatedAt'>): Promise<Job>
+  updateJob(id: string, patch: Partial<Job>): Promise<Job>
+  deleteJob(id: string): Promise<void>
 }
 
 // ─── 智能体应用 ───────────────────────────────────────────────
@@ -421,11 +421,14 @@ export interface UpdateAppInput {
 }
 // ─── 工作空间配置 ───────────────────────────────────────────────
 
-/** 工作空间配置（顶层运行环境，包含多个会话） */
+/** 工作空间配置（顶层运行环境，包含多个任务/会话）*/
 export interface WorkspaceConfig {
   id: string
   name: string
   description?: string
+
+  /** 用户选择的本地文件夹路径（工作空间绑定的目录）*/
+  folderPath?: string
 
   /** 绑定的智能体应用 ID 列表 */
   agentAppIds: string[]
@@ -444,12 +447,14 @@ export interface WorkspaceConfig {
 export interface CreateWorkspaceInput {
   name: string
   description?: string
+  folderPath?: string  // 用户选择的本地文件夹路径
 }
 
 /** 更新工作空间的输入 */
 export interface UpdateWorkspaceInput {
   name?: string
   description?: string
+  folderPath?: string  // 更新文件夹路径
   agentAppIds?: string[]
   knowledgeBaseIds?: string[]
   workflowIds?: string[]
@@ -485,16 +490,16 @@ export interface KnowledgeBase {
   updatedAt: string
 }
 
-// ─── 会话类型 ───────────────────────────────────────────────
+// ─── 任务类型（聊天会话）─────────────────────────────────────────
 
-/** 会话类型 */
-export type ConversationType = 'global' | 'workspace'
+/** 任务类型（聊天会话）*/
+export type TaskType = 'global' | 'workspace'
 
-/** 创建会话的输入 */
-export interface CreateConversationInput {
+/** 创建任务的输入 */
+export interface CreateTaskInput {
   agentName: string
   title?: string
-  type: ConversationType
+  type: TaskType
   workspaceId?: string  // type='workspace' 时必填
 }
 
@@ -518,8 +523,8 @@ export interface StepUsageRecord {
   toolNames?: string[]
 }
 
-/** 会话消息 */
-export interface ConversationMessage {
+/** 任务消息（聊天会话消息）*/
+export interface TaskMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
@@ -537,25 +542,25 @@ export interface ConversationMessage {
   agentAppId?: string
 }
 
-/** 会话上下文 */
-export interface ConversationContext {
+/** 任务上下文 */
+export interface TaskContext {
   [key: string]: unknown
 }
 
-/** 会话 */
-export interface Conversation {
+/** 任务（聊天会话）*/
+export interface Task {
   id: string
   title: string
   agentName: string
-  messages: ConversationMessage[]
-  context: ConversationContext
+  messages: TaskMessage[]
+  context: TaskContext
   workspaceId?: string
   createdAt: string
   updatedAt: string
 }
 
-/** 会话摘要（列表展示用） */
-export interface ConversationSummary {
+/** 任务摘要（列表展示用）*/
+export interface TaskSummary {
   id: string
   title: string
   agentName: string
@@ -576,3 +581,10 @@ export interface AtMention {
 }
 
 /*  end: 核心类型定义结束 */
+
+// ─── 向后兼容别名（旧代码可继续使用 Conversation 等名称）────────────────────
+export type Conversation = Task
+export type ConversationMessage = TaskMessage
+export type ConversationContext = TaskContext
+export type ConversationSummary = TaskSummary
+export type ConversationType = TaskType

@@ -1,4 +1,4 @@
-/* Sidebar Zustand Store — 侧边栏 UI 状态管理（Tab 模式、搜索） */
+/* Sidebar Zustand Store — 侧边栏 UI 状态管理 */
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -6,25 +6,26 @@ import { persist } from 'zustand/middleware'
 export type TabMode = 'conversation' | 'workspace'
 
 interface SidebarStore {
-  mode: TabMode
   searchQuery: string
+  mode: TabMode
 
-  setMode: (mode: TabMode) => void
   setSearchQuery: (query: string) => void
+  setMode: (mode: TabMode) => void
 }
 
 export const useSidebarStore = create<SidebarStore>()(
   persist(
     (set) => ({
-      mode: 'conversation',
       searchQuery: '',
+      mode: 'conversation',
 
-      setMode: (mode) => set({ mode }),
       setSearchQuery: (query) => set({ searchQuery: query }),
+      setMode: (mode) => set({ mode }),
     }),
     {
       name: 'manta:sidebar',
-      partialize: (state) => ({ mode: state.mode }),
+      partialize: (state) => ({ mode: state.mode }), // 持久化 tab 选择
     }
   )
 )
+

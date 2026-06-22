@@ -1,4 +1,4 @@
-/* 会话聊天页面 — 性能优化版 */
+/* 任务聊天页面 — 性能优化版 */
 'use client'
 
 import { useState, useEffect, useRef, Suspense, useCallback } from 'react'
@@ -17,37 +17,41 @@ import {
   CapabilityTags,
   KimInputBar,
 } from './components'
-import type { Conversation, AgentEntry } from './utils'
+import type { WorkspaceEntry } from './components/WorkspaceSelector'
+import type { Task, AgentEntry } from './utils'
 
 const DEFAULT_AGENT = 'main'
 
-// ─── ChatView（有会话时） ─────────────────────────────────────────────────────
+// ─── ChatView（有任务时） ─────────────────────────────────────────────────────
 
 function ChatView({
-  convId, agentName, initialMessages, onAgentChange, onNewChat, title, agents, conversation, workspaceId,
+  taskId, agentName, initialMessages, onAgentChange, onNewChat, title, agents, task, workspaceId,
+  workspaces, onSwitchWorkspace,
 }: {
-  convId: string; agentName: string; initialMessages: UIMessage[]
+  taskId: string; agentName: string; initialMessages: UIMessage[]
   onAgentChange: (name: string) => void; onNewChat: () => void; title: string; agents: AgentEntry[]
-  conversation: Conversation | null
+  task: Task | null
   workspaceId?: string | null
+  workspaces: WorkspaceEntry[]
+  onSwitchWorkspace: (workspaceId: string | null) => void
 }) {
   const router = useRouter()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [inputText, setInputText] = useState('')
 
   // 构建 API URL 的辅助函数，自动添加 workspace 参数
-  const buildConvUrl = useCallback((path: string = '') => {
+  const buildTaskUrl = useCallback((path: string = '') => {
     const typeParam = workspaceId ? 'type=workspace' : ''
     const wsParam = workspaceId ? `workspaceId=${workspaceId}` : ''
     const params = [typeParam, wsParam].filter(Boolean).join('&')
-    return `/api/conversations/${convId}${path}${params ? `?${params}` : ''}`
-  }, [convId, workspaceId])
+    return `/api/tasks/${taskId}${path}${params ? `?${params}` : ''}`
+  }, [taskId, workspaceId])
 
-  // 本地 conversation 状态
-  const [sidebarConv, setSidebarConv] = useState<Conversation | null>(conversation)
-  useEffect(() => { setSidebarConv(conversation) }, [conversation])
+  // 本地 task 状态
+  const [sidebarTask, setSidebarTask] = useState<Task | null>(task)
+  useEffect(() => { setSidebarTask(task) }, [task])
 
-  // 会话标题编辑状态
+  // 任务标题编辑状态
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState(title)
   const titleInputRef = useRef<HTMLInputElement>(null)
@@ -62,19 +66,19 @@ function ChatView({
       return
     }
     try {
-      const res = await fetch(buildConvUrl(), {
+      const res = await fetch(buildTaskUrl(), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: trimmed }),
       })
       if (res.ok) {
-        setSidebarConv((prev) => (prev ? { ...prev, title: trimmed } : prev))
+        setSidebarTask((prev) => (prev ? { ...prev, title: trimmed } : prev))
       }
     } catch {
       // 忽略错误
     }
     setEditingTitle(false)
-  }, [titleValue, title, buildConvUrl])
+  }, [titleValue, title, buildTaskUrl])
 
   // 编辑模式下聚焦输入框
   useEffect(() => {
@@ -92,23 +96,23 @@ function ChatView({
     }
     return false
   })
-  const pendingMsgKey = `manta:pending-msg:${convId}`
+  const pendingMsgKey = `manta:pending-msg:${taskId}`
 
   const { messages, setMessages, sendMessage, stop, status, error } = useChat({
     transport: new DefaultChatTransport({
       api: workspaceId
-        ? `/api/conversations/${convId}/ai-stream?type=workspace&workspaceId=${workspaceId}`
-        : `/api/conversations/${convId}/ai-stream`,
+        ? `/api/tasks/${taskId}/ai-stream?type=workspace&workspaceId=${workspaceId}`
+        : `/api/tasks/${taskId}/ai-stream`,
       body: { agentName },
     }),
     messages: initialMessages,
-    id: convId,
+    id: taskId,
   })
 
   const isLoading = status === 'submitted' || status === 'streaming'
 
   // ─── SSE 重连 ─────────────────────────────────────────────────────────
-  const reconnect = useReconnectSSE(convId, !isLoading && status === 'ready', workspaceId)
+  const reconnect = useReconnectSSE(taskId, !isLoading && status === 'ready', workspaceId)
 
   // 当发送新消息时，重置重连状态
   useEffect(() => {
@@ -123,13 +127,13 @@ function ChatView({
   useEffect(() => {
     if (reconnect.finished && !reconnectFinishedRef.current) {
       reconnectFinishedRef.current = true
-      fetch(buildConvUrl())
+      fetch(buildTaskUrl())
         .then((r) => r.json())
         .then((data) => {
-          const conv = data.conversation
-          if (!conv) return
-          setSidebarConv(conv)
-          const refreshed: UIMessage[] = conv.messages
+          const t = data.task
+          if (!t) return
+          setSidebarTask(t)
+          const refreshed: UIMessage[] = t.messages
             .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
             .map((m: { id: string; role: string; content: string; timestamp: string; toolCalls?: unknown[]; usage?: Record<string, unknown> | null; stepUsages?: Array<Record<string, unknown>> | null }) => {
               const parts: UIMessage['parts'] = []
@@ -159,7 +163,7 @@ function ChatView({
         })
         .catch(() => {})
     }
-  }, [reconnect.finished, convId, setMessages, reconnect, buildConvUrl])
+  }, [reconnect.finished, taskId, setMessages, reconnect, buildTaskUrl])
 
   // 持久化 sidebarOpen 到 localStorage
   useEffect(() => {
@@ -172,15 +176,15 @@ function ChatView({
     const prev = prevStatusRef.current
     prevStatusRef.current = status
     if ((prev === 'streaming' || prev === 'submitted') && status === 'ready') {
-      fetch(buildConvUrl())
+      fetch(buildTaskUrl())
         .then((r) => r.json())
         .then((data) => {
-          const conv = data.conversation
-          if (!conv) return
-          setSidebarConv(conv)
+          const t = data.task
+          if (!t) return
+          setSidebarTask(t)
           setMessages((prevMessages) => {
             return prevMessages.map((msg) => {
-              const serverMsg = conv.messages.find((m: { id: string }) => m.id === msg.id)
+              const serverMsg = t.messages.find((m: { id: string }) => m.id === msg.id)
               if (serverMsg) {
                 return {
                   ...msg,
@@ -197,7 +201,7 @@ function ChatView({
         })
         .catch(() => {})
     }
-  }, [status, convId, setMessages, buildConvUrl])
+  }, [status, taskId, setMessages, buildTaskUrl])
 
   useEffect(() => {
     const pendingMsg = sessionStorage.getItem(pendingMsgKey)
@@ -223,7 +227,7 @@ function ChatView({
 
   // ─── 自定义停止 ────────────────────────────────────────────────
   async function handleStop() {
-    await fetch(buildConvUrl('/stop'), { method: 'POST' }).catch(() => {})
+    await fetch(buildTaskUrl('/stop'), { method: 'POST' }).catch(() => {})
     stop()
   }
 
@@ -248,7 +252,7 @@ function ChatView({
           replacedMsgIdxRef.current = lastAssistantIdx
         } else {
           result.push({
-            id: `reconnect-${convId}`,
+            id: `reconnect-${taskId}`,
             role: 'assistant' as const,
             parts: reconnect.streamingParts,
           })
@@ -300,7 +304,7 @@ function ChatView({
                 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px', cursor: 'pointer' }}
                 title="点击编辑标题"
               >
-                {sidebarConv?.title || title}
+                {sidebarTask?.title || title}
               </h3>
             )}
           </div>
@@ -331,7 +335,7 @@ function ChatView({
           {isReconnecting && (
             <div style={{ padding: '12px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 500, background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent)', color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Loader2 size={14} className="tool-spinner" />
-              正在连接会话…
+              正在连接任务…
             </div>
           )}
           {displayMessages.map((msg, idx) => {
@@ -373,6 +377,9 @@ function ChatView({
           agentName={agentName}
           agents={agents}
           onAgentChange={onAgentChange}
+          workspaces={workspaces}
+          currentWorkspaceId={workspaceId}
+          onWorkspaceChange={onSwitchWorkspace}
         />
       </div>
 
@@ -380,7 +387,7 @@ function ChatView({
       <div className="hidden md:block">
         <SessionSidebar
           open={sidebarOpen}
-          conversation={sidebarConv}
+          task={sidebarTask}
         />
       </div>
     </div>
@@ -390,34 +397,36 @@ function ChatView({
 // ─── 新建草稿态 ───────────────────────────────────────────────────────────────
 
 function NewChatDraft({
-  agentName, onAgentChange, onCreated, agents, workspaceId,
+  agentName, onAgentChange, onCreated, agents, workspaceId, workspaces, onSwitchWorkspace,
 }: {
   agentName: string; onAgentChange: (name: string) => void
-  onCreated: (convId: string, firstMsg: string) => void; agents: AgentEntry[]
+  onCreated: (taskId: string, firstMsg: string) => void; agents: AgentEntry[]
   workspaceId?: string | null
+  workspaces: WorkspaceEntry[]
+  onSwitchWorkspace: (workspaceId: string | null) => void
 }) {
   const [input, setInput] = useState('')
   const [creating, setCreating] = useState(false)
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | undefined>(workspaceId || undefined)
 
   async function handleSend() {
     const msg = input.trim()
     if (!msg || creating) return
     setCreating(true)
     try {
-      const res = await fetch('/api/conversations', {
+      const res = await fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agentName,
-          mode: 'chat',
           title: msg.slice(0, 30),
-          ...(workspaceId ? { type: 'workspace', workspaceId } : { type: 'global' }),
+          ...(selectedWorkspaceId ? { type: 'workspace', workspaceId: selectedWorkspaceId } : { type: 'global' }),
         }),
       })
       const data = await res.json()
-      const convId: string = data.data?.conversation?.id
-      if (!convId) throw new Error('创建会话失败')
-      onCreated(convId, msg)
+      const taskId: string = data.data?.task?.id
+      if (!taskId) throw new Error('创建任务失败')
+      onCreated(taskId, msg)
     } catch (err) {
       console.error(err)
       setCreating(false)
@@ -433,6 +442,35 @@ function NewChatDraft({
         onAgentChange={onAgentChange}
         onTagClick={(label) => setInput(label + ' ')}
       />
+
+      {/* 工作空间选择器 */}
+      {workspaces && workspaces.length > 0 && (
+        <div style={{ padding: '0 24px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+            <span>工作空间:</span>
+            <select
+              value={selectedWorkspaceId || ''}
+              onChange={(e) => setSelectedWorkspaceId(e.target.value || undefined)}
+              style={{
+                flex: 1,
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-bg-secondary, #f5f5f5)',
+                color: 'var(--color-text-primary)',
+                fontSize: '13px',
+                outline: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              <option value="">无 (独立任务)</option>
+              {workspaces.map((ws) => (
+                <option key={ws.id} value={ws.id}>{ws.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       {/* 能力标签 */}
       <CapabilityTags onSelect={(label) => setInput(label + ' ')} />
@@ -450,6 +488,12 @@ function NewChatDraft({
         agentName={agentName}
         agents={agents}
         onAgentChange={onAgentChange}
+        workspaces={workspaces}
+        currentWorkspaceId={selectedWorkspaceId}
+        onWorkspaceChange={(id) => {
+          setSelectedWorkspaceId(id || undefined)
+          onSwitchWorkspace(id)
+        }}
       />
     </div>
   )
@@ -460,13 +504,14 @@ function NewChatDraft({
 function TasksPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const convIdParam = searchParams.get('convId')
+  const taskIdParam = searchParams.get('taskId') || searchParams.get('convId')
   const workspaceIdParam = searchParams.get('workspaceid') || searchParams.get('workspaceId')
 
   const [draftAgent, setDraftAgent] = useState(DEFAULT_AGENT)
-  const [conv, setConv] = useState<Conversation | null>(null)
+  const [task, setTask] = useState<Task | null>(null)
   const [loading, setLoading] = useState(false)
   const [agents, setAgents] = useState<AgentEntry[]>([])
+  const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([])
 
   // 加载 agent 列表
   useEffect(() => {
@@ -476,54 +521,81 @@ function TasksPage() {
       .catch(() => {})
   }, [])
 
-  const loadConv = useCallback(async (id: string) => {
+  // 加载工作空间列表
+  useEffect(() => {
+    fetch('/api/workspaces')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success && d.data) {
+          const list = Array.isArray(d.data) ? d.data : d.data.workspaces || []
+          setWorkspaces(list.map((ws: any) => ({
+            id: ws.id,
+            name: ws.name,
+            folderPath: ws.folderPath,
+            taskCount: ws.taskCount ?? 0,
+          })))
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // 切换工作空间
+  function handleSwitchWorkspace(workspaceId: string | null) {
+    if (workspaceId) {
+      router.replace(`/tasks?workspaceId=${workspaceId}`, { scroll: false })
+    } else {
+      router.replace('/tasks', { scroll: false })
+    }
+  }
+
+  const loadTask = useCallback(async (id: string) => {
     setLoading(true)
     try {
       const typeParam = workspaceIdParam ? 'workspace' : 'global'
       const wsParam = workspaceIdParam ? `&workspaceId=${workspaceIdParam}` : ''
-      const url = `/api/conversations/${id}?type=${typeParam}${wsParam}`
+      const url = `/api/tasks/${id}?type=${typeParam}${wsParam}`
       const res = await fetch(url)
       if (res.ok) {
         const data = await res.json()
-        setConv(data.conversation)
+        setTask(data.task)
       } else {
-        setConv(null)
+        setTask(null)
       }
     } catch {
-      setConv(null)
+      setTask(null)
     } finally {
       setLoading(false)
     }
   }, [workspaceIdParam])
 
   useEffect(() => {
-    if (convIdParam) loadConv(convIdParam)
-    else setConv(null)
-  }, [convIdParam, loadConv])
+    if (taskIdParam) loadTask(taskIdParam)
+    else setTask(null)
+  }, [taskIdParam, loadTask])
 
   async function handleAgentChange(agentName: string) {
     setDraftAgent(agentName)
-    if (!conv) return
+    if (!task) return
     try {
       const typeParam = workspaceIdParam ? 'type=workspace' : ''
       const wsParam = workspaceIdParam ? `workspaceId=${workspaceIdParam}` : ''
       const params = [typeParam, wsParam].filter(Boolean).join('&')
-      const url = `/api/conversations/${conv.id}/agent${params ? `?${params}` : ''}`
+      const url = `/api/tasks/${task.id}/agent${params ? `?${params}` : ''}`
       const res = await fetch(url, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentName }),
       })
-      if (res.ok) setConv((await res.json()).conversation)
+      if (res.ok) setTask((await res.json()).task)
     } catch {
       // 忽略错误
     }
   }
 
-  function handleConvCreated(convId: string, firstMsg: string) {
-    sessionStorage.setItem(`manta:pending-msg:${convId}`, firstMsg)
+  function handleTaskCreated(taskId: string, firstMsg: string) {
+    sessionStorage.setItem(`manta:pending-msg:${taskId}`, firstMsg)
     const wsParam = workspaceIdParam ? `workspaceId=${workspaceIdParam}&` : ''
-    router.replace(`/tasks?${wsParam}convId=${convId}`, { scroll: false })
+    router.replace(`/tasks?${wsParam}taskId=${taskId}`, { scroll: false })
   }
 
   if (loading) {
@@ -535,8 +607,8 @@ function TasksPage() {
     )
   }
 
-  if (conv) {
-    const initialMessages: UIMessage[] = conv.messages
+  if (task) {
+    const initialMessages: UIMessage[] = task.messages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
       .map((m) => {
         const parts: UIMessage['parts'] = []
@@ -569,20 +641,22 @@ function TasksPage() {
 
     return (
       <ChatView
-        key={conv.id}
-        convId={conv.id}
-        agentName={conv.agentName}
+        key={task.id}
+        taskId={task.id}
+        agentName={task.agentName}
         initialMessages={initialMessages}
-        title={conv.title}
+        title={task.title}
         onAgentChange={handleAgentChange}
         onNewChat={() => {
-          setConv(null)
+          setTask(null)
           const wsParam = workspaceIdParam ? `?workspaceId=${workspaceIdParam}` : ''
           router.replace(`/tasks${wsParam}`, { scroll: false })
         }}
         agents={agents}
-        conversation={conv}
+        task={task}
         workspaceId={workspaceIdParam}
+        workspaces={workspaces}
+        onSwitchWorkspace={handleSwitchWorkspace}
       />
     )
   }
@@ -591,9 +665,11 @@ function TasksPage() {
     <NewChatDraft
       agentName={draftAgent}
       onAgentChange={setDraftAgent}
-      onCreated={handleConvCreated}
+      onCreated={handleTaskCreated}
       agents={agents}
       workspaceId={workspaceIdParam}
+      workspaces={workspaces}
+      onSwitchWorkspace={handleSwitchWorkspace}
     />
   )
 }

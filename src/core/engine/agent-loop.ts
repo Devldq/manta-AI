@@ -46,7 +46,7 @@ export interface AgentLoopOptions {
   messageId?: string
   /** 专用的 AbortSignal（来自 LoopRegistry，仅用户点击停止时触发，不与 HTTP 请求生命周期绑定） */
   abortSignal?: AbortSignal
-  conversationId?: string
+  taskId?: string
   /** 每个 SSE chunk 的输出回调（写入 LoopRegistry，而非直接写入 HTTP stream） */
   onChunk: (data: string) => void
   /** 循环结束后回调 */
@@ -81,21 +81,13 @@ interface StepCollect {
   cacheHitStats?: { cachedPromptTokens: number; hitRate: number }
 }
 
-/** 退出条件判断结果 */
-interface StopDecision {
-  shouldStop: boolean
-  reason: string
-  warningToInject?: string
-}
-
 /**
  * 检测模型输出是否包含"工具使用意图"但实际没有调用工具（空谈不执行）。
  *
  * 常见场景：模型说"让我看看源码"、"我来检查一下"但没有调用 read_file/search_file 等工具，
  * 导致 loop 在 toolCalls=[] 时误判为"自然结束"。
  */
-const INTENT_PATTERN = /(?:让我|我来|我需要|我将|我要|让我来)\s*(?:看看?|查看|读[读取]|检查|找一下?|搜[搜索]|look|check|read|examine|inspect|investigate|search|find|explore)|(?:(?:look|check|read|let me|I'll|I will|I need to|going to)\s+(?:at|into|up|for|the|through))|(?:源码|代码|文件|实现|目录)/i
-
+const INTENT_PATTERN = /(?:让我|我来|我需要|我将|我要|让我来)\s*(?:看看?|查看|读[读取]|检查|找一下?|搜[搜索]|look|check|read|examine|inspect|investigate|search|find|explore)|(?:(?:look|check|read|let me|I'll|I will|I need to|going to)\s+(?:at|into|up|for|the|through))|(?:(源码|代码|文件|实现|目录)/i
 function detectEmptyIntent(text: string): boolean {
   if (!text || text.length < 10) return false
   return INTENT_PATTERN.test(text)
@@ -183,7 +175,7 @@ function formatToolOutput(output: unknown, isError: boolean): { type: string; va
 function appendStepToMessages(
   messages: ModelMessage[],
   stepCollect: StepCollect,
-  conversationId?: string,
+  taskId?: string,
   stepIndex?: number,
   messageId?: string,
 ): ModelMessage[] {
@@ -208,50 +200,50 @@ function appendStepToMessages(
         input: call.input,
       })),
     } as ModelMessage)
+  }
 
-    // 添加工具结果（toolName 从 toolCalls 中查找对应值）
-    for (const result of stepCollect.toolResults) {
-      const matchingCall = stepCollect.toolCalls.find(
-        (c) => c.toolCallId === result.toolCallId
-      )
-      const toolName = matchingCall?.toolName ?? result.toolName
+  // 添加工具结果（toolName 从 toolCalls 中查找对应值）
+  for (const result of stepCollect.toolResults) {
+    const matchingCall = stepCollect.toolCalls.find(
+      (c) => c.toolCallId === result.toolCallId
+    )
+    const toolName = matchingCall?.toolName ?? result.toolName
 
+    newMessages.push({
+      role: 'tool' as const,
+      content: [
+        {
+          type: 'tool-result' as const,
+          toolCallId: result.toolCallId,
+          toolName,
+          output: formatToolOutput(result.output, result.isError ?? false),
+        },
+      ],
+    } as ModelMessage)
+  }
+
+  // 防御：为缺少结果的 tool-call 补充错误结果，避免 AI SDK 报 "Tool result is missing"
+  const resultCallIds = new Set(stepCollect.toolResults.map((r) => r.toolCallId))
+  for (const call of stepCollect.toolCalls) {
+    if (!resultCallIds.has(call.toolCallId)) {
+      logger.warn(`[AgentLoop] 工具 ${call.toolName} (${call.toolCallId}) 缺少结果，补充兜底错误`, {
+        taskId,
+        messageId,
+        agentName: '',
+        toolName: call.toolName,
+        stepIndex,
+      }, ['agent', 'loop', 'tool-missing'])
       newMessages.push({
         role: 'tool' as const,
         content: [
           {
             type: 'tool-result' as const,
-            toolCallId: result.toolCallId,
-            toolName,
-            output: formatToolOutput(result.output, result.isError ?? false),
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            output: { type: 'error-text', value: '工具执行超时或未返回结果' },
           },
         ],
       } as ModelMessage)
-    }
-
-    // 防御：为缺少结果的 tool-call 补充错误结果，避免 AI SDK 报 "Tool result is missing"
-    const resultCallIds = new Set(stepCollect.toolResults.map((r) => r.toolCallId))
-    for (const call of stepCollect.toolCalls) {
-      if (!resultCallIds.has(call.toolCallId)) {
-        logger.warn(`[AgentLoop] 工具 ${call.toolName} (${call.toolCallId}) 缺少结果，补充兜底错误`, {
-          conversationId,
-          messageId,
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          stepIndex,
-        }, ['agent', 'loop', 'tool-missing'])
-        newMessages.push({
-          role: 'tool' as const,
-          content: [
-            {
-              type: 'tool-result' as const,
-              toolCallId: call.toolCallId,
-              toolName: call.toolName,
-              output: { type: 'error-text', value: '工具执行超时或未返回结果' },
-            },
-          ],
-        } as ModelMessage)
-      }
     }
   }
 
@@ -265,7 +257,7 @@ function appendStepToMessages(
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户停止
  * - 不创建 ReadableStream 或 Response，不感知 HTTP 连接状态
  */
-export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, onChunk, onDone, onFinish, onError }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, taskId, onChunk, onDone, onFinish, onError }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
 
@@ -273,25 +265,25 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
   const maxOutputTokens = llmConfig.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
   const maxSteps = llmConfig.maxSteps ?? DEFAULT_MAX_STEPS
 
-    // Microcompact 配置：默认启用，可通过 LLM 配置关闭
-    const microcompactEnabled = llmConfig.microcompact !== false
-    // Compaction 配置：默认启用，可通过 LLM 配置关闭
-    const compactionEnabled = llmConfig.compaction !== false
-    // TTL Prune 配置：默认启用，可通过 LLM 配置关闭
-    const ttlPruneEnabled = llmConfig.ttlPrune !== false
-    // Prompt Cache 配置：默认启用，可通过 LLM 配置关闭
-    const promptCacheEnabled = llmConfig.promptCache !== false
+  // Microcompact 配置：默认启用，可通过 LLM 配置关闭
+  const microcompactEnabled = llmConfig.microcompact !== false
+  // Compaction 配置：默认启用，可通过 LLM 配置关闭
+  const compactionEnabled = llmConfig.compaction !== false
+  // TTL Prune 配置：默认启用，可通过 LLM 配置关闭
+  const ttlPruneEnabled = llmConfig.ttlPrune !== false
+  // Prompt Cache 配置：默认启用，可通过 LLM 配置关闭
+  const promptCacheEnabled = llmConfig.promptCache !== false
 
-    // ── Prompt Cache：构建 providerOptions ──
-    const cacheProviderOptions = promptCacheEnabled
-      ? buildCacheProviderOptions(llmConfig, conversationId)
-      : undefined
-    const cacheAccumulator = new CacheStatsAccumulator()
+  // ── Prompt Cache：构建 providerOptions ──
+  const cacheProviderOptions = promptCacheEnabled
+    ? buildCacheProviderOptions(llmConfig, taskId)
+    : undefined
+  const cacheAccumulator = new CacheStatsAccumulator()
 
-    // 记录 cache 策略（首次 loop 启动时）
-    if (promptCacheEnabled) {
-      logCacheStrategy(llmConfig, conversationId)
-    }
+  // 记录 cache 策略（首次 loop 启动时）
+  if (promptCacheEnabled) {
+    logCacheStrategy(llmConfig, taskId)
+  }
 
   // 后台异步执行 agent loop，边产生边通过 onChunk 输出
   ;(async () => {
@@ -316,7 +308,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
     const messageId = incomingMessageId || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
     // 基础日志元数据（所有本 loop 日志共享）
-    const baseMeta = { messageId, conversationId, prompt }
+    const baseMeta = { messageId, taskId, prompt }
 
     // ── 性能计时 ──
     const turnStartTime = performance.now()
@@ -334,8 +326,8 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
       // 循环开始时直接进入 while，由 AI SDK 自身的 text-start 事件触发消息创建
 
       // 清空旧上下文快照（每次新 loop 重新记录）
-      if (conversationId) {
-        clearSnapshots(conversationId)
+      if (taskId) {
+        clearSnapshots(taskId)
       }
 
       while (true) {
@@ -357,9 +349,6 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           : basePrompt
         warningMessage = null
 
-        // 每步调一次 streamText，stopWhen=[stepCountIs(1)] 强制单步执行
-        const effectiveTemperature = llmConfig.temperature ?? 0.7
-
         // 每步重新获取工具列表（包含新发现的工具）
         const stepTools = await getAgentTools()
 
@@ -378,14 +367,12 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           extra: {
             messageCount: currentMessages.length,
             messagesPreview: msgSummary,
-            toolCount: stepTools ? Object.keys(stepTools).length : 0,
+            toolCount: Object.keys(stepTools).length,
           },
         }, ['agent', 'loop', 'model-input'])
 
-        // 记录上下文快照：保存每一步实际传给 LLM 的完整消息列表
-        if (conversationId) {
-          recordContextSnapshot(conversationId, stepIndex, currentMessages)
-        }
+        // 每步调一次 streamText，stopWhen=[stepCountIs(1)] 强制单步执行
+        const effectiveTemperature = llmConfig.temperature ?? 0.7
 
         const result = streamText({
           model,
@@ -393,7 +380,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           tools: stepTools as Parameters<typeof streamText>[0]['tools'],
           temperature: effectiveTemperature,
           messages: currentMessages,
-          abortSignal,  // 仅用户停止时触发（来自 LoopRegistry 的 AbortController）
+          abortSignal, // 仅用户停止时触发（来自 LoopRegistry 的 AbortController）
           stopWhen: stepCountIs(1),
           providerOptions: cacheProviderOptions,
         })
@@ -410,7 +397,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         // 遍历 fullStream：收集数据 + 逐个通过 onChunk 输出
         for await (const chunk of result.fullStream) {
           // 将 fullStream chunk 转换为 UIMessageChunk 格式并立即输出
-          const transformed = transformChunk(chunk as { type: string; [key: string]: unknown }, conversationId, messageId)
+          const transformed = transformChunk(chunk as { type: string; [key: string]: unknown }, taskId, messageId)
           if (transformed) {
             sendChunk(transformed)
           }
@@ -434,16 +421,16 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
             case 'text-delta':
               // 首字延迟（TTFT）— 仅记录第一次
               if (!ttftMeasured) {
-                ttftMs = Math.round(performance.now() - turnStartTime)
+                ttftMs = Math.round(performance.now() - stepStartTime)
                 ttftMeasured = true
               }
-              stepCollect.text += chunk.text
+              stepCollect.text += (chunk as { textDelta?: string }).textDelta ?? ''
               break
             case 'tool-call':
               stepCollect.toolCalls.push({
-                toolCallId: chunk.toolCallId,
-                toolName: chunk.toolName,
-                input: chunk.input,
+                toolCallId: (chunk as { toolCallId: string }).toolCallId,
+                toolName: (chunk as { toolName: string }).toolName,
+                input: (chunk as { input?: unknown }).input,
               })
               break
             case 'tool-result':
@@ -452,15 +439,15 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
               const toolResult = (chunk as any).output
               const toolResultIsError = (chunk as any).isError ?? false
               stepCollect.toolResults.push({
-                toolCallId: chunk.toolCallId,
-                toolName: chunk.toolName,
+                toolCallId: (chunk as { toolCallId: string }).toolCallId,
+                toolName: (chunk as { toolName: string }).toolName,
                 output: toolResult,
                 isError: toolResultIsError,
               })
               logger.toolCall(
-                chunk.toolName,
-                chunk.toolCallId,
-                stepCollect.toolCalls.find(c => c.toolCallId === chunk.toolCallId)?.input ?? null,
+                (chunk as { toolName: string }).toolName,
+                (chunk as { toolCallId: string }).toolCallId,
+                stepCollect.toolCalls.find(c => c.toolCallId === (chunk as { toolCallId: string }).toolCallId)?.input ?? null,
                 toolResult,
                 toolResultIsError,
                 toolResultIsError ? String(toolResult ?? '') : undefined,
@@ -471,31 +458,30 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
               // 工具执行抛出异常时，AI SDK 发出 tool-error chunk（而非 tool-result）
               // 必须收集此 chunk，否则下次 streamText 会因为缺少 tool-result 而报错
               logger.toolCall(
-                chunk.toolName,
-                chunk.toolCallId,
-                stepCollect.toolCalls.find(c => c.toolCallId === chunk.toolCallId)?.input ?? null,
-                chunk.error ?? '工具执行失败',
+                (chunk as { toolName: string }).toolName,
+                (chunk as { toolCallId: string }).toolCallId,
+                stepCollect.toolCalls.find(c => c.toolCallId === (chunk as { toolCallId: string }).toolCallId)?.input ?? null,
+                (chunk as { error?: string }).error ?? '工具执行失败',
                 true,
-                String(chunk.error ?? ''),
+                String((chunk as { error?: string }).error ?? ''),
                 { ...baseMeta, stepIndex }
               )
               stepCollect.toolResults.push({
-                toolCallId: chunk.toolCallId,
-                toolName: chunk.toolName,
-                output: chunk.error ?? '工具执行失败',
+                toolCallId: (chunk as { toolCallId: string }).toolCallId,
+                toolName: (chunk as { toolName: string }).toolName,
+                output: (chunk as { error?: string }).error ?? '工具执行失败',
                 isError: true,
               })
               break
             case 'finish':
-              stepCollect.finishReason = chunk.finishReason
-              if (chunk.totalUsage) {
-                const details = chunk.totalUsage.inputTokenDetails
+              stepCollect.finishReason = (chunk as { finishReason: string }).finishReason ?? ''
+              if ((chunk as { totalUsage?: unknown }).totalUsage) {
+                const usage = (chunk as { totalUsage: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number } }).totalUsage
                 stepCollect.usage = {
-                  inputTokens: chunk.totalUsage.inputTokens ?? 0,
-                  outputTokens: chunk.totalUsage.outputTokens ?? 0,
-                  cacheReadTokens: details?.cacheReadTokens ?? undefined,
-                  cacheWriteTokens: details?.cacheWriteTokens ?? undefined,
-                  noCacheTokens: details?.noCacheTokens ?? undefined,
+                  inputTokens: usage.inputTokens ?? 0,
+                  outputTokens: usage.outputTokens ?? 0,
+                  cacheReadTokens: usage.cacheReadTokens,
+                  cacheWriteTokens: usage.cacheWriteTokens,
                 }
                 // 用 API 返回的精确 prompt_tokens 校准 TokenTracker
                 tokenTracker.updateFromAPI(stepCollect.usage.inputTokens)
@@ -510,7 +496,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         if (promptCacheEnabled) {
           try {
             // result.providerMetadata 在 fullStream 消费完成后可用
-            const cacheHit = extractCacheHit(result.providerMetadata)
+            const cacheHit = extractCacheHit((result as { providerMetadata?: unknown }).providerMetadata)
             if (cacheHit) {
               stepCollect.cacheHitStats = {
                 cachedPromptTokens: cacheHit.cachedPromptTokens,
@@ -526,28 +512,45 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           }
         }
 
-        // 记录工具调用到循环检测器
-        for (const call of stepCollect.toolCalls) {
-          const toolResult = stepCollect.toolResults.find(
-            (r) => r.toolCallId === call.toolCallId
-          )
-          loopDetector.recordCall(call.toolName, call.input, toolResult?.output ?? null, stepIndex)
+        // ── 持久化：最后一条 user 消息 + assistant 回复（含工具调用记录） ──
+        const lastUserMsg = [...currentMessages].reverse().find((m) => m.role === 'user')
+        const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
+        if (userText) {
+          // 使用 appendMessage 持久化用户消息
+          const { appendMessage } = await import('@/core/storage/task/store')
+          appendMessage(taskId!, 'user', userText, taskId ? undefined : undefined).catch(() => {})
+        }
+        if (stepCollect.text || stepCollect.toolCalls.length > 0) {
+          const usage = stepCollect.usage
+            ? {
+                inputTokens: stepCollect.usage.inputTokens ?? undefined,
+                outputTokens: stepCollect.usage.outputTokens ?? undefined,
+                cacheReadTokens: stepCollect.usage.cacheReadTokens ?? undefined,
+                cacheWriteTokens: stepCollect.usage.cacheWriteTokens ?? undefined,
+                noCacheTokens: (stepCollect as { noCacheTokens?: number }).noCacheTokens ?? undefined,
+              }
+            : undefined
+          // 使用 appendMessage 持久化 assistant 回复
+          const { appendMessage } = await import('@/core/storage/task/store')
+          appendMessage(
+            taskId!,
+            'assistant',
+            stepCollect.text,
+            taskId,
+            stepCollect.toolCalls.length > 0 ? stepCollect.toolCalls : undefined,
+            usage,
+            stepCollect.stepUsages?.length > 0 ? stepCollect.stepUsages : undefined
+          ).catch(() => {})
         }
 
-        // 更新累计 token
-        totalOutputTokens += stepCollect.usage.outputTokens
-
         // 记录步骤完成
-        allStepCollects.push(stepCollect)
-
-        // 记录步骤日志（简洁版：模型输出 + 步骤完成）
         if (stepCollect.text) {
           logger.modelOutput(stepIndex, stepCollect.text, {
             inputTokens: stepCollect.usage.inputTokens,
             outputTokens: stepCollect.usage.outputTokens,
             cacheReadTokens: stepCollect.usage.cacheReadTokens,
             cacheWriteTokens: stepCollect.usage.cacheWriteTokens,
-            noCacheTokens: stepCollect.usage.noCacheTokens,
+            noCacheTokens: (stepCollect as { noCacheTokens?: number }).noCacheTokens,
           }, {
             ...baseMeta,
             extra: {
@@ -569,42 +572,24 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           stepCollect.usage,
         )
 
-        // 判断退出条件（一次调用，包含 warning 检测）
-        const decision = decideStop(stepCollect, loopDetector, totalOutputTokens, stepIndex, maxOutputTokens, maxSteps)
-        if (decision.shouldStop) {
-          break
-        }
-        if (decision.warningToInject) {
-          loopDetectionCount++
-          warningMessage = decision.warningToInject
-          logger.warn(`[LoopDetector] ${warningMessage}`, {
-            ...baseMeta,
-            stepIndex,
-            extra: { warning: warningMessage },
-          }, ['agent', 'loop', 'warning'])
-        }
-
-        // 记录追加前消息数量，用于时间戳追踪
-        const msgCountBefore = currentMessages.length
-
         // 将步骤结果追加到消息列表
-        currentMessages = appendStepToMessages(currentMessages, stepCollect, conversationId, stepIndex, messageId)
+        currentMessages = appendStepToMessages(currentMessages, stepCollect, taskId, stepIndex, messageId)
 
-        // 记录新追加消息的时间戳
+        // 记录追加消息的时间戳
         const msgCountAfter = currentMessages.length
-        timestampTracker.recordNewMessages(msgCountBefore, msgCountAfter - msgCountBefore)
+        timestampTracker.recordNewMessages(currentMessages.length - msgCountAfter, msgCountAfter)
 
         // Microcompact: 清理旧的查询类工具结果，减少上下文 token 占用
         // 保留最近 3 个工具结果不动，只清理更早的
         if (microcompactEnabled) {
-          applyMicrocompactWithLogging(currentMessages, conversationId, messageId, stepIndex)
+          applyMicrocompactWithLogging(currentMessages, taskId, messageId)
         }
 
         // Layer 2 动态截断: 对剩余工具结果做双重约束截断
         // Pass 1 — 单条超过窗口 50% 的做 Head/Tail 60/40 分割
         // Pass 2 — 总字符数超过窗口 75% 时，从最老的 tool result 开始逐条 compact
         const truncateResult = truncateToolResultsWithLogging(
-          currentMessages, conversationId, messageId, stepIndex,
+          currentMessages, taskId, messageId,
         )
         if (truncateResult.truncated > 0 || truncateResult.compacted > 0) {
           currentMessages = truncateResult.messages
@@ -617,7 +602,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           const ttlResult = ttlPruneWithLogging(
             currentMessages,
             timestampTracker.getTimestamps(),
-            conversationId,
+            taskId,
             messageId,
             stepIndex,
           )
@@ -640,6 +625,24 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           }
         }
 
+        // 更新累计 token
+        totalOutputTokens += stepCollect.usage.outputTokens
+
+        // 判断退出条件（一次调用，包含 warning 检测）
+        const decision = decideStop(stepCollect, loopDetector, totalOutputTokens, stepIndex, maxOutputTokens, maxSteps)
+        if (decision.shouldStop) {
+          break
+        }
+        if (decision.warningToInject) {
+          loopDetectionCount++
+          warningMessage = decision.warningToInject
+          logger.warn(`[LoopDetector] ${warningMessage}`, {
+            ...baseMeta,
+            stepIndex,
+            extra: { warning: warningMessage },
+          }, ['agent', 'loop', 'warning'])
+        }
+
         stepIndex++
       }
 
@@ -650,7 +653,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           outputTokens: acc.outputTokens + step.usage.outputTokens,
           cacheReadTokens: (acc.cacheReadTokens ?? 0) + (step.usage.cacheReadTokens ?? 0),
           cacheWriteTokens: (acc.cacheWriteTokens ?? 0) + (step.usage.cacheWriteTokens ?? 0),
-          noCacheTokens: (acc.noCacheTokens ?? 0) + (step.usage.noCacheTokens ?? 0),
+          noCacheTokens: (acc.noCacheTokens ?? 0) + ((step as { noCacheTokens?: number }).noCacheTokens ?? 0),
         }),
         { inputTokens: 0, outputTokens: 0 } as StepUsage
       )
@@ -683,7 +686,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
             outputTokens: sc.usage.outputTokens,
             cacheReadTokens: sc.usage.cacheReadTokens,
             cacheWriteTokens: sc.usage.cacheWriteTokens,
-            noCacheTokens: sc.usage.noCacheTokens,
+            noCacheTokens: (sc as { noCacheTokens?: number }).noCacheTokens,
           },
           timing: { durationMs: 0 }, // per-step timing not tracked individually
           promptCacheHitTokens: sc.cacheHitStats?.cachedPromptTokens,
@@ -699,7 +702,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
       // ── 构建并记录 TurnMetrics ──
       const turnMetrics: TurnMetrics = {
         messageId,
-        conversationId: conversationId ?? '',
+        taskId: taskId ?? '',
         prompt: (prompt ?? '').slice(0, 80),
         totalDurationMs,
         ttftMs,
@@ -716,7 +719,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         totalToolCalls,
         toolCallSuccessCount: totalToolCalls - totalToolErrors,
         toolCallErrorCount: totalToolErrors,
-        toolCallSuccessRate: toolSuccessRate,
+        toolCallSuccessRate,
         loopDetectionCount,
         stopReason: allStepCollects[allStepCollects.length - 1]?.finishReason ?? 'stop',
         steps: stepMetricsList,
@@ -764,19 +767,16 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
       // 调用 onFinish 回调（流结束后持久化消息）
       if (onFinish) {
         const finalText = allStepCollects.map((s) => s.text).join('')
-
         const stepsForCallback = allStepCollects.map((s) => ({
           finishReason: s.finishReason,
           toolCalls: s.toolCalls,
           toolResults: s.toolResults,
           usage: s.usage,
         }))
-
         await onFinish({
           text: finalText,
           steps: stepsForCallback,
           totalUsage,
-          usage: totalUsage,
           finishReason: allStepCollects[allStepCollects.length - 1]?.finishReason ?? 'stop',
         })
       }
@@ -793,10 +793,12 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         stepIndex,
         durationMs: Math.round(performance.now() - turnStartTime),
       }, ['agent', 'loop', 'error'])
+
       // 将技术错误转换为用户友好的提示
       const errorInfo = formatAIError(err)
       const friendlyMessage = formatErrorForSSE(errorInfo)
       sendChunk({ type: 'error', errorText: friendlyMessage })
+
       // 保存错误信息到对话历史
       if (onError) {
         await onError(friendlyMessage)

@@ -1,10 +1,10 @@
-/* SidebarTabs — 会话 / 工作空间 Tab 切换 */
+/* SidebarTabs — 任务 / 工作空间 Tab 切换 */
 'use client'
 
 import { useSidebarStore, type TabMode } from '@/stores/sidebar-store'
 
 const TABS: { key: TabMode; label: string }[] = [
-  { key: 'conversation', label: '会话' },
+  { key: 'conversation', label: '任务' },
   { key: 'workspace', label: '工作空间' },
 ]
 

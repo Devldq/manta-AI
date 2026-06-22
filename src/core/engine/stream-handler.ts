@@ -1,8 +1,7 @@
 /* AI start: 流式聊天核心处理逻辑 */
 import { getLLMConfig } from '@llm/config-store'
-import { appendMessage } from '@storage/conversation/store'
-import { appendWorkspaceMessage } from '@storage/workspace/store'
-import type { ToolCallRecord, StepUsageRecord } from '@storage/conversation/types'
+import { appendMessage } from '@/core/storage/task/store'
+import type { ToolCallRecord, StepUsageRecord } from '@/core/storage/task/types'
 import { readAgentSoul } from '@context/agent-soul'
 import {
   buildSystemPromptWithStats,
@@ -150,11 +149,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
         const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
         const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
         if (userText) {
-          if (workspaceId) {
-            appendWorkspaceMessage(workspaceId, conversationId, 'user', userText)
-          } else {
-            appendMessage(conversationId, 'user', userText)
-          }
+          appendMessage(conversationId, 'user', userText, workspaceId)
         }
         if (text || toolCalls.length > 0) {
           const usage = event.usage
@@ -166,11 +161,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
                 noCacheTokens: event.usage.noCacheTokens ?? undefined,
               }
             : undefined
-          if (workspaceId) {
-            appendWorkspaceMessage(workspaceId, conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined)
-          } else {
-            appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined)
-          }
+          appendMessage(conversationId, 'assistant', text, workspaceId, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined)
         }
 
         logManager.closeConversation(conversationId)
@@ -183,19 +174,12 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
           errorText: errorText.slice(0, 200),
         }, ['agent', 'loop', 'error'])
 
-        // 根据是否有 workspaceId 选择正确的存储函数
-        const appendMsg = workspaceId
-          ? (role: 'user' | 'assistant', content: string) =>
-              appendWorkspaceMessage(workspaceId, conversationId, role, content)
-          : (role: 'user' | 'assistant', content: string) =>
-              appendMessage(conversationId, role, content)
-
         const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
         const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
         if (userText) {
-          appendMsg('user', userText)
+          appendMessage(conversationId, 'user', userText, workspaceId)
         }
-        appendMsg('assistant', errorText)
+        appendMessage(conversationId, 'assistant', errorText, workspaceId)
 
         logManager.closeConversation(conversationId)
       },

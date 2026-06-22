@@ -2,7 +2,6 @@
 'use client'
 
 import { Menu, Search, Plus } from 'lucide-react'
-import { useSidebarStore, type TabMode } from '@/stores/sidebar-store'
 
 interface SidebarTopBarProps {
   searchQuery: string
@@ -11,9 +10,6 @@ interface SidebarTopBarProps {
 }
 
 export function SidebarTopBar({ searchQuery, onSearchChange, onNewAction }: SidebarTopBarProps) {
-  const mode = useSidebarStore((s) => s.mode)
-  const createLabel = mode === 'conversation' ? '新建会话' : '新建空间'
-
   return (
     <div className="px-3 pt-3 pb-2 flex-shrink-0 space-y-2">
       {/* 菜单 + 搜索 */}
@@ -42,7 +38,7 @@ export function SidebarTopBar({ searchQuery, onSearchChange, onNewAction }: Side
         className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded bg-sidebar-border hover:bg-border transition-colors group"
       >
         <Plus size={13} className="text-sidebar-text-secondary" />
-        <span className="text-xs text-sidebar-text-secondary group-hover:text-sidebar-text flex-1 text-left">{createLabel}</span>
+        <span className="text-xs text-sidebar-text-secondary group-hover:text-sidebar-text flex-1 text-left">新建任务</span>
         <span className="text-[10px] text-text-muted">Ctrl N</span>
       </button>
     </div>

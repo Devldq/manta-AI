@@ -29,8 +29,8 @@ export interface StoredMessage {
   stepUsages?: Array<{ inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number; toolNames?: string[] }>
 }
 
-/** 会话数据 */
-export interface ConversationData {
+/** 任务数据 */
+export interface TaskData {
   id: string
   title: string
   agentName: string
@@ -93,13 +93,13 @@ function extractFilePath(input: unknown): string | null {
 interface SessionSidebarProps {
   /** 侧边栏是否打开 */
   open: boolean
-  /** 会话数据 */
-  conversation: ConversationData | null
+  /** 任务数据 */
+  task: TaskData | null
 }
 
 export const SessionSidebar = memo(function SessionSidebar({
   open,
-  conversation,
+  task,
 }: SessionSidebarProps) {
   const [activeTab, setActiveTab] = useState<TabId>('logs')
   const [width, setWidth] = useState(420)
@@ -211,19 +211,19 @@ export const SessionSidebar = memo(function SessionSidebar({
         {/* 内容区 */}
         <div className="flex-1 overflow-hidden">
           {activeTab === 'files' && (
-            <ChangedFiles conversation={conversation} />
+            <ChangedFiles task={task} />
           )}
           {activeTab === 'changes' && (
-            <FileChanges conversation={conversation} />
+            <FileChanges task={task} />
           )}
           {activeTab === 'session' && (
-            <SessionInfo conversation={conversation} />
+            <SessionInfo task={task} />
           )}
           {activeTab === 'context' && (
-            <ContextView conversationId={conversation?.id} />
+            <ContextView taskId={task?.id} />
           )}
           {activeTab === 'logs' && (
-            <SystemLogs conversationId={conversation?.id} />
+            <SystemLogs taskId={task?.id} />
           )}
         </div>
       </div>
@@ -237,12 +237,12 @@ export const SessionSidebar = memo(function SessionSidebar({
 
 // ─── 修改内容面板 ──────────────────────────────────────────────────────────────
 
-function FileChanges({ conversation }: { conversation: ConversationData | null }) {
+function FileChanges({ task }: { task: TaskData | null }) {
   // 从工具调用中提取修改内容
   const changes: FileChange[] = []
 
-  if (conversation) {
-    for (const msg of conversation.messages) {
+  if (task) {
+    for (const msg of task.messages) {
       if (msg.role === 'assistant' && msg.toolCalls) {
         for (const tc of msg.toolCalls) {
           const filePath = extractFilePath(tc.input)
@@ -313,20 +313,20 @@ function FileChanges({ conversation }: { conversation: ConversationData | null }
 
 // ─── Session 面板 ──────────────────────────────────────────────────────────────
 
-function SessionInfo({ conversation }: { conversation: ConversationData | null }) {
-  if (!conversation) {
+function SessionInfo({ task }: { task: TaskData | null }) {
+  if (!task) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-6">
         <MonitorDot size={32} className="text-text-muted mb-3 opacity-50" />
-        <p className="text-sm text-text-muted">暂无会话信息</p>
+        <p className="text-sm text-text-muted">暂无任务信息</p>
         <p className="text-xs text-text-muted mt-1">开始对话后将显示 Session 详情</p>
       </div>
     )
   }
 
   // 统计信息
-  const userMessages = conversation.messages.filter(m => m.role === 'user')
-  const assistantMessages = conversation.messages.filter(m => m.role === 'assistant')
+  const userMessages = task.messages.filter(m => m.role === 'user')
+  const assistantMessages = task.messages.filter(m => m.role === 'assistant')
   const allToolCalls = assistantMessages.flatMap(m => m.toolCalls ?? [])
   const fileOps = allToolCalls.filter(tc =>
     tc.toolName === 'write' || tc.toolName === 'edit' || tc.toolName === 'multiEdit'
@@ -356,15 +356,15 @@ function SessionInfo({ conversation }: { conversation: ConversationData | null }
 
   return (
     <div className="h-full overflow-y-auto">
-      {/* 会话基本信息 */}
+      {/* 任务基本信息 */}
       <div className="px-4 py-3 border-b border-border-subtle">
-        <h3 className="text-sm font-semibold text-text-primary mb-2">会话信息</h3>
+        <h3 className="text-sm font-semibold text-text-primary mb-2">任务信息</h3>
         <div className="space-y-1.5">
-          <InfoRow label="ID" value={conversation.id.slice(0, 8) + '…'} mono />
-          <InfoRow label="标题" value={conversation.title} />
-          <InfoRow label="Agent" value={conversation.agentName || '—'} />
-          <InfoRow label="创建时间" value={formatTime(conversation.createdAt)} />
-          <InfoRow label="更新时间" value={formatTime(conversation.updatedAt)} />
+          <InfoRow label="ID" value={task.id.slice(0, 8) + '…'} mono />
+          <InfoRow label="标题" value={task.title} />
+          <InfoRow label="Agent" value={task.agentName || '—'} />
+          <InfoRow label="创建时间" value={formatTime(task.createdAt)} />
+          <InfoRow label="更新时间" value={formatTime(task.updatedAt)} />
         </div>
       </div>
 
@@ -377,7 +377,7 @@ function SessionInfo({ conversation }: { conversation: ConversationData | null }
           <StatCard label="工具调用" value={allToolCalls.length} />
           <StatCard label="文件操作" value={fileOps.length} />
           <StatCard label="错误" value={errorOps.length} accent={errorOps.length > 0} />
-          <StatCard label="总消息" value={conversation.messages.length} />
+          <StatCard label="总消息" value={task.messages.length} />
         </div>
       </div>
 
@@ -409,11 +409,11 @@ function SessionInfo({ conversation }: { conversation: ConversationData | null }
       )}
 
       {/* 上下文 */}
-      {conversation.context && Object.keys(conversation.context).length > 0 && (
+      {task.context && Object.keys(task.context).length > 0 && (
         <div className="px-4 py-3 border-b border-border-subtle">
           <h3 className="text-sm font-semibold text-text-primary mb-2">上下文</h3>
           <pre className="text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
-            {JSON.stringify(conversation.context, null, 2)}
+            {JSON.stringify(task.context, null, 2)}
           </pre>
         </div>
       )}
@@ -451,12 +451,12 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
 
 // ─── 变更文件面板 ──────────────────────────────────────────────────────────────
 
-function ChangedFiles({ conversation }: { conversation: ConversationData | null }) {
+function ChangedFiles({ task }: { task: TaskData | null }) {
   // 从修改内容中提取唯一文件列表
   const fileSet = new Map<string, { changeType: FileChange['changeType']; timestamp: string }>()
 
-  if (conversation) {
-    for (const msg of conversation.messages) {
+  if (task) {
+    for (const msg of task.messages) {
       if (msg.role === 'assistant' && msg.toolCalls) {
         for (const tc of msg.toolCalls) {
           const filePath = extractFilePath(tc.input)

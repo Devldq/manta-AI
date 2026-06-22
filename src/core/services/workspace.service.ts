@@ -90,3 +90,9 @@ export function unbindWorkflows(id: string, workflowIds: string[]): WorkspaceCon
   }
   return updateWorkspace(id, { workflowIds: Array.from(existing) })
 }
+
+/** 获取工作空间下的任务列表 */
+export function fetchWorkspaceTasks(workspaceId: string): import('@/core/types').Task[] {
+  const { listTasks } = require('@/core/storage/task/store')
+  return listTasks(workspaceId)
+}

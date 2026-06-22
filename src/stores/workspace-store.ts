@@ -2,14 +2,14 @@
 
 import { create } from 'zustand'
 import type { WorkspaceConfig, CreateWorkspaceInput, UpdateWorkspaceInput } from '@/core/types'
-import type { ConversationSummary } from '@/stores/conversation-store'
+import type { TaskSummary } from '@/stores/task-store'
 import { swrFetch, invalidateCache } from '@/stores/lib/swr-fetch'
 
 export interface WorkspaceSummary {
   id: string
   name: string
   description?: string
-  conversationCount: number
+  taskCount: number
   createdAt: string
   updatedAt: string
 }
@@ -19,8 +19,8 @@ interface WorkspaceStore {
   expandedIds: Set<string>
   loading: boolean
   error: string | null
-  /** 缓存每个工作空间的会话列表，切换 tab 时不会丢失 */
-  conversationsByWs: Record<string, ConversationSummary[]>
+  /** 缓存每个工作空间的任务列表，切换 tab 时不会丢失 */
+  tasksByWs: Record<string, TaskSummary[]>
   /** 正在加载的工作空间 ID 集合 */
   loadingWsIds: Set<string>
 
@@ -29,8 +29,8 @@ interface WorkspaceStore {
   updateWorkspace: (id: string, patch: UpdateWorkspaceInput) => Promise<WorkspaceConfig | null>
   deleteWorkspace: (id: string) => Promise<boolean>
   toggleExpand: (id: string) => void
-  /** 加载指定工作空间的会话列表（带缓存） */
-  fetchConversations: (wsId: string, force?: boolean) => Promise<void>
+  /** 加载指定工作空间的任务列表（带缓存） */
+  fetchTasks: (wsId: string, force?: boolean) => Promise<void>
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -38,7 +38,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   expandedIds: new Set(),
   loading: false,
   error: null,
-  conversationsByWs: {},
+  tasksByWs: {},
   loadingWsIds: new Set(),
 
   fetchList: async () => {
@@ -135,23 +135,23 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     })
   },
 
-  fetchConversations: async (wsId: string, force?: boolean) => {
+  fetchTasks: async (wsId: string, force?: boolean) => {
     // 已有缓存或正在加载，跳过（除非强制刷新）
-    if (!force && (get().conversationsByWs[wsId] || get().loadingWsIds.has(wsId))) return
+    if (!force && (get().tasksByWs[wsId] || get().loadingWsIds.has(wsId))) return
 
     set((s) => ({ loadingWsIds: new Set(s.loadingWsIds).add(wsId) }))
     try {
-      const res = await fetch(`/api/conversations?type=workspace&workspaceId=${wsId}`)
+      const res = await fetch(`/api/tasks?type=workspace&workspaceId=${wsId}`)
       if (res.ok) {
         const data = await res.json()
         set((s) => ({
-          conversationsByWs: { ...s.conversationsByWs, [wsId]: data.data?.conversations ?? [] },
+          tasksByWs: { ...s.tasksByWs, [wsId]: data.data?.tasks ?? [] },
         }))
       } else {
-        set((s) => ({ conversationsByWs: { ...s.conversationsByWs, [wsId]: [] } }))
+        set((s) => ({ tasksByWs: { ...s.tasksByWs, [wsId]: [] } }))
       }
     } catch {
-      set((s) => ({ conversationsByWs: { ...s.conversationsByWs, [wsId]: [] } }))
+      set((s) => ({ tasksByWs: { ...s.tasksByWs, [wsId]: [] } }))
     } finally {
       set((s) => {
         const next = new Set(s.loadingWsIds)

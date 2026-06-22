@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, memo } from 'react'
 import type { AgentEntry } from '../utils/types'
+import { WorkspaceSelector, type WorkspaceEntry } from './WorkspaceSelector'
 
 export const KimInputBar = memo(function KimInputBar({
   value,
@@ -13,6 +14,9 @@ export const KimInputBar = memo(function KimInputBar({
   agentName,
   agents,
   onAgentChange,
+  workspaces = [],
+  currentWorkspaceId,
+  onWorkspaceChange,
 }: {
   value: string
   onChange: (v: string) => void
@@ -23,6 +27,9 @@ export const KimInputBar = memo(function KimInputBar({
   agentName: string
   agents: AgentEntry[]
   onAgentChange: (name: string) => void
+  workspaces?: WorkspaceEntry[]
+  currentWorkspaceId?: string | null
+  onWorkspaceChange?: (workspaceId: string | null) => void
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [agentOpen, setAgentOpen] = useState(false)
@@ -214,16 +221,13 @@ export const KimInputBar = memo(function KimInputBar({
             </button>
           </div>
 
-          {/* 右侧：选择文件夹 + 发送 */}
+          {/* 右侧：工作空间选择 + 发送 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button className="transition-all duration-fast"
-              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
-              <span style={{ fontSize: '11px' }}>🖥</span>
-              <span>选择文件夹</span>
-              <span style={{ fontSize: '9px', opacity: 0.6 }}>▾</span>
-            </button>
+            <WorkspaceSelector
+              workspaces={workspaces}
+              currentWorkspaceId={currentWorkspaceId}
+              onWorkspaceChange={onWorkspaceChange || (() => {})}
+            />
 
             {isLoading ? (
               <button onClick={onStop}

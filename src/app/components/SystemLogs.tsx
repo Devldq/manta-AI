@@ -247,8 +247,8 @@ function buildTurnGroups(logs: LogEntry[]): { turns: TurnGroup[]; globalUngroupe
 
 /** 会话日志组件属性 */
 interface SystemLogsProps {
-  /** 会话ID（可选，用于过滤特定会话的日志） */
-  conversationId?: string
+  /** 任务ID（可选，用于过滤特定任务的日志） */
+  taskId?: string
   /** 初始过滤器 */
   initialFilter?: LogFilter
   /** 是否显示过滤器 */
@@ -303,7 +303,7 @@ interface TurnGroup {
 
 /** 会话日志组件 */
 export const SystemLogs = memo(function SystemLogs({
-  conversationId,
+  taskId,
   initialFilter,
   showFilter = true,
   showStats = true,
@@ -331,7 +331,7 @@ export const SystemLogs = memo(function SystemLogs({
     () => ({ ...initialFilter, ...filter }),
     [initialFilter, filter]
   )
-  const { logs, stats, loading, error, refreshLogs } = useLogState(combinedFilter, conversationId)
+  const { logs, stats, loading, error, refreshLogs } = useLogState(combinedFilter, taskId)
 
   // 日志导出
   const { exporting, exportLogs, downloadExport } = useLogExport()
@@ -352,10 +352,10 @@ export const SystemLogs = memo(function SystemLogs({
     if (initialFilter) updateFilter(initialFilter)
   }, [initialFilter, updateFilter])
 
-  // 应用会话ID过滤
+  // 应用任务ID过滤
   useEffect(() => {
-    if (conversationId) updateFilter({ conversationId })
-  }, [conversationId, updateFilter])
+    if (taskId) updateFilter({ taskId })
+  }, [taskId, updateFilter])
 
   // 默认展开所有轮次和步骤
   useEffect(() => {

@@ -47,8 +47,6 @@ export interface LogEntry {
 
 /** 日志元数据 */
 export interface LogMetadata {
-  /** 会话ID */
-  conversationId?: string
   /** 消息ID */
   messageId?: string
   /** 步骤索引 */
@@ -257,7 +255,7 @@ export interface LogFilter {
   /** 标签过滤 */
   tags?: string[]
   /** 会话ID */
-  conversationId?: string
+  taskId?: string
   /** 消息ID */
   messageId?: string
   /** 工具名称 */

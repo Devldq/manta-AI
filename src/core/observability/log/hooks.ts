@@ -10,7 +10,7 @@ function matchFilter(entry: LogEntry, filter: LogFilter): boolean {
   if (filter.level?.length && !filter.level.includes(entry.level)) return false
   if (filter.type?.length && !filter.type.includes(entry.type)) return false
   if (filter.source?.length && !filter.source.includes(entry.source)) return false
-  if (filter.conversationId && entry.metadata?.conversationId !== filter.conversationId) return false
+  if (filter.taskId && entry.metadata?.taskId !== filter.taskId) return false
   if (filter.search) {
     const s = filter.search.toLowerCase()
     const haystack = `${entry.message} ${JSON.stringify(entry.details || {})} ${(entry.tags || []).join(' ')}`.toLowerCase()
@@ -21,23 +21,23 @@ function matchFilter(entry: LogEntry, filter: LogFilter): boolean {
 
 /** 日志状态钩子（轮询日志文件增读，前端过滤）
  * @param filter  前端过滤条件
- * @param conversationId  可选，传入后读取会话专属日志文件（~/.manta-data/conversations/<id>/log.ndjson）
+  * @param taskId  可选，传入后读取任务专属日志文件（~/.manta-data/tasks/<id>/log.ndjson）
  */
-export function useLogState(filter?: LogFilter, conversationId?: string) {
+export function useLogState(filter?: LogFilter, taskId?: string) {
   const [rawLogs, setRawLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const offsetRef = useRef(0)
   const filterKey = filter ? JSON.stringify(filter) : ''
-  const convKey = conversationId || ''
+  const taskKey = taskId || ''
 
-  // filter / conversationId 变化时：清空数据、重置 offset、显示 loading
+  // filter / taskId 变化时：清空数据、重置 offset、显示 loading
   useEffect(() => {
     offsetRef.current = 0
     setRawLogs([])
     setLoading(true)
     setError(null)
-  }, [filterKey, convKey])
+  }, [filterKey, taskKey])
 
   // 用 useMemo 基于 rawLogs + filter 计算可见日志（最新在前）
   const { logs, stats } = useMemo(() => {
@@ -78,8 +78,8 @@ export function useLogState(filter?: LogFilter, conversationId?: string) {
     offsetRef.current = 0
     setRawLogs([])
     setError(null)
-    const url = conversationId
-      ? `/api/logs/file?offset=0&conversationId=${encodeURIComponent(conversationId)}`
+    const url = taskId
+      ? `/api/logs/file?offset=0&taskId=${encodeURIComponent(taskId)}`
       : '/api/logs/file?offset=0'
     try {
       const res = await fetch(url)
@@ -95,15 +95,15 @@ export function useLogState(filter?: LogFilter, conversationId?: string) {
       setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKey, convKey])
+  }, [filterKey, taskKey])
 
   // 轮询日志文件，增量读取
   useEffect(() => {
     let stopped = false
     let hasInitial = false
 
-    const urlBase = conversationId
-      ? `/api/logs/file?conversationId=${encodeURIComponent(conversationId)}`
+    const urlBase = taskId
+      ? `/api/logs/file?taskId=${encodeURIComponent(taskId)}`
       : '/api/logs/file'
 
     const poll = async () => {
@@ -141,7 +141,7 @@ export function useLogState(filter?: LogFilter, conversationId?: string) {
       clearInterval(timer)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKey, convKey])
+  }, [filterKey, taskKey])
 
   return {
     logs,
@@ -551,20 +551,20 @@ export function useLogPerformance() {
 }
 
 /** Metrics 实时指标钩子 — 轮询 /api/metrics */
-export function useMetrics(conversationId?: string) {
+export function useMetrics(taskId?: string) {
   const [lastTurn, setLastTurn] = useState<any>(null)
   const [session, setSession] = useState<any>(null)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (!conversationId) return
+    if (!taskId) return
 
     let stopped = false
     const poll = async () => {
       if (stopped) return
       try {
         setLoading(true)
-        const res = await fetch(`/api/metrics?conversationId=${encodeURIComponent(conversationId)}`)
+        const res = await fetch(`/api/metrics?taskId=${encodeURIComponent(taskId)}`)
         if (!res.ok || stopped) return
         const json = await res.json()
         if (!stopped) {
@@ -585,7 +585,7 @@ export function useMetrics(conversationId?: string) {
       stopped = true
       clearInterval(timer)
     }
-  }, [conversationId])
+  }, [taskId])
 
   return { lastTurn, session, loading }
 }

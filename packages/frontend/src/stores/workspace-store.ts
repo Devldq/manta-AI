@@ -53,9 +53,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         })
       )
       if (json.success && json.data?.workspaces) {
-        // 默认展开所有工作空间
-        const allIds = new Set<string>(json.data.workspaces.map((ws: WorkspaceSummary) => ws.id))
-        set({ items: json.data.workspaces, loading: false, expandedIds: allIds })
+        // 默认折叠所有工作空间（用户点击展开时按需加载）
+        set({ items: json.data.workspaces, loading: false })
       } else {
         set({ items: [], loading: false })
       }

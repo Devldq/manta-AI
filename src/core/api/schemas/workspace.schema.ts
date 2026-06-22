@@ -7,6 +7,7 @@ export const CreateWorkspaceSchema = z.object({
     .max(50, '工作空间名称不能超过 50 个字符')
     .trim(),
   description: z.string().trim().optional(),
+  folderPath: z.string().optional(),  // 用户选择的本地文件夹路径
   icon: z.string().optional(),
   isDefault: z.boolean().optional(),
   agentAppIds: z.array(z.string()).optional(),

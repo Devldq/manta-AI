@@ -8,17 +8,15 @@ import { applyTheme, loadThemeFromStorage, getThemeById, getThemeConfig, DESIGN_
 import { SettingsModal } from './SettingsModal'
 import { SidebarTopBar } from './sidebar/SidebarTopBar'
 import { SidebarNavItems } from './sidebar/SidebarNavItems'
-import { SidebarTabs } from './sidebar/SidebarTabs'
+import { SidebarBottomBar } from './sidebar/SidebarBottomBar'
 import { ConversationList } from './sidebar/ConversationList'
 import { WorkspaceList } from './sidebar/WorkspaceList'
-import { SidebarBottomBar } from './sidebar/SidebarBottomBar'
 import { useSidebarStore } from '@/stores/sidebar-store'
 import { useConversationStore } from '@/stores/conversation-store'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 
 export function SidebarNav() {
   const router = useRouter()
-  const mode = useSidebarStore((s) => s.mode)
   const searchQuery = useSidebarStore((s) => s.searchQuery)
   const setSearchQuery = useSidebarStore((s) => s.setSearchQuery)
 
@@ -36,15 +34,10 @@ export function SidebarNav() {
     useWorkspaceStore.getState().fetchList()
   }, [])
 
-  // 新建操作（根据 Tab 模式动态切换）
+  // 新建操作：创建新任务（独立任务）
   const handleNewAction = useCallback(() => {
-    if (mode === 'conversation') {
-      router.push('/tasks')
-    } else {
-      // Phase 2: 创建新工作空间
-      router.push('/workspace/new')
-    }
-  }, [mode, router])
+    router.push('/tasks')
+  }, [router])
 
   // 全局快捷键 Ctrl+N
   useEffect(() => {
@@ -86,15 +79,13 @@ export function SidebarNav() {
         {/* 分割线 */}
         <div className="mx-3 border-t border-border-subtle" />
 
-        {/* ③ Tab 切换 */}
-        <SidebarTabs />
-
-        {/* ④ 内容列表（可滚动） */}
+        {/* ③ 内容列表（统一分组：任务 + 工作空间） */}
         <div className="flex-1 overflow-y-auto scrollbar-none">
-          {mode === 'conversation' ? <ConversationList /> : <WorkspaceList />}
+          <ConversationList />
+          <WorkspaceList />
         </div>
 
-        {/* ⑤ 底部用户栏 */}
+        {/* ④ 底部用户栏 */}
         <SidebarBottomBar onSettingsClick={() => setSettingsOpen(true)} />
       </aside>
 

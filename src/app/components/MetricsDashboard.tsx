@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 
 interface MetricsDashboardProps {
-  conversationId?: string
+  taskId?: string
 }
 
 /** 格式化数字：≥10000 显示 x.xw，否则千分位 */
@@ -38,9 +38,9 @@ function fmtPct(rate: number): string {
 }
 
 export const MetricsDashboard = memo(function MetricsDashboard({
-  conversationId,
+  taskId,
 }: MetricsDashboardProps) {
-  const { lastTurn, session, loading } = useMetrics(conversationId)
+  const { lastTurn, session, loading } = useMetrics(taskId)
 
   // 无数据时不展示
   if (!lastTurn && !session) return null

@@ -7,7 +7,6 @@ import { applyTheme, loadThemeFromStorage, getThemeById, getThemeConfig, DESIGN_
 import { SettingsModal } from '@/components/SettingsModal'
 import { SidebarTopBar } from '@/components/sidebar/SidebarTopBar'
 import { SidebarNavItems } from '@/components/sidebar/SidebarNavItems'
-import { SidebarTabs } from '@/components/sidebar/SidebarTabs'
 import { ConversationList } from '@/components/sidebar/ConversationList'
 import { WorkspaceList } from '@/components/sidebar/WorkspaceList'
 import { SidebarBottomBar } from '@/components/sidebar/SidebarBottomBar'
@@ -17,7 +16,6 @@ import { useWorkspaceStore } from '@/stores/workspace-store'
 
 export function SidebarNav() {
   const navigate = useNavigate()
-  const mode = useSidebarStore((s) => s.mode)
   const searchQuery = useSidebarStore((s) => s.searchQuery)
   const setSearchQuery = useSidebarStore((s) => s.setSearchQuery)
 
@@ -35,15 +33,10 @@ export function SidebarNav() {
     useWorkspaceStore.getState().fetchList()
   }, [])
 
-  // 新建操作（根据 Tab 模式动态切换）
+  // 新建操作：统一创建新任务
   const handleNewAction = useCallback(() => {
-    if (mode === 'conversation') {
-      navigate('/tasks')
-    } else {
-      // Phase 2: 创建新工作空间
-      navigate('/workspace/new')
-    }
-  }, [mode, navigate])
+    navigate('/tasks')
+  }, [navigate])
 
   // 全局快捷键 Ctrl+N
   useEffect(() => {
@@ -85,15 +78,13 @@ export function SidebarNav() {
         {/* 分割线 */}
         <div className="mx-3 border-t border-border-subtle" />
 
-        {/* ③ Tab 切换 */}
-        <SidebarTabs />
-
-        {/* ④ 内容列表（可滚动） */}
-        <div className="flex-1 overflow-y-auto scrollbar-none">
-          {mode === 'conversation' ? <ConversationList /> : <WorkspaceList />}
+        {/* ③ 内容列表（统一分组：任务 + 工作空间） */}
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+          <ConversationList />
+          <WorkspaceList />
         </div>
 
-        {/* ⑤ 底部用户栏 */}
+        {/* ④ 底部用户栏 */}
         <SidebarBottomBar onSettingsClick={() => setSettingsOpen(true)} />
       </aside>
 
