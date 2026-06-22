@@ -58,7 +58,7 @@ if (!isDev) {
 ipcMain.handle('dialog:openDirectory', async () => {
   const result = await dialog.showOpenDialog(mainWindow!, {
     properties: ['openDirectory'],
-    title: '选择插件目录',
+    title: '选择文件夹',
     buttonLabel: '选择此文件夹',
   })
   if (result.canceled || result.filePaths.length === 0) return null

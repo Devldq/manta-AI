@@ -15,6 +15,8 @@ export const KimInputBar = memo(function KimInputBar({
   workspaces = [],
   currentWorkspaceId,
   onWorkspaceChange,
+  pendingFolderName,
+  onFolderSelected,
 }: {
   value: string
   onChange: (v: string) => void
@@ -28,6 +30,8 @@ export const KimInputBar = memo(function KimInputBar({
   workspaces?: WorkspaceEntry[]
   currentWorkspaceId?: string | null
   onWorkspaceChange?: (workspaceId: string | null) => void
+  pendingFolderName?: string
+  onFolderSelected?: (folderName: string, folderPath: string) => void
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [agentOpen, setAgentOpen] = useState(false)
@@ -108,7 +112,7 @@ export const KimInputBar = memo(function KimInputBar({
         background: 'var(--color-surface)',
         border: '1px solid var(--color-border)',
         borderRadius: '16px',
-        overflow: 'hidden',
+        overflow: 'visible',
         boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
         transition: 'box-shadow var(--duration-normal) var(--ease-out-quart), border-color var(--duration-normal) var(--ease-out-quart)',
       }}>
@@ -224,7 +228,9 @@ export const KimInputBar = memo(function KimInputBar({
             <WorkspaceSelector
               workspaces={workspaces}
               currentWorkspaceId={currentWorkspaceId}
+              pendingFolderName={pendingFolderName}
               onWorkspaceChange={onWorkspaceChange || (() => {})}
+              onFolderSelected={onFolderSelected}
             />
 
             {isLoading ? (

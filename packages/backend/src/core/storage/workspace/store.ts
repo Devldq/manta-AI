@@ -70,11 +70,25 @@ export function getWorkspace(id: string): WorkspaceConfig | null {
 
 /** 创建工作空间 */
 export function createWorkspace(input: CreateWorkspaceInput): WorkspaceConfig {
+  // 去重：若 folderPath 相同则直接返回已有工作空间
+  if (input.folderPath) {
+    const existing = listWorkspaces()
+    const duplicate = existing.find((ws) => ws.folderPath === input.folderPath)
+    if (duplicate) {
+      // 更新名称（如果用户重命名了）
+      if (duplicate.name !== input.name) {
+        return updateWorkspace(duplicate.id, { name: input.name }) || duplicate
+      }
+      return duplicate
+    }
+  }
+
   const now = new Date().toISOString()
   const config: WorkspaceConfig = {
     id: shortId(),
     name: input.name,
     description: input.description,
+    folderPath: input.folderPath,
     agentAppIds: [],
     knowledgeBaseIds: [],
     workflowIds: [],

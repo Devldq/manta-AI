@@ -7,7 +7,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
   app.get('/api/workspaces', async (_request, reply) => {
     try {
       const workspaces = fetchWorkspaces()
-      return reply.send(apiSuccess(workspaces))
+      return reply.send(apiSuccess({ workspaces }))
     } catch (err) {
       return apiError(reply, err)
     }
@@ -18,7 +18,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
     try {
       const body = request.body as Parameters<typeof createNewWorkspace>[0]
       const workspace = createNewWorkspace(body)
-      return reply.status(201).send(apiSuccess(workspace))
+      return reply.status(201).send(apiSuccess({ workspace }))
     } catch (err) {
       return apiError(reply, err)
     }

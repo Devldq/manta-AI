@@ -428,6 +428,9 @@ export interface WorkspaceConfig {
   name: string
   description?: string
 
+  /** 关联的本地文件夹路径（绝对路径） */
+  folderPath?: string
+
   /** 绑定的智能体应用 ID 列表 */
   agentAppIds: string[]
 
@@ -445,6 +448,8 @@ export interface WorkspaceConfig {
 export interface CreateWorkspaceInput {
   name: string
   description?: string
+  /** 关联的本地文件夹路径（绝对路径） */
+  folderPath?: string
 }
 
 /** 更新工作空间的输入 */

@@ -9,6 +9,8 @@ import type { UIMessage } from 'ai'
 import { SessionSidebar } from '@/components/SessionSidebar'
 import { useReconnectSSE } from '@/hooks/useReconnectSSE'
 import { SkeletonChatPage } from '@/components/skeleton'
+import { useWorkspaceStore } from '@/stores/workspace-store'
+import { useConversationStore } from '@/stores/conversation-store'
 import {
   MessageRow,
   FsAccessBanner,
@@ -399,7 +401,7 @@ function NewChatDraft({
   agentName, onAgentChange, onCreated, agents, workspaceId, workspaces, onSwitchWorkspace,
 }: {
   agentName: string; onAgentChange: (name: string) => void
-  onCreated: (convId: string, firstMsg: string) => void; agents: AgentEntry[]
+  onCreated: (convId: string, firstMsg: string, workspaceId?: string) => void; agents: AgentEntry[]
   workspaceId?: string | null
   workspaces: WorkspaceEntry[]
   onSwitchWorkspace: (workspaceId: string | null) => void
@@ -407,12 +409,52 @@ function NewChatDraft({
   const [input, setInput] = useState('')
   const [creating, setCreating] = useState(false)
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | undefined>(workspaceId || undefined)
+  // 待创建的工作空间：用户选了文件夹但还没发送消息
+  const [pendingFolderName, setPendingFolderName] = useState<string | undefined>(undefined)
+  const [pendingFolderPath, setPendingFolderPath] = useState<string | undefined>(undefined)
+
+  // 选择文件夹时的回调：先不创建，只记住路径
+  function handleFolderSelected(folderName: string, folderPath: string) {
+    setPendingFolderName(folderName)
+    setPendingFolderPath(folderPath)
+    // 如果文件夹名匹配已有工作空间，直接用
+    const existing = workspaces.find((w) => w.name === folderName || w.folderPath === folderPath)
+    if (existing) {
+      setSelectedWorkspaceId(existing.id)
+      onSwitchWorkspace(existing.id)
+      setPendingFolderName(undefined)
+      setPendingFolderPath(undefined)
+    } else {
+      // 待创建状态：清除已选工作空间（仅更新本地状态，不导航，避免丢失 pending 数据）
+      setSelectedWorkspaceId(undefined)
+    }
+  }
 
   async function handleSend() {
     const msg = input.trim()
     if (!msg || creating) return
     setCreating(true)
     try {
+      let effectiveWsId = selectedWorkspaceId
+
+      // 如果选了文件夹但还没创建工作空间 → 先自动创建
+      if (!effectiveWsId && pendingFolderName && pendingFolderPath) {
+        const workspace = await useWorkspaceStore.getState().createWorkspace({
+          name: pendingFolderName,
+          folderPath: pendingFolderPath,
+        })
+        if (workspace) {
+          effectiveWsId = workspace.id
+          setSelectedWorkspaceId(effectiveWsId)
+          onSwitchWorkspace(effectiveWsId)
+          // 清除 pending 状态，避免重复创建
+          setPendingFolderName(undefined)
+          setPendingFolderPath(undefined)
+        } else {
+          throw new Error('创建工作空间失败')
+        }
+      }
+
       const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -420,13 +462,13 @@ function NewChatDraft({
           agentName,
           mode: 'chat',
           title: msg.slice(0, 30),
-          ...(selectedWorkspaceId ? { type: 'workspace', workspaceId: selectedWorkspaceId } : { type: 'global' }),
+          ...(effectiveWsId ? { type: 'workspace', workspaceId: effectiveWsId } : { type: 'global' }),
         }),
       })
       const data = await res.json()
       const convId: string = data.data?.conversation?.id
       if (!convId) throw new Error('创建会话失败')
-      onCreated(convId, msg)
+      onCreated(convId, msg, effectiveWsId)
     } catch (err) {
       console.error(err)
       setCreating(false)
@@ -461,8 +503,12 @@ function NewChatDraft({
         onAgentChange={onAgentChange}
         workspaces={workspaces}
         currentWorkspaceId={selectedWorkspaceId}
+        pendingFolderName={pendingFolderName}
+        onFolderSelected={handleFolderSelected}
         onWorkspaceChange={(id) => {
           setSelectedWorkspaceId(id || undefined)
+          setPendingFolderName(undefined)
+          setPendingFolderPath(undefined)
           onSwitchWorkspace(id)
         }}
       />
@@ -563,9 +609,22 @@ function TasksPage() {
     }
   }
 
-  function handleConvCreated(convId: string, firstMsg: string) {
+  function handleConvCreated(convId: string, firstMsg: string, createdWorkspaceId?: string) {
     sessionStorage.setItem(`manta:pending-msg:${convId}`, firstMsg)
-    const wsParam = workspaceIdParam ? `workspaceId=${workspaceIdParam}&` : ''
+
+    // 刷新侧边栏数据：工作空间对话缓存 + 独立任务列表
+    const effectiveWsId = createdWorkspaceId || workspaceIdParam
+    if (effectiveWsId) {
+      const wsStore = useWorkspaceStore.getState()
+      wsStore.fetchConversations(effectiveWsId, true)
+      // 自动展开该工作空间
+      if (!wsStore.expandedIds.has(effectiveWsId)) {
+        wsStore.toggleExpand(effectiveWsId)
+      }
+    }
+    useConversationStore.getState().fetchList()
+
+    const wsParam = effectiveWsId ? `workspaceId=${effectiveWsId}&` : ''
     navigate(`/tasks?${wsParam}convId=${convId}`, { replace: true })
   }
 
