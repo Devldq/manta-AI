@@ -1,4 +1,4 @@
-/* core/tools/file-ops — 文件操作工具集（CC 风格，无访问控制）
+/* core/tools/file-ops — 文件操作工具集（接入安全沙箱 SDK）
  *
  * 工具列表：
  * - read       — 读取文件内容
@@ -9,8 +9,107 @@
 import type { ToolDefinition } from '@tools/registry'
 import * as fs from 'fs'
 import * as path from 'path'
+import { approvalManager } from '@security/ApprovalManager'
 
-// ─── 工具定义 ────────────────────────────────────────────────────────────────
+// ─── 从 @manta/agent-sandbox 复制的必要函数 ────────────────────────────────
+
+import * as os from 'os'
+
+// ─── 类型定义 ─────────────────────────────────────────────────────────────
+
+interface SecurityContextType {
+  taskId?: string
+  workspaceId?: string
+  allowedRoots: string[]
+  shellAllowedRoots: string[]
+  networkAccess: boolean
+  maxFileSize: number
+  platform: string
+}
+
+interface PathValidationResult {
+  allowed: boolean
+  needApproval: boolean
+  reason?: string
+}
+
+// ─── 安全上下文存储（简化版）────────────────────────────────────────────
+
+const securityContextStorage: { getStore: () => SecurityContextType | undefined } = {
+  getStore: () => undefined,
+}
+
+// ─── 路径验证函数 ─────────────────────────────────────────────────────────
+
+function normalizePath(inputPath: string): string {
+  if (inputPath.startsWith('~')) {
+    return path.join(os.homedir(), inputPath.slice(1))
+  }
+  return path.resolve(inputPath)
+}
+
+function isPathInAllowedRoots(targetPath: string, allowedRoots: string[]): boolean {
+  if (!allowedRoots || allowedRoots.length === 0) return false
+  const normalizedTarget = normalizePath(targetPath)
+  return allowedRoots.some((root) => {
+    const normalizedRoot = normalizePath(root)
+    const relative = path.relative(normalizedRoot, normalizedTarget)
+    return !relative.startsWith('..') && !path.isAbsolute(relative)
+  })
+}
+
+function getSecurityContext(): SecurityContextType | undefined {
+  return securityContextStorage.getStore()
+}
+
+function validatePathAccess(targetPath: string, accessType: 'read' | 'write'): PathValidationResult {
+  const context = getSecurityContext()
+  
+  if (!context) {
+    return {
+      allowed: false,
+      needApproval: false,
+      reason: '安全上下文未初始化',
+    }
+  }
+  
+  const isInAllowedRoots = isPathInAllowedRoots(targetPath, context.allowedRoots)
+  
+  if (isInAllowedRoots) {
+    return {
+      allowed: true,
+      needApproval: false,
+    }
+  }
+  
+  // 不在允许范围内，需要检查外部访问策略
+  const allowExternalRead = (context as any).allowExternalRead || false
+  const allowExternalWrite = (context as any).allowExternalWrite || false
+  
+  if (accessType === 'read' && allowExternalRead) {
+    return {
+      allowed: false,
+      needApproval: true,
+      reason: `路径 ${targetPath} 不在允许的根路径内，需要授权才能读取`,
+    }
+  }
+  
+  if (accessType === 'write' && allowExternalWrite) {
+    return {
+      allowed: false,
+      needApproval: true,
+      reason: `路径 ${targetPath} 不在允许的根路径内，需要授权才能写入`,
+    }
+  }
+  
+  return {
+    allowed: false,
+    needApproval: false,
+    reason: `路径 ${targetPath} 不在允许的根路径内，且不允许外部${accessType === 'read' ? '读取' : '写入'}`,
+  }
+}
+
+// ─── 工具定义 ─────────────────────────────────────────────────────────────
 
 /** Read — 读取文件内容 */
 function createReadTool(): ToolDefinition {
@@ -32,6 +131,31 @@ function createReadTool(): ToolDefinition {
     execute: async (input: any) => {
       const { file_path, offset, limit } = input
       const resolved = path.resolve(file_path)
+      
+      // 路径安全校验
+      const validation = validatePathAccess(resolved, 'read')
+      if (!validation.allowed) {
+        // 如果需要授权，创建授权请求并等待用户响应
+        if (validation.needApproval) {
+          const context = getSecurityContext()
+          const requestedBy = context?.taskId || 'unknown'
+          
+          // 创建授权请求
+          const requestId = approvalManager.createRequest('read', requestedBy, resolved)
+          
+          // 等待用户响应（最多 60 秒）
+          const approved = await approvalManager.waitForResponse(requestId, 60000)
+          
+          if (!approved) {
+            return { error: '用户拒绝访问或超时', path: resolved }
+          }
+          
+          // 用户已批准，继续执行
+        } else {
+          return { error: validation.reason || '读取访问被拒绝', path: resolved }
+        }
+      }
+      
       if (!fs.existsSync(resolved)) {
         return { error: `文件不存在：${resolved}` }
       }
@@ -78,6 +202,31 @@ function createWriteTool(): ToolDefinition {
     execute: async (input: any) => {
       const { file_path, content } = input
       const resolved = path.resolve(file_path)
+      
+      // 路径安全校验
+      const validation = validatePathAccess(resolved, 'write')
+      if (!validation.allowed) {
+        // 如果需要授权，创建授权请求并等待用户响应
+        if (validation.needApproval) {
+          const context = getSecurityContext()
+          const requestedBy = context?.taskId || 'unknown'
+          
+          // 创建授权请求
+          const requestId = approvalManager.createRequest('write', requestedBy, resolved)
+          
+          // 等待用户响应（最多 60 秒）
+          const approved = await approvalManager.waitForResponse(requestId, 60000)
+          
+          if (!approved) {
+            return { error: '用户拒绝访问或超时', path: resolved }
+          }
+          
+          // 用户已批准，继续执行
+        } else {
+          return { error: validation.reason || '写入访问被拒绝', path: resolved }
+        }
+      }
+      
       const dir = path.dirname(resolved)
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true })
@@ -113,6 +262,31 @@ function createEditTool(): ToolDefinition {
     execute: async (input: any) => {
       const { file_path, old_string, new_string, replace_all = false } = input
       const resolved = path.resolve(file_path)
+      
+      // 路径安全校验
+      const validation = validatePathAccess(resolved, 'write')
+      if (!validation.allowed) {
+        // 如果需要授权，创建授权请求并等待用户响应
+        if (validation.needApproval) {
+          const context = getSecurityContext()
+          const requestedBy = context?.taskId || 'unknown'
+          
+          // 创建授权请求
+          const requestId = approvalManager.createRequest('write', requestedBy, resolved)
+          
+          // 等待用户响应（最多 60 秒）
+          const approved = await approvalManager.waitForResponse(requestId, 60000)
+          
+          if (!approved) {
+            return { error: '用户拒绝访问或超时', path: resolved }
+          }
+          
+          // 用户已批准，继续执行
+        } else {
+          return { error: validation.reason || '编辑访问被拒绝', path: resolved }
+        }
+      }
+      
       if (!fs.existsSync(resolved)) {
         return { error: `文件不存在：${resolved}` }
       }
@@ -174,6 +348,31 @@ function createMultiEditTool(): ToolDefinition {
     execute: async (input: any) => {
       const { file_path, edits } = input
       const resolved = path.resolve(file_path)
+      
+      // 路径安全校验
+      const validation = validatePathAccess(resolved, 'write')
+      if (!validation.allowed) {
+        // 如果需要授权，创建授权请求并等待用户响应
+        if (validation.needApproval) {
+          const context = getSecurityContext()
+          const requestedBy = context?.taskId || 'unknown'
+          
+          // 创建授权请求
+          const requestId = approvalManager.createRequest('write', requestedBy, resolved)
+          
+          // 等待用户响应（最多 60 秒）
+          const approved = await approvalManager.waitForResponse(requestId, 60000)
+          
+          if (!approved) {
+            return { error: '用户拒绝访问或超时', path: resolved }
+          }
+          
+          // 用户已批准，继续执行
+        } else {
+          return { error: validation.reason || '批量编辑访问被拒绝', path: resolved }
+        }
+      }
+      
       if (!fs.existsSync(resolved)) {
         return { error: `文件不存在：${resolved}` }
       }
@@ -216,7 +415,7 @@ function createMultiEditTool(): ToolDefinition {
   }
 }
 
-// ─── 工厂函数 ────────────────────────────────────────────────────────────────
+// ─── 工厂函数 ─────────────────────────────────────────────────────────
 
 /** 创建所有文件操作工具（CC 风格，无访问控制） */
 export function createFileOpsTools(): ToolDefinition[] {

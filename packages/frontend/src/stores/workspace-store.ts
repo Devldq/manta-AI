@@ -106,18 +106,37 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   deleteWorkspace: async (id) => {
+    // 乐观更新：先从列表中移除，避免 UI 闪烁
+    const prevItems = get().items
+    const prevConversations = get().conversationsByWs
+    const prevExpanded = get().expandedIds
+    set((s) => ({
+      items: s.items.filter((w) => w.id !== id),
+      conversationsByWs: (() => {
+        const next = { ...s.conversationsByWs }
+        delete next[id]
+        return next
+      })(),
+      expandedIds: (() => {
+        const next = new Set(s.expandedIds)
+        next.delete(id)
+        return next
+      })(),
+    }))
+
     try {
       const res = await fetch(`/api/workspaces/${id}`, { method: 'DELETE' })
       const json = await res.json()
       if (json.success) {
-        invalidateCache('workspaces:') // 清除缓存
-        await get().fetchList()
+        invalidateCache('workspaces:') // 清除 SWR 缓存
         return true
       }
-      set({ error: json.error?.message ?? '删除工作空间失败' })
+      // 删除失败，回滚
+      set({ items: prevItems, conversationsByWs: prevConversations, expandedIds: prevExpanded, error: json.error?.message ?? '删除工作空间失败' })
       return false
     } catch (err) {
-      set({ error: String(err) })
+      // 网络错误，回滚
+      set({ items: prevItems, conversationsByWs: prevConversations, expandedIds: prevExpanded, error: String(err) })
       return false
     }
   },

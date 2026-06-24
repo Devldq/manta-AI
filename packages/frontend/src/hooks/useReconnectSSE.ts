@@ -242,10 +242,21 @@ function sseEventToPart(event: Record<string, unknown>): UIMessage['parts'][numb
         errorText: event.errorText as string,
       } as unknown as NonNullable<UIMessage['parts']>[number]
     case 'start-step':
+      return {
+        type: 'step-start' as const,
+      } as unknown as NonNullable<UIMessage['parts']>[number]
     case 'finish-step':
+      return {
+        type: 'step-end' as const,
+      } as unknown as NonNullable<UIMessage['parts']>[number]
     case 'finish':
+      return {
+        type: 'finish' as const,
+      } as unknown as NonNullable<UIMessage['parts']>[number]
     case 'abort':
-      return null // 元事件，不显示
+      return {
+        type: 'abort' as const,
+      } as unknown as NonNullable<UIMessage['parts']>[number]
     default:
       return null
   }

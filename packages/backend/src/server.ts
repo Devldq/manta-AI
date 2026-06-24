@@ -93,6 +93,9 @@ import { ragRoutes } from './routes/rag.js'
 import { readmeRoutes } from './routes/readme.js'
 import { runnerRoutes } from './routes/runners.js'
 import { workflowRoutes } from './routes/workflow.js'
+import { default as auditRoutes } from './routes/audit.js'
+import { default as approvalRoutes } from './routes/approval.js'
+import { default as approvalSSERoutes } from './routes/approval-sse.js'
 
 await app.register(agentRoutes)
 await app.register(conversationRoutes)
@@ -115,6 +118,9 @@ await app.register(ragRoutes)
 await app.register(readmeRoutes)
 await app.register(runnerRoutes)
 await app.register(workflowRoutes)
+await app.register(auditRoutes)
+await app.register(approvalRoutes)
+await app.register(approvalSSERoutes)
 
 // ─── 启动服务器 ─────────────────────────────────────────────
 async function start() {

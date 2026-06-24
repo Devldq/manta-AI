@@ -1,0 +1,37 @@
+{
+  "name": "@manta/agent-sandbox",
+  "version": "0.1.0",
+  "description": "Manta Agent 安全沙箱 SDK - 提供跨平台的工具执行边界控制和审计日志功能",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "manta",
+    "agent",
+    "security",
+    "sandbox",
+    "path-validation"
+  ],
+  "author": "Manta Team",
+  "license": "MIT",
+  "dependencies": {
+    "pathe": "^2.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5",
+    "vitest": "^2.0.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

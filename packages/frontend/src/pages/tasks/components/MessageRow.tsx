@@ -3,7 +3,7 @@ import type { UIMessage } from 'ai'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { markdownComponents } from '../utils/markdown'
-import { getTextContent, extractToolCalls, formatTime, fmtTokens } from '../utils/formatters'
+import { getTextContent, formatTime, fmtTokens } from '../utils/formatters'
 import { ToolCallLog } from './ToolCallLog'
 import { TokenBreakdown } from './TokenBreakdown'
 
@@ -26,19 +26,56 @@ const MarkdownContent = memo(function MarkdownContent({ content, streaming }: { 
   )
 })
 
-export const MessageRow = memo(function MessageRow({ message, agentName, isStreaming }: { message: UIMessage; agentName: string; isStreaming: boolean }) {
+interface MessageRowProps {
+  message: UIMessage
+  agentName: string
+  isStreaming: boolean
+  /** 是否是最后一条 assistant 消息（用于自动折叠历史消息） */
+  isLastAssistant?: boolean
+}
+
+export const MessageRow = memo(function MessageRow({ message, agentName, isStreaming, isLastAssistant = true }: MessageRowProps) {
   const [hovered, setHovered] = useState(false)
   const [copied, setCopied] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [toolsExpanded, setToolsExpanded] = useState(isLastAssistant) // 历史消息默认折叠工具调用
   const [tokenDetailOpen, setTokenDetailOpen] = useState(false)
+
   const content = getTextContent(message)
-  const toolCalls = extractToolCalls(message.parts)
-  const meta = message.metadata as { timestamp?: string; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number } | null; stepUsages?: Array<{ inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number; toolNames?: string[] }> | null } | undefined
+  // 不再提取扁平工具调用列表，而是将 parts 传给 ToolCallLog
+  const hasToolCalls = message.parts.some(
+    (p) =>
+      p.type === 'dynamic-tool' ||
+      (typeof p.type === 'string' && p.type.startsWith('tool-') && p.type !== 'tool-invocation')
+  )
+
+  const meta = message.metadata as {
+    timestamp?: string
+    usage?: {
+      inputTokens?: number
+      outputTokens?: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+      noCacheTokens?: number
+    } | null
+    stepUsages?: Array<{
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+      noCacheTokens?: number
+      toolNames?: string[]
+    }> | null
+  } | undefined
+
   const timestamp = formatTime(meta?.timestamp)
   const usage = meta?.usage
   const stepUsages = meta?.stepUsages
-  const hasStepUsages = stepUsages && stepUsages.length > 1 // 只有多步才展示分析面板
+  const hasStepUsages = stepUsages && stepUsages.length > 1
   const isLong = content.length > CONTENT_SCROLL_THRESHOLD
+
+  // 判断是否是已完成的历史消息（非最后一条 assistant，且非流式）
+  const isHistorical = !isLastAssistant && !isStreaming
 
   async function handleCopy() {
     try {
@@ -86,9 +123,41 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
           {timestamp && <span style={{ fontSize: '10px', color: 'var(--color-text-muted)' }}>{timestamp}</span>}
         </div>
 
-        {/* 工具调用日志 */}
-        {toolCalls.length > 0 && (
-          <ToolCallLog toolCalls={toolCalls} isStreaming={isStreaming} />
+        {/* 工具调用日志（步骤视图） */}
+        {hasToolCalls && (toolsExpanded || isLastAssistant) && (
+          <ToolCallLog parts={message.parts} isStreaming={isStreaming} />
+        )}
+
+        {/* 历史消息：折叠的工具调用摘要 */}
+        {hasToolCalls && isHistorical && toolsExpanded && (
+          <button
+            onClick={() => setToolsExpanded(false)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '4px',
+              padding: '3px 8px', border: '1px solid var(--color-border)',
+              background: 'var(--color-surface)', borderRadius: '12px',
+              cursor: 'pointer', fontSize: '11px', color: 'var(--color-text-muted)',
+              marginBottom: '8px',
+            }}
+          >
+            <span>收起工具调用</span>
+          </button>
+        )}
+
+        {/* 历史消息：折叠状态时显示展开按钮 */}
+        {hasToolCalls && isHistorical && !toolsExpanded && (
+          <button
+            onClick={() => setToolsExpanded(true)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '4px',
+              padding: '3px 8px', border: '1px solid var(--color-border)',
+              background: 'var(--color-surface)', borderRadius: '12px',
+              cursor: 'pointer', fontSize: '11px', color: 'var(--color-text-muted)',
+              marginBottom: '8px',
+            }}
+          >
+            <span>🔧 查看工具调用</span>
+          </button>
         )}
 
         {/* 主内容区 */}
@@ -146,7 +215,7 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
           <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>
             {isStreaming ? (
               <span style={{ display: 'inline-block', width: '2px', height: '14px', background: 'var(--color-accent)', animation: 'blink 1s step-end infinite', verticalAlign: 'middle' }} />
-            ) : toolCalls.length > 0 ? null : '（无输出）'}
+            ) : hasToolCalls ? null : '（无输出）'}
           </span>
         )}
 

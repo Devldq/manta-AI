@@ -54,7 +54,7 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
         ok = deleteConversation(id)
       }
       if (!ok) return reply.status(404).send({ error: '会话不存在' })
-      return reply.send({ ok: true })
+      return reply.send(apiSuccess({ deleted: true }))
     } catch (err) {
       return reply.status(500).send({ error: String(err) })
     }

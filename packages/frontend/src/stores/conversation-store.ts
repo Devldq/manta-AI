@@ -19,7 +19,7 @@ interface ConversationStore {
   error: string | null
 
   fetchList: (params?: { workspaceId?: string }) => Promise<void>
-  deleteConversation: (id: string) => Promise<boolean>
+  deleteConversation: (id: string, params?: { type?: string; workspaceId?: string }) => Promise<boolean>
   sendMessage: (conversationId: string, content: string, agentAppId?: string) => Promise<boolean>
   setActiveId: (id: string | null) => void
 }
@@ -65,20 +65,32 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
     return fetchPromise
   },
 
-  deleteConversation: async (id) => {
+  deleteConversation: async (id, params) => {
+    // 乐观更新：先从列表中移除，避免 UI 闪烁
+    const prevItems = get().items
+    const prevActiveId = get().activeId
+    set((s) => ({
+      items: s.items.filter((c) => c.id !== id),
+      activeId: s.activeId === id ? null : s.activeId,
+    }))
+
     try {
-      const res = await fetch(`/api/conversations/${id}`, { method: 'DELETE' })
+      const qp = new URLSearchParams()
+      if (params?.type) qp.set('type', params.type)
+      if (params?.workspaceId) qp.set('workspaceId', params.workspaceId)
+      const qs = qp.toString()
+      const res = await fetch(`/api/conversations/${id}${qs ? `?${qs}` : ''}`, { method: 'DELETE' })
       const json = await res.json()
       if (json.success) {
-        invalidateCache('conversations:') // 清除缓存
-        set((s) => ({
-          items: s.items.filter((c) => c.id !== id),
-          activeId: s.activeId === id ? null : s.activeId,
-        }))
+        invalidateCache('conversations:') // 清除 SWR 缓存
         return true
       }
+      // 删除失败，回滚
+      set({ items: prevItems, activeId: prevActiveId, error: json.error?.message ?? '删除会话失败' })
       return false
     } catch {
+      // 网络错误，回滚
+      set({ items: prevItems, activeId: prevActiveId })
       return false
     }
   },

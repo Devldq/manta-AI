@@ -66,3 +66,17 @@ export interface StepUsageData {
   noCacheTokens?: number
   toolNames?: string[]
 }
+
+/** 按 step 分组的工具调用 */
+export interface StepGroup {
+  /** 步骤序号（从 0 开始） */
+  stepIndex: number
+  /** Agent 在该步骤中说的文本（可作为步骤目的/意图） */
+  purposeText: string
+  /** 该步骤的工具调用列表 */
+  toolCalls: ToolCallEntry[]
+  /** 步骤是否已完成（已收到 finish-step） */
+  isComplete: boolean
+  /** 步骤是否正在执行中 */
+  isActive: boolean
+}

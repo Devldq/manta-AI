@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { ChevronRight, Plus, Folder, Square } from 'lucide-react'
+import { ChevronRight, Plus, Folder, Square, Trash2 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useConversationStore } from '@/stores/conversation-store'
 import { SkeletonSidebarList } from '@/components/skeleton'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 
 export function WorkspaceList() {
   const items = useWorkspaceStore((s) => s.items)
@@ -19,11 +20,14 @@ export function WorkspaceList() {
   const loadingWsIds = useWorkspaceStore((s) => s.loadingWsIds)
   const fetchConversations = useWorkspaceStore((s) => s.fetchConversations)
 
+  const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace)
+
   const navigate = useNavigate()
   const location = useLocation()
   const activeId = useConversationStore((s) => s.activeId)
   const setActiveId = useConversationStore((s) => s.setActiveId)
   const [collapsed, setCollapsed] = useState(false)
+  const [delWsId, setDelWsId] = useState<string | null>(null)
 
   // 从 URL 读取当前工作空间 ID
   const urlWorkspaceId = (() => {
@@ -98,19 +102,37 @@ export function WorkspaceList() {
 
   async function handleDeleteConversation(wsId: string, convId: string, e: React.MouseEvent) {
     e.stopPropagation()
+    // 乐观移除：先从会话列表中移除，避免 UI 闪烁
+    const prev = conversationsByWs[wsId]
+    if (prev) {
+      useWorkspaceStore.setState((s) => ({
+        conversationsByWs: { ...s.conversationsByWs, [wsId]: prev.filter((c) => c.id !== convId) },
+      }))
+    }
+    // 如果正在查看该会话，先导航离开
+    if (activeId === convId) {
+      navigate(`/tasks?workspaceId=${wsId}`, { replace: true })
+    }
     try {
-      const res = await fetch(`/api/conversations/${convId}?type=workspace&workspaceId=${wsId}`, {
+      await fetch(`/api/conversations/${convId}?type=workspace&workspaceId=${wsId}`, {
         method: 'DELETE',
       })
-      if (res.ok) {
-        if (activeId === convId) {
-          navigate(`/tasks?workspaceId=${wsId}`)
-        }
-        fetchConversations(wsId, true)
-      }
     } catch {
-      // 忽略错误
+      // 删除失败，回滚
+      fetchConversations(wsId, true)
     }
+  }
+
+  async function handleDeleteWorkspace() {
+    if (!delWsId) return
+    const wsId = delWsId
+    setDelWsId(null)
+    // 先导航离开（如果正在查看该工作空间），避免页面闪烁
+    if (urlWorkspaceId === wsId) {
+      navigate('/tasks', { replace: true })
+    }
+    // store.deleteWorkspace 内部已做乐观移除，直接调用即可
+    await deleteWorkspace(wsId)
   }
 
   function handleNewWorkspace() {
@@ -119,8 +141,8 @@ export function WorkspaceList() {
 
   if (items.length === 0) {
     return (
-      <div className="pt-1 flex-1 overflow-y-auto scrollbar-none">
-        {/* ── 工作空间分组头（与任务分组头一致） ── */}
+      <div className="pt-1 flex-1 flex flex-col overflow-hidden">
+        {/* ── 工作空间分组头（吸顶） ── */}
         <div className="flex items-center justify-between pl-3 pr-1 py-1 flex-shrink-0">
           <div className="flex items-center gap-1.5">
             <ChevronRight size={12} className="text-text-muted flex-shrink-0" />
@@ -136,16 +158,19 @@ export function WorkspaceList() {
             </button>
           </div>
         </div>
-        <div className="px-4 py-2 flex-shrink-0">
-          <span className="text-[11px] text-text-muted">暂无工作空间</span>
+        {/* 列表区域（可滚动） */}
+        <div className="flex-1 overflow-y-auto scrollbar-none">
+          <div className="px-4 py-2">
+            <span className="text-[11px] text-text-muted">暂无工作空间</span>
+          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="pt-1 flex-1 overflow-y-auto scrollbar-none">
-      {/* ── 工作空间分组头（可折叠，与任务分组头一致） ── */}
+    <div className="pt-1 flex-1 flex flex-col overflow-hidden">
+      {/* ── 工作空间分组头（吸顶，可折叠） ── */}
       <div
         className="flex items-center justify-between pl-3 pr-1 py-1 cursor-pointer hover:bg-border/30 rounded transition-colors flex-shrink-0"
         onClick={() => setCollapsed(!collapsed)}
@@ -168,8 +193,9 @@ export function WorkspaceList() {
         </div>
       </div>
 
+      {/* ── 工作空间列表（可滚动） ── */}
       {!collapsed && (
-        <>
+        <div className="flex-1 overflow-y-auto scrollbar-none">
           {items.map((ws) => {
             const isExpanded = expandedIds.has(ws.id)
             const isLoading = loadingWsIds.has(ws.id)
@@ -200,6 +226,14 @@ export function WorkspaceList() {
                     title="新建会话"
                   >
                     <Plus size={12} />
+                  </button>
+                  {/* 删除工作空间按钮 */}
+                  <button
+                    className="hidden group-hover:flex items-center justify-center p-0.5 rounded hover:bg-border text-text-muted hover:text-status-failed transition-colors"
+                    onClick={(e) => { e.stopPropagation(); setDelWsId(ws.id) }}
+                    title="删除工作空间"
+                  >
+                    <Trash2 size={12} />
                   </button>
                 </div>
 
@@ -253,8 +287,19 @@ export function WorkspaceList() {
               </div>
             )
           })}
-        </>
+        </div>
       )}
+
+      {/* 删除工作空间确认弹窗 */}
+      <ConfirmDialog
+        open={!!delWsId}
+        title="删除工作空间"
+        message={`确定要删除该工作空间吗？工作空间下的所有任务也将被一并删除，此操作不可撤销。`}
+        confirmLabel="删除"
+        variant="danger"
+        onConfirm={handleDeleteWorkspace}
+        onCancel={() => setDelWsId(null)}
+      />
     </div>
   )
 }

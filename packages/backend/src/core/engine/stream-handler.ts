@@ -2,6 +2,7 @@
 import { getLLMConfig } from '@llm/config-store'
 import { appendMessage } from '@storage/conversation/store'
 import { appendWorkspaceMessage } from '@storage/workspace/store'
+import { getWorkspace } from '@storage/workspace/store'
 import type { ToolCallRecord, StepUsageRecord } from '@storage/conversation/types'
 import { readAgentSoul } from '@context/agent-soul'
 import {
@@ -14,6 +15,30 @@ import { parseMessagesToCore, type UIMessage } from './message-parser'
 import { runAgentLoop } from './agent-loop'
 import { getActiveLoop, registerLoop, emitLoopEvent } from './loop-registry'
 import { logger, logManager } from '@observability/log'
+import type { SecurityContext } from '@manta/agent-sandbox'
+// 内联 createDefaultSecurityContext 以绕过 tsx 模块解析问题
+function detectPlatform(): 'macos' | 'linux' | 'windows' {
+  const platform = process.platform
+  switch (platform) {
+    case 'darwin': return 'macos'
+    case 'linux': return 'linux'
+    case 'win32': return 'windows'
+    default: return 'linux'
+  }
+}
+function createDefaultSecurityContext(taskId: string): SecurityContext {
+  const cwd = process.cwd()
+  return {
+    allowedRoots: [cwd],
+    allowExternalRead: true,
+    allowExternalWrite: false,
+    shellAllowedRoots: [cwd],
+    taskId,
+    platform: detectPlatform(),
+    onApprovalRequest: undefined,
+    onAuditLog: undefined,
+  }
+}
 
 /** 流式聊天选项 */
 export interface StreamChatOptions {
@@ -103,6 +128,23 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   // 解析消息格式
   const coreMessages = parseMessagesToCore(messages)
 
+  // 创建安全上下文（用于路径校验、命令校验等安全检查）
+  let securityContext: SecurityContext | undefined
+  if (workspaceId) {
+    const workspace = getWorkspace(workspaceId)
+    if (workspace?.folderPath) {
+      securityContext = createDefaultSecurityContext(conversationId)
+      securityContext.allowedRoots = [workspace.folderPath]
+      securityContext.shellAllowedRoots = [workspace.folderPath]
+      logger.info(`[Security] 初始化安全上下文，允许路径: ${workspace.folderPath}`, {
+        conversationId,
+        extra: {
+          workspaceId,
+        },
+      }, ['security', 'context'])
+    }
+  }
+
   // 注册新的活跃循环（占位，后续填充 running promise）
   const loopPromise = new Promise<void>((resolve) => {
     runAgentLoop({
@@ -112,6 +154,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
       prompt: userPrompt,
       messageId,
       conversationId,
+      securityContext,
       onChunk: (data: string) => emitLoopEvent(conversationId, data),
       onDone: () => resolve(),
       onFinish: async (event) => {

@@ -1,7 +1,7 @@
 /* 会话聊天页面 — 性能优化版 */
 
 import { useState, useEffect, useRef, Suspense, useCallback } from 'react'
-import { AlertCircle, Loader2, PanelRight, ArrowLeft } from 'lucide-react'
+import { AlertCircle, Loader2, PanelRight, ArrowLeft, Trash2 } from 'lucide-react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
@@ -20,6 +20,7 @@ import {
 } from './components'
 import type { WorkspaceEntry } from './components/WorkspaceSelector'
 import type { Conversation, AgentEntry } from './utils'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 
 const DEFAULT_AGENT = 'main'
 
@@ -39,6 +40,24 @@ function ChatView({
   const navigate = useNavigate()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [inputText, setInputText] = useState('')
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  // 删除当前任务
+  async function handleDeleteTask() {
+    setShowDeleteConfirm(false)
+    // 先跳转离开，避免页面闪烁
+    const wsParam2 = workspaceId ? `workspaceId=${workspaceId}` : ''
+    navigate(`/tasks${wsParam2 ? `?${wsParam2}` : ''}`, { replace: true })
+    // 后台异步删除（乐观：store 中已移除）
+    const typeParam = workspaceId ? 'type=workspace' : ''
+    const wsParam = workspaceId ? `workspaceId=${workspaceId}` : ''
+    const params = [typeParam, wsParam].filter(Boolean).join('&')
+    try {
+      await fetch(`/api/conversations/${convId}${params ? `?${params}` : ''}`, { method: 'DELETE' })
+    } catch {
+      // 忽略错误
+    }
+  }
 
   // 构建 API URL 的辅助函数，自动添加 workspace 参数
   const buildConvUrl = useCallback((path: string = '') => {
@@ -318,6 +337,18 @@ function ChatView({
               </span>
             )}
 
+            {/* 删除任务按钮 */}
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-fast"
+              style={{ border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-status-failed)'; e.currentTarget.style.borderColor = 'var(--color-status-failed)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.borderColor = 'var(--color-border)' }}
+              title="删除任务"
+            >
+              <Trash2 size={14} />
+            </button>
+
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-fast"
@@ -341,11 +372,14 @@ function ChatView({
           )}
           {displayMessages.map((msg, idx) => {
             const isReconnectMsg = msg.id.startsWith('reconnect-') || idx === replacedMsgIdxRef.current
-            const isLastAssistant = msg.role === 'assistant' && idx === displayMessages.length - 1
+            // 找到最后一条 assistant 消息的索引（从后往前找）
+            const lastAssistantIdx = [...displayMessages].reverse().findIndex(m => m.role === 'assistant')
+            const lastAssistantRealIdx = lastAssistantIdx >= 0 ? displayMessages.length - 1 - lastAssistantIdx : -1
+            const isLastAssistant = msg.role === 'assistant' && idx === lastAssistantRealIdx
             const streaming = isReconnectMsg ? showReconnectStreaming : isLoading && isLastAssistant
             return (
               <div key={msg.id} style={{ width: '100%' }}>
-                <MessageRow message={msg} agentName={agentName} isStreaming={streaming} />
+                <MessageRow message={msg} agentName={agentName} isStreaming={streaming} isLastAssistant={isLastAssistant} />
               </div>
             )
           })}
@@ -391,6 +425,17 @@ function ChatView({
           conversation={sidebarConv}
         />
       </div>
+
+      {/* 删除任务确认弹窗 */}
+      <ConfirmDialog
+        open={showDeleteConfirm}
+        title="删除任务"
+        message="确定要删除该任务吗？任务中的所有消息将被永久删除，此操作不可撤销。"
+        confirmLabel="删除"
+        variant="danger"
+        onConfirm={handleDeleteTask}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   )
 }

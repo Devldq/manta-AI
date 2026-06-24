@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { ThemeInitializer } from './components/ThemeInitializer'
 import { SidebarNav } from './components/sidebar/SidebarNav'
 import { MobileSidebarToggle } from './components/MobileSidebarToggle'
+import { ApprovalDialog } from './components/ApprovalDialog'
 
 // 页面组件（懒加载可后续优化）
 import TasksPage from './pages/tasks/page'
@@ -35,6 +36,7 @@ export default function App() {
   return (
     <>
       <ThemeInitializer />
+      <ApprovalDialog />
       <Routes>
         <Route element={<AppLayout />}>
           <Route index element={<Navigate to="/tasks" replace />} />

@@ -22,6 +22,14 @@ import {
 import { logger } from '@observability/log'
 import { recordTurn } from '@observability/metrics'
 import type { TurnMetrics, StepMetrics } from '@observability/metrics'
+import type { SecurityContext } from '@manta/agent-sandbox'
+// 内联 runWithSecurityContext 以绕过 tsx 模块解析问题
+import { AsyncLocalStorage } from 'node:async_hooks'
+
+const _securityContextStorage = new AsyncLocalStorage<SecurityContext>()
+function runWithSecurityContext<T>(ctx: SecurityContext, fn: () => T): T {
+  return _securityContextStorage.run(ctx, fn)
+}
 
 /** Token 预算默认值 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 1_000_000
@@ -47,6 +55,8 @@ export interface AgentLoopOptions {
   /** 专用的 AbortSignal（来自 LoopRegistry，仅用户点击停止时触发，不与 HTTP 请求生命周期绑定） */
   abortSignal?: AbortSignal
   conversationId?: string
+  /** 安全上下文（用于路径校验、命令校验等安全检查） */
+  securityContext?: SecurityContext
   /** 每个 SSE chunk 的输出回调（写入 LoopRegistry，而非直接写入 HTTP stream） */
   onChunk: (data: string) => void
   /** 循环结束后回调 */
@@ -265,7 +275,7 @@ function appendStepToMessages(
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户停止
  * - 不创建 ReadableStream 或 Response，不感知 HTTP 连接状态
  */
-export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, onChunk, onDone, onFinish, onError }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, securityContext, onChunk, onDone, onFinish, onError }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
 
@@ -294,7 +304,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
     }
 
   // 后台异步执行 agent loop，边产生边通过 onChunk 输出
-  ;(async () => {
+  const executeLoop = async () => {
     const loopDetector = new LoopDetector()
     let totalOutputTokens = 0
     const allStepCollects: StepCollect[] = []
@@ -804,5 +814,14 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
     } finally {
       onDone()
     }
-  })()
+  }
+
+  // 在安全上下文中执行 Agent Loop（如果提供了安全上下文）
+  if (securityContext) {
+    runWithSecurityContext(securityContext, () => {
+      executeLoop()
+    })
+  } else {
+    executeLoop()
+  }
 }
