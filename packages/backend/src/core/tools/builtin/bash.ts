@@ -10,23 +10,14 @@ import * as child_process from 'child_process'
 import { checkCommand } from './utils'
 import { approvalManager } from '@security/ApprovalManager'
 
-// ─── 从 @manta/agent-sandbox 复制的必要函数 ─────────────────────────────────
+// ─── 使用共享安全上下文模块（解决 tsx 模块解析问题）────────────────────
 
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
+import { getSecurityContext, type SecurityContext as SecurityContextType } from '../../security-context'
 
 // ─── 类型定义 ────────────────────────────────────────────────────────────────────
-
-interface SecurityContextType {
-  taskId?: string
-  workspaceId?: string
-  allowedRoots: string[]
-  shellAllowedRoots: string[]
-  networkAccess: boolean
-  maxFileSize: number
-  platform: string
-}
 
 interface CommandValidationResult {
   allowed: boolean
@@ -44,12 +35,6 @@ interface AuditEntry {
   command?: string
   approved?: boolean
   durationMs?: number
-}
-
-// ─── 安全上下文存储（简化版）────────────────────────────────────────────────────
-
-const securityContextStorage: { getStore: () => SecurityContextType | undefined } = {
-  getStore: () => undefined,
 }
 
 // ─── 路径验证函数 ───────────────────────────────────────────────────────────────
@@ -98,10 +83,6 @@ function extractPathsFromCommand(command: string): string[] {
     }
   }
   return paths
-}
-
-function getSecurityContext(): SecurityContextType | undefined {
-  return securityContextStorage.getStore()
 }
 
 function validateCommand(command: string, cwd: string): CommandValidationResult {
@@ -244,7 +225,9 @@ function createBashTool(): ToolDefinition {
     isConcurrencySafe: false,
     searchHint: 'run execute shell command bash terminal script',
     execute: async (input: any) => {
-      const { command, cwd: targetCwd = process.cwd(), timeout = 10000, run_in_background = false } = input
+      // ★ 默认 cwd：优先使用安全上下文的 shellAllowedRoots[0]，其次 process.cwd()
+      const defaultCwd = getSecurityContext()?.shellAllowedRoots?.[0] || process.cwd()
+      const { command, cwd: targetCwd = defaultCwd, timeout = 10000, run_in_background = false } = input
       const startTime = Date.now()
       
       // 1. 检查危险命令（保留原有逻辑）

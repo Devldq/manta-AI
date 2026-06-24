@@ -11,6 +11,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { isApproved, requestAccess, listPendingRequests } from '@security/fs-access'
+import { getSecurityContext } from '../../security-context'
 
 // ─── 参数解析 ─────────────────────────────────────────────────────────────────
 
@@ -94,7 +95,10 @@ export function walkFiles(dir: string, result: string[] = []): string[] {
  * - 未授权 → 发起授权请求，轮询等待（最多 120s），授权后继续；超时或拒绝返回 error
  */
 export async function checkAccess(targetPath: string): Promise<{ resolved: string } | { error: string }> {
-  const resolved = path.resolve(targetPath)
+  // ★ 相对路径相对于安全上下文的工作空间（而非 process.cwd()）
+  const context = getSecurityContext()
+  const baseCwd = context?.allowedRoots?.[0] || process.cwd()
+  const resolved = path.resolve(baseCwd, targetPath)
   if (isApproved(resolved)) {
     return { resolved }
   }

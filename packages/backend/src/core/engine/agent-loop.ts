@@ -22,14 +22,8 @@ import {
 import { logger } from '@observability/log'
 import { recordTurn } from '@observability/metrics'
 import type { TurnMetrics, StepMetrics } from '@observability/metrics'
-import type { SecurityContext } from '@manta/agent-sandbox'
-// 内联 runWithSecurityContext 以绕过 tsx 模块解析问题
-import { AsyncLocalStorage } from 'node:async_hooks'
-
-const _securityContextStorage = new AsyncLocalStorage<SecurityContext>()
-function runWithSecurityContext<T>(ctx: SecurityContext, fn: () => T): T {
-  return _securityContextStorage.run(ctx, fn)
-}
+// 使用共享安全上下文模块（解决 tsx 模块解析问题）
+import { runWithSecurityContext, type SecurityContext } from '../security-context'
 
 /** Token 预算默认值 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 1_000_000
@@ -101,14 +95,23 @@ interface StopDecision {
 /**
  * 检测模型输出是否包含"工具使用意图"但实际没有调用工具（空谈不执行）。
  *
- * 常见场景：模型说"让我看看源码"、"我来检查一下"但没有调用 read_file/search_file 等工具，
- * 导致 loop 在 toolCalls=[] 时误判为"自然结束"。
+ * **只匹配明确的意图声明**，要求文本中包含动作短语（"让我查看"、"我来搜索"等）。
+ * 不匹配常见名词（文件、目录、代码等），避免把已完成回答中的措辞误判为空谈。
+ *
+ * 例如：
+ * - "我来看看源码目录结构" → 空谈（只说不做）
+ * - "需要查看 src 目录下的具体文件吗？" → 不是空谈（这是回答的一部分）
  */
-const INTENT_PATTERN = /(?:让我|我来|我需要|我将|我要|让我来)\s*(?:看看?|查看|读[读取]|检查|找一下?|搜[搜索]|look|check|read|examine|inspect|investigate|search|find|explore)|(?:(?:look|check|read|let me|I'll|I will|I need to|going to)\s+(?:at|into|up|for|the|through))|(?:源码|代码|文件|实现|目录)/i
+const EMPTY_INTENT_ACTION_PATTERN = /(?:让我|我来|我需要|我将|我要|让我来)\s*(?:看看?|查看|读[读取]|检查|找一下?|搜[搜索]|了解|探索|look|check|read|examine|inspect|investigate|search|find|explore)/i
+const EMPTY_INTENT_EN_PATTERN = /(?:let me|I'?ll|I will|I need to|I'm going to)\s+(?:look|check|read|examine|inspect|investigate|search|find|explore|grep|browse)/i
 
 function detectEmptyIntent(text: string): boolean {
   if (!text || text.length < 10) return false
-  return INTENT_PATTERN.test(text)
+
+  // 如果文本包含代码块、列表、或表格 → 大概率是完整回答，不是空谈
+  if (/```|^[-*]\s|^\d+\.\s|^\|/m.test(text)) return false
+
+  return EMPTY_INTENT_ACTION_PATTERN.test(text) || EMPTY_INTENT_EN_PATTERN.test(text)
 }
 
 /**
@@ -817,11 +820,10 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
   }
 
   // 在安全上下文中执行 Agent Loop（如果提供了安全上下文）
+  // ★ 必须使用 await 确保 async executeLoop 完整在 ALS 作用域内执行
   if (securityContext) {
-    runWithSecurityContext(securityContext, () => {
-      executeLoop()
-    })
+    await runWithSecurityContext(securityContext, () => executeLoop())
   } else {
-    executeLoop()
+    await executeLoop()
   }
 }

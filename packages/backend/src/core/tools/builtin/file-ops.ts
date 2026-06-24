@@ -10,33 +10,18 @@ import type { ToolDefinition } from '@tools/registry'
 import * as fs from 'fs'
 import * as path from 'path'
 import { approvalManager } from '@security/ApprovalManager'
-
-// ─── 从 @manta/agent-sandbox 复制的必要函数 ────────────────────────────────
-
 import * as os from 'os'
 
-// ─── 类型定义 ─────────────────────────────────────────────────────────────
+// ─── 使用共享安全上下文模块（解决 tsx 模块解析问题）────────────────────
 
-interface SecurityContextType {
-  taskId?: string
-  workspaceId?: string
-  allowedRoots: string[]
-  shellAllowedRoots: string[]
-  networkAccess: boolean
-  maxFileSize: number
-  platform: string
-}
+import { getSecurityContext, type SecurityContext as SecurityContextType } from '../../security-context'
+
+// ─── 类型定义 ─────────────────────────────────────────────────────────────
 
 interface PathValidationResult {
   allowed: boolean
   needApproval: boolean
   reason?: string
-}
-
-// ─── 安全上下文存储（简化版）────────────────────────────────────────────
-
-const securityContextStorage: { getStore: () => SecurityContextType | undefined } = {
-  getStore: () => undefined,
 }
 
 // ─── 路径验证函数 ─────────────────────────────────────────────────────────
@@ -48,6 +33,15 @@ function normalizePath(inputPath: string): string {
   return path.resolve(inputPath)
 }
 
+/** ★ 解析路径：相对路径相对于安全上下文的工作空间（而非 process.cwd()） */
+function resolvePath(filePath: string): string {
+  const context = getSecurityContext()
+  const baseCwd = context?.allowedRoots?.[0] || process.cwd()
+  // path.resolve(base, '/abs') → '/abs'，正确处理绝对路径
+  // path.resolve(base, 'rel') → base/rel，相对于工作空间
+  return path.resolve(baseCwd, filePath)
+}
+
 function isPathInAllowedRoots(targetPath: string, allowedRoots: string[]): boolean {
   if (!allowedRoots || allowedRoots.length === 0) return false
   const normalizedTarget = normalizePath(targetPath)
@@ -56,10 +50,6 @@ function isPathInAllowedRoots(targetPath: string, allowedRoots: string[]): boole
     const relative = path.relative(normalizedRoot, normalizedTarget)
     return !relative.startsWith('..') && !path.isAbsolute(relative)
   })
-}
-
-function getSecurityContext(): SecurityContextType | undefined {
-  return securityContextStorage.getStore()
 }
 
 function validatePathAccess(targetPath: string, accessType: 'read' | 'write'): PathValidationResult {
@@ -130,7 +120,7 @@ function createReadTool(): ToolDefinition {
     searchHint: 'read file content view inspect text lines',
     execute: async (input: any) => {
       const { file_path, offset, limit } = input
-      const resolved = path.resolve(file_path)
+      const resolved = resolvePath(file_path)
       
       // 路径安全校验
       const validation = validatePathAccess(resolved, 'read')
@@ -201,7 +191,7 @@ function createWriteTool(): ToolDefinition {
     searchHint: 'write create file save overwrite content output',
     execute: async (input: any) => {
       const { file_path, content } = input
-      const resolved = path.resolve(file_path)
+      const resolved = resolvePath(file_path)
       
       // 路径安全校验
       const validation = validatePathAccess(resolved, 'write')
@@ -261,7 +251,7 @@ function createEditTool(): ToolDefinition {
     searchHint: 'edit modify replace update change string file',
     execute: async (input: any) => {
       const { file_path, old_string, new_string, replace_all = false } = input
-      const resolved = path.resolve(file_path)
+      const resolved = resolvePath(file_path)
       
       // 路径安全校验
       const validation = validatePathAccess(resolved, 'write')
@@ -347,7 +337,7 @@ function createMultiEditTool(): ToolDefinition {
     searchHint: 'batch multiple edit replace file modify string atomic',
     execute: async (input: any) => {
       const { file_path, edits } = input
-      const resolved = path.resolve(file_path)
+      const resolved = resolvePath(file_path)
       
       // 路径安全校验
       const validation = validatePathAccess(resolved, 'write')

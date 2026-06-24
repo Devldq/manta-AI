@@ -17,12 +17,15 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
   pendingFolderName,
   onWorkspaceChange,
   onFolderSelected,
+  readonly = false,
 }: {
   workspaces: WorkspaceEntry[]
   currentWorkspaceId?: string | null
   pendingFolderName?: string
   onWorkspaceChange: (workspaceId: string | null) => void
   onFolderSelected?: (folderName: string, folderPath: string) => void
+  /** 只读模式：仅显示工作空间名称，不可点击切换 */
+  readonly?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -67,10 +70,19 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
         }
         return
       }
+      // 浏览器模式：showDirectoryPicker 只返回目录名，需要用户确认完整路径
       const w = window as Record<string, unknown> & { showDirectoryPicker?: () => Promise<{ name: string }> }
       if (w.showDirectoryPicker) {
         const handle = await w.showDirectoryPicker()
-        onFolderSelected?.(handle.name, handle.name)
+        // handle.name 只是目录名（如 "炒股"），不是完整路径
+        // 让用户输入完整绝对路径
+        const fullPath = window.prompt(
+          `已选中文件夹 "${handle.name}"\n请输入其完整绝对路径（例如 /Users/link/projects/炒股）：`,
+          `/Users/${navigator.userAgent.includes('Mac') ? '' : 'yourname/'}${handle.name}`
+        )
+        if (fullPath) {
+          onFolderSelected?.(handle.name, fullPath.trim())
+        }
         return
       }
       alert('当前环境不支持选择文件夹')
@@ -88,191 +100,220 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
 
   return (
     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-      {/* 统一下拉触发按钮 */}
-      <button
-        ref={triggerRef}
-        onClick={() => setOpen((o) => !o)}
-        className="transition-all duration-fast"
-        title={hasPendingFolder ? `待创建: ${pendingFolderName}` : currentWs ? `当前工作空间: ${currentWs.name}` : '选择文件夹作为工作空间'}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '5px',
-          padding: '5px 8px 5px 10px',
-          borderRadius: '8px',
-          border: '1px solid var(--color-border)',
-          background: isActive ? 'var(--color-accent-subtle)' : 'transparent',
-          color: isActive ? 'var(--color-accent)' : 'var(--color-text-secondary)',
-          cursor: 'pointer',
-          fontSize: '12px',
-          fontWeight: 500,
-          maxWidth: '170px',
-          transition: 'all var(--duration-fast) var(--ease-out-quart)',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'var(--color-accent-subtle)'
-          e.currentTarget.style.borderColor = 'var(--color-accent)'
-          e.currentTarget.style.color = 'var(--color-accent)'
-        }}
-        onMouseLeave={(e) => {
-          if (!isActive) {
-            e.currentTarget.style.background = 'transparent'
-            e.currentTarget.style.borderColor = 'var(--color-border)'
-            e.currentTarget.style.color = 'var(--color-text-secondary)'
-          }
-        }}
-      >
-        {currentWs ? (
-          <FolderOpen size={13} style={{ flexShrink: 0 }} />
-        ) : hasPendingFolder ? (
-          <FolderPlus size={13} style={{ flexShrink: 0 }} />
-        ) : (
-          <Folder size={13} style={{ flexShrink: 0 }} />
-        )}
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {displayLabel}
-        </span>
-        {hasPendingFolder && (
-          <span style={{
-            fontSize: '9px',
-            color: 'var(--color-accent)',
-            background: 'var(--color-accent-subtle)',
-            padding: '0 4px',
-            borderRadius: '4px',
-            fontWeight: 600,
-            flexShrink: 0,
-          }}>
-            新
+      {readonly ? (
+        /* 只读模式：仅显示工作空间名称标签 */
+        currentWs ? (
+          <span
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              padding: '5px 10px',
+              borderRadius: '8px',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-accent-subtle)',
+              color: 'var(--color-accent)',
+              fontSize: '12px',
+              fontWeight: 500,
+              maxWidth: '170px',
+            }}
+            title={`工作空间: ${currentWs.name}`}
+          >
+            <FolderOpen size={13} style={{ flexShrink: 0 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {currentWs.name}
+            </span>
           </span>
-        )}
-        <ChevronDown
-          size={12}
+        ) : null
+      ) : (
+        /* 统一下拉触发按钮 */
+        <>
+        <button
+          ref={triggerRef}
+          onClick={() => setOpen((o) => !o)}
+          className="transition-all duration-fast"
+          title={hasPendingFolder ? `待创建: ${pendingFolderName}` : currentWs ? `当前工作空间: ${currentWs.name}` : '选择文件夹作为工作空间'}
           style={{
-            flexShrink: 0,
-            transition: 'transform var(--duration-fast) var(--ease-out-quart)',
-            transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
-          }}
-        />
-      </button>
-
-      {/* Portal 下拉菜单 */}
-      {open && dropPos && createPortal(
-        <div
-          ref={dropRef}
-          style={{
-            position: 'fixed',
-            bottom: `${dropPos.bottom}px`,
-            right: `${dropPos.right}px`,
-            zIndex: 9999,
-            minWidth: '200px',
-            maxWidth: '280px',
-            background: 'var(--color-surface-elevated)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            padding: '5px 8px 5px 10px',
+            borderRadius: '8px',
             border: '1px solid var(--color-border)',
-            borderRadius: '12px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
-            overflow: 'hidden',
+            background: isActive ? 'var(--color-accent-subtle)' : 'transparent',
+            color: isActive ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+            cursor: 'pointer',
+            fontSize: '12px',
+            fontWeight: 500,
+            maxWidth: '170px',
+            transition: 'all var(--duration-fast) var(--ease-out-quart)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'var(--color-accent-subtle)'
+            e.currentTarget.style.borderColor = 'var(--color-accent)'
+            e.currentTarget.style.color = 'var(--color-accent)'
+          }}
+          onMouseLeave={(e) => {
+            if (!isActive) {
+              e.currentTarget.style.background = 'transparent'
+              e.currentTarget.style.borderColor = 'var(--color-border)'
+              e.currentTarget.style.color = 'var(--color-text-secondary)'
+            }
           }}
         >
-          <div style={{ padding: '6px', maxHeight: '240px', overflowY: 'auto', scrollbarWidth: 'thin' }}>
-            {/* 第一行：选择新的工作空间 */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                handlePickFolder()
-              }}
-              className="transition-colors duration-fast"
-              style={{
-                width: '100%',
-                padding: '8px 10px',
-                textAlign: 'left',
-                border: 'none',
-                background: 'transparent',
-                color: 'var(--color-accent)',
-                fontSize: '12px',
-                fontWeight: 500,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                borderRadius: '6px',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'var(--color-accent-subtle)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent'
-              }}
-            >
-              <FolderPlus size={14} />
-              <span>选择新的工作空间</span>
-            </button>
+          {currentWs ? (
+            <FolderOpen size={13} style={{ flexShrink: 0 }} />
+          ) : hasPendingFolder ? (
+            <FolderPlus size={13} style={{ flexShrink: 0 }} />
+          ) : (
+            <Folder size={13} style={{ flexShrink: 0 }} />
+          )}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {displayLabel}
+          </span>
+          {hasPendingFolder && (
+            <span style={{
+              fontSize: '9px',
+              color: 'var(--color-accent)',
+              background: 'var(--color-accent-subtle)',
+              padding: '0 4px',
+              borderRadius: '4px',
+              fontWeight: 600,
+              flexShrink: 0,
+            }}>
+              新
+            </span>
+          )}
+          <ChevronDown
+            size={12}
+            style={{
+              flexShrink: 0,
+              transition: 'transform var(--duration-fast) var(--ease-out-quart)',
+              transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+            }}
+          />
+        </button>
 
-            {/* 分隔线 */}
-            <div style={{
-              margin: '4px 4px',
-              height: '1px',
-              background: 'var(--color-border)',
-            }} />
+        {/* Portal 下拉菜单 */}
+        {open && dropPos && createPortal(
+          <div
+            ref={dropRef}
+            style={{
+              position: 'fixed',
+              bottom: `${dropPos.bottom}px`,
+              right: `${dropPos.right}px`,
+              zIndex: 9999,
+              minWidth: '200px',
+              maxWidth: '280px',
+              background: 'var(--color-surface-elevated)',
+              border: '1px solid var(--color-border)',
+              borderRadius: '12px',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.14)',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ padding: '6px', maxHeight: '240px', overflowY: 'auto', scrollbarWidth: 'thin' }}>
+              {/* 第一行：选择新的工作空间 */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handlePickFolder()
+                }}
+                className="transition-colors duration-fast"
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  textAlign: 'left',
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'var(--color-accent)',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '6px',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-accent-subtle)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent'
+                }}
+              >
+                <FolderPlus size={14} />
+                <span>选择新的工作空间</span>
+              </button>
 
-            {/* 已有工作空间 */}
-            {workspaces.length === 0 ? (
-              <div style={{ padding: '10px 12px', fontSize: '12px', color: 'var(--color-text-muted)', textAlign: 'center' }}>
-                暂无工作空间
-              </div>
-            ) : (
-              workspaces.map((ws) => {
-                const isActiveWs = ws.id === currentWorkspaceId
-                return (
-                  <button
-                    key={ws.id}
-                    onClick={() => handleSelectWs(ws.id)}
-                    className="transition-colors duration-fast"
-                    style={{
-                      width: '100%',
-                      padding: '7px 10px',
-                      textAlign: 'left',
-                      border: 'none',
-                      background: isActiveWs ? 'var(--color-accent-subtle)' : 'transparent',
-                      color: isActiveWs ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                      fontSize: '12px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      borderRadius: '6px',
-                      fontWeight: isActiveWs ? 600 : 400,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isActiveWs) e.currentTarget.style.background = 'var(--color-bg-secondary, #f5f5f5)'
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isActiveWs) e.currentTarget.style.background = 'transparent'
-                    }}
-                  >
-                    {isActiveWs ? <FolderOpen size={13} /> : <Folder size={13} />}
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                      {ws.name}
-                    </span>
-                    {ws.taskCount !== undefined && ws.taskCount > 0 && (
-                      <span style={{
-                        fontSize: '10px',
-                        color: 'var(--color-text-muted)',
-                        background: 'var(--color-bg-secondary, #f5f5f5)',
-                        padding: '1px 6px',
-                        borderRadius: '10px',
-                        flexShrink: 0,
-                      }}>
-                        {ws.taskCount}
+              {/* 分隔线 */}
+              <div style={{
+                margin: '4px 4px',
+                height: '1px',
+                background: 'var(--color-border)',
+              }} />
+
+              {/* 已有工作空间 */}
+              {workspaces.length === 0 ? (
+                <div style={{ padding: '10px 12px', fontSize: '12px', color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                  暂无工作空间
+                </div>
+              ) : (
+                workspaces.map((ws) => {
+                  const isActiveWs = ws.id === currentWorkspaceId
+                  return (
+                    <button
+                      key={ws.id}
+                      onClick={() => handleSelectWs(ws.id)}
+                      className="transition-colors duration-fast"
+                      style={{
+                        width: '100%',
+                        padding: '7px 10px',
+                        textAlign: 'left',
+                        border: 'none',
+                        background: isActiveWs ? 'var(--color-accent-subtle)' : 'transparent',
+                        color: isActiveWs ? 'var(--color-accent)' : 'var(--color-text-primary)',
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        borderRadius: '6px',
+                        fontWeight: isActiveWs ? 600 : 400,
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActiveWs) e.currentTarget.style.background = 'var(--color-bg-secondary, #f5f5f5)'
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActiveWs) e.currentTarget.style.background = 'transparent'
+                      }}
+                    >
+                      {isActiveWs ? <FolderOpen size={13} /> : <Folder size={13} />}
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        {ws.name}
                       </span>
-                    )}
-                    {isActiveWs && <Check size={12} style={{ flexShrink: 0 }} />}
-                  </button>
-                )
-              })
-            )}
-          </div>
-        </div>,
-        document.body,
+                      {ws.taskCount !== undefined && ws.taskCount > 0 && (
+                        <span style={{
+                          fontSize: '10px',
+                          color: 'var(--color-text-muted)',
+                          background: 'var(--color-bg-secondary, #f5f5f5)',
+                          padding: '1px 6px',
+                          borderRadius: '10px',
+                          flexShrink: 0,
+                        }}>
+                          {ws.taskCount}
+                        </span>
+                      )}
+                      {isActiveWs && <Check size={12} style={{ flexShrink: 0 }} />}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
+        </>
       )}
     </div>
   )

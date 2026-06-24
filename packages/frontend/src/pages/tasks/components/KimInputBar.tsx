@@ -17,6 +17,7 @@ export const KimInputBar = memo(function KimInputBar({
   onWorkspaceChange,
   pendingFolderName,
   onFolderSelected,
+  workspaceReadonly = false,
 }: {
   value: string
   onChange: (v: string) => void
@@ -32,6 +33,8 @@ export const KimInputBar = memo(function KimInputBar({
   onWorkspaceChange?: (workspaceId: string | null) => void
   pendingFolderName?: string
   onFolderSelected?: (folderName: string, folderPath: string) => void
+  /** 工作空间只读模式（已有会话时使用） */
+  workspaceReadonly?: boolean
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [agentOpen, setAgentOpen] = useState(false)
@@ -225,13 +228,17 @@ export const KimInputBar = memo(function KimInputBar({
 
           {/* 右侧：工作空间选择 + 发送 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {/* 工作空间选择器：只读模式或可编辑模式 */}
+            {(!workspaceReadonly || currentWorkspaceId) && (
             <WorkspaceSelector
               workspaces={workspaces}
               currentWorkspaceId={currentWorkspaceId}
               pendingFolderName={pendingFolderName}
               onWorkspaceChange={onWorkspaceChange || (() => {})}
               onFolderSelected={onFolderSelected}
+              readonly={workspaceReadonly}
             />
+            )}
 
             {isLoading ? (
               <button onClick={onStop}

@@ -1,4 +1,7 @@
 /* AI start: 流式聊天核心处理逻辑 */
+import * as fs from 'fs'
+import * as path from 'path'
+import * as os from 'os'
 import { getLLMConfig } from '@llm/config-store'
 import { appendMessage } from '@storage/conversation/store'
 import { appendWorkspaceMessage } from '@storage/workspace/store'
@@ -15,29 +18,44 @@ import { parseMessagesToCore, type UIMessage } from './message-parser'
 import { runAgentLoop } from './agent-loop'
 import { getActiveLoop, registerLoop, emitLoopEvent } from './loop-registry'
 import { logger, logManager } from '@observability/log'
-import type { SecurityContext } from '@manta/agent-sandbox'
-// 内联 createDefaultSecurityContext 以绕过 tsx 模块解析问题
-function detectPlatform(): 'macos' | 'linux' | 'windows' {
-  const platform = process.platform
-  switch (platform) {
-    case 'darwin': return 'macos'
-    case 'linux': return 'linux'
-    case 'win32': return 'windows'
-    default: return 'linux'
+// 使用共享安全上下文模块（解决 tsx 模块解析问题）
+import { createDefaultSecurityContext, type SecurityContext } from '../security-context'
+
+/** ★ 解析工作空间 folderPath 为绝对路径，处理 showDirectoryPicker 只返回目录名的 bug */
+function resolveFolderPath(folderPath?: string): string | null {
+  if (!folderPath) return null
+
+  // 已经是绝对路径且存在 → 直接使用
+  if (path.isAbsolute(folderPath)) {
+    try {
+      if (fs.existsSync(folderPath) && fs.statSync(folderPath).isDirectory()) {
+        return folderPath
+      }
+    } catch {}
+    logger.warn(`[Security] workspace folderPath 指向不存在的目录: ${folderPath}`, undefined, ['security', 'context'])
+    return null
   }
-}
-function createDefaultSecurityContext(taskId: string): SecurityContext {
-  const cwd = process.cwd()
-  return {
-    allowedRoots: [cwd],
-    allowExternalRead: true,
-    allowExternalWrite: false,
-    shellAllowedRoots: [cwd],
-    taskId,
-    platform: detectPlatform(),
-    onApprovalRequest: undefined,
-    onAuditLog: undefined,
+
+  // 相对路径 → 可能是 showDirectoryPicker 的 bug（只返回目录名）
+  // 尝试常见基路径解析
+  const candidates: Array<{ label: string; candidate: string }> = [
+    { label: 'cwd', candidate: path.resolve(process.cwd(), folderPath) },
+    { label: 'home', candidate: path.join(os.homedir(), folderPath) },
+    { label: 'Desktop', candidate: path.join(os.homedir(), 'Desktop', folderPath) },
+    { label: 'Documents', candidate: path.join(os.homedir(), 'Documents', folderPath) },
+  ]
+
+  for (const { label, candidate } of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        logger.info(`[Security] workspace folderPath "${folderPath}" 解析为: ${candidate} (base: ${label})`, undefined, ['security', 'context'])
+        return candidate
+      }
+    } catch {}
   }
+
+  logger.warn(`[Security] 无法解析 workspace folderPath "${folderPath}" 到任何已存在目录`, undefined, ['security', 'context'])
+  return null
 }
 
 /** 流式聊天选项 */
@@ -80,9 +98,13 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   // 提前生成 messageId（整轮 agent loop 共享，确保早期日志也能立即关联到会话）
   const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
+  // ★ 确定工作目录：有工作空间则解析并使用工作空间路径，否则用 process.cwd()
+  const workspace = workspaceId ? getWorkspace(workspaceId) : null
+  const resolvedFolderPath = resolveFolderPath(workspace?.folderPath)
+  const cwd = resolvedFolderPath || process.cwd()
+
   // 构建 system prompt builder（每步 API 调用时重新 build，确保新存记忆立即可见）
   const soulPrompt = readAgentSoul(agentName)
-  const cwd = process.cwd()
   const promptBuilder = createMantaPromptBuilder({ cwd, soulPrompt })
 
   // 每步重建 system prompt 的闭包：memoryContext pipe 内部实时读 MemoryStore
@@ -130,19 +152,16 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
 
   // 创建安全上下文（用于路径校验、命令校验等安全检查）
   let securityContext: SecurityContext | undefined
-  if (workspaceId) {
-    const workspace = getWorkspace(workspaceId)
-    if (workspace?.folderPath) {
-      securityContext = createDefaultSecurityContext(conversationId)
-      securityContext.allowedRoots = [workspace.folderPath]
-      securityContext.shellAllowedRoots = [workspace.folderPath]
-      logger.info(`[Security] 初始化安全上下文，允许路径: ${workspace.folderPath}`, {
-        conversationId,
-        extra: {
-          workspaceId,
-        },
-      }, ['security', 'context'])
-    }
+  if (resolvedFolderPath) {
+    securityContext = createDefaultSecurityContext(conversationId)
+    securityContext.allowedRoots = [resolvedFolderPath]
+    securityContext.shellAllowedRoots = [resolvedFolderPath]
+    logger.info(`[Security] 初始化安全上下文，允许路径: ${resolvedFolderPath}`, {
+      conversationId,
+      extra: {
+        workspaceId,
+      },
+    }, ['security', 'context'])
   }
 
   // 注册新的活跃循环（占位，后续填充 running promise）

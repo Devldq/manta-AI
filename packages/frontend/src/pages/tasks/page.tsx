@@ -415,6 +415,7 @@ function ChatView({
           workspaces={workspaces}
           currentWorkspaceId={workspaceId}
           onWorkspaceChange={onSwitchWorkspace}
+          workspaceReadonly={true}
         />
       </div>
 
@@ -668,6 +669,22 @@ function TasksPage() {
       }
     }
     useConversationStore.getState().fetchList()
+
+    // ★ 刷新 workspaces 列表，确保新创建的工作空间出现在选择器中
+    fetch('/api/workspaces')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success && d.data) {
+          const list = Array.isArray(d.data) ? d.data : d.data.workspaces || []
+          setWorkspaces(list.map((ws: any) => ({
+            id: ws.id,
+            name: ws.name,
+            folderPath: ws.folderPath,
+            taskCount: ws.taskCount ?? 0,
+          })))
+        }
+      })
+      .catch(() => {})
 
     const wsParam = effectiveWsId ? `workspaceId=${effectiveWsId}&` : ''
     navigate(`/tasks?${wsParam}convId=${convId}`, { replace: true })
