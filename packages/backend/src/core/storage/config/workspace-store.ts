@@ -4,21 +4,11 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { getSecurityContext } from '../../security-context'
 
 // 配置文件路径
 const DATA_DIR = path.join(os.homedir(), '.manta-data')
 const WORKSPACE_FILE = path.join(DATA_DIR, 'workspace.json')
-
-/** 延迟引用安全上下文（通过 AsyncLocalStorage），避免模块加载时的循环依赖 */
-function getSecurityContextOrNull(): { allowedRoots: string[] } | undefined {
-  // 运行时动态 require，避免模块解析顺序问题
-  try {
-    const { getSecurityContext } = require('../../security-context')
-    return getSecurityContext()
-  } catch {
-    return undefined
-  }
-}
 
 function ensureDir(): void {
   if (!fs.existsSync(DATA_DIR)) {
@@ -84,7 +74,7 @@ export function saveWorkspaceConfig(config: WorkspaceConfig): void {
  */
 export function getDefaultWorkDir(): string {
   // 0. 安全上下文的工作空间（最高优先级 — agent loop 运行时通过 AsyncLocalStorage 注入）
-  const ctx = getSecurityContextOrNull()
+  const ctx = getSecurityContext()
   if (ctx?.allowedRoots?.[0] && fs.existsSync(ctx.allowedRoots[0]) && fs.statSync(ctx.allowedRoots[0]).isDirectory()) {
     return path.resolve(ctx.allowedRoots[0])
   }
