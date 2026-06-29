@@ -1,48 +1,84 @@
 import type { EmbeddingService } from '../types'
 
-/**
- * OpenAI Embedding 服务实现
- * 使用 OpenAI API 生成文本嵌入
- */
+// ─── OpenAI Embedding Service ────────────────────────────────
+
 export class OpenAIEmbeddingService implements EmbeddingService {
   private apiKey: string
+  private baseUrl: string
   private model: string
   private dimensions: number
 
-  constructor(config?: { apiKey?: string; model?: string; dimensions?: number }) {
+  constructor(config?: { apiKey?: string; baseUrl?: string; model?: string; dimensions?: number }) {
     this.apiKey = config?.apiKey || process.env.OPENAI_API_KEY || ''
+    this.baseUrl = config?.baseUrl || 'https://api.openai.com/v1'
     this.model = config?.model || 'text-embedding-3-small'
     this.dimensions = config?.dimensions || 1536
   }
 
   async embed(text: string): Promise<number[]> {
     if (!this.apiKey) {
-      throw new Error('OpenAI API key not configured')
+      throw new Error('OpenAI API key not configured. Set OPENAI_API_KEY environment variable')
     }
 
-    // 实际实现：
-    // 1. 调用 OpenAI Embeddings API
-    // 2. 返回嵌入向量
+    const response = await fetch(`${this.baseUrl}/embeddings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: text,
+        dimensions: this.dimensions,
+      }),
+    })
 
-    // 占位实现：返回随机向量
-    console.log(`生成嵌入: "${text.substring(0, 50)}..."`)
-    return Array.from({ length: this.dimensions }, () => Math.random())
+    if (!response.ok) {
+      const errorBody = await response.text()
+      throw new Error(`OpenAI Embedding API error (${response.status}): ${errorBody}`)
+    }
+
+    const data = (await response.json()) as {
+      data: Array<{ embedding: number[] }>
+    }
+
+    return data.data[0].embedding
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (!this.apiKey) {
-      throw new Error('OpenAI API key not configured')
+      throw new Error('OpenAI API key not configured. Set OPENAI_API_KEY environment variable')
     }
 
-    // 实际实现：
-    // 1. 批量调用 OpenAI Embeddings API
-    // 2. 返回嵌入向量数组
+    if (texts.length === 0) return []
 
-    // 占位实现：返回随机向量数组
-    console.log(`批量生成嵌入: ${texts.length} 个文本`)
-    return texts.map(() =>
-      Array.from({ length: this.dimensions }, () => Math.random())
-    )
+    // OpenAI 支持批量输入
+    const response = await fetch(`${this.baseUrl}/embeddings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: texts,
+        dimensions: this.dimensions,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorBody = await response.text()
+      throw new Error(`OpenAI Embedding API error (${response.status}): ${errorBody}`)
+    }
+
+    const data = (await response.json()) as {
+      data: Array<{ embedding: number[]; index: number }>
+    }
+
+    // 按 index 排序确保顺序正确
+    return data.data
+      .sort((a, b) => a.index - b.index)
+      .map((item) => item.embedding)
   }
 
   getDimensions(): number {
@@ -50,9 +86,8 @@ export class OpenAIEmbeddingService implements EmbeddingService {
   }
 }
 
-/**
- * 本地 Embedding 服务实现（使用 Ollama）
- */
+// ─── 本地 Ollama Embedding Service ───────────────────────────
+
 export class LocalEmbeddingService implements EmbeddingService {
   private baseUrl: string
   private model: string
@@ -65,25 +100,34 @@ export class LocalEmbeddingService implements EmbeddingService {
   }
 
   async embed(text: string): Promise<number[]> {
-    // 实际实现：
-    // 1. 调用 Ollama API
-    // 2. 返回嵌入向量
+    const response = await fetch(`${this.baseUrl}/api/embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.model,
+        prompt: text,
+      }),
+    })
 
-    // 占位实现：返回随机向量
-    console.log(`本地生成嵌入: "${text.substring(0, 50)}..."`)
-    return Array.from({ length: this.dimensions }, () => Math.random())
+    if (!response.ok) {
+      const errorBody = await response.text()
+      throw new Error(
+        `Ollama Embedding API error (${response.status}): ${errorBody}\n` +
+        `确保 Ollama 已启动并已拉取模型: ollama pull ${this.model}`
+      )
+    }
+
+    const data = (await response.json()) as { embedding: number[] }
+    return data.embedding
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
-    // 实际实现：
-    // 1. 批量调用 Ollama API
-    // 2. 返回嵌入向量数组
-
-    // 占位实现：返回随机向量数组
-    console.log(`本地批量生成嵌入: ${texts.length} 个文本`)
-    return texts.map(() =>
-      Array.from({ length: this.dimensions }, () => Math.random())
-    )
+    // Ollama 不支持批量，逐个调用
+    const results: number[][] = []
+    for (const text of texts) {
+      results.push(await this.embed(text))
+    }
+    return results
   }
 
   getDimensions(): number {
@@ -91,9 +135,8 @@ export class LocalEmbeddingService implements EmbeddingService {
   }
 }
 
-/**
- * 创建 Embedding 服务实例
- */
+// ─── 工厂函数 ────────────────────────────────────────────────
+
 export function createEmbeddingService(
   provider: 'openai' | 'local' = 'openai',
   config?: Record<string, unknown>
