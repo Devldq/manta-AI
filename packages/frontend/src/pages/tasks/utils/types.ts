@@ -71,8 +71,10 @@ export interface StepUsageData {
 export interface StepGroup {
   /** 步骤序号（从 0 开始） */
   stepIndex: number
-  /** Agent 在该步骤中说的文本（可作为步骤目的/意图） */
+  /** Agent 在该步骤中说的文本摘要（用于步骤标题，取前 100 字符） */
   purposeText: string
+  /** Agent 在该步骤中的完整思考文本（用于"深度思考"区块） */
+  thinking?: string
   /** 该步骤的工具调用列表 */
   toolCalls: ToolCallEntry[]
   /** 步骤是否已完成（已收到 finish-step） */

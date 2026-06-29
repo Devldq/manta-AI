@@ -1,211 +1,122 @@
-import { useState, memo } from 'react'
-import {
-  ChevronRight, ChevronDown, Loader2, Check, AlertCircle,
-  Folder, FileText, FileSearch, Search, Terminal, Pencil, Wrench,
-} from 'lucide-react'
+import { memo, useState, useRef, useEffect } from 'react'
+import { Loader2, Check, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import type { StepGroup, ToolCallEntry } from '../utils/types'
-import { describeToolCall, formatToolInput, formatToolOutput, getStepSummary, inferStepPurpose } from '../utils/formatters'
 
-/** 工具名 → lucide icon 映射 */
-const TOOL_ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string; style?: React.CSSProperties }>> = {
-  lsDir: Folder,
-  readFile: FileText,
-  glob: FileSearch,
-  grep: Search,
-  bash: Terminal,
-  write: Pencil,
-  edit: Pencil,
-  multiEdit: Pencil,
+// ============================================================
+// 样式常量
+// ============================================================
+const THINK_COLOR = '#6366f1'
+const DONE_COLOR = '#22c55e'
+const ERR_COLOR = '#ef4444'
+const RUN_COLOR = '#3b82f6'
+const FADED = 'var(--color-text-muted)'
+
+// ============================================================
+// 动作描述
+// ============================================================
+function describeAction(entry: ToolCallEntry): string {
+  const input = entry.input as Record<string, unknown> | null | undefined
+  switch (entry.toolName) {
+    case 'bash': {
+      const cmd = String(input?.command ?? '')
+      return cmd.length > 50 ? cmd.slice(0, 50) + '…' : cmd
+    }
+    case 'lsDir': return `已查看 ${String(input?.dir_path ?? '')}`
+    case 'readFile': return `已读取 ${String(input?.file_path ?? '')}`
+    case 'glob': return `已搜索 ${String(input?.pattern ?? '')}`
+    case 'grep': return `已搜索 "${String(input?.pattern ?? '')}"`
+    case 'write': return `已写入 ${String(input?.file_path ?? '')}`
+    case 'edit':
+    case 'multiEdit': return `已编辑 ${String(input?.file_path ?? '')}`
+    default: return entry.toolName
+  }
 }
 
-function getToolIcon(toolName: string) {
-  return TOOL_ICON_MAP[toolName] ?? Wrench
-}
-
-/** 单个工具调用的展开详情 */
-const ToolCallDetail = memo(function ToolCallDetail({ entry }: { entry: ToolCallEntry }) {
-  const [expanded, setExpanded] = useState(false)
-  const isDone = entry.state === 'output-available'
-  const isError = entry.state === 'output-error'
-  const Icon = getToolIcon(entry.toolName)
-  const desc = describeToolCall(entry)
+// ============================================================
+// 深度思考区块
+// ============================================================
+const ThinkingBlock = memo(function ThinkingBlock({
+  text,
+  expanded,
+  onToggle,
+}: {
+  text: string
+  expanded: boolean
+  onToggle: () => void
+}) {
+  if (!text.trim()) return null
 
   return (
-    <div style={{
-      borderLeft: '2px solid var(--color-border)',
-      marginLeft: '10px',
-      paddingLeft: '10px',
-      paddingTop: '4px',
-      paddingBottom: '4px',
-    }}>
-      {/* 工具调用主行 */}
+    <div style={{ margin: '6px 0' }}>
+      {/* 标题栏 */}
       <div
+        onClick={onToggle}
         style={{
           display: 'flex', alignItems: 'center', gap: '6px',
-          cursor: 'pointer',
-          padding: '2px 4px',
-          borderRadius: '4px',
+          cursor: 'pointer', userSelect: 'none',
+          padding: '2px 0',
+          fontSize: '12px',
+          color: THINK_COLOR,
         }}
-        onClick={() => setExpanded(!expanded)}
-        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)' }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
       >
-        {entry.state === 'input-streaming' || entry.state === 'input-available' ? (
-          <Loader2 size={12} className="tool-spinner" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
-        ) : isDone ? (
-          <Check size={12} style={{ flexShrink: 0, color: 'var(--color-status-done)' }} />
-        ) : isError ? (
-          <AlertCircle size={12} style={{ flexShrink: 0, color: 'var(--color-status-failed)' }} />
-        ) : (
-          <Icon size={12} style={{ flexShrink: 0, color: 'var(--color-text-muted)' }} />
-        )}
-
-        <span style={{
-          fontSize: '12px', fontFamily: 'var(--font-mono)',
-          color: isError ? 'var(--color-status-failed)' : 'var(--color-text-secondary)',
-          flex: 1,
-        }}>
-          {desc}
-        </span>
-
-        {/* 展开/收起箭头 */}
-        <ChevronRight
-          size={12}
-          style={{
-            flexShrink: 0,
-            color: 'var(--color-text-muted)',
-            transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-            transition: 'transform 0.15s',
-          }}
-        />
+        <span style={{ fontWeight: 500 }}>深度思考</span>
+        {expanded
+          ? <ChevronDown size={12} style={{ opacity: 0.7 }} />
+          : <ChevronRight size={12} style={{ opacity: 0.7 }} />
+        }
       </div>
 
-      {/* 展开详情 */}
+      {/* 内容 */}
       {expanded && (
         <div style={{
-          marginTop: '4px',
-          padding: '6px 8px',
-          background: 'var(--color-surface)',
-          borderRadius: '6px',
-          fontSize: '11px',
-          fontFamily: 'var(--font-mono)',
-          lineHeight: '1.5',
+          fontSize: '13px', color: 'var(--color-text-secondary)',
+          lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          padding: '4px 0 4px 4px',
         }}>
-          {/* 输入 */}
-          <div style={{ marginBottom: '4px' }}>
-            <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>输入: </span>
-            <pre style={{
-              margin: '2px 0 0 0',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-              color: 'var(--color-text-secondary)',
-              fontSize: '11px',
-              maxHeight: '150px',
-              overflow: 'auto',
-            }}>{formatToolInput(entry)}</pre>
-          </div>
-
-          {/* 输出 */}
-          <div>
-            <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>输出: </span>
-            <pre style={{
-              margin: '2px 0 0 0',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-              color: isError ? 'var(--color-status-failed)' : 'var(--color-text-secondary)',
-              fontSize: '11px',
-              maxHeight: '200px',
-              overflow: 'auto',
-            }}>{formatToolOutput(entry)}</pre>
-          </div>
+          {text.trim()}
         </div>
       )}
     </div>
   )
 })
 
-/** 单个步骤卡片 */
-const AgentStepCard = memo(function AgentStepCard({ group, defaultExpanded }: { group: StepGroup; defaultExpanded?: boolean }) {
-  const [expanded, setExpanded] = useState(defaultExpanded ?? !group.isComplete)
-
-  const purpose = group.purposeText.trim()
-    ? group.purposeText.trim().slice(0, 100)
-    : inferStepPurpose(group.toolCalls)
-
-  const summary = getStepSummary(group)
+// ============================================================
+// 单条工具调用行
+// ============================================================
+const ToolLine = memo(function ToolLine({ entry }: { entry: ToolCallEntry }) {
+  const isDone = entry.state === 'output-available'
+  const isError = entry.state === 'output-error'
+  const isRunning = entry.state === 'input-streaming' || entry.state === 'input-available'
+  const desc = describeAction(entry)
 
   return (
     <div style={{
-      border: '1px solid var(--color-border)',
-      borderRadius: '8px',
-      overflow: 'hidden',
-      background: group.isActive ? 'var(--color-accent-subtle)' : 'transparent',
+      display: 'flex', alignItems: 'center', gap: '6px',
+      padding: '1.5px 0 1.5px 16px',
+      fontSize: '12px', lineHeight: '1.6',
     }}>
-      {/* 步骤头部：可点击折叠/展开 */}
-      <div
-        style={{
-          display: 'flex', alignItems: 'center', gap: '6px',
-          padding: '6px 10px',
-          cursor: 'pointer',
-          userSelect: 'none',
-        }}
-        onClick={() => setExpanded(!expanded)}
-        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface)' }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-      >
-        {/* 折叠箭头 */}
-        {expanded ? (
-          <ChevronDown size={14} style={{ flexShrink: 0, color: 'var(--color-text-muted)' }} />
-        ) : (
-          <ChevronRight size={14} style={{ flexShrink: 0, color: 'var(--color-text-muted)' }} />
-        )}
-
-        {/* 步骤序号 */}
-        <span style={{
-          fontSize: '11px', fontWeight: 600,
-          color: 'var(--color-accent)',
-          fontFamily: 'var(--font-mono)',
-          flexShrink: 0,
-        }}>
-          Step {group.stepIndex + 1}
-        </span>
-
-        {/* 步骤目的/描述 */}
-        <span style={{
-          fontSize: '12px',
-          color: 'var(--color-text-secondary)',
-          flex: 1,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}>
-          {purpose}
-        </span>
-
-        {/* 步骤摘要（右侧） */}
-        <span style={{
-          fontSize: '11px',
-          color: 'var(--color-text-muted)',
-          fontFamily: 'var(--font-mono)',
-          flexShrink: 0,
-        }}>
-          {summary}
-        </span>
-      </div>
-
-      {/* 展开内容：工具调用列表 */}
-      {expanded && group.toolCalls.length > 0 && (
-        <div style={{ padding: '2px 8px 6px 8px' }}>
-          {group.toolCalls.map((t: ToolCallEntry, i: number) => (
-            <ToolCallDetail key={t.toolCallId ?? `${group.stepIndex}-${i}`} entry={t} />
-          ))}
-        </div>
-      )}
+      <span style={{ flexShrink: 0, width: '14px', display: 'flex', justifyContent: 'center' }}>
+        {isRunning ? (
+          <Loader2 size={11} className="tool-spinner" style={{ color: RUN_COLOR }} />
+        ) : isDone ? (
+          <Check size={11} style={{ color: DONE_COLOR }} />
+        ) : isError ? (
+          <AlertCircle size={11} style={{ color: ERR_COLOR }} />
+        ) : null}
+      </span>
+      <span style={{
+        color: isRunning ? 'var(--color-text-secondary)' : isError ? ERR_COLOR : FADED,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {desc}
+      </span>
     </div>
   )
 })
 
-/** 步骤视图容器：渲染所有步骤 */
+// ============================================================
+// 主组件
+// ============================================================
 export const AgentStepView = memo(function AgentStepView({
   groups,
   isStreaming,
@@ -215,15 +126,112 @@ export const AgentStepView = memo(function AgentStepView({
 }) {
   if (groups.length === 0) return null
 
+  const [expanded, setExpanded] = useState(false)
+  const [thinkingExpanded, setThinkingExpanded] = useState<Record<number, boolean>>({})
+
+  // 步骤进行时自动展开
+  const prevStreamingRef = useRef(isStreaming)
+  useEffect(() => {
+    if (isStreaming && !prevStreamingRef.current) {
+      setExpanded(true)
+    }
+    prevStreamingRef.current = isStreaming
+  }, [isStreaming])
+
+  // 统计
+  const totalCalls = groups.reduce((sum, g) => sum + g.toolCalls.length, 0)
+  const totalThinking = groups.filter(g => g.thinking?.trim()).length
+  const allComplete = groups.every(g => g.isComplete)
+
+  // 切换所有思考区块
+  const toggleThinking = (idx: number) => {
+    setThinkingExpanded(prev => ({ ...prev, [idx]: !prev[idx] }))
+  }
+
+  // 摘要行：「> 8 个工具调用, 12 条过程消息」
+  const summaryText = `${totalCalls} 个工具调用, ${totalThinking} 条过程消息`
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '10px' }}>
-      {groups.map((group) => (
-        <AgentStepCard
-          key={group.stepIndex}
-          group={group}
-          defaultExpanded={isStreaming && group.isActive}
-        />
-      ))}
+    <div>
+      {/* 折叠摘要行 */}
+      {!expanded && (
+        <div
+          onClick={() => setExpanded(true)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            cursor: 'pointer', userSelect: 'none',
+            padding: '4px 0',
+            fontSize: '13px',
+            color: FADED,
+          }}
+        >
+          <ChevronRight size={14} style={{ color: 'var(--color-text-muted)' }} />
+          <span>{summaryText}</span>
+          {allComplete && <span style={{ marginLeft: '4px' }}>完成</span>}
+        </div>
+      )}
+
+      {/* 展开后的完整内容 */}
+      {expanded && (
+        <div>
+          {/* 摘要行（点击可折叠） */}
+          <div
+            onClick={() => setExpanded(false)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '6px',
+              cursor: 'pointer', userSelect: 'none',
+              padding: '4px 0',
+              fontSize: '13px',
+              color: FADED,
+              marginBottom: '4px',
+            }}
+          >
+            <ChevronDown size={14} style={{ color: 'var(--color-text-muted)' }} />
+            <span>{summaryText}</span>
+          </div>
+
+          {/* 各步骤内容平铺 */}
+          {groups.map((group, idx) => {
+            const isThinkExpanded = thinkingExpanded[idx] ?? false
+            const hasThinking = !!(group.thinking && group.thinking.trim())
+
+            return (
+              <div key={group.stepIndex}>
+                {/* 深度思考 */}
+                {hasThinking && (
+                  <ThinkingBlock
+                    text={group.thinking!}
+                    expanded={isThinkExpanded}
+                    onToggle={() => toggleThinking(idx)}
+                  />
+                )}
+
+                {/* 工具调用列表 */}
+                {group.toolCalls.map((t, i) => (
+                  <ToolLine key={t.toolCallId ?? `${group.stepIndex}-${i}`} entry={t} />
+                ))}
+
+                {/* 步骤间分隔（除了最后） */}
+                {idx < groups.length - 1 && (
+                  <div style={{ height: '8px' }} />
+                )}
+              </div>
+            )
+          })}
+
+          {/* 进行中提示 */}
+          {isStreaming && groups.some(g => g.isActive) && (
+            <div style={{
+              fontSize: '10px', color: RUN_COLOR,
+              display: 'flex', alignItems: 'center', gap: '4px',
+              marginTop: '6px',
+            }}>
+              <Loader2 size={10} className="tool-spinner" />
+              Agent 正在执行…
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 })

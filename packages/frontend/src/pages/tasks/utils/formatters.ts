@@ -58,10 +58,11 @@ export function extractStepGroups(parts: UIMessage['parts']): StepGroup[] {
       continue
     }
 
-    // text part: 收集为步骤目的（取前 120 字符作为目的摘要）
+    // text part: 收集完整思考文本，同时截取前 100 字符作为摘要
     if (partType === 'text' && currentGroup) {
       const text = (p as TextUIPart).text ?? ''
-      if (currentGroup.purposeText.length < 120) {
+      currentGroup.thinking = (currentGroup.thinking ?? '') + text
+      if (currentGroup.purposeText.length < 100) {
         currentGroup.purposeText += text
       }
       continue
