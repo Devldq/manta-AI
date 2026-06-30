@@ -39,11 +39,36 @@ const ThinkingBlock = memo(function ThinkingBlock({
   text,
   expanded,
   onToggle,
+  isStreaming,
 }: {
   text: string
   expanded: boolean
   onToggle: () => void
+  isStreaming: boolean
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const userScrolledRef = useRef(false)
+
+  // 流式更新时，只有当用户在底部才自动滚到底
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || !expanded || !isStreaming) return
+    // 如果用户手动滚上去了，不去抢滚动
+    if (userScrolledRef.current) return
+
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30
+    if (isAtBottom) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [text, expanded, isStreaming])
+
+  const handleScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30
+    userScrolledRef.current = !isAtBottom
+  }
+
   if (!text.trim()) return null
 
   return (
@@ -68,11 +93,20 @@ const ThinkingBlock = memo(function ThinkingBlock({
 
       {/* 内容 */}
       {expanded && (
-        <div style={{
-          fontSize: '13px', color: 'var(--color-text-secondary)',
-          lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-          padding: '4px 0 4px 4px',
-        }}>
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          style={{
+            fontSize: '13px', color: 'var(--color-text-secondary)',
+            lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            padding: '8px 10px',
+            maxHeight: '200px',
+            overflowY: 'auto',
+            overflowAnchor: 'none',
+            borderLeft: `2px solid ${THINK_COLOR}40`,
+            borderRadius: '4px',
+            background: `${THINK_COLOR}06`,
+          } as React.CSSProperties}>
           {text.trim()}
         </div>
       )}
@@ -126,14 +160,19 @@ export const AgentStepView = memo(function AgentStepView({
 }) {
   if (groups.length === 0) return null
 
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(() => isStreaming)
   const [thinkingExpanded, setThinkingExpanded] = useState<Record<number, boolean>>({})
 
-  // 步骤进行时自动展开
+  // 进行时自动展开，完成后自动折叠
   const prevStreamingRef = useRef(isStreaming)
   useEffect(() => {
     if (isStreaming && !prevStreamingRef.current) {
+      // 开始执行 → 展开
       setExpanded(true)
+    } else if (!isStreaming && prevStreamingRef.current) {
+      // 执行完成 → 折叠
+      setExpanded(false)
+      setThinkingExpanded({})
     }
     prevStreamingRef.current = isStreaming
   }, [isStreaming])
@@ -152,7 +191,7 @@ export const AgentStepView = memo(function AgentStepView({
   const summaryText = `${totalCalls} 个工具调用, ${totalThinking} 条过程消息`
 
   return (
-    <div>
+    <div style={{ overflowAnchor: 'none' } as React.CSSProperties}>
       {/* 折叠摘要行 */}
       {!expanded && (
         <div
@@ -192,7 +231,7 @@ export const AgentStepView = memo(function AgentStepView({
 
           {/* 各步骤内容平铺 */}
           {groups.map((group, idx) => {
-            const isThinkExpanded = thinkingExpanded[idx] ?? false
+            const isThinkExpanded = thinkingExpanded[idx] ?? isStreaming
             const hasThinking = !!(group.thinking && group.thinking.trim())
 
             return (
@@ -203,6 +242,7 @@ export const AgentStepView = memo(function AgentStepView({
                     text={group.thinking!}
                     expanded={isThinkExpanded}
                     onToggle={() => toggleThinking(idx)}
+                    isStreaming={isStreaming}
                   />
                 )}
 

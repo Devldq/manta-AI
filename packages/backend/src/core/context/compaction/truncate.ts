@@ -5,7 +5,7 @@
  * - Layer 1（静态截断）：注册时配置的 maxResultChars（默认 3000），在 registry.ts 的
  *   buildAISDKTools 中由 truncateResult 执行，固定 Head/Tail 60/40 分割。
  * - Layer 2（动态截断）：根据当前上下文使用率实时调整截断阈值，在 agent-loop 中每步执行。
- * - 双重约束（对齐 OpenClaw）：
+ * - 双重约束：
  *   1. Pass 1 — 单条截断：单个工具结果不超过上下文窗口的 50%（以 chars 计）
  *   2. Pass 2 — 总量预算：如果总字符数超过窗口 75%，从最老的 tool result 开始逐条 compact
  *

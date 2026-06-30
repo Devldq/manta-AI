@@ -7,9 +7,6 @@ import { getTextContent, formatTime, fmtTokens } from '../utils/formatters'
 import { ToolCallLog } from './ToolCallLog'
 import { TokenBreakdown } from './TokenBreakdown'
 
-/** 内容字符数超过此阈值时加滚动窗口 */
-const CONTENT_SCROLL_THRESHOLD = 1200
-
 const MarkdownContent = memo(function MarkdownContent({ content, streaming }: { content: string; streaming?: boolean }) {
   return (
     <div>
@@ -37,7 +34,6 @@ interface MessageRowProps {
 export const MessageRow = memo(function MessageRow({ message, agentName, isStreaming, isLastAssistant = true }: MessageRowProps) {
   const [hovered, setHovered] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [expanded, setExpanded] = useState(false)
   const [toolsExpanded, setToolsExpanded] = useState(isLastAssistant) // 历史消息默认折叠工具调用
   const [tokenDetailOpen, setTokenDetailOpen] = useState(false)
 
@@ -72,8 +68,6 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
   const usage = meta?.usage
   const stepUsages = meta?.stepUsages
   const hasStepUsages = stepUsages && stepUsages.length > 1
-  const isLong = content.length > CONTENT_SCROLL_THRESHOLD
-
   // 判断是否是已完成的历史消息（非最后一条 assistant，且非流式）
   const isHistorical = !isLastAssistant && !isStreaming
 
@@ -172,44 +166,11 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
               </button>
             )}
 
-            {/* 内容：超长且已结束时折叠 */}
             <div
-              className={isLong && !isStreaming && !expanded ? 'msg-content-collapsed' : undefined}
               style={{ fontSize: '14px', lineHeight: '1.65', color: 'var(--color-text-primary)', wordBreak: 'break-word' }}
             >
               <MarkdownContent content={content} streaming={isStreaming} />
             </div>
-
-            {/* 展开/收起按钮 */}
-            {isLong && !isStreaming && (
-              <div style={{ marginTop: expanded ? '10px' : '2px', display: 'flex', justifyContent: 'center' }}>
-                <button
-                  onClick={() => setExpanded((v) => !v)}
-                  className="transition-all duration-fast"
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: '5px',
-                    padding: '5px 14px', borderRadius: '20px', fontSize: '12px',
-                    border: '1px solid var(--color-border)',
-                    background: 'var(--color-surface)',
-                    color: 'var(--color-text-secondary)',
-                    cursor: 'pointer',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'var(--color-accent-subtle)'
-                    e.currentTarget.style.borderColor = 'var(--color-accent)'
-                    e.currentTarget.style.color = 'var(--color-accent)'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'var(--color-surface)'
-                    e.currentTarget.style.borderColor = 'var(--color-border)'
-                    e.currentTarget.style.color = 'var(--color-text-secondary)'
-                  }}
-                >
-                  <span style={{ display: 'inline-block', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform var(--duration-normal) var(--ease-out-quart)', fontSize: '10px', lineHeight: 1 }}>▼</span>
-                  {expanded ? '收起' : '展开全文'}
-                </button>
-              </div>
-            )}
           </div>
         ) : (
           <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>

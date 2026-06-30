@@ -26,7 +26,6 @@ interface PluginManifest {
   description?: string
   agentFormat: string
   agentsDirs?: string[]
-  openclawConfigFile?: string
   isNpm?: boolean
   disabled?: boolean
 }
@@ -537,7 +536,7 @@ export default function SettingsPage() {
               如何安装 Runner
             </p>
             <div className="space-y-1.5" style={{ fontSize: '12px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
-              <div>openclaw: <span style={{ color: 'var(--color-text-secondary)' }}>brew install openclaw</span></div>
+              <div><span style={{ color: 'var(--color-text-secondary)' }}>Manta Runner 已就绪</span></div>
             </div>
           </div>
         </section>
@@ -934,9 +933,7 @@ function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: (v: b
 }
 
 /* AI start: 插件卡片 */
-const FORMAT_LABEL: Record<string, string> = {
-  'openclaw-json': 'openclaw-json',
-}
+const FORMAT_LABEL: Record<string, string> = {}
 
 function PluginCard({
   plugin,
@@ -1020,7 +1017,6 @@ function PluginCard({
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1" style={{ fontSize: '11px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
             <span>id: {plugin.id}</span>
             <span>runner: {plugin.runnerId}</span>
-            {plugin.openclawConfigFile && <span>config: {plugin.openclawConfigFile}</span>}
             {plugin.agentsDirs && plugin.agentsDirs.length > 0 && (
               <span>dirs: {plugin.agentsDirs.join(', ')}</span>
             )}

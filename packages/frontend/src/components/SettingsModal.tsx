@@ -36,7 +36,6 @@ interface PluginManifest {
   description?: string
   agentFormat: string
   agentsDirs?: string[]
-  openclawConfigFile?: string
   isNpm?: boolean
   disabled?: boolean
 }
@@ -720,7 +719,7 @@ function SettingsTab() {
             如何安装 Runner
           </p>
           <div style={{ fontSize: '12px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
-            openclaw: <span style={{ color: 'var(--color-text-secondary)' }}>brew install openclaw</span>
+            <span style={{ color: 'var(--color-text-secondary)' }}>Manta Runner 已就绪</span>
           </div>
         </div>
       </section>
@@ -1264,9 +1263,7 @@ function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: (v: b
 /* AI end: 开关组件 */
 
 /* AI start: 插件卡片 */
-const FORMAT_LABEL: Record<string, string> = {
-  'openclaw-json': 'openclaw-json',
-}
+const FORMAT_LABEL: Record<string, string> = {}
 
 function PluginCard({
   plugin,

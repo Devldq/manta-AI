@@ -1,10 +1,9 @@
-/* Agent Registry — 扫描 openclaw 插件 */
-// Manta 是 Agent OS，agent 定义权在 openclaw CLI 工具
-// Registry 只负责：启动时扫描 openclaw 插件目录 → 返回 AgentEntry 列表
+/* Agent Registry — Manta 原生 agent 注册表 */
+// Manta 的 agent 定义权在应用层（AppConfig），注册表负责提供查询接口
 import type { AgentEntry } from '../core/types'
 import { loadAllPluginAgents } from '../plugins/loader'
 
-// 读取所有 Agent（纯插件扫描，无 manta-custom 概念）
+// 读取所有 Agent（插件扫描 + 应用层注册）
 export function loadAgents(): AgentEntry[] {
   return loadAllPluginAgents()
 }

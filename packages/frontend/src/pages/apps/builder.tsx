@@ -318,7 +318,7 @@ export default function AppBuilderPage() {
                     type="text"
                     value={agentId}
                     onChange={(e) => { setAgentId(e.target.value); markDirty() }}
-                    placeholder="从注册表中选择 Agent，如 openclaw-agent-id"
+                    placeholder="从注册表中选择 Agent"
                     className="w-full px-3 py-2 rounded-lg text-sm outline-none"
                     style={{
                       background: 'var(--color-surface)',

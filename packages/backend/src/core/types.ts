@@ -49,14 +49,14 @@ export interface Task {
 
 // ─── Agent 来源 ───────────────────────────────────────────────
 export type AgentSource =
-  | 'plugin-native'   // AI: 从插件目录扫描得到（openclaw/claude-code 原生 agents）
+  | 'plugin-native'   // 从插件目录扫描得到
 
 // ─── Agent 注册表 ───────────────────────────────────────────────
 export interface AgentEntry {
   /** Agent 名字，工作流中用 agent: <name> 引用 */
   name: string
 
-  /** 使用的 Runner ID（网关/驱动层 ID，如 openclaw / claude-code / generic-cli）*/
+  /** 使用的 Runner ID */
   runnerId: string
 
   /** CLI 可执行文件路径，留空则从 PATH 自动发现 */
@@ -80,7 +80,7 @@ export interface AgentEntry {
   /** AI: agent 定义文件的绝对路径（用于查看/编辑）*/
   filePath?: string
 
-  /** AI: 定义文件是否只读（如 openclaw models.json 含 API key，只展示不允许编辑）*/
+  /** 定义文件是否只读 */
   fileReadonly?: boolean
 
   /** AI: SOUL.md 是否可编辑（区分文件只读和系统提示可编辑）*/
@@ -91,7 +91,7 @@ export interface AgentEntry {
 
 /** plugin.yaml 的类型定义 */
 export interface PluginManifest {
-  /** 插件唯一 ID，如 openclaw / claude-code */
+  /** 插件唯一 ID */
   id: string
 
   /** 插件名称（显示用）*/
@@ -103,22 +103,17 @@ export interface PluginManifest {
   /** 描述 */
   description?: string
 
-  /** agents 目录扫描路径列表（支持 ~ 展开）。openclaw-json 格式不需要此字段 */
+  /** agents 目录扫描路径列表（支持 ~ 展开） */
   agentsDirs?: string[]
 
-  /** agent 格式：
-   * - openclaw-json: 读 openclawConfigFile 指向的 JSON 文件（openclaw 格式）
-   */
-  agentFormat: 'openclaw-json'
+  /** agent 格式 */
+  agentFormat: string
 
-  // AI: 是否为 npm 安装的插件（loader 自动填充，plugin.yaml 本身无此字段）
+  // 是否为外部安装的插件（loader 自动填充，plugin.yaml 本身无此字段）
   isNpm?: boolean
 
-  // AI: 是否禁用（loader 从 plugins/_disabled.json 读取，plugin.yaml 本身无此字段）
+  // 是否禁用（loader 从 plugins/_disabled.json 读取，plugin.yaml 本身无此字段）
   disabled?: boolean
-
-  // AI: openclaw-json 格式专用：openclaw 主配置文件路径（支持 ~ 展开）
-  openclawConfigFile?: string
 }
 
 /** 插件 Adapter 接口 — 每个插件实现此接口 */
@@ -153,34 +148,22 @@ export interface UpdateAgentParams {
 }
 
 /**
- * AgentOps — openclaw 插件实现此接口，封装 CLI 特有的 agent 文件操作
+ * AgentOps — Agent 文件操作接口
  */
 export interface AgentOps {
-  /**
-   * 在 openclaw 中创建 agent
-   * - 更新 openclaw.json + 创建 workspace-<name>/SOUL.md
-   */
+  /** 创建 agent */
   createAgent(params: CreateAgentParams): Promise<void>
 
-  /**
-   * 更新 agent 定义（仅更新有传入的字段）
-   */
+  /** 更新 agent 定义（仅更新有传入的字段） */
   updateAgent(name: string, params: UpdateAgentParams): Promise<void>
 
-  /**
-   * 读取 agent 的系统提示内容
-   * 返回 null 表示 agent 不存在或无法读取
-   */
+  /** 读取 agent 的系统提示内容 */
   readAgentContent(name: string): Promise<string | null>
 
-  /**
-   * 删除 agent（从 CLI 原生目录中移除）
-   */
+  /** 删除 agent */
   deleteAgent(name: string): Promise<void>
 
-  /**
-   * 检查 agent 是否已存在于 CLI 中
-   */
+  /** 检查 agent 是否已存在 */
   agentExists(name: string): Promise<boolean>
 }
 

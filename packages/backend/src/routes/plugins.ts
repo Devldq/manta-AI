@@ -5,7 +5,7 @@ import * as path from 'path'
 import * as yaml from 'js-yaml'
 
 const PLUGINS_DIR = path.join(process.cwd(), 'plugins')
-const BUILTIN_PLUGIN_DIRS = new Set(['openclaw'])
+const BUILTIN_PLUGIN_DIRS = new Set<string>()
 
 function readPluginYaml(dir: string): { id: string; name: string } | null {
   const manifestPath = path.join(dir, 'plugin.yaml')
