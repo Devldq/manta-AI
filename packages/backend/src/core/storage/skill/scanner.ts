@@ -212,3 +212,127 @@ export function readSkillFileContent(name: string, baseDir?: string): string | n
     return null
   }
 }
+
+// ─── 大型 Skill 文件树浏览 ────────────────────────────────────
+
+export interface SkillFileEntry {
+  name: string
+  /** 相对于 skill 根目录的路径 */
+  path: string
+  type: 'file' | 'directory'
+  size?: number
+  extension?: string
+  children?: SkillFileEntry[]
+}
+
+/**
+ * 递归列出 skill 目录下的所有文件
+ * @param skillName skill 名称（目录名）
+ */
+export function listSkillFileTree(skillName: string, baseDir?: string): SkillFileEntry[] | null {
+  const dir = baseDir || getSkillsBaseDir()
+  const skillDir = path.join(dir, skillName)
+
+  try {
+    if (!fs.statSync(skillDir).isDirectory()) return null
+  } catch {
+    return null
+  }
+
+  function readDir(currentPath: string, relativeTo: string): SkillFileEntry[] {
+    const entries: SkillFileEntry[] = []
+    let dirEntries: fs.Dirent[]
+
+    try {
+      dirEntries = fs.readdirSync(currentPath, { withFileTypes: true })
+    } catch {
+      return entries
+    }
+
+    // 目录优先，文件其次
+    const dirs = dirEntries.filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))
+    const files = dirEntries.filter((e) => e.isFile()).sort((a, b) => a.name.localeCompare(b.name))
+
+    for (const d of dirs) {
+      const relPath = path.join(relativeTo, d.name)
+      entries.push({
+        name: d.name,
+        path: relPath,
+        type: 'directory',
+        children: readDir(path.join(currentPath, d.name), relPath),
+      })
+    }
+
+    for (const f of files) {
+      const relPath = path.join(relativeTo, f.name)
+      const ext = path.extname(f.name).slice(1) || undefined
+      let size: number | undefined
+      try {
+        size = fs.statSync(path.join(currentPath, f.name)).size
+      } catch { /* ignore */ }
+
+      entries.push({
+        name: f.name,
+        path: relPath,
+        type: 'file',
+        size,
+        extension: ext,
+      })
+    }
+
+    return entries
+  }
+
+  return readDir(skillDir, '')
+}
+
+/**
+ * 读取 skill 目录下指定文件的原始内容
+ * @param skillName skill 名称（目录名）
+ * @param relativePath 相对于 skill 目录的文件路径
+ */
+export function readSkillSubFile(skillName: string, relativePath: string, baseDir?: string): string | null {
+  const dir = baseDir || getSkillsBaseDir()
+  const filePath = path.join(dir, skillName, relativePath)
+
+  // 安全检查：防止路径遍历
+  const resolved = path.resolve(filePath)
+  const skillDir = path.resolve(dir, skillName)
+  if (!resolved.startsWith(skillDir)) return null
+
+  try {
+    return fs.readFileSync(filePath, 'utf-8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 写入 skill 目录下指定文件的内容
+ * @returns 写入后的文件大小，失败返回 null
+ */
+export function writeSkillSubFile(
+  skillName: string,
+  relativePath: string,
+  content: string,
+  baseDir?: string,
+): number | null {
+  const dir = baseDir || getSkillsBaseDir()
+  const filePath = path.join(dir, skillName, relativePath)
+
+  // 安全检查：防止路径遍历
+  const resolved = path.resolve(filePath)
+  const skillDir = path.resolve(dir, skillName)
+  if (!resolved.startsWith(skillDir)) return null
+
+  try {
+    const parentDir = path.dirname(filePath)
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true })
+    }
+    fs.writeFileSync(filePath, content, 'utf-8')
+    return fs.statSync(filePath).size
+  } catch {
+    return null
+  }
+}

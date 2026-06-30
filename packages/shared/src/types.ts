@@ -92,31 +92,190 @@ export interface AgentEntry {
 
 // ─── 插件系统 ───────────────────────────────────────────────
 
+/** 插件能力类型 */
+export type PluginCapabilityType =
+  | 'agent'       // 提供 Agent
+  | 'skill'       // 提供 Skill
+  | 'mcp-server'  // 提供 MCP 服务器
+  | 'command'     // 提供斜杠命令
+  | 'hook'        // 提供生命周期钩子
+  | 'tool'        // 提供工具
+  | 'ui'          // 提供 UI 扩展
+
+/** 插件能力声明 */
+export interface PluginCapability {
+  type: PluginCapabilityType
+  /** 能力唯一名称（如 agent 名称、skill 名称） */
+  name: string
+  /** 能力描述 */
+  description?: string
+  /** 入口文件路径（相对于插件目录） */
+  entry?: string
+  /** 额外配置 */
+  config?: Record<string, unknown>
+}
+
+/** 插件生命周期钩子 */
+export interface PluginHook {
+  /** 钩子名称 */
+  name: string
+  /** 触发事件 */
+  event: PluginHookEvent
+  /** 执行脚本/命令 */
+  command: string
+  /** 超时时间（毫秒），默认 30000 */
+  timeout?: number
+  /** 是否在失败时阻止继续 */
+  blocking?: boolean
+}
+
+/** 钩子事件类型 */
+export type PluginHookEvent =
+  | 'pre-install'
+  | 'post-install'
+  | 'pre-uninstall'
+  | 'post-uninstall'
+  | 'on-enable'
+  | 'on-disable'
+  | 'on-upgrade'
+  | 'pre-agent-run'
+  | 'post-agent-run'
+
+/** 插件依赖声明 */
+export interface PluginDependency {
+  /** 依赖的插件 ID */
+  pluginId: string
+  /** 版本约束 (semver range) */
+  version?: string
+  /** 是否必须（false 则为软依赖/可选） */
+  required: boolean
+}
+
+/** 插件权限声明 */
+export interface PluginPermission {
+  /** 权限类型 */
+  type: 'network' | 'filesystem' | 'process' | 'env'
+  /** 权限范围 */
+  scope: string
+  /** 读/写/执行 */
+  action?: 'read' | 'write' | 'execute'
+}
+
 /** plugin.yaml 的类型定义 */
 export interface PluginManifest {
-  /** 插件唯一 ID */
+  /** 插件唯一 ID（推荐 org.author.name 格式） */
   id: string
-
-  /** 插件名称（显示用）*/
+  /** 插件名称（显示用） */
   name: string
-
-  /** 对应的 Runner ID */
-  runnerId: string
-
-  /** 描述 */
+  /** 语义化版本 */
+  version: string
+  /** 插件描述 */
   description?: string
+  /** 作者 */
+  author?: string
+  /** 许可证 */
+  license?: string
+  /** 官网/仓库地址 */
+  homepage?: string
+  /** 最低 Manta 核心版本要求 (semver range) */
+  requires?: string
 
+  /** 对应的 Runner ID（提供 Agent 能力时） */
+  runnerId?: string
   /** agents 目录扫描路径列表（支持 ~ 展开） */
   agentsDirs?: string[]
-
   /** agent 格式 */
-  agentFormat: string
+  agentFormat?: string
 
-  // 是否为外部安装的插件（loader 自动填充，plugin.yaml 本身无此字段）
+  /** 声明提供的能力列表 */
+  capabilities?: PluginCapability[]
+  /** 生命周期钩子 */
+  hooks?: PluginHook[]
+  /** 依赖的其他插件 */
+  dependencies?: PluginDependency[]
+  /** 权限声明 */
+  permissions?: PluginPermission[]
+
+  /** 图标 */
+  icon?: string
+  /** 标签 */
+  tags?: string[]
+
+  // ─── 运行时字段（不写入 plugin.yaml） ───
+  /** 是否为外部安装的插件 */
   isNpm?: boolean
-
-  // 是否禁用（loader 从 plugins/_disabled.json 读取，plugin.yaml 本身无此字段）
+  /** 是否禁用 */
   disabled?: boolean
+  /** 安装来源路径 */
+  sourcePath?: string
+}
+
+/** 插件生命周期状态 */
+export type PluginLifecycleState =
+  | 'discovered'   // 已发现但未安装
+  | 'installed'    // 已安装
+  | 'active'       // 已激活（运行中）
+  | 'error'        // 错误状态
+  | 'upgrading'    // 升级中
+
+/** 插件运行时定义（完整状态） */
+export interface PluginDefinition {
+  /** 唯一 ID（与 manifest.id 一致） */
+  id: string
+  /** 插件清单 */
+  manifest: PluginManifest
+  /** 生命周期状态 */
+  state: PluginLifecycleState
+  /** 安装时间 */
+  installedAt?: string
+  /** 上次激活时间 */
+  activatedAt?: string
+  /** 状态信息（错误信息等） */
+  statusMessage?: string
+  /** 插件在磁盘上的目录路径 */
+  installPath?: string
+  /** 提供的能力实例 */
+  capabilities?: PluginCapability[]
+  /** 时间戳 */
+  createdAt: string
+  updatedAt: string
+}
+
+/** 插件摘要（列表展示用） */
+export interface PluginSummary {
+  id: string
+  name: string
+  version: string
+  description?: string
+  author?: string
+  state: PluginLifecycleState
+  enabled: boolean
+  capabilities: PluginCapability[]
+  tags?: string[]
+  icon?: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** 创建插件的输入 */
+export interface CreatePluginInput {
+  manifest: Omit<PluginManifest, 'disabled' | 'isNpm' | 'sourcePath'>
+}
+
+/** 更新插件的输入 */
+export interface UpdatePluginInput {
+  manifest?: Partial<PluginManifest>
+  state?: PluginLifecycleState
+}
+
+/** 安装插件的参数 */
+export interface InstallPluginInput {
+  /** 安装来源路径（本地目录）或 npm 包名 */
+  source: string
+  /** 是否为 npm 包 */
+  isNpm?: boolean
+  /** 版本（npm 安装时） */
+  version?: string
 }
 
 /** 插件 Adapter 接口 — 每个插件实现此接口 */
@@ -128,6 +287,19 @@ export interface PluginAdapter {
 
   /** 探测插件对应的 Runner 是否可用 */
   probe(): Promise<{ available: boolean; reason?: string; version?: string }>
+}
+
+/** 插件操作接口 */
+export interface PluginOps {
+  listPlugins(): Promise<PluginSummary[]>
+  getPlugin(id: string): Promise<PluginDefinition | null>
+  installPlugin(input: InstallPluginInput): Promise<PluginDefinition>
+  uninstallPlugin(id: string): Promise<void>
+  updatePlugin(id: string, input: UpdatePluginInput): Promise<PluginDefinition>
+  enablePlugin(id: string): Promise<void>
+  disablePlugin(id: string): Promise<void>
+  /** 执行生命周期钩子 */
+  executeHook(pluginId: string, event: PluginHookEvent): Promise<void>
 }
 
 // ─── Agent CRUD 操作接口（插件层实现，Core 只知道此接口）─────────

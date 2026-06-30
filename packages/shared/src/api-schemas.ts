@@ -146,3 +146,83 @@ export type CreateSkillSchemaInput = z.infer<typeof CreateSkillSchema>
 export type UpdateSkillSchemaInput = z.infer<typeof UpdateSkillSchema>
 export type ToggleSkillSchemaInput = z.infer<typeof ToggleSkillSchema>
 export type BindSkillAgentsSchemaInput = z.infer<typeof BindSkillAgentsSchema>
+
+/** 动态创建并导入 Skill（写 SKILL.md 文件 + 入库一步到位） */
+export const CreateAndImportSkillSchema = z.object({
+  name: z.string().min(1, '名称不能为空').max(64),
+  description: z.string().min(1, '描述不能为空').max(1024),
+  type: z.enum(['writing', 'tool', 'workflow']),
+  content: z.string().min(1, '指令内容不能为空'),
+  version: z.string().optional(),
+  license: z.string().optional(),
+  argumentHint: z.string().optional(),
+  tools: z.array(z.string()).optional(),
+})
+
+export type CreateAndImportSkillSchemaInput = z.infer<typeof CreateAndImportSkillSchema>
+
+// ─── Plugin Schemas ──────────────────────────────────────────────
+
+export const PluginCapabilitySchema = z.object({
+  type: z.enum(['agent', 'skill', 'mcp-server', 'command', 'hook', 'tool', 'ui']),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  entry: z.string().optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+})
+
+export const PluginHookSchema = z.object({
+  name: z.string().min(1),
+  event: z.enum([
+    'pre-install', 'post-install',
+    'pre-uninstall', 'post-uninstall',
+    'on-enable', 'on-disable', 'on-upgrade',
+    'pre-agent-run', 'post-agent-run',
+  ]),
+  command: z.string().min(1),
+  timeout: z.number().int().positive().optional(),
+  blocking: z.boolean().optional(),
+})
+
+export const PluginDependencySchema = z.object({
+  pluginId: z.string().min(1),
+  version: z.string().optional(),
+  required: z.boolean().default(true),
+})
+
+export const PluginPermissionSchema = z.object({
+  type: z.enum(['network', 'filesystem', 'process', 'env']),
+  scope: z.string().min(1),
+  action: z.enum(['read', 'write', 'execute']).optional(),
+})
+
+export const CreatePluginSchema = z.object({
+  source: z.string().min(1, '安装来源不能为空'),
+  isNpm: z.boolean().optional(),
+  version: z.string().optional(),
+})
+
+export const UpdatePluginSchema = z.object({
+  state: z.enum(['installed', 'active', 'error']).optional(),
+  manifest: z.object({
+    name: z.string().min(1).optional(),
+    version: z.string().optional(),
+    description: z.string().optional(),
+    author: z.string().optional(),
+    license: z.string().optional(),
+    homepage: z.string().optional(),
+    requires: z.string().optional(),
+    capabilities: z.array(PluginCapabilitySchema).optional(),
+    hooks: z.array(PluginHookSchema).optional(),
+    dependencies: z.array(PluginDependencySchema).optional(),
+    permissions: z.array(PluginPermissionSchema).optional(),
+  }).optional(),
+})
+
+export const PluginToggleSchema = z.object({
+  enabled: z.boolean(),
+})
+
+export type CreatePluginSchemaInput = z.infer<typeof CreatePluginSchema>
+export type UpdatePluginSchemaInput = z.infer<typeof UpdatePluginSchema>
+export type PluginToggleSchemaInput = z.infer<typeof PluginToggleSchema>

@@ -1,0 +1,21 @@
+{
+  "id": "skill-nzc0cw9u",
+  "metadata": {
+    "name": "weekly-report-generator",
+    "description": "根据工作日志自动生成周报。触发场景：用户提到\"周报\"、\"本周总结\"、\"weekly report\"、需要汇总本周工作时使用。输入：本周完成的任务列表；输出：结构化的 Markdown 周报。",
+    "version": "1.0.0",
+    "type": "writing",
+    "source": "user",
+    "license": "MIT",
+    "userInvocable": true,
+    "argumentHint": "[本周关键词] [任务数量]"
+  },
+  "content": "# 任务目标\n根据用户提供的本周工作内容，自动生成结构化的周报文档。\n\n# 规则\n1. 周报结构：本周概要 → 重点项目进展 → 完成的任务 → 遇到的问题 → 下周计划 → 需要协助\n2. 每条任务描述不超过80字\n3. 量化产出指标（完成X个功能、修复Y个Bug、代码行数、PR数量等）\n4. 不编造数据，不确定的标注 [待确认]\n\n# 输出格式\n```markdown\n# 周报 — {YYYY-MM-DD}\n\n## 本周概要\n[一句话概括本周主要产出]\n\n## 重点项目进展\n### 项目A\n- 进度：[XX%]\n- 状态：[正常/有风险/延期]\n- 关键产出：[描述]\n\n## 完成的任务\n- [ ] [任务1描述]（{日期}）\n- [ ] [任务2描述]（{日期}）\n\n## 遇到的问题\n- [问题描述] → [解决方案/状态]\n\n## 下周计划\n1. [计划1]\n2. [计划2]\n\n## 需要协助\n- [需要XX团队支持XXX]\n```\n\n# 注意事项\n1. 语气专业简洁，适合管理层阅读\n2. 突出成果和影响，而非单纯罗列\n3. 风险项提前预警，标注影响和缓解措施",
+  "parameters": [],
+  "boundAgents": [],
+  "tools": [],
+  "filePath": "/Users/link/manta-AI/.manta/skills/skill-nzc0cw9u.json",
+  "enabled": true,
+  "createdAt": "2026-06-30T13:20:32.488Z",
+  "updatedAt": "2026-06-30T13:22:48.301Z"
+}

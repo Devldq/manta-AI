@@ -11,6 +11,9 @@ const PORT = parseInt(process.env.MANTA_PORT ?? '3001', 10)
 const HOST = process.env.MANTA_HOST ?? '0.0.0.0'
 const IS_DEV = process.env.NODE_ENV !== 'production'
 const DATA_DIR = process.env.MANTA_DATA_DIR ?? resolve(process.env.HOME ?? '~', '.manta-data')
+// 计算项目根目录（无论 dev/prod，始终指向 monorepo 根目录）
+const WORKSPACE_ROOT = process.env.MANTA_WORKSPACE_ROOT || resolve(__dirname, '../../..')
+process.env.MANTA_WORKSPACE_ROOT = WORKSPACE_ROOT
 
 // ─── 创建 Fastify 实例 ──────────────────────────────────────
 const app = Fastify({
@@ -94,6 +97,7 @@ import { readmeRoutes } from './routes/readme.js'
 import { runnerRoutes } from './routes/runners.js'
 import { workflowRoutes } from './routes/workflow.js'
 import { skillRoutes } from './routes/skills.js'
+import { initializeSkills } from './core/storage/skill/store.js'
 import { default as auditRoutes } from './routes/audit.js'
 import { default as approvalRoutes } from './routes/approval.js'
 import { default as approvalSSERoutes } from './routes/approval-sse.js'
@@ -127,6 +131,13 @@ await app.register(approvalSSERoutes)
 // ─── 启动服务器 ─────────────────────────────────────────────
 async function start() {
   try {
+    // 初始化：扫描并加载 skills/ 目录中的所有 SKILL.md
+    const skillResult = initializeSkills()
+    app.log.info(
+      `[Skill Init] 扫描完成: 总计 ${skillResult.total}, 新导入 ${skillResult.imported}, 同步更新 ${skillResult.updated}` +
+      (skillResult.errors.length ? `, 错误 ${skillResult.errors.length}` : '')
+    )
+
     await app.listen({ port: PORT, host: HOST })
     app.log.info(`Manta Backend running at http://${HOST}:${PORT}`)
     app.log.info(`Data directory: ${DATA_DIR}`)

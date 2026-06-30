@@ -5,7 +5,10 @@
  * - 扫描 skills/ 目录导入 SKILL.md
  * - Agent 绑定/解绑管理
  * - Skill 详情展开查看
+ * - 大型 Skill 文件树浏览 & 在线编辑
  */
+
+import SkillFileBrowser from './SkillFileBrowser'
 
 import { useState, useEffect, useCallback } from 'react';
 import {
@@ -17,13 +20,11 @@ import {
   Wrench,
   Workflow,
   XCircle,
-  ChevronDown,
   Loader2,
   Eye,
   EyeOff,
   Search,
   Download,
-  Upload,
   Bot,
   Link2,
   Unlink2,
@@ -151,16 +152,6 @@ function SkillTypeLabel({ type }: { type: SkillType }) {
   }
 }
 
-function formatDate(iso: string) {
-  try {
-    return new Date(iso).toLocaleDateString('zh-CN', {
-      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
-}
-
 // ── 页面主体 ──────────────────────────────────────────────────────────────
 
 export default function SkillsPage() {
@@ -174,11 +165,6 @@ export default function SkillsPage() {
   const [form, setForm] = useState<SkillFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
-
-  // 展开详情
-  const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
-  const [skillDetail, setSkillDetail] = useState<SkillDefinition | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
 
   // 扫描导入 modal
   const [showScanModal, setShowScanModal] = useState(false);
@@ -196,6 +182,9 @@ export default function SkillsPage() {
   const [boundAgents, setBoundAgents] = useState<string[]>([]);
   const [bindLoading, setBindLoading] = useState(false);
 
+  // 文件浏览器模式
+  const [browsingSkill, setBrowsingSkill] = useState<string | null>(null);
+
   // ═══ 数据加载 ══════════════════════════════════════════════════════════
 
   const loadSkills = useCallback(async () => {
@@ -211,28 +200,6 @@ export default function SkillsPage() {
   }, []);
 
   useEffect(() => { loadSkills(); }, [loadSkills]);
-
-  const fetchDetail = useCallback(async (id: string) => {
-    setDetailLoading(true);
-    try {
-      const data = await apiFetch<{ data: { skill: SkillDefinition } }>(`/api/skills/${id}`);
-      setSkillDetail(data.data?.skill || null);
-    } catch {
-      setSkillDetail(null);
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
-
-  function toggleExpand(id: string) {
-    if (expandedSkill === id) {
-      setExpandedSkill(null);
-      setSkillDetail(null);
-    } else {
-      setExpandedSkill(id);
-      fetchDetail(id);
-    }
-  }
 
   // ═══ CRUD 表单 ══════════════════════════════════════════════════════════
 
@@ -341,7 +308,6 @@ export default function SkillsPage() {
     try {
       await apiFetch(`/api/skills/${id}`, { method: 'DELETE' });
       await loadSkills();
-      if (expandedSkill === id) { setExpandedSkill(null); setSkillDetail(null); }
     } catch (e: any) {
       alert(e.message);
     }
@@ -482,6 +448,11 @@ export default function SkillsPage() {
     );
   }
 
+  // 文件浏览器模式
+  if (browsingSkill) {
+    return <SkillFileBrowser skillName={browsingSkill} onBack={() => setBrowsingSkill(null)} />;
+  }
+
   return (
     <div className="p-8 max-w-4xl">
       {/* 头部 */}
@@ -558,14 +529,11 @@ export default function SkillsPage() {
             <SkillCard
               key={skill.id}
               skill={skill}
-              detail={expandedSkill === skill.id ? skillDetail : null}
-              detailLoading={expandedSkill === skill.id ? detailLoading : false}
-              expanded={expandedSkill === skill.id}
-              onToggleExpand={() => toggleExpand(skill.id)}
               onEdit={() => openEditModal(skill)}
               onDelete={() => handleDelete(skill.id, skill.name)}
               onToggleEnabled={() => handleToggleEnabled(skill.id, skill.enabled)}
               onBindAgents={() => openBindModal(skill)}
+              onClick={() => setBrowsingSkill(skill.name)}
             />
           ))}
         </div>
@@ -610,32 +578,26 @@ export default function SkillsPage() {
 
 function SkillCard({
   skill,
-  detail,
-  detailLoading,
-  expanded,
-  onToggleExpand,
   onEdit,
   onDelete,
   onToggleEnabled,
   onBindAgents,
+  onClick,
 }: {
   skill: SkillSummary;
-  detail: SkillDefinition | null;
-  detailLoading: boolean;
-  expanded: boolean;
-  onToggleExpand: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onToggleEnabled: () => void;
   onBindAgents: () => void;
+  onClick: () => void;
 }) {
   return (
-    <div className="rounded-xl border transition-colors" style={{ borderColor: 'var(--color-border)', background: skill.enabled ? 'var(--color-background)' : 'var(--color-surface)', opacity: skill.enabled ? 1 : 0.6 }}>
+    <div
+      onClick={onClick}
+      className="rounded-xl border transition-colors cursor-pointer hover:border-[var(--color-accent)] hover:shadow-sm"
+      style={{ borderColor: 'var(--color-border)', background: skill.enabled ? 'var(--color-background)' : 'var(--color-surface)', opacity: skill.enabled ? 1 : 0.6 }}
+    >
       <div className="flex items-center gap-4 p-4">
-        <button onClick={onToggleExpand} className="flex-shrink-0 p-1 rounded transition-transform" style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
-          <ChevronDown size={16} style={{ color: 'var(--color-text-muted)' }} />
-        </button>
-
         <div className="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'var(--color-surface)' }}>
           <SkillTypeIcon type={skill.type} />
         </div>
@@ -677,7 +639,7 @@ function SkillCard({
           )}
         </div>
 
-        <div className="flex-shrink-0 flex items-center gap-1">
+        <div className="flex-shrink-0 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           {/* 绑定按钮 */}
           <button onClick={onBindAgents} className="p-1.5 rounded-lg transition-colors" style={{ color: 'var(--color-text-muted)' }} title="管理 Agent 绑定">
             <Link2 size={16} />
@@ -693,91 +655,6 @@ function SkillCard({
           </button>
         </div>
       </div>
-
-      {/* 展开详情 */}
-      {expanded && (
-        <div className="px-4 pb-4 border-t mx-4" style={{ borderColor: 'var(--color-border)' }}>
-          {detailLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 size={20} className="animate-spin" style={{ color: 'var(--color-text-muted)' }} />
-            </div>
-          ) : detail ? (
-            <div className="mt-3 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <DetailItem label="名称" value={detail.metadata.name} />
-                <DetailItem label="类型" value={<SkillTypeLabel type={detail.metadata.type} />} />
-                <DetailItem label="版本" value={detail.metadata.version || '-'} />
-                <DetailItem label="来源" value={detail.metadata.source || 'user'} />
-                <DetailItem label="许可" value={detail.metadata.license || '-'} />
-                <DetailItem label="用户可调用" value={detail.metadata.userInvocable ? '是' : '否'} />
-                <DetailItem label="创建时间" value={formatDate(detail.createdAt)} />
-                <DetailItem label="更新时间" value={formatDate(detail.updatedAt)} />
-              </div>
-
-              {detail.metadata.argumentHint && (
-                <DetailItem label="参数提示" value={detail.metadata.argumentHint} />
-              )}
-
-              <div>
-                <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>指令内容</span>
-                <pre className="mt-1 p-3 rounded-lg text-xs overflow-auto max-h-48 font-mono" style={{ background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {detail.content.slice(0, 500)}{detail.content.length > 500 && '\n... (截断)'}
-                </pre>
-              </div>
-
-              {detail.parameters && detail.parameters.length > 0 && (
-                <div>
-                  <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>参数 ({detail.parameters.length})</span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {detail.parameters.map((p: SkillParameter) => (
-                      <span key={p.name} className="text-[10px] px-1.5 py-0.5 font-mono rounded" style={{ background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
-                        {p.name}: {p.type}{p.required ? '*' : ''}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {detail.tools && detail.tools.length > 0 && (
-                <div>
-                  <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>关联工具 ({detail.tools.length})</span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {detail.tools.map((t: string) => (
-                      <span key={t} className="text-[10px] px-1.5 py-0.5 font-mono rounded" style={{ background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {detail.boundAgents && detail.boundAgents.length > 0 && (
-                <div>
-                  <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>绑定 Agent ({detail.boundAgents.length})</span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {detail.boundAgents.map((a: string) => (
-                      <span key={a} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(99,102,241,0.1)', color: 'var(--color-accent)', border: '1px solid rgba(99,102,241,0.2)' }}>
-                        {a}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs py-4" style={{ color: 'var(--color-text-muted)' }}>加载详情失败</p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DetailItem({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div>
-      <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>{label}</span>
-      <p className="text-sm mt-0.5" style={{ color: 'var(--color-text-primary)' }}>{value}</p>
     </div>
   );
 }

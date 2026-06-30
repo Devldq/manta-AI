@@ -17,6 +17,7 @@ import ThemesPage from './pages/themes/page'
 import RagPage from './pages/rag/page'
 import EvaluationPage from './pages/evaluation/page'
 import SkillsPage from './pages/skills/page'
+import PluginsPage from './pages/plugins/page'
 
 /** 根布局 — 替代 Next.js 的 layout.tsx */
 function AppLayout() {
@@ -53,6 +54,7 @@ export default function App() {
           <Route path="rag" element={<RagPage />} />
           <Route path="evaluation" element={<EvaluationPage />} />
           <Route path="skills" element={<SkillsPage />} />
+          <Route path="plugins" element={<PluginsPage />} />
           <Route path="*" element={<Navigate to="/tasks" replace />} />
         </Route>
       </Routes>

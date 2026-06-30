@@ -9,6 +9,11 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { ensureDir, atomicWrite, shortId, readJsonFile } from '../shared/fs-utils'
+import {
+  scanSkillFiles,
+  getSkillsBaseDir,
+  skillFileExists as scannerSkillFileExists,
+} from './scanner'
 import type {
   SkillDefinition,
   SkillSummary,
@@ -259,4 +264,173 @@ export function getSkillsForAgent(agentName: string): SkillDefinition[] {
     // 读取失败
   }
   return skills
+}
+
+// ─── 启动初始化 & 动态加载 ─────────────────────────────────────
+
+export interface InitializeSkillsResult {
+  total: number
+  imported: number
+  updated: number
+  skipped: number
+  errors: Array<{ name: string; error: string }>
+}
+
+/**
+ * 启动时自动扫描并导入 skills/ 目录中的 SKILL.md 文件
+ *
+ * 策略：
+ *   - 新发现的 skill → 自动导入（create）
+ *   - 已存在的 → 自动同步更新（以文件为准）
+ */
+export function initializeSkills(): InitializeSkillsResult {
+  ensureDir(getDataDir())
+
+  let scanned: ReturnType<typeof scanSkillFiles>
+  try {
+    scanned = scanSkillFiles()
+  } catch {
+    return { total: 0, imported: 0, updated: 0, skipped: 0, errors: [] }
+  }
+
+  const allStored = listSkills()
+  const storedByName = new Map(allStored.map((s) => [s.name, s]))
+
+  const result: InitializeSkillsResult = {
+    total: scanned.length,
+    imported: 0,
+    updated: 0,
+    skipped: 0,
+    errors: [],
+  }
+
+  for (const scannedSkill of scanned) {
+    try {
+      const existing = storedByName.get(scannedSkill.name)
+
+      if (!existing) {
+        createSkill({
+          metadata: {
+            name: scannedSkill.name,
+            description: scannedSkill.description,
+            version: scannedSkill.version || '1.0.0',
+            type: scannedSkill.type,
+            source: (scannedSkill.source as SkillMetadata['source']) || 'file',
+            license: scannedSkill.license,
+            userInvocable: scannedSkill.userInvocable ?? true,
+            argumentHint: scannedSkill.argumentHint,
+          },
+          content: scannedSkill.content,
+          tools: scannedSkill.tools,
+        })
+        result.imported++
+      } else {
+        updateSkill(existing.id, {
+          metadata: {
+            description: scannedSkill.description,
+            version: scannedSkill.version || existing.metadata.version,
+            type: scannedSkill.type,
+            source: existing.metadata.source || 'file',
+            license: scannedSkill.license ?? existing.metadata.license,
+            userInvocable: scannedSkill.userInvocable ?? existing.metadata.userInvocable,
+            argumentHint: scannedSkill.argumentHint ?? existing.metadata.argumentHint,
+          },
+          content: scannedSkill.content,
+          tools: scannedSkill.tools ?? existing.tools,
+        })
+        result.updated++
+      }
+    } catch (err) {
+      result.errors.push({ name: scannedSkill.name, error: String(err) })
+    }
+  }
+
+  return result
+}
+
+export interface CreateAndImportInput {
+  name: string
+  description: string
+  type: SkillType
+  content: string
+  tools?: string[]
+  version?: string
+  license?: string
+  argumentHint?: string
+}
+
+export interface CreateAndImportResult {
+  success: boolean
+  skill?: SkillDefinition
+  filePath?: string
+  error?: string
+}
+
+/**
+ * 动态创建 Skill：写入 SKILL.md 到 skills/ 目录并立即导入到管理系统
+ *
+ * 用途：AI 动态生成新 skill 后调用此函数完成「写文件 + 入库」一步到位
+ */
+export function createAndImportSkill(input: CreateAndImportInput): CreateAndImportResult {
+  const skillsDir = getSkillsBaseDir()
+  const safeName = input.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+  const skillDir = path.join(skillsDir, safeName)
+  const mdPath = path.join(skillDir, 'SKILL.md')
+
+  try {
+    ensureDir(skillDir)
+
+    const frontmatter = [
+      '---',
+      `name: ${safeName}`,
+      `description: ${input.description}`,
+      `type: ${input.type}`,
+      ...(input.version ? [`version: ${input.version}`] : []),
+      ...(input.license ? [`license: ${input.license}`] : []),
+      ...(input.argumentHint ? [`argument-hint: ${input.argumentHint}`] : []),
+      ...(input.tools?.length ? [`allowed-tools:\n${input.tools.map((t) => `  - ${t}`).join('\n')}`] : []),
+      '---',
+      '',
+      input.content,
+    ].join('\n')
+
+    fs.writeFileSync(mdPath, frontmatter, 'utf-8')
+
+    // 检查是否已存在同名 skill
+    const existing = findSkillByName(safeName)
+    if (existing) {
+      const updated = updateSkill(existing.id, {
+        metadata: {
+          description: input.description,
+          type: input.type,
+          version: input.version || existing.metadata.version,
+          license: input.license,
+          argumentHint: input.argumentHint,
+        },
+        content: input.content,
+        tools: input.tools,
+      })
+      return { success: true, skill: updated, filePath: mdPath }
+    }
+
+    // 新建导入
+    const skill = createSkill({
+      metadata: {
+        name: safeName,
+        description: input.description,
+        type: input.type,
+        version: input.version || '1.0.0',
+        source: 'ai-generated',
+        license: input.license,
+        userInvocable: true,
+        argumentHint: input.argumentHint,
+      },
+      content: input.content,
+      tools: input.tools,
+    })
+
+    return { success: true, skill, filePath: mdPath }
+  } catch (err) {
+    return { success: false, error: String(err) }
+  }
 }

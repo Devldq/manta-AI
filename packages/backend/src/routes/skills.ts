@@ -26,11 +26,15 @@ import {
   toggleSkill,
   bindAgents,
   getSkillsForAgent,
+  createAndImportSkill,
 } from '../core/storage/skill/store'
 import {
   scanSkillFiles,
   getSkillsBaseDir,
   readSkillFileContent,
+  listSkillFileTree,
+  readSkillSubFile,
+  writeSkillSubFile,
 } from '../core/storage/skill/scanner'
 import { apiSuccess, apiError, Errors } from '../core/api/error-handler'
 import type { CreateSkillInput, UpdateSkillInput, SkillType, SkillMetadata } from '@manta/shared'
@@ -350,6 +354,94 @@ export async function skillRoutes(app: FastifyInstance) {
       const content = readSkillFileContent(name)
       if (content === null) throw Errors.NOT_FOUND('Skill 文件', name)
       return reply.send(apiSuccess({ name, content }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // ═══════════════════════════════════════════════════════════
+  //  动态创建 Skill（写文件 + 入库一步到位）
+  // ═══════════════════════════════════════════════════════════
+
+  // POST /api/skills/create-and-import — 动态创建并导入 Skill
+  app.post('/api/skills/create-and-import', async (request, reply) => {
+    try {
+      const body = request.body as Record<string, any>
+
+      if (!body.name?.trim()) throw Errors.VALIDATION_ERROR('name', 'Skill 名称不能为空')
+      if (!body.description?.trim()) throw Errors.VALIDATION_ERROR('description', 'Skill 描述不能为空')
+      if (!body.type || !['writing', 'tool', 'workflow'].includes(body.type)) {
+        throw Errors.VALIDATION_ERROR('type', 'Skill 类型必须为 writing、tool 或 workflow')
+      }
+      if (!body.content?.trim()) throw Errors.VALIDATION_ERROR('content', 'Skill 指令内容不能为空')
+
+      const result = createAndImportSkill({
+        name: body.name.trim(),
+        description: body.description.trim(),
+        type: body.type as SkillType,
+        content: body.content.trim(),
+        tools: body.tools,
+        version: body.version,
+        license: body.license,
+        argumentHint: body.argumentHint,
+      })
+
+      if (!result.success) {
+        return apiError(reply, new Error(result.error || '创建失败'))
+      }
+
+      return reply.status(201).send(apiSuccess({
+        skill: result.skill,
+        filePath: result.filePath,
+      }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // ═══════════════════════════════════════════════════════════
+  //  大型 Skill 文件树浏览 & 在线编辑
+  // ═══════════════════════════════════════════════════════════
+
+  // GET /api/skills/:name/files — 获取 skill 目录下的文件树
+  app.get('/api/skills/:name/files', async (request, reply) => {
+    try {
+      const { name } = request.params as { name: string }
+      const tree = listSkillFileTree(name)
+      if (tree === null) throw Errors.NOT_FOUND('Skill', name)
+      return reply.send(apiSuccess({ skillName: name, tree }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // GET /api/skills/:name/files/content — 读取 skill 目录下指定文件的内容
+  app.get('/api/skills/:name/files/content', async (request, reply) => {
+    try {
+      const { name } = request.params as { name: string }
+      const { path: relativePath } = request.query as { path: string }
+      if (!relativePath) throw Errors.VALIDATION_ERROR('path', '文件路径不能为空')
+
+      const content = readSkillSubFile(name, relativePath)
+      if (content === null) throw Errors.NOT_FOUND('文件', relativePath)
+      return reply.send(apiSuccess({ skillName: name, filePath: relativePath, content }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // PUT /api/skills/:name/files/content — 写入 skill 目录下指定文件
+  app.put('/api/skills/:name/files/content', async (request, reply) => {
+    try {
+      const { name } = request.params as { name: string }
+      const { path: relativePath, content } = request.body as { path: string; content: string }
+      if (!relativePath) throw Errors.VALIDATION_ERROR('path', '文件路径不能为空')
+      if (typeof content !== 'string') throw Errors.VALIDATION_ERROR('content', '文件内容必须为字符串')
+
+      const size = writeSkillSubFile(name, relativePath, content)
+      if (size === null) throw Errors.INTERNAL_ERROR('文件写入失败')
+
+      return reply.send(apiSuccess({ skillName: name, filePath: relativePath, size }))
     } catch (err) {
       return apiError(reply, err)
     }
