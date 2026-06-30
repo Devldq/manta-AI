@@ -121,20 +121,6 @@ export const KimInputBar = memo(function KimInputBar({
       }}>
         {/* 顶部工具栏 */}
         <div className="flex items-center gap-1 px-3.5 pt-2.5 md:px-3.5 md:pt-2.5">
-          <button className="transition-all duration-fast"
-            style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '14px' }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-accent)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)' }}
-            title="@提及">
-            @
-          </button>
-          <button className="transition-all duration-fast"
-            style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '14px' }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.color = 'var(--color-accent)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)' }}
-            title="附件">
-            📎
-          </button>
         </div>
 
         {/* 文本输入区 */}
@@ -207,23 +193,6 @@ export const KimInputBar = memo(function KimInputBar({
                 </div>
               )}
             </div>
-
-            <button className="transition-all duration-fast"
-              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', fontWeight: 500 }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
-              <span style={{ fontSize: '11px' }}>⚡</span>
-              <span>Auto</span>
-              <span style={{ fontSize: '9px', opacity: 0.6 }}>▾</span>
-            </button>
-
-            <button className="transition-all duration-fast"
-              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '12px', fontWeight: 500 }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' }}>
-              <span style={{ fontSize: '11px' }}>✦</span>
-              <span>Skills</span>
-            </button>
           </div>
 
           {/* 右侧：工作空间选择 + 发送 */}

@@ -363,7 +363,7 @@ function ChatView({
         </div>
 
         {/* 消息列表 */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 24px 16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '6px 20px 12px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {isReconnecting && (
             <div style={{ padding: '12px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 500, background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent)', color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Loader2 size={14} className="tool-spinner" />

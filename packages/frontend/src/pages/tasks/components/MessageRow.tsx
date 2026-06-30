@@ -17,7 +17,7 @@ const MarkdownContent = memo(function MarkdownContent({ content, streaming }: { 
         {content}
       </ReactMarkdown>
       {streaming && (
-        <span style={{ display: 'inline-block', width: '2px', height: '14px', background: 'var(--color-accent)', marginLeft: '2px', verticalAlign: 'text-bottom', animation: 'blink 1s step-end infinite' }} />
+        <span style={{ display: 'inline-block', width: '2px', height: '13px', background: 'var(--color-accent)', marginLeft: '2px', verticalAlign: 'text-bottom', animation: 'blink 1s step-end infinite' }} />
       )}
     </div>
   )
@@ -83,20 +83,20 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
 
   if (message.role === 'user') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}
         onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', justifyContent: 'flex-end', width: '100%' }}>
-          <button onClick={handleCopy} style={{ opacity: hovered ? 0.5 : 0, transition: 'opacity 0.15s', width: '22px', height: '22px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '11px', flexShrink: 0 }}
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', justifyContent: 'flex-end', width: '100%' }}>
+          <button onClick={handleCopy} style={{ opacity: hovered ? 0.45 : 0, transition: 'opacity 0.15s', width: '20px', height: '20px', marginTop: '5px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '10px', flexShrink: 0 }}
             onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
-            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}>
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.45' }}>
             {copied ? '✓' : '⧉'}
           </button>
-          <div style={{ maxWidth: '72%', padding: '10px 16px', borderRadius: '16px', fontSize: '14px', lineHeight: '1.65', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', transition: 'transform var(--duration-fast) var(--ease-out-quart)' }}>
+          <div style={{ maxWidth: '82%', padding: '7px 12px', borderRadius: '12px', fontSize: '13px', lineHeight: '1.5', background: 'var(--color-accent)', color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', transition: 'transform var(--duration-fast) var(--ease-out-quart)' }}>
             {content}
           </div>
         </div>
         {timestamp && (
-          <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', paddingRight: '30px' }}>{timestamp}</span>
+          <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', paddingRight: '24px' }}>{timestamp}</span>
         )}
       </div>
     )
@@ -105,16 +105,16 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
   const avatarLabel = (agentName || 'A').slice(0, 1).toUpperCase()
 
   return (
-    <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}
+    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}
       onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <div style={{ width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, background: 'var(--color-accent)', color: '#000', marginTop: '2px' }}>
+      <div style={{ width: '22px', height: '22px', borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 700, background: 'var(--color-accent)', color: '#000', marginTop: '1px' }}>
         {avatarLabel}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0, maxWidth: '78ch' }}>
         {/* 顶部：agent 名 + 时间 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-          <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>{agentName}</span>
-          {timestamp && <span style={{ fontSize: '10px', color: 'var(--color-text-muted)' }}>{timestamp}</span>}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+          <span style={{ fontSize: '10.5px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>{agentName}</span>
+          {timestamp && <span style={{ fontSize: '9px', color: 'var(--color-text-muted)' }}>{timestamp}</span>}
         </div>
 
         {/* 工具调用日志（步骤视图） */}
@@ -127,11 +127,11 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
           <button
             onClick={() => setToolsExpanded(false)}
             style={{
-              display: 'flex', alignItems: 'center', gap: '4px',
-              padding: '3px 8px', border: '1px solid var(--color-border)',
-              background: 'var(--color-surface)', borderRadius: '12px',
-              cursor: 'pointer', fontSize: '11px', color: 'var(--color-text-muted)',
-              marginBottom: '8px',
+              display: 'flex', alignItems: 'center', gap: '3px',
+              padding: '2px 6px', border: '1px solid var(--color-border)',
+              background: 'var(--color-surface)', borderRadius: '10px',
+              cursor: 'pointer', fontSize: '10px', color: 'var(--color-text-muted)',
+              marginBottom: '6px',
             }}
           >
             <span>收起工具调用</span>
@@ -143,11 +143,11 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
           <button
             onClick={() => setToolsExpanded(true)}
             style={{
-              display: 'flex', alignItems: 'center', gap: '4px',
-              padding: '3px 8px', border: '1px solid var(--color-border)',
-              background: 'var(--color-surface)', borderRadius: '12px',
-              cursor: 'pointer', fontSize: '11px', color: 'var(--color-text-muted)',
-              marginBottom: '8px',
+              display: 'flex', alignItems: 'center', gap: '3px',
+              padding: '2px 6px', border: '1px solid var(--color-border)',
+              background: 'var(--color-surface)', borderRadius: '10px',
+              cursor: 'pointer', fontSize: '10px', color: 'var(--color-text-muted)',
+              marginBottom: '6px',
             }}
           >
             <span>🔧 查看工具调用</span>
@@ -159,43 +159,43 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
           <div style={{ position: 'relative' }}>
             {/* 复制按钮 */}
             {!isStreaming && (
-              <button onClick={handleCopy} style={{ position: 'absolute', top: 0, right: 0, opacity: hovered ? 0.5 : 0, transition: 'opacity 0.15s', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', zIndex: 2 }}
+              <button onClick={handleCopy} style={{ position: 'absolute', top: 0, right: 0, opacity: hovered ? 0.45 : 0, transition: 'opacity 0.15s', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', zIndex: 2 }}
                 onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
-                onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}>
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.45' }}>
                 {copied ? '✓' : '⧉'}
               </button>
             )}
 
             <div
-              style={{ fontSize: '14px', lineHeight: '1.65', color: 'var(--color-text-primary)', wordBreak: 'break-word' }}
+              style={{ fontSize: '13px', lineHeight: '1.55', color: 'var(--color-text-primary)', wordBreak: 'break-word' }}
             >
               <MarkdownContent content={content} streaming={isStreaming} />
             </div>
           </div>
         ) : (
-          <span style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>
+          <span style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>
             {isStreaming ? (
-              <span style={{ display: 'inline-block', width: '2px', height: '14px', background: 'var(--color-accent)', animation: 'blink 1s step-end infinite', verticalAlign: 'middle' }} />
+              <span style={{ display: 'inline-block', width: '2px', height: '13px', background: 'var(--color-accent)', animation: 'blink 1s step-end infinite', verticalAlign: 'middle' }} />
             ) : hasToolCalls ? null : '（无输出）'}
           </span>
         )}
 
         {/* 底部：token 消耗 */}
         {!isStreaming && usage && (usage.inputTokens != null || usage.outputTokens != null) && (
-          <div style={{ marginTop: '10px' }}>
+          <div style={{ marginTop: '6px' }}>
             {/* 紧凑摘要行 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               {usage.inputTokens != null && (
-                <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>in {fmtTokens(usage.inputTokens)}</span>
+                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>in {fmtTokens(usage.inputTokens)}</span>
               )}
               {usage.outputTokens != null && (
-                <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>out {fmtTokens(usage.outputTokens)}</span>
+                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>out {fmtTokens(usage.outputTokens)}</span>
               )}
               {usage.inputTokens != null && usage.outputTokens != null && (
-                <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>· {fmtTokens(usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0))} total</span>
+                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>· {fmtTokens(usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0))} total</span>
               )}
               {usage.cacheReadTokens != null && usage.cacheReadTokens > 0 && (
-                <span style={{ fontSize: '10px', color: 'var(--color-text-success, #10b981)', fontFamily: 'var(--font-mono)' }}>cache hit {fmtTokens(usage.cacheReadTokens)}</span>
+                <span style={{ fontSize: '9px', color: 'var(--color-text-success, #10b981)', fontFamily: 'var(--font-mono)' }}>cache hit {fmtTokens(usage.cacheReadTokens)}</span>
               )}
             </div>
 
