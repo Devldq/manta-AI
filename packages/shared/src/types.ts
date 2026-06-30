@@ -62,7 +62,10 @@ export interface AgentEntry {
   /** CLI 可执行文件路径，留空则从 PATH 自动发现 */
   bin?: string
 
-  /** 附加技能/工具 */
+  /** 关联的 Skill ID 列表 */
+  skillIds?: string[]
+
+  /** 附加技能/工具名称（向后兼容，deprecated） */
   skills?: string[]
 
   /** 描述信息 */
@@ -369,6 +372,9 @@ export interface AppConfig {
   /** 启用的工具 */
   enabledTools: string[]
 
+  /** 绑定的 Skill ID 列表 */
+  skillIds?: string[]
+
   /** 自动化 */
   automations: Automation[]
 
@@ -400,6 +406,7 @@ export interface UpdateAppInput {
   agentOverride?: Partial<AgentOverride>
   ragBinding?: RagBinding | null
   enabledTools?: string[]
+  skillIds?: string[]
   automations?: Automation[]
 }
 
@@ -552,6 +559,122 @@ export interface ConversationSummary {
   updatedAt: string
   workspaceId?: string
   messageCount?: number
+}
+
+// ─── Skill 技能系统 ───────────────────────────────────────────────
+
+/** Skill 类型 */
+export type SkillType = 'writing' | 'tool' | 'workflow'
+
+/** Skill 来源 */
+export type SkillSource = 'builtin' | 'user' | 'plugin'
+
+/** Skill 参数 JSON Schema */
+export interface SkillParameter {
+  name: string
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array'
+  description: string
+  required?: boolean
+  default?: unknown
+  enum?: string[]
+}
+
+/** Skill 元数据 (YAML frontmatter) */
+export interface SkillMetadata {
+  /** Skill 唯一标识，小写字母+数字+连字符，≤64字符 */
+  name: string
+  /** 描述：说明功能、触发场景、输入输出，≤1024字符 */
+  description: string
+  /** 版本号 */
+  version?: string
+  /** Skill 类型 */
+  type: SkillType
+  /** 来源 */
+  source?: SkillSource
+  /** 许可证 */
+  license?: string
+  /** 用户是否可手动调用 */
+  userInvocable?: boolean
+  /** 参数提示 */
+  argumentHint?: string
+}
+
+/** Skill 定义（完整结构） */
+export interface SkillDefinition {
+  /** 唯一 ID */
+  id: string
+  /** 元数据 */
+  metadata: SkillMetadata
+  /** 指令内容（Markdown body） */
+  content: string
+  /** 参数定义 */
+  parameters?: SkillParameter[]
+  /** 绑定的 Agent 名称列表 */
+  boundAgents?: string[]
+  /** 关联的工具名称列表 */
+  tools?: string[]
+  /** 文件路径（磁盘存储时） */
+  filePath?: string
+  /** 是否启用 */
+  enabled: boolean
+  /** 时间戳 */
+  createdAt: string
+  updatedAt: string
+}
+
+/** Skill 摘要（列表展示用） */
+export interface SkillSummary {
+  id: string
+  name: string
+  description: string
+  type: SkillType
+  version?: string
+  source?: SkillSource
+  enabled: boolean
+  boundAgents?: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+/** 创建 Skill 的输入 */
+export interface CreateSkillInput {
+  metadata: SkillMetadata
+  content: string
+  parameters?: SkillParameter[]
+  tools?: string[]
+}
+
+/** 更新 Skill 的输入 */
+export interface UpdateSkillInput {
+  metadata?: Partial<SkillMetadata>
+  content?: string
+  parameters?: SkillParameter[]
+  tools?: string[]
+  enabled?: boolean
+}
+
+/** Skill CRUD 操作接口 */
+export interface SkillOps {
+  listSkills(): Promise<SkillSummary[]>
+  getSkill(id: string): Promise<SkillDefinition | null>
+  createSkill(input: CreateSkillInput): Promise<SkillDefinition>
+  updateSkill(id: string, input: UpdateSkillInput): Promise<SkillDefinition>
+  deleteSkill(id: string): Promise<void>
+  /** 启用/禁用 */
+  toggleSkill(id: string, enabled: boolean): Promise<void>
+  /** 绑定/解绑 Agent */
+  bindAgents(skillId: string, agentNames: string[]): Promise<void>
+}
+
+/** Skill 执行结果 */
+export interface SkillExecutionResult {
+  skillId: string
+  skillName: string
+  success: boolean
+  output?: string
+  error?: string
+  durationMs: number
+  toolCalls?: string[]
 }
 
 // ─── @调用 ───────────────────────────────────────────────

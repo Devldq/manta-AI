@@ -93,6 +93,7 @@ import { ragRoutes } from './routes/rag.js'
 import { readmeRoutes } from './routes/readme.js'
 import { runnerRoutes } from './routes/runners.js'
 import { workflowRoutes } from './routes/workflow.js'
+import { skillRoutes } from './routes/skills.js'
 import { default as auditRoutes } from './routes/audit.js'
 import { default as approvalRoutes } from './routes/approval.js'
 import { default as approvalSSERoutes } from './routes/approval-sse.js'
@@ -118,6 +119,7 @@ await app.register(ragRoutes)
 await app.register(readmeRoutes)
 await app.register(runnerRoutes)
 await app.register(workflowRoutes)
+await app.register(skillRoutes)
 await app.register(auditRoutes)
 await app.register(approvalRoutes)
 await app.register(approvalSSERoutes)

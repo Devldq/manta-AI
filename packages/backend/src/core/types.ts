@@ -62,7 +62,10 @@ export interface AgentEntry {
   /** CLI 可执行文件路径，留空则从 PATH 自动发现 */
   bin?: string
 
-  /** 附加技能/工具 */
+  /** 关联的 Skill ID 列表 */
+  skillIds?: string[]
+
+  /** 附加技能/工具名称（向后兼容，deprecated） */
   skills?: string[]
 
   /** 描述信息 */

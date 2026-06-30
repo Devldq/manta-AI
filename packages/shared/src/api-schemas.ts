@@ -96,3 +96,53 @@ export const BindEntitySchema = z.object({
 export type CreateWorkspaceSchemaInput = z.infer<typeof CreateWorkspaceSchema>
 export type UpdateWorkspaceSchemaInput = z.infer<typeof UpdateWorkspaceSchema>
 export type BindEntitySchemaInput = z.infer<typeof BindEntitySchema>
+
+// ─── Skill Schemas ───────────────────────────────────────────────
+
+export const CreateSkillSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Skill 名称不能为空')
+    .max(64, 'Skill 名称不能超过 64 个字符')
+    .regex(/^[a-z][a-z0-9-]*$/, 'Skill 名称必须以小写字母开头，仅包含小写字母、数字和连字符'),
+  description: z
+    .string()
+    .min(1, 'Skill 描述不能为空')
+    .max(1024, 'Skill 描述不能超过 1024 个字符'),
+  version: z.string().optional(),
+  type: z.enum(['writing', 'tool', 'workflow']),
+  content: z.string().min(1, 'Skill 指令内容不能为空'),
+  license: z.string().optional(),
+  userInvocable: z.boolean().optional(),
+  argumentHint: z.string().optional(),
+  parameters: z
+    .array(
+      z.object({
+        name: z.string(),
+        type: z.enum(['string', 'number', 'boolean', 'object', 'array']),
+        description: z.string(),
+        required: z.boolean().optional(),
+        default: z.unknown().optional(),
+        enum: z.array(z.string()).optional(),
+      }),
+    )
+    .optional(),
+  tools: z.array(z.string()).optional(),
+})
+
+export const UpdateSkillSchema = CreateSkillSchema.partial().extend({
+  enabled: z.boolean().optional(),
+})
+
+export const ToggleSkillSchema = z.object({
+  enabled: z.boolean(),
+})
+
+export const BindSkillAgentsSchema = z.object({
+  agentNames: z.array(z.string()).min(1, '至少需要绑定一个 Agent'),
+})
+
+export type CreateSkillSchemaInput = z.infer<typeof CreateSkillSchema>
+export type UpdateSkillSchemaInput = z.infer<typeof UpdateSkillSchema>
+export type ToggleSkillSchemaInput = z.infer<typeof ToggleSkillSchema>
+export type BindSkillAgentsSchemaInput = z.infer<typeof BindSkillAgentsSchema>

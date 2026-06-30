@@ -36,6 +36,7 @@ export const DATA_DIRS = {
   KNOWLEDGE_BASES: 'knowledge-bases',
   RAG: 'rag',
   PLUGINS: 'plugins',
+  SKILLS: 'skills',
 } as const
 
 // ─── SSE 事件类型 ───────────────────────────────────────────────

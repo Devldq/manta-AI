@@ -2,10 +2,11 @@
 
 import { Link } from 'react-router-dom'
 import { useLocation } from 'react-router-dom'
-import { Bot, Database, GitBranch } from 'lucide-react'
+import { Bot, Database, GitBranch, Zap } from 'lucide-react'
 
 const NAV_ITEMS = [
   { href: '/apps', label: '智能体应用', icon: Bot },
+  { href: '/skills', label: 'Skill 技能', icon: Zap },
   { href: '/rag', label: '知识库', icon: Database },
   { href: '/workflow', label: '工作流', icon: GitBranch },
 ]
