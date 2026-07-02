@@ -15,6 +15,7 @@ import WorkspacePage from './pages/workspace/page'
 import WorkflowPage from './pages/workflow/page'
 import ThemesPage from './pages/themes/page'
 import RagPage from './pages/rag/page'
+import RagDetailPage from './pages/rag/detail'
 import EvaluationPage from './pages/evaluation/page'
 import SkillsPage from './pages/skills/page'
 import PluginsPage from './pages/plugins/page'
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="workflow" element={<WorkflowPage />} />
           <Route path="themes" element={<ThemesPage />} />
           <Route path="rag" element={<RagPage />} />
+          <Route path="rag/:id" element={<RagDetailPage />} />
           <Route path="evaluation" element={<EvaluationPage />} />
           <Route path="skills" element={<SkillsPage />} />
           <Route path="plugins" element={<PluginsPage />} />
