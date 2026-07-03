@@ -1,4 +1,4 @@
-/* RAG 详情页 Zustand Store —— 知识库详情、文档、检索 */
+/* RAG 详情页 Zustand Store —— 知识库详情、文档、检索、配置 */
 
 import { create } from 'zustand'
 import { swrFetch, invalidateCache } from '@/stores/lib/swr-fetch'
@@ -9,11 +9,53 @@ export interface KnowledgeBaseDetail {
   name: string
   description: string
   providerId: string
-  config: Record<string, unknown>
+  config: KnowledgeBaseConfig
   documentCount: number
   chunkCount: number
   createdAt: string
   updatedAt: string
+}
+
+/** 知识库配置 */
+export interface KnowledgeBaseConfig {
+  dimensions: number
+  similarityThreshold: number
+  topK: number
+  hybridSearch?: {
+    enabled: boolean
+    vectorWeight: number
+    keywordWeight: number
+  }
+  embeddingConfig?: {
+    provider: 'openai' | 'local'
+    model?: string
+    apiKey?: string
+    baseUrl?: string
+    dimensions?: number
+  }
+}
+
+/** 可选的 Embedding 模型 */
+export interface EmbeddingModelOption {
+  id: string
+  name: string
+  dimensions: number
+}
+
+/** Embedding Provider */
+export interface EmbeddingProviderOption {
+  id: 'openai' | 'local'
+  name: string
+  models: EmbeddingModelOption[]
+}
+
+/** RAG 全局配置 */
+export interface RAGConfig {
+  supportedFormats: string[]
+  maxFileSize: string
+  globalProvider: string
+  globalModel: string
+  availableProviders: EmbeddingProviderOption[]
 }
 
 /** 文档信息 */
@@ -79,13 +121,21 @@ interface RAGDetailStore {
   uploadProgress: number | null
   uploadError: string | null
 
+  // 配置
+  ragConfig: RAGConfig | null
+  ragConfigLoading: boolean
+  configSaving: boolean
+  configError: string | null
+
   // 操作
   fetchKnowledgeBase: (id: string) => Promise<void>
   fetchDocuments: (kbId: string) => Promise<void>
   fetchChunks: (kbId: string, docId: string) => Promise<void>
+  fetchRAGConfig: () => Promise<void>
   uploadDocument: (kbId: string, file: File) => Promise<boolean>
   deleteDocument: (kbId: string, docId: string) => Promise<boolean>
   search: (kbId: string, query: string, topK?: number) => Promise<void>
+  updateConfig: (kbId: string, config: Partial<KnowledgeBaseConfig>) => Promise<boolean>
   reset: () => void
 }
 
@@ -111,10 +161,53 @@ const initialState = {
 
   uploadProgress: null as number | null,
   uploadError: null as string | null,
+
+  ragConfig: null as RAGConfig | null,
+  ragConfigLoading: false,
+  configSaving: false,
+  configError: null as string | null,
 }
 
 export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
   ...initialState,
+
+  fetchRAGConfig: async () => {
+    set({ ragConfigLoading: true })
+    try {
+      const json = await swrFetch('rag-config', () =>
+        fetch('/api/rag/config').then((r) => r.json())
+      )
+      if (json.success && json.data) {
+        set({ ragConfig: json.data as RAGConfig, ragConfigLoading: false })
+      } else {
+        set({ ragConfigLoading: false })
+      }
+    } catch {
+      set({ ragConfigLoading: false })
+    }
+  },
+
+  updateConfig: async (kbId: string, configPatch: Partial<KnowledgeBaseConfig>) => {
+    set({ configSaving: true, configError: null })
+    try {
+      const res = await fetch(`/api/rag/knowledge-bases/${kbId}/config`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(configPatch),
+      })
+      const json = await res.json()
+      if (json.success && json.data?.knowledgeBase) {
+        set({ kb: json.data.knowledgeBase as KnowledgeBaseDetail, configSaving: false })
+        invalidateCache(`rag-kb:${kbId}`)
+        return true
+      }
+      set({ configSaving: false, configError: json.error?.message ?? '保存配置失败' })
+      return false
+    } catch (err) {
+      set({ configSaving: false, configError: String(err) })
+      return false
+    }
+  },
 
   fetchKnowledgeBase: async (id: string) => {
     set({ kbLoading: true, kbError: null })

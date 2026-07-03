@@ -96,16 +96,25 @@ export class DocumentPipeline {
       const texts = chunks.map((c) => c.content)
       const batchSize = 20 // 每批 20 个，避免 API 限制
 
-      for (let i = 0; i < texts.length; i += batchSize) {
-        const batch = texts.slice(i, i + batchSize)
-        const embeddings = await this.embeddingService.embedBatch(batch)
+      try {
+        for (let i = 0; i < texts.length; i += batchSize) {
+          const batch = texts.slice(i, i + batchSize)
+          const embeddings = await this.embeddingService.embedBatch(batch)
 
-        for (let j = 0; j < batch.length; j++) {
-          chunks[i + j].embedding = embeddings[j]
+          for (let j = 0; j < batch.length; j++) {
+            chunks[i + j].embedding = embeddings[j]
+          }
+
+          emit('embedding', Math.round(((i + batch.length) / texts.length) * 100),
+            `向量化进度: ${i + batch.length}/${texts.length}`)
         }
-
-        emit('embedding', Math.round(((i + batch.length) / texts.length) * 100),
-          `向量化进度: ${i + batch.length}/${texts.length}`)
+      } catch (embedErr) {
+        const dims = this.embeddingService.getDimensions()
+        throw new Error(
+          `Embedding 失败 — 维度: ${dims}，已处理: 0/${texts.length}\n` +
+          `提示: 确认 Ollama 在 localhost:11434 运行中，且已安装该模型\n` +
+          `${embedErr instanceof Error ? embedErr.message : String(embedErr)}`
+        )
       }
 
       // 4. 写入向量库

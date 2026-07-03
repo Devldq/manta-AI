@@ -14,6 +14,19 @@ import { getSQLiteVecProvider } from '../core/engine/rag/providers/sqlite-vec-pr
 import { createEmbeddingService } from '../core/engine/rag/providers/embedding-service'
 import { inferMimeType } from '../core/engine/rag/document-parser'
 import type { DocumentMetadata, SearchOptions } from '../core/engine/rag/types'
+import type { KnowledgeBaseConfig } from '../core/storage/knowledge-base/store'
+
+// ─── Embedding Service 工厂 ─────────────────────────────────────
+// 优先使用 KB 内嵌配置，否则降级到环境变量
+function buildEmbeddingService(kbConfig?: KnowledgeBaseConfig) {
+  const ec = kbConfig?.embeddingConfig
+  const provider = ec?.provider || (process.env.EMBEDDING_PROVIDER as 'openai' | 'local') || 'openai'
+  const model = ec?.model || process.env.EMBEDDING_MODEL
+  const apiKey = ec?.apiKey || process.env.OPENAI_API_KEY
+  const baseUrl = ec?.baseUrl || process.env.OPENAI_BASE_URL
+  const dimensions = ec?.dimensions || kbConfig?.dimensions || 1536
+  return createEmbeddingService(provider, { apiKey, baseUrl, model, dimensions })
+}
 
 // ─── 注册 multipart 插件 ─────────────────────────────────────
 
@@ -112,6 +125,36 @@ export async function ragRoutes(app: FastifyInstance) {
     }
   })
 
+  // PATCH /api/rag/knowledge-bases/:id/config — 仅更新配置（embedding 等）
+  app.patch('/api/rag/knowledge-bases/:id/config', async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string }
+      const body = request.body as Record<string, any>
+
+      const kb = getKnowledgeBase(id)
+      if (!kb) throw Errors.NOT_FOUND('知识库', id)
+
+      // 合并配置
+      const newConfig = {
+        ...kb.config,
+        ...body,
+        // 深度合并 embeddingConfig
+        embeddingConfig: body.embeddingConfig
+          ? { ...kb.config.embeddingConfig, ...body.embeddingConfig }
+          : kb.config.embeddingConfig,
+        // 深度合并 hybridSearch
+        hybridSearch: body.hybridSearch
+          ? { ...kb.config.hybridSearch, ...body.hybridSearch }
+          : kb.config.hybridSearch,
+      }
+
+      const updated = updateKnowledgeBase(id, { config: newConfig })
+      return reply.send(apiSuccess({ knowledgeBase: updated }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
   // DELETE /api/rag/knowledge-bases/:id — 删除知识库
   app.delete('/api/rag/knowledge-bases/:id', async (request, reply) => {
     try {
@@ -191,15 +234,8 @@ export async function ragRoutes(app: FastifyInstance) {
         status: 'processing',
       }
 
-      // 构建 embedding service
-      const embeddingService = createEmbeddingService(
-        process.env.EMBEDDING_PROVIDER as 'openai' | 'local' || 'openai',
-        {
-          apiKey: process.env.OPENAI_API_KEY,
-          baseUrl: process.env.OPENAI_BASE_URL,
-          model: process.env.EMBEDDING_MODEL,
-        }
-      )
+      // 构建 embedding service（优先使用 KB 内嵌配置）
+      const embeddingService = buildEmbeddingService(kb.config)
 
       // 获取 RAG provider
       const ragProvider = getSQLiteVecProvider()
@@ -326,44 +362,45 @@ export async function ragRoutes(app: FastifyInstance) {
 
       const provider = getSQLiteVecProvider()
 
-      const searchOptions: SearchOptions = {
-        topK: body.topK || kb.config.topK || 5,
-        threshold: body.threshold || kb.config.similarityThreshold || 0.7,
-        includeMetadata: true,
+      // 向量检索和关键词检索使用不同阈值
+      const vectorThreshold = body.threshold || kb.config.similarityThreshold || 0.3
+      const keywordThreshold = 0.1  // 关键词匹配天生分数低，用低阈值
+      const topK = body.topK || kb.config.topK || 5
+
+      // ── 主检索：向量语义检索 ──
+      let results: any[] = []
+      try {
+        const embeddingService = buildEmbeddingService(kb.config)
+        const queryEmbedding = await embeddingService.embed(query)
+        results = await (provider as any).vectorSearch(id, queryEmbedding, {
+          topK,
+          threshold: vectorThreshold,
+          includeMetadata: true,
+        })
+      } catch (err) {
+        console.warn('向量检索失败，回退到关键词匹配:', err)
       }
 
-      // 首先尝试向量检索
-      let results = await provider.search(id, query, searchOptions)
-
-      // 如果配置了 embedding 并且结果较少，尝试增强检索
-      if (results.length < searchOptions.topK!) {
-        try {
-          const embeddingService = createEmbeddingService(
-            process.env.EMBEDDING_PROVIDER as 'openai' | 'local' || 'openai',
-            {
-              apiKey: process.env.OPENAI_API_KEY,
-              baseUrl: process.env.OPENAI_BASE_URL,
-              model: process.env.EMBEDDING_MODEL,
-            }
-          )
-          const queryEmbedding = await embeddingService.embed(query)
-          const vectorResults = await (provider as any).vectorSearch(id, queryEmbedding, searchOptions)
-
-          // 合并去重结果
-          if (vectorResults && vectorResults.length > 0) {
-            const existingIds = new Set(results.map((r) => r.chunk.id))
-            for (const vr of vectorResults) {
-              if (!existingIds.has(vr.chunk.id)) {
-                results.push(vr)
-              }
-            }
-            results.sort((a, b) => b.score - a.score)
-            results = results.slice(0, searchOptions.topK)
+      // ── 补充：关键词匹配（去重合并） ──
+      try {
+        const keywordResults = await provider.search(id, query, {
+          topK: topK * 2,
+          threshold: keywordThreshold,
+          includeMetadata: true,
+        })
+        const existingIds = new Set(results.map((r: any) => r.chunk.id))
+        for (const kr of keywordResults) {
+          if (!existingIds.has(kr.chunk.id)) {
+            results.push(kr)
           }
-        } catch (err) {
-          console.warn('向量检索增强失败，使用关键词匹配结果:', err)
         }
+      } catch (err) {
+        console.warn('关键词匹配补充失败:', err)
       }
+
+      // 去重 + 按分数排序 + 取 topK
+      results.sort((a: any, b: any) => b.score - a.score)
+      results = results.slice(0, topK)
 
       return reply.send(apiSuccess({
         query,
@@ -404,18 +441,57 @@ export async function ragRoutes(app: FastifyInstance) {
   //  配置查询（供前端使用）
   // ═══════════════════════════════════════════════════════════
 
-  // GET /api/rag/config — RAG 模块配置信息
+  // GET /api/rag/config — RAG 模块配置信息（含可选模型）
   app.get('/api/rag/config', async (_request, reply) => {
     try {
       const { createDocumentParserFactory } = await import('../core/engine/rag/document-parser')
       const factory = createDocumentParserFactory()
       const supportedTypes = factory.getSupportedMimeTypes()
 
+      // 动态获取本地模型
+      const { getAvailableEmbeddingModels } = await import('../core/engine/rag/providers/embedding-service')
+      const { local, openai } = await getAvailableEmbeddingModels()
+
+      // 智能选择默认 provider
+      let globalProvider = process.env.EMBEDDING_PROVIDER || 'openai'
+      let globalModel = process.env.EMBEDDING_MODEL || 'text-embedding-3-small'
+
+      // 如果配置了本地优先且有本地模型，自动使用本地
+      if (process.env.EMBEDDING_PROVIDER === 'local' && local.length > 0) {
+        globalModel = local[0].id
+      } else if (globalProvider === 'local' && local.length === 0) {
+        // 本地模型不可用时降级到 OpenAI
+        globalProvider = 'openai'
+        globalModel = 'text-embedding-3-small'
+      }
+
+      const availableProviders: Array<{
+        id: string
+        name: string
+        models: Array<{ id: string; name: string; dimensions: number }>
+      }> = []
+
+      // OpenAI 模型（始终可用）
+      if (openai.length > 0) {
+        availableProviders.push({ id: 'openai', name: 'OpenAI', models: openai })
+      }
+
+      // 本地模型（如果有安装）
+      if (local.length > 0) {
+        availableProviders.push({ id: 'local', name: 'Ollama (本地)', models: local })
+      }
+
+      // 如果没有可用模型，返回默认选项
+      if (availableProviders.length === 0) {
+        availableProviders.push({ id: 'openai', name: 'OpenAI', models: openai })
+      }
+
       return reply.send(apiSuccess({
         supportedFormats: supportedTypes,
         maxFileSize: '50MB',
-        embeddingProvider: process.env.EMBEDDING_PROVIDER || 'openai',
-        embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
+        globalProvider,
+        globalModel,
+        availableProviders,
       }))
     } catch (err) {
       return apiError(reply, err)

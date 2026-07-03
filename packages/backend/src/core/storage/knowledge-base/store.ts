@@ -22,6 +22,14 @@ export interface KnowledgeBaseConfig {
     vectorWeight: number
     keywordWeight: number
   }
+  /** 向量模型配置（可覆盖环境变量全局配置） */
+  embeddingConfig?: {
+    provider: 'openai' | 'local'
+    model?: string
+    apiKey?: string
+    baseUrl?: string
+    dimensions?: number
+  }
 }
 
 export interface KnowledgeBase {
