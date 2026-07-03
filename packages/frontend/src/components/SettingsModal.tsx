@@ -2528,26 +2528,7 @@ function LLMTab() {
                   boxSizing: 'border-box',
                 }}
               />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
-                {MODEL_SUGGESTIONS[editForm.provider].map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setEditForm((p) => p ? { ...p, model: m } : p)}
-                    style={{
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      fontSize: '11px',
-                      fontFamily: 'monospace',
-                      border: `1px solid ${editForm.model === m ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                      background: editForm.model === m ? 'var(--color-accent)15' : 'transparent',
-                      color: editForm.model === m ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
+
             </div>
 
             {/* Temperature */}
