@@ -1,15 +1,8 @@
 /**
- * @manta/rag — 自包含 RAG（Retrieval-Augmented Generation）引擎
+ * @manta/rag — 核心 RAG 引擎
  *
- * 包含：文档解析、分块策略、向量存储（SQLite）、Embedding 服务、Fastify 路由
- *
- * 使用方式:
- *   // 引擎 API
- *   import { createDocumentPipeline, getSQLiteVecProvider, createEmbeddingService } from '@manta/rag'
- *
- *   // Fastify 路由插件
- *   import { ragRoutes } from '@manta/rag/routes'
- *   await app.register(ragRoutes)
+ * 数据库读写（SQLite 向量库）、文档解析、文档切分、检索
+ * Embedding 模型配置、API 路由等由调用方负责
  */
 
 // ─── 类型 ───────────────────────────────────────────────
@@ -27,10 +20,6 @@ export type {
   ChunkingOptions,
 } from './types'
 
-// ─── 流水线 ─────────────────────────────────────────────
-export { DocumentPipeline, createDocumentPipeline } from './pipeline'
-export type { PipelineOptions, PipelineResult, PipelineStage } from './pipeline'
-
 // ─── 分块策略 ───────────────────────────────────────────
 export {
   FixedSizeChunkingStrategy,
@@ -39,56 +28,27 @@ export {
   ChunkingStrategyFactory,
 } from './chunking-strategy'
 
-// ─── 文档解析 ───────────────────────────────────────────
-export {
-  TextDocumentParser,
-  PDFDocumentParser,
-  DocxDocumentParser,
-  DocDocumentParser,
-  XlsxDocumentParser,
-  PptxDocumentParser,
-  PptDocumentParser,
-  DocumentParserFactory,
-  createDocumentParserFactory,
-  inferMimeType,
-  SUPPORTED_MIME_TYPES,
-} from './document-parser'
-
-// ─── 向量存储 ───────────────────────────────────────────
+// ─── 向量存储（数据库读写 + 检索）─────────────────────
 export {
   SQLiteVecProvider,
   createSQLiteVecProvider,
   getSQLiteVecProvider,
 } from './sqlite-vec-provider'
 
-// ─── Embedding 服务 ─────────────────────────────────────
+// ─── 文档解析 ───────────────────────────────────────────
 export {
-  OpenAIEmbeddingService,
-  LocalEmbeddingService,
-  createEmbeddingService,
-  getAvailableEmbeddingModels,
-  listLocalOllamaModels,
-} from './embedding-service'
-export type { OllamaModel } from './embedding-service'
+  DocumentParserFactory,
+  createDocumentParserFactory,
+  inferMimeType,
+  SUPPORTED_MIME_TYPES,
+} from './document-parser'
 
-// ─── 知识库存储 ─────────────────────────────────────────
+// ─── 处理流水线 ─────────────────────────────────────────
 export {
-  listKnowledgeBases,
-  getKnowledgeBase,
-  createKnowledgeBase,
-  updateKnowledgeBase,
-  deleteKnowledgeBase,
-  knowledgeBaseExists,
-} from './knowledge-base-store'
-export type {
-  KnowledgeBase,
-  CreateKnowledgeBaseInput,
-  UpdateKnowledgeBaseInput,
-} from './knowledge-base-store'
-
-// ─── 错误处理（供下游复用） ────────────────────────────
-export { AppError, Errors, apiSuccess, apiError } from './error-handler'
-export type { ApiResponse } from './error-handler'
+  DocumentPipeline,
+  createDocumentPipeline,
+} from './pipeline'
+export type { PipelineOptions, PipelineResult, PipelineStage } from './pipeline'
 
 // ─── 文件工具 ───────────────────────────────────────────
 export { ensureDir, atomicWrite, shortId, readJsonFile, writeJsonFile, removeDir } from './fs-utils'

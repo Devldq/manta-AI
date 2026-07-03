@@ -339,8 +339,8 @@ export class SQLiteVecProvider implements RAGProvider {
   /**
    * 获取知识库中的文档列表
    */
-  getDocuments(knowledgeBaseId: string): DocumentMetadata[] {
-    if (!this.initialized) return []
+  async getDocuments(knowledgeBaseId: string): Promise<DocumentMetadata[]> {
+    await this.ensureInitialized()
 
     const rows = this.db.prepare(`
       SELECT * FROM documents WHERE kb_id = ? ORDER BY uploaded_at DESC
@@ -362,8 +362,8 @@ export class SQLiteVecProvider implements RAGProvider {
   /**
    * 获取文档详情
    */
-  getDocument(documentId: string): DocumentMetadata | null {
-    if (!this.initialized) return null
+  async getDocument(documentId: string): Promise<DocumentMetadata | null> {
+    await this.ensureInitialized()
 
     const row = this.db.prepare('SELECT * FROM documents WHERE id = ?').get(documentId) as DocRow | undefined
 
@@ -385,8 +385,8 @@ export class SQLiteVecProvider implements RAGProvider {
   /**
    * 获取文档的所有 chunks（用于预览）
    */
-  getDocumentChunks(documentId: string, limit = 50): (DocumentChunk & { embedding?: number[] })[] {
-    if (!this.initialized) return []
+  async getDocumentChunks(documentId: string, limit = 50): Promise<(DocumentChunk & { embedding?: number[] })[]> {
+    await this.ensureInitialized()
 
     const rows = this.db.prepare(`
       SELECT * FROM chunks WHERE doc_id = ? ORDER BY start_index ASC LIMIT ?

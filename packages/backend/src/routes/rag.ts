@@ -1,9 +1,8 @@
 /**
  * RAG REST API 路由 — Fastify 插件
  *
- * 使用方式:
- *   import { ragRoutes } from '@manta/rag/routes'
- *   await app.register(ragRoutes)
+ * Embedding 模型配置由调用方传入（KB 配置或环境变量），
+ * 再传入 @manta/rag 包的核心检索/存储能力。
  */
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
@@ -14,28 +13,41 @@ import {
   createKnowledgeBase,
   updateKnowledgeBase,
   deleteKnowledgeBase,
-} from './knowledge-base-store'
-import type { CreateKnowledgeBaseInput, UpdateKnowledgeBaseInput, KnowledgeBaseConfig } from './knowledge-base-store'
-import { apiSuccess, apiError, Errors } from './error-handler'
-import { createDocumentPipeline } from './pipeline'
-import { getSQLiteVecProvider } from './sqlite-vec-provider'
-import { createEmbeddingService } from './embedding-service'
-import { inferMimeType } from './document-parser'
-import type { DocumentMetadata } from './types'
+} from '../core/storage/knowledge-base/store.js'
+import type { CreateKnowledgeBaseInput, UpdateKnowledgeBaseInput, KnowledgeBaseConfig } from '../core/storage/knowledge-base/store.js'
+import { apiSuccess, apiError, Errors } from '../core/api/error-handler.js'
+import { getSQLiteVecProvider, createDocumentPipeline, inferMimeType } from '@manta/rag'
+import type { DocumentMetadata } from '@manta/rag'
+import { createEmbeddingService, getAvailableEmbeddingModels } from '../core/engine/rag/embedding-service.js'
 
 // ─── Embedding Service 工厂 ─────────────────────────────────────
-// 优先使用 KB 内嵌配置，否则降级到环境变量
+// 从 KB 配置或环境变量构建 embedding 服务，传入 rag 包
+
 function buildEmbeddingService(kbConfig?: KnowledgeBaseConfig) {
   const ec = kbConfig?.embeddingConfig
   const provider = ec?.provider || (process.env.EMBEDDING_PROVIDER as 'openai' | 'local') || 'openai'
   const model = ec?.model || process.env.EMBEDDING_MODEL
   const apiKey = ec?.apiKey || process.env.OPENAI_API_KEY
-  const baseUrl = ec?.baseUrl || process.env.OPENAI_BASE_URL
+  const baseUrl = ec?.baseUrl || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
   const dimensions = ec?.dimensions || kbConfig?.dimensions || 1536
+
+  if (!model) {
+    throw new Error(
+      'Embedding model not configured. ' +
+      'Set embeddingConfig.model in knowledge base config, or EMBEDDING_MODEL environment variable.'
+    )
+  }
+  if (!apiKey) {
+    throw new Error(
+      'OpenAI API key not configured. ' +
+      'Set embeddingConfig.apiKey in knowledge base config, or OPENAI_API_KEY environment variable.'
+    )
+  }
+
   return createEmbeddingService(provider, { apiKey, baseUrl, model, dimensions })
 }
 
-// ─── 注册 multipart 插件 ─────────────────────────────────────
+// ─── 注册插件 ─────────────────────────────────────────────────
 
 export async function ragRoutes(app: FastifyInstance) {
   // 注册 multipart 支持
@@ -44,7 +56,7 @@ export async function ragRoutes(app: FastifyInstance) {
     const plugin = (multipartPlugin as any).default || multipartPlugin
     await app.register(plugin, {
       limits: {
-        fileSize: 50 * 1024 * 1024, // 50MB
+        fileSize: 50 * 1024 * 1024,
         files: 1,
       },
     })
@@ -56,7 +68,6 @@ export async function ragRoutes(app: FastifyInstance) {
   //  知识库 CRUD
   // ═══════════════════════════════════════════════════════════
 
-  // GET /api/rag/knowledge-bases — 获取知识库列表
   app.get('/api/rag/knowledge-bases', async (request, reply) => {
     try {
       const search = (request.query as Record<string, string>).search
@@ -67,7 +78,6 @@ export async function ragRoutes(app: FastifyInstance) {
     }
   })
 
-  // POST /api/rag/knowledge-bases — 创建知识库
   app.post('/api/rag/knowledge-bases', async (request, reply) => {
     try {
       const body = request.body as Record<string, any>
@@ -84,7 +94,6 @@ export async function ragRoutes(app: FastifyInstance) {
 
       const knowledgeBase = createKnowledgeBase(input)
 
-      // 在 vector provider 中注册知识库
       try {
         const provider = getSQLiteVecProvider()
         await provider.createKnowledgeBase(knowledgeBase.id, knowledgeBase.name, knowledgeBase.config)
@@ -98,7 +107,6 @@ export async function ragRoutes(app: FastifyInstance) {
     }
   })
 
-  // GET /api/rag/knowledge-bases/:id — 获取单个知识库
   app.get('/api/rag/knowledge-bases/:id', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
@@ -110,7 +118,6 @@ export async function ragRoutes(app: FastifyInstance) {
     }
   })
 
-  // PUT /api/rag/knowledge-bases/:id — 更新知识库
   app.put('/api/rag/knowledge-bases/:id', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
@@ -132,7 +139,6 @@ export async function ragRoutes(app: FastifyInstance) {
     }
   })
 
-  // PATCH /api/rag/knowledge-bases/:id/config — 仅更新配置（embedding 等）
   app.patch('/api/rag/knowledge-bases/:id/config', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
@@ -141,15 +147,12 @@ export async function ragRoutes(app: FastifyInstance) {
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
-      // 合并配置
       const newConfig = {
         ...kb.config,
         ...body,
-        // 深度合并 embeddingConfig
         embeddingConfig: body.embeddingConfig
           ? { ...kb.config.embeddingConfig, ...body.embeddingConfig }
           : kb.config.embeddingConfig,
-        // 深度合并 hybridSearch
         hybridSearch: body.hybridSearch
           ? { ...kb.config.hybridSearch, ...body.hybridSearch }
           : kb.config.hybridSearch,
@@ -162,12 +165,10 @@ export async function ragRoutes(app: FastifyInstance) {
     }
   })
 
-  // DELETE /api/rag/knowledge-bases/:id — 删除知识库
   app.delete('/api/rag/knowledge-bases/:id', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
 
-      // 删除向量库数据
       try {
         const provider = getSQLiteVecProvider()
         await provider.deleteKnowledgeBase(id)
@@ -187,24 +188,20 @@ export async function ragRoutes(app: FastifyInstance) {
   //  文档管理
   // ═══════════════════════════════════════════════════════════
 
-  // GET /api/rag/knowledge-bases/:id/documents — 文档列表
   app.get('/api/rag/knowledge-bases/:id/documents', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
-
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getSQLiteVecProvider()
-      const documents = provider.getDocuments(id)
-
+      const documents = await provider.getDocuments(id)
       return reply.send(apiSuccess({ documents }))
     } catch (err) {
       return apiError(reply, err)
     }
   })
 
-  // POST /api/rag/knowledge-bases/:id/documents — 上传并处理文档
   app.post('/api/rag/knowledge-bases/:id/documents', async (request: FastifyRequest, reply) => {
     try {
       const { id: kbId } = request.params as { id: string }
@@ -212,24 +209,16 @@ export async function ragRoutes(app: FastifyInstance) {
       const kb = getKnowledgeBase(kbId)
       if (!kb) throw Errors.NOT_FOUND('知识库', kbId)
 
-      // 解析 multipart 文件上传
       const data = await request.file()
-      if (!data) {
-        throw Errors.VALIDATION_ERROR('file', '未上传文件')
-      }
+      if (!data) throw Errors.VALIDATION_ERROR('file', '未上传文件')
 
       const buffer = await data.toBuffer()
       const fileName = data.filename || 'unknown'
       const mimeType = data.mimetype || inferMimeType(fileName)
 
-      if (buffer.length === 0) {
-        throw Errors.VALIDATION_ERROR('file', '上传的文件为空')
-      }
-      if (buffer.length > 50 * 1024 * 1024) {
-        throw Errors.VALIDATION_ERROR('file', '文件大小超过 50MB 限制')
-      }
+      if (buffer.length === 0) throw Errors.VALIDATION_ERROR('file', '上传的文件为空')
+      if (buffer.length > 50 * 1024 * 1024) throw Errors.VALIDATION_ERROR('file', '文件大小超过 50MB 限制')
 
-      // 创建文档元数据
       const docId = uuidv4()
       const now = new Date().toISOString()
       const metadata: DocumentMetadata = {
@@ -241,13 +230,10 @@ export async function ragRoutes(app: FastifyInstance) {
         status: 'processing',
       }
 
-      // 构建 embedding service（优先使用 KB 内嵌配置）
+      // 从 KB 配置 / 环境变量构建 embedding 服务，传入 pipeline
       const embeddingService = buildEmbeddingService(kb.config)
-
-      // 获取 RAG provider
       const ragProvider = getSQLiteVecProvider()
 
-      // 创建流水线并处理文档
       const pipeline = createDocumentPipeline({
         embeddingService,
         ragProvider,
@@ -261,7 +247,6 @@ export async function ragRoutes(app: FastifyInstance) {
 
       const result = await pipeline.process(buffer, metadata, kbId)
 
-      // 更新知识库的文档计数
       const provider = getSQLiteVecProvider()
       const stats = await provider.getStats(kbId)
       updateKnowledgeBase(kbId, {
@@ -279,7 +264,6 @@ export async function ragRoutes(app: FastifyInstance) {
     }
   })
 
-  // GET /api/rag/knowledge-bases/:id/documents/:docId — 文档详情
   app.get('/api/rag/knowledge-bases/:id/documents/:docId', async (request, reply) => {
     try {
       const { id, docId } = request.params as { id: string; docId: string }
@@ -288,7 +272,7 @@ export async function ragRoutes(app: FastifyInstance) {
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getSQLiteVecProvider()
-      const doc = provider.getDocument(docId)
+      const doc = await provider.getDocument(docId)
       if (!doc) throw Errors.NOT_FOUND('文档', docId)
 
       return reply.send(apiSuccess({ document: doc }))
@@ -297,7 +281,6 @@ export async function ragRoutes(app: FastifyInstance) {
     }
   })
 
-  // DELETE /api/rag/knowledge-bases/:id/documents/:docId — 删除文档
   app.delete('/api/rag/knowledge-bases/:id/documents/:docId', async (request, reply) => {
     try {
       const { id, docId } = request.params as { id: string; docId: string }
@@ -308,7 +291,6 @@ export async function ragRoutes(app: FastifyInstance) {
       const provider = getSQLiteVecProvider()
       await provider.removeDocument(id, docId)
 
-      // 更新统计
       const stats = await provider.getStats(id)
       updateKnowledgeBase(id, {
         documentCount: stats.documentCount,
@@ -325,7 +307,6 @@ export async function ragRoutes(app: FastifyInstance) {
   //  文档预览
   // ═══════════════════════════════════════════════════════════
 
-  // GET /api/rag/knowledge-bases/:id/documents/:docId/chunks — 文档分块预览
   app.get('/api/rag/knowledge-bases/:id/documents/:docId/chunks', async (request, reply) => {
     try {
       const { id, docId } = request.params as { id: string; docId: string }
@@ -334,13 +315,11 @@ export async function ragRoutes(app: FastifyInstance) {
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getSQLiteVecProvider()
-      const doc = provider.getDocument(docId)
+      const doc = await provider.getDocument(docId)
       if (!doc) throw Errors.NOT_FOUND('文档', docId)
 
       const limit = parseInt((request.query as Record<string, string>)?.limit || '50', 10)
-      const chunks = provider.getDocumentChunks(docId, Math.min(limit, 200))
-
-      // 返回不包含 embedding 的预览数据
+      const chunks = await provider.getDocumentChunks(docId, Math.min(limit, 200))
       const preview = chunks.map(({ embedding, ...rest }) => rest)
 
       return reply.send(apiSuccess({ document: doc, chunks: preview, totalChunks: doc.chunkCount }))
@@ -353,28 +332,24 @@ export async function ragRoutes(app: FastifyInstance) {
   //  检索
   // ═══════════════════════════════════════════════════════════
 
-  // POST /api/rag/knowledge-bases/:id/search — 检索知识库
   app.post('/api/rag/knowledge-bases/:id/search', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
       const body = request.body as Record<string, any>
       const query = body.query?.trim()
 
-      if (!query) {
-        throw Errors.VALIDATION_ERROR('query', '检索关键词不能为空')
-      }
+      if (!query) throw Errors.VALIDATION_ERROR('query', '检索关键词不能为空')
 
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getSQLiteVecProvider()
 
-      // 向量检索和关键词检索使用不同阈值
       const vectorThreshold = body.threshold || kb.config.similarityThreshold || 0.3
-      const keywordThreshold = 0.1  // 关键词匹配天生分数低，用低阈值
+      const keywordThreshold = 0.1
       const topK = body.topK || kb.config.topK || 5
 
-      // ── 主检索：向量语义检索 ──
+      // ── 主检索：向量语义检索（embedding 由外部配置传入） ──
       let results: any[] = []
       try {
         const embeddingService = buildEmbeddingService(kb.config)
@@ -388,7 +363,7 @@ export async function ragRoutes(app: FastifyInstance) {
         console.warn('向量检索失败，回退到关键词匹配:', err)
       }
 
-      // ── 补充：关键词匹配（去重合并） ──
+      // ── 补充：关键词匹配 ──
       try {
         const keywordResults = await provider.search(id, query, {
           topK: topK * 2,
@@ -405,7 +380,6 @@ export async function ragRoutes(app: FastifyInstance) {
         console.warn('关键词匹配补充失败:', err)
       }
 
-      // 去重 + 按分数排序 + 取 topK
       results.sort((a: any, b: any) => b.score - a.score)
       results = results.slice(0, topK)
 
@@ -424,11 +398,9 @@ export async function ragRoutes(app: FastifyInstance) {
   //  统计
   // ═══════════════════════════════════════════════════════════
 
-  // GET /api/rag/knowledge-bases/:id/stats — 知识库统计
   app.get('/api/rag/knowledge-bases/:id/stats', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
-
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
@@ -445,29 +417,24 @@ export async function ragRoutes(app: FastifyInstance) {
   })
 
   // ═══════════════════════════════════════════════════════════
-  //  配置查询（供前端使用）
+  //  配置查询（供前端使用）— 动态读取 ollama list
   // ═══════════════════════════════════════════════════════════
 
-  // GET /api/rag/config — RAG 模块配置信息（含可选模型）
   app.get('/api/rag/config', async (_request, reply) => {
     try {
-      const { createDocumentParserFactory } = await import('./document-parser')
+      const { createDocumentParserFactory } = await import('@manta/rag')
       const factory = createDocumentParserFactory()
       const supportedTypes = factory.getSupportedMimeTypes()
 
-      // 动态获取本地模型
-      const { getAvailableEmbeddingModels } = await import('./embedding-service')
-      const { local, openai } = await getAvailableEmbeddingModels()
+      const { getAvailableEmbeddingModels: getModels } = await import('../core/engine/rag/embedding-service.js')
+      const { local, openai } = await getModels()
 
-      // 智能选择默认 provider
       let globalProvider = process.env.EMBEDDING_PROVIDER || 'openai'
       let globalModel = process.env.EMBEDDING_MODEL || 'text-embedding-3-small'
 
-      // 如果配置了本地优先且有本地模型，自动使用本地
       if (process.env.EMBEDDING_PROVIDER === 'local' && local.length > 0) {
         globalModel = local[0].id
       } else if (globalProvider === 'local' && local.length === 0) {
-        // 本地模型不可用时降级到 OpenAI
         globalProvider = 'openai'
         globalModel = 'text-embedding-3-small'
       }
@@ -475,20 +442,19 @@ export async function ragRoutes(app: FastifyInstance) {
       const availableProviders: Array<{
         id: string
         name: string
-        models: Array<{ id: string; name: string; dimensions: number }>
+        models: Array<{ id: string; name: string; dimensions?: number }>
       }> = []
 
-      // OpenAI 模型（始终可用）
       if (openai.length > 0) {
         availableProviders.push({ id: 'openai', name: 'OpenAI', models: openai })
       }
-
-      // 本地模型（如果有安装）
       if (local.length > 0) {
-        availableProviders.push({ id: 'local', name: 'Ollama (本地)', models: local })
+        availableProviders.push({
+          id: 'local',
+          name: 'Ollama (本地)',
+          models: local.map((m) => ({ id: m.id, name: m.name })),
+        })
       }
-
-      // 如果没有可用模型，返回默认选项
       if (availableProviders.length === 0) {
         availableProviders.push({ id: 'openai', name: 'OpenAI', models: openai })
       }

@@ -9,7 +9,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { shortId, readJsonFile, writeJsonFile, removeDir } from './fs-utils'
+import { shortId, readJsonFile, writeJsonFile, removeDir } from '@manta/rag'
 
 // ─── 类型定义 ─────────────────────────────────────────────────
 
@@ -22,7 +22,7 @@ export interface KnowledgeBaseConfig {
     vectorWeight: number
     keywordWeight: number
   }
-  /** 向量模型配置（可覆盖环境变量全局配置） */
+  /** 向量模型配置（优先于环境变量） */
   embeddingConfig?: {
     provider: 'openai' | 'local'
     model?: string
@@ -86,7 +86,6 @@ function now(): string {
 
 // ─── CRUD 操作 ────────────────────────────────────────────────
 
-/** 列出所有知识库，支持搜索过滤 */
 export function listKnowledgeBases(search?: string): KnowledgeBase[] {
   const dir = getStorageDir()
   if (!fs.existsSync(dir)) return []
@@ -110,12 +109,10 @@ export function listKnowledgeBases(search?: string): KnowledgeBase[] {
   return kbs.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
 
-/** 获取单个知识库 */
 export function getKnowledgeBase(id: string): KnowledgeBase | null {
   return readJsonFile<KnowledgeBase>(getFilePath(id))
 }
 
-/** 创建知识库 */
 export function createKnowledgeBase(input: CreateKnowledgeBaseInput): KnowledgeBase {
   const id = shortId()
   const timestamp = now()
@@ -141,7 +138,6 @@ export function createKnowledgeBase(input: CreateKnowledgeBaseInput): KnowledgeB
   return kb
 }
 
-/** 更新知识库 */
 export function updateKnowledgeBase(id: string, patch: UpdateKnowledgeBaseInput): KnowledgeBase | null {
   const kb = readJsonFile<KnowledgeBase>(getFilePath(id))
   if (!kb) return null
@@ -161,12 +157,10 @@ export function updateKnowledgeBase(id: string, patch: UpdateKnowledgeBaseInput)
   return kb
 }
 
-/** 删除知识库 */
 export function deleteKnowledgeBase(id: string): boolean {
   const filePath = getFilePath(id)
   if (!fs.existsSync(filePath)) return false
 
-  // 删除关联的数据目录
   const kbDir = path.join(os.homedir(), '.manta-data', 'rag', id)
   removeDir(kbDir)
 
@@ -178,7 +172,6 @@ export function deleteKnowledgeBase(id: string): boolean {
   }
 }
 
-/** 检查知识库是否存在 */
 export function knowledgeBaseExists(id: string): boolean {
   return fs.existsSync(getFilePath(id))
 }

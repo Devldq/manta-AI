@@ -1,34 +1,21 @@
 /**
- * 文档处理流水线 (Pipeline)
- *
- * 流程: 解析 → 分块 → 向量化 → 写入向量库
+ * 文档处理流水线 — 解析 → 分块 → 向量化 → 写入向量库
+ * Embedding 模型和存储 Provider 由调用方注入
  */
 
 import { v4 as uuidv4 } from 'uuid'
-import type {
-  DocumentMetadata,
-  DocumentChunk,
-  EmbeddingService,
-  RAGProvider,
-  ChunkingStrategy,
-} from './types'
-import { createDocumentParserFactory } from './document-parser'
+import type { DocumentMetadata, DocumentChunk, EmbeddingService, RAGProvider, ChunkingStrategy } from './types'
 import { ChunkingStrategyFactory } from './chunking-strategy'
+import { createDocumentParserFactory } from './document-parser'
 
-// ─── 类型定义 ────────────────────────────────────────────────
+// ── 类型 ────────────────────────────────────────────────────
 
 export interface PipelineOptions {
-  /** Embedding 服务 */
   embeddingService: EmbeddingService
-  /** RAG Provider */
   ragProvider: RAGProvider
-  /** 分块策略名称，默认 'recursive' */
   chunkStrategy?: 'fixed' | 'semantic' | 'recursive'
-  /** 分块大小（字符数），默认 1000 */
   chunkSize?: number
-  /** 分块重叠（字符数），默认 200 */
   chunkOverlap?: number
-  /** 进度回调 */
   onProgress?: (stage: PipelineStage, progress: number, message: string) => void
 }
 
@@ -42,7 +29,7 @@ export interface PipelineResult {
 
 export type PipelineStage = 'parsing' | 'chunking' | 'embedding' | 'storing'
 
-// ─── 流水线实现 ──────────────────────────────────────────────
+// ── 流水线实现 ──────────────────────────────────────────────
 
 export class DocumentPipeline {
   private parserFactory = createDocumentParserFactory()
@@ -58,12 +45,6 @@ export class DocumentPipeline {
     this.options = options
   }
 
-  /**
-   * 执行完整文档处理流水线
-   * @param buffer - 文档二进制内容
-   * @param metadata - 文档元数据（需包含 id, name, type）
-   * @param knowledgeBaseId - 目标知识库 ID
-   */
   async process(
     buffer: Buffer,
     metadata: DocumentMetadata,
@@ -78,7 +59,7 @@ export class DocumentPipeline {
       const rawChunks = await this.parserFactory.parseDocument(buffer, metadata)
       emit('parsing', 100, `解析完成，共 ${rawChunks.length} 个段落`)
 
-      // 2. 分块（对每个段落的大段文本再分块）
+      // 2. 分块
       emit('chunking', 0, '正在分块...')
       const chunks = this.rechunk(rawChunks, metadata.id)
       emit('chunking', 100, `分块完成，共 ${chunks.length} 个块`)
@@ -87,10 +68,10 @@ export class DocumentPipeline {
         throw new Error('文档处理后未产生任何有效内容块')
       }
 
-      // 3. 向量化
+      // 3. 向量化（调用方注入的 embedding 服务）
       emit('embedding', 0, `正在向量化 ${chunks.length} 个块...`)
       const texts = chunks.map((c) => c.content)
-      const batchSize = 20 // 每批 20 个，避免 API 限制
+      const batchSize = 20
 
       try {
         for (let i = 0; i < texts.length; i += batchSize) {
@@ -108,7 +89,7 @@ export class DocumentPipeline {
         const dims = this.embeddingService.getDimensions()
         throw new Error(
           `Embedding 失败 — 维度: ${dims}，已处理: 0/${texts.length}\n` +
-          `提示: 确认 Ollama 在 http://127.0.0.1:11434 运行中，且已安装该模型\n` +
+          `提示: 确认 Embedding 服务可用，模型已正确配置\n` +
           `${embedErr instanceof Error ? embedErr.message : String(embedErr)}`
         )
       }
@@ -133,16 +114,10 @@ export class DocumentPipeline {
     }
   }
 
-  /**
-   * 仅解析不分块（用于预览）
-   */
   async parseOnly(buffer: Buffer, metadata: DocumentMetadata): Promise<DocumentChunk[]> {
     return this.parserFactory.parseDocument(buffer, metadata)
   }
 
-  /**
-   * 仅分块预览（不进行向量化）
-   */
   async chunkPreview(text: string): Promise<string[]> {
     return this.chunkStrategy.chunk(text, {
       chunkSize: this.options.chunkSize || 1000,
@@ -150,9 +125,6 @@ export class DocumentPipeline {
     })
   }
 
-  /**
-   * 对解析后的段落进行二次分块
-   */
   private rechunk(rawChunks: DocumentChunk[], documentId: string): DocumentChunk[] {
     const result: DocumentChunk[] = []
 
@@ -175,8 +147,6 @@ export class DocumentPipeline {
     return result
   }
 }
-
-// ─── 工厂函数 ────────────────────────────────────────────────
 
 export function createDocumentPipeline(options: PipelineOptions): DocumentPipeline {
   return new DocumentPipeline(options)

@@ -1,7 +1,7 @@
 import type { DocumentParser, DocumentMetadata, DocumentChunk } from './types'
 import { v4 as uuidv4 } from 'uuid'
 
-// ─── MIME type 常量 ──────────────────────────────────────────
+// ── MIME type 常量 ──────────────────────────────────────────
 export const SUPPORTED_MIME_TYPES = {
   PDF: 'application/pdf',
   DOCX: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -15,9 +15,8 @@ export const SUPPORTED_MIME_TYPES = {
   CSV: 'text/csv',
 } as const
 
-// ─── 辅助函数 ────────────────────────────────────────────────
+// ── 辅助函数 ────────────────────────────────────────────────
 
-/** 将文本按段落拆分为 chunks，记录 startIndex/endIndex */
 function textToChunks(documentId: string, content: string, metaType: string): DocumentChunk[] {
   const chunks: DocumentChunk[] = []
   const paragraphs = content.split(/\n\s*\n/).filter((p) => p.trim())
@@ -38,7 +37,6 @@ function textToChunks(documentId: string, content: string, metaType: string): Do
     currentIndex = endIndex
   }
 
-  // 如果无分段，整个文档作为一个 chunk
   if (chunks.length === 0 && content.trim()) {
     chunks.push({
       id: uuidv4(),
@@ -53,14 +51,13 @@ function textToChunks(documentId: string, content: string, metaType: string): Do
   return chunks
 }
 
-/** 格式化文件大小 */
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
-// ─── 纯文本解析器 (TXT, MD, CSV) ─────────────────────────────
+// ── 纯文本解析器 ─────────────────────────────────────────────
 
 export class TextDocumentParser implements DocumentParser {
   supportedTypes = [SUPPORTED_MIME_TYPES.TXT, SUPPORTED_MIME_TYPES.MD, SUPPORTED_MIME_TYPES.CSV]
@@ -71,14 +68,13 @@ export class TextDocumentParser implements DocumentParser {
   }
 }
 
-// ─── PDF 解析器 ──────────────────────────────────────────────
+// ── PDF 解析器 ──────────────────────────────────────────────
 
 export class PDFDocumentParser implements DocumentParser {
   supportedTypes = [SUPPORTED_MIME_TYPES.PDF]
 
   async parse(buffer: Buffer, metadata: DocumentMetadata): Promise<DocumentChunk[]> {
     try {
-      // 动态导入 pdf-parse
       const pdfParse = (await import('pdf-parse') as any).default || (await import('pdf-parse') as any)
       const data = await pdfParse(buffer)
 
@@ -88,18 +84,13 @@ export class PDFDocumentParser implements DocumentParser {
       }
 
       const chunks = textToChunks(metadata.id, content, 'pdf')
-      // 附加 PDF 元数据
       const headerInfo = `[文档: ${metadata.name}]
 [页数: ${data.numpages}]
 [PDF信息: ${data.info?.Title || '无标题'}, 作者: ${data.info?.Author || '未知'}]
 ---
 `
-      // 在第一个 chunk 前插入文档头信息
       if (chunks.length > 0) {
-        chunks[0] = {
-          ...chunks[0],
-          content: headerInfo + chunks[0].content,
-        }
+        chunks[0] = { ...chunks[0], content: headerInfo + chunks[0].content }
       }
 
       return chunks
@@ -111,7 +102,7 @@ export class PDFDocumentParser implements DocumentParser {
   }
 }
 
-// ─── DOCX 解析器 ─────────────────────────────────────────────
+// ── DOCX 解析器 ─────────────────────────────────────────────
 
 export class DocxDocumentParser implements DocumentParser {
   supportedTypes = [SUPPORTED_MIME_TYPES.DOCX]
@@ -125,7 +116,6 @@ export class DocxDocumentParser implements DocumentParser {
         throw new Error('DOCX 文件未提取到文本内容')
       }
 
-      // 收集警告信息
       const warnings = result.messages
         .filter((m: { type: string }) => m.type === 'warning')
         .map((m: { message: string }) => m.message)
@@ -149,13 +139,12 @@ export class DocxDocumentParser implements DocumentParser {
   }
 }
 
-// ─── DOC 解析器（旧格式，需要 LibreOffice） ──────────────────
+// ── DOC 解析器（需 LibreOffice） ─────────────────────────────
 
 export class DocDocumentParser implements DocumentParser {
   supportedTypes = [SUPPORTED_MIME_TYPES.DOC]
 
   async parse(_buffer: Buffer, metadata: DocumentMetadata): Promise<DocumentChunk[]> {
-    // .doc 是旧的二进制格式，Node.js 原生无法直接解析
     throw new Error(
       `.doc 格式（旧版 Word）需要系统安装 LibreOffice 才能解析。\n` +
       `请安装: brew install libreoffice (macOS) 或 apt install libreoffice (Linux)\n` +
@@ -165,7 +154,7 @@ export class DocDocumentParser implements DocumentParser {
   }
 }
 
-// ─── XLSX 解析器 ─────────────────────────────────────────────
+// ── XLSX 解析器 ─────────────────────────────────────────────
 
 export class XlsxDocumentParser implements DocumentParser {
   supportedTypes = [SUPPORTED_MIME_TYPES.XLSX, SUPPORTED_MIME_TYPES.XLS]
@@ -180,7 +169,6 @@ export class XlsxDocumentParser implements DocumentParser {
 
       for (const name of sheetNames) {
         const sheet = workbook.Sheets[name]
-        // 使用 CSV 格式导出每个 sheet 的内容
         const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false, strip: true })
         if (csv.trim()) {
           sheetTexts.push(`【Sheet: ${name}】\n${csv}`)
@@ -194,7 +182,6 @@ export class XlsxDocumentParser implements DocumentParser {
 
       const chunks = textToChunks(metadata.id, content, 'xlsx')
 
-      // 附加表格元数据
       const totalRows = sheetNames.reduce((sum, name) => {
         const sheet = workbook.Sheets[name]
         const ref = sheet['!ref']
@@ -219,7 +206,7 @@ ${chunks[0].content}`,
   }
 }
 
-// ─── PPTX 解析器 ─────────────────────────────────────────────
+// ── PPTX 解析器 ─────────────────────────────────────────────
 
 export class PptxDocumentParser implements DocumentParser {
   supportedTypes = [SUPPORTED_MIME_TYPES.PPTX]
@@ -229,7 +216,6 @@ export class PptxDocumentParser implements DocumentParser {
       const JSZip = (await import('jszip')).default
       const zip = await JSZip.loadAsync(buffer)
 
-      // PPTX 是 ZIP 文件，幻灯片内容在 ppt/slides/slide*.xml
       const slideFiles: string[] = []
       const slideDir = zip.folder('ppt/slides')
 
@@ -243,7 +229,6 @@ export class PptxDocumentParser implements DocumentParser {
         }
       })
 
-      // 按幻灯片编号排序
       slideFiles.sort((a, b) => {
         const numA = parseInt(a.match(/slide(\d+)/)?.[1] || '0', 10)
         const numB = parseInt(b.match(/slide(\d+)/)?.[1] || '0', 10)
@@ -256,7 +241,6 @@ export class PptxDocumentParser implements DocumentParser {
         const xmlContent = await zip.file(`ppt/slides/${file}`)?.async('string')
         if (!xmlContent) continue
 
-        // 提取 <a:t> 标签内的文本（PPTX 文本元素）
         const textMatches = xmlContent.match(/<a:t[^>]*>([^<]*)<\/a:t>/g)
         if (textMatches) {
           const texts = textMatches
@@ -293,13 +277,12 @@ ${chunks[0].content}`,
   }
 }
 
-// ─── PPT 解析器（旧格式，需要 LibreOffice） ──────────────────
+// ── PPT 解析器（需 LibreOffice） ─────────────────────────────
 
 export class PptDocumentParser implements DocumentParser {
   supportedTypes = [SUPPORTED_MIME_TYPES.PPT]
 
   async parse(_buffer: Buffer, metadata: DocumentMetadata): Promise<DocumentChunk[]> {
-    // .ppt 是旧的二进制格式，Node.js 原生无法直接解析
     throw new Error(
       `.ppt 格式（旧版 PowerPoint）需要系统安装 LibreOffice 才能解析。\n` +
       `请安装: brew install libreoffice (macOS) 或 apt install libreoffice (Linux)\n` +
@@ -309,13 +292,12 @@ export class PptDocumentParser implements DocumentParser {
   }
 }
 
-// ─── 文档解析器工厂 ──────────────────────────────────────────
+// ── 文档解析器工厂 ──────────────────────────────────────────
 
 export class DocumentParserFactory {
   private parsers: DocumentParser[] = []
 
   constructor() {
-    // 按优先级注册解析器
     this.registerParser(new TextDocumentParser())
     this.registerParser(new PDFDocumentParser())
     this.registerParser(new DocxDocumentParser())
@@ -360,7 +342,7 @@ export class DocumentParserFactory {
   }
 }
 
-// ─── MIME 类型标签映射 ───────────────────────────────────────
+// ── MIME 类型标签映射 ───────────────────────────────────────
 
 function mimeLabel(mimeType: string): string {
   const map: Record<string, string> = {
@@ -378,7 +360,7 @@ function mimeLabel(mimeType: string): string {
   return map[mimeType] || mimeType
 }
 
-// ─── 工厂函数 ────────────────────────────────────────────────
+// ── 工厂函数 ────────────────────────────────────────────────
 
 let factoryInstance: DocumentParserFactory | null = null
 
@@ -389,9 +371,6 @@ export function createDocumentParserFactory(): DocumentParserFactory {
   return factoryInstance
 }
 
-/**
- * 根据文件扩展名推断 MIME 类型
- */
 export function inferMimeType(filename: string): string {
   const ext = (filename.split('.').pop() || '').toLowerCase()
   const extMap: Record<string, string> = {
