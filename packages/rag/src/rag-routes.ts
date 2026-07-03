@@ -1,3 +1,11 @@
+/**
+ * RAG REST API 路由 — Fastify 插件
+ *
+ * 使用方式:
+ *   import { ragRoutes } from '@manta/rag/routes'
+ *   await app.register(ragRoutes)
+ */
+
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { v4 as uuidv4 } from 'uuid'
 import {
@@ -6,15 +14,14 @@ import {
   createKnowledgeBase,
   updateKnowledgeBase,
   deleteKnowledgeBase,
-} from '../core/storage/knowledge-base/store'
-import type { CreateKnowledgeBaseInput, UpdateKnowledgeBaseInput } from '../core/storage/knowledge-base/store'
-import { apiSuccess, apiError, Errors } from '../core/api/error-handler'
-import { createDocumentPipeline } from '../core/engine/rag/pipeline'
-import { getSQLiteVecProvider } from '../core/engine/rag/providers/sqlite-vec-provider'
-import { createEmbeddingService } from '../core/engine/rag/providers/embedding-service'
-import { inferMimeType } from '../core/engine/rag/document-parser'
-import type { DocumentMetadata, SearchOptions } from '../core/engine/rag/types'
-import type { KnowledgeBaseConfig } from '../core/storage/knowledge-base/store'
+} from './knowledge-base-store'
+import type { CreateKnowledgeBaseInput, UpdateKnowledgeBaseInput, KnowledgeBaseConfig } from './knowledge-base-store'
+import { apiSuccess, apiError, Errors } from './error-handler'
+import { createDocumentPipeline } from './pipeline'
+import { getSQLiteVecProvider } from './sqlite-vec-provider'
+import { createEmbeddingService } from './embedding-service'
+import { inferMimeType } from './document-parser'
+import type { DocumentMetadata } from './types'
 
 // ─── Embedding Service 工厂 ─────────────────────────────────────
 // 优先使用 KB 内嵌配置，否则降级到环境变量
@@ -372,7 +379,7 @@ export async function ragRoutes(app: FastifyInstance) {
       try {
         const embeddingService = buildEmbeddingService(kb.config)
         const queryEmbedding = await embeddingService.embed(query)
-        results = await (provider as any).vectorSearch(id, queryEmbedding, {
+        results = await provider.vectorSearch(id, queryEmbedding, {
           topK,
           threshold: vectorThreshold,
           includeMetadata: true,
@@ -444,12 +451,12 @@ export async function ragRoutes(app: FastifyInstance) {
   // GET /api/rag/config — RAG 模块配置信息（含可选模型）
   app.get('/api/rag/config', async (_request, reply) => {
     try {
-      const { createDocumentParserFactory } = await import('../core/engine/rag/document-parser')
+      const { createDocumentParserFactory } = await import('./document-parser')
       const factory = createDocumentParserFactory()
       const supportedTypes = factory.getSupportedMimeTypes()
 
       // 动态获取本地模型
-      const { getAvailableEmbeddingModels } = await import('../core/engine/rag/providers/embedding-service')
+      const { getAvailableEmbeddingModels } = await import('./embedding-service')
       const { local, openai } = await getAvailableEmbeddingModels()
 
       // 智能选择默认 provider

@@ -48,48 +48,30 @@ importers:
       '@manta/agent-sandbox':
         specifier: workspace:*
         version: link:../agent-sandbox
+      '@manta/rag':
+        specifier: workspace:*
+        version: link:../rag
       '@manta/shared':
         specifier: workspace:*
         version: link:../shared
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
-      '@types/better-sqlite3':
-        specifier: ^7.6.13
-        version: 7.6.13
-      '@types/jszip':
-        specifier: ^3.4.1
-        version: 3.4.1
       ai:
         specifier: ^6.0.177
         version: 6.0.177(zod@4.4.3)
-      better-sqlite3:
-        specifier: ^12.11.1
-        version: 12.11.1
       fastify:
         specifier: ^5.3.3
         version: 5.8.5
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
-      jszip:
-        specifier: ^3.10.1
-        version: 3.10.1
-      mammoth:
-        specifier: ^1.12.0
-        version: 1.12.0
-      pdf-parse:
-        specifier: ^2.4.5
-        version: 2.4.5
       proper-lockfile:
         specifier: ^4.1.2
         version: 4.1.2
       uuid:
         specifier: ^13.0.0
         version: 13.0.0
-      xlsx:
-        specifier: ^0.18.5
-        version: 0.18.5
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -219,6 +201,43 @@ importers:
       vite:
         specifier: ^6.0.0
         version: 6.4.3(@types/node@24.12.0)(jiti@1.21.7)(less@4.6.6)(lightningcss@1.32.0)(sass-embedded@1.100.0)(sass@1.100.0)(stylus@0.64.0)(sugarss@5.0.1(postcss@8.5.8))(terser@5.48.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/rag:
+    dependencies:
+      '@fastify/multipart':
+        specifier: ^10.0.0
+        version: 10.0.0
+      better-sqlite3:
+        specifier: ^12.11.1
+        version: 12.11.1
+      fastify:
+        specifier: ^5.3.3
+        version: 5.8.5
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
+      mammoth:
+        specifier: ^1.12.0
+        version: 1.12.0
+      pdf-parse:
+        specifier: ^2.4.5
+        version: 2.4.5
+      uuid:
+        specifier: ^13.0.0
+        version: 13.0.0
+      xlsx:
+        specifier: ^0.18.5
+        version: 0.18.5
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
+      '@types/node':
+        specifier: ^22
+        version: 22.19.15
+      typescript:
+        specifier: ^5
+        version: 5.9.3
 
   packages/shared:
     dependencies:
@@ -1686,10 +1705,6 @@ packages:
 
   '@types/js-yaml@4.0.9':
     resolution: {integrity: sha512-k4MGaQl5TGo/iipqb2UDG2UwjXziSWkh0uysQelTlJpX1qGlpUZYm8PnO4DxG1qBomtJUdYJ6qR6xdIah10JLg==}
-
-  '@types/jszip@3.4.1':
-    resolution: {integrity: sha512-TezXjmf3lj+zQ651r6hPqvSScqBLvyPI9FxdXBqpEwBijNGQ2NXpaFW/7joGzveYkKQUil7iiDHLo6LV71Pc0A==}
-    deprecated: This is a stub types definition. jszip provides its own type definitions, so you do not need this installed.
 
   '@types/keyv@3.1.4':
     resolution: {integrity: sha512-BQ5aZNSCpj7D6K2ksrRCTmKRLEpnPvWDiLPfoGyhZ++8YtiK9d/3DBKPJgry359X/P1PfruyYwvnvwFjuEiEIg==}
@@ -6298,10 +6313,6 @@ snapshots:
   '@types/http-cache-semantics@4.2.0': {}
 
   '@types/js-yaml@4.0.9': {}
-
-  '@types/jszip@3.4.1':
-    dependencies:
-      jszip: 3.10.1
 
   '@types/keyv@3.1.4':
     dependencies:

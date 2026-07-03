@@ -2,10 +2,6 @@
  * 文档处理流水线 (Pipeline)
  *
  * 流程: 解析 → 分块 → 向量化 → 写入向量库
- *
- * 使用方式:
- *   const pipeline = createDocumentPipeline({ embeddingService, ragProvider, chunkStrategy })
- *   const result = await pipeline.process(buffer, metadata, knowledgeBaseId)
  */
 
 import { v4 as uuidv4 } from 'uuid'
@@ -112,7 +108,7 @@ export class DocumentPipeline {
         const dims = this.embeddingService.getDimensions()
         throw new Error(
           `Embedding 失败 — 维度: ${dims}，已处理: 0/${texts.length}\n` +
-          `提示: 确认 Ollama 在 localhost:11434 运行中，且已安装该模型\n` +
+          `提示: 确认 Ollama 在 http://127.0.0.1:11434 运行中，且已安装该模型\n` +
           `${embedErr instanceof Error ? embedErr.message : String(embedErr)}`
         )
       }
