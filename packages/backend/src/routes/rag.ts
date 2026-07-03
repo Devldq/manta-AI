@@ -16,9 +16,19 @@ import {
 } from '../core/storage/knowledge-base/store.js'
 import type { CreateKnowledgeBaseInput, UpdateKnowledgeBaseInput, KnowledgeBaseConfig } from '../core/storage/knowledge-base/store.js'
 import { apiSuccess, apiError, Errors } from '../core/api/error-handler.js'
-import { getSQLiteVecProvider, createDocumentPipeline, inferMimeType } from '@manta/rag'
+import {
+  getSQLiteVecProvider,
+  createDocumentPipeline,
+  inferMimeType,
+  extractChatContext,
+  buildRAGSystemPrompt,
+  buildRAGUserMessage,
+} from '@manta/rag'
 import type { DocumentMetadata } from '@manta/rag'
 import { createEmbeddingService, getAvailableEmbeddingModels } from '../core/engine/rag/embedding-service.js'
+import { getLLMConfig, getLLMProfiles } from '../core/llm/config-store'
+import { profileToLLMConfig } from '../core/llm/types'
+import { createAISDKModel } from '../core/llm/ai-sdk-provider'
 
 // ─── Embedding Service 工厂 ─────────────────────────────────────
 // 从 KB 配置或环境变量构建 embedding 服务，传入 rag 包
@@ -395,6 +405,136 @@ export async function ragRoutes(app: FastifyInstance) {
   })
 
   // ═══════════════════════════════════════════════════════════
+  //  知识问答（流式 SSE）
+  // ═══════════════════════════════════════════════════════════
+
+  app.post('/api/rag/knowledge-bases/:id/chat', async (request: FastifyRequest, reply) => {
+    try {
+      const { id } = request.params as { id: string }
+      const body = request.body as Record<string, any>
+      const question = body.question?.trim()
+
+      if (!question) throw Errors.VALIDATION_ERROR('question', '问题不能为空')
+
+      const kb = getKnowledgeBase(id)
+      if (!kb) throw Errors.NOT_FOUND('知识库', id)
+
+      // ── 1. 检索相关 chunks ──
+      const provider = getSQLiteVecProvider()
+      const vectorThreshold = kb.config.similarityThreshold || 0.3
+      const topK = 5
+
+      let allResults: any[] = []
+      try {
+        const embeddingService = buildEmbeddingService(kb.config)
+        const queryEmbedding = await embeddingService.embed(question)
+        allResults = await provider.vectorSearch(id, queryEmbedding, {
+          topK,
+          threshold: vectorThreshold,
+          includeMetadata: true,
+        })
+      } catch (err) {
+        console.warn('向量检索失败:', err)
+      }
+
+      // 补充关键词检索
+      try {
+        const keywordResults = await provider.search(id, question, {
+          topK: topK * 2,
+          threshold: 0.1,
+          includeMetadata: true,
+        })
+        const existingIds = new Set(allResults.map((r: any) => r.chunk.id))
+        for (const kr of keywordResults) {
+          if (!existingIds.has(kr.chunk.id)) allResults.push(kr)
+        }
+      } catch { /* ignore */ }
+
+      allResults.sort((a: any, b: any) => b.score - a.score)
+      allResults = allResults.slice(0, topK)
+
+      // ── 2. 构建 RAG 上下文 + prompt ──
+      const context = extractChatContext(allResults)
+      const systemPrompt = buildRAGSystemPrompt(context)
+      const userMessage = buildRAGUserMessage(question, context)
+
+      // ── 3. 选择 LLM 模型 ──
+      const { streamText } = await import('ai')
+      let modelConfig = getLLMConfig()
+
+      const profileId = body.profileId as string | undefined
+      if (profileId) {
+        try {
+          const profilesConfig = getLLMProfiles()
+          const found = profilesConfig.profiles.find((p) => p.id === profileId)
+          if (found) {
+            modelConfig = profileToLLMConfig(found)
+          }
+        } catch { /* fall back to default */ }
+      }
+
+      let model
+      try {
+        model = await createAISDKModel(modelConfig)
+      } catch (err) {
+        throw new Error(`创建 AI 模型失败: ${err instanceof Error ? err.message : String(err)}`)
+      }
+
+      // ── 4. SSE 流式输出 ──
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      })
+
+      // 发送检索到的来源信息
+      reply.raw.write(`data: ${JSON.stringify({
+        type: 'sources',
+        sources: context.chunks.map((c) => ({
+          name: c.sourceName,
+          documentId: c.documentId,
+          score: c.score,
+        })),
+      })}\n\n`)
+
+      const result = streamText({
+        model,
+        system: systemPrompt,
+        prompt: userMessage,
+        temperature: 0.3,
+      })
+
+      let fullText = ''
+      for await (const chunk of result.textStream) {
+        fullText += chunk
+        reply.raw.write(`data: ${JSON.stringify({ type: 'token', text: chunk })}\n\n`)
+      }
+
+      // 发送完成信号
+      reply.raw.write(`data: ${JSON.stringify({
+        type: 'done',
+        text: fullText,
+      })}\n\n`)
+
+      reply.raw.end()
+    } catch (err: any) {
+      // 如果 header 还没发送，返回 JSON 错误
+      if (!reply.sent) {
+        return apiError(reply, err)
+      }
+      // header 已发送，用 SSE 格式发送错误
+      try {
+        reply.raw.write(`data: ${JSON.stringify({
+          type: 'error',
+          error: err?.message || String(err),
+        })}\n\n`)
+        reply.raw.end()
+      } catch { /* ignore */ }
+    }
+  })
+
+  // ═══════════════════════════════════════════════════════════
   //  统计
   // ═══════════════════════════════════════════════════════════
 
@@ -459,12 +599,25 @@ export async function ragRoutes(app: FastifyInstance) {
         availableProviders.push({ id: 'openai', name: 'OpenAI', models: openai })
       }
 
+      // LLM profiles（供问答 Tab 模型选择）
+      let llmProfiles: Array<{ id: string; name: string; model: string; isDefault?: boolean }> = []
+      try {
+        const profilesConfig = getLLMProfiles()
+        llmProfiles = profilesConfig.profiles.map((p) => ({
+          id: p.id,
+          name: p.name,
+          model: p.model,
+          isDefault: p.isDefault,
+        }))
+      } catch { /* ignore */ }
+
       return reply.send(apiSuccess({
         supportedFormats: supportedTypes,
         maxFileSize: '50MB',
         globalProvider,
         globalModel,
         availableProviders,
+        llmProfiles,
       }))
     } catch (err) {
       return apiError(reply, err)

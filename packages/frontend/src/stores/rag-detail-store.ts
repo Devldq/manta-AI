@@ -93,6 +93,25 @@ export interface SearchResult {
   metadata: Record<string, unknown>
 }
 
+/** 问答消息 */
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  sources?: Array<{
+    name: string
+    documentId: string
+    score: number
+  }>
+}
+
+/** LLM Profile（供模型选择） */
+export interface LLMProfileOption {
+  id: string
+  name: string
+  model: string
+  isDefault?: boolean
+}
+
 interface RAGDetailStore {
   // 知识库详情
   kb: KnowledgeBaseDetail | null
@@ -127,6 +146,13 @@ interface RAGDetailStore {
   configSaving: boolean
   configError: string | null
 
+  // 问答
+  chatMessages: ChatMessage[]
+  chatStreaming: boolean
+  chatError: string | null
+  chatModelId: string | null
+  llmProfiles: LLMProfileOption[]
+
   // 操作
   fetchKnowledgeBase: (id: string) => Promise<void>
   fetchDocuments: (kbId: string) => Promise<void>
@@ -136,6 +162,8 @@ interface RAGDetailStore {
   deleteDocument: (kbId: string, docId: string) => Promise<boolean>
   search: (kbId: string, query: string, topK?: number) => Promise<void>
   updateConfig: (kbId: string, config: Partial<KnowledgeBaseConfig>) => Promise<boolean>
+  sendChat: (kbId: string, question: string) => Promise<void>
+  clearChat: () => void
   reset: () => void
 }
 
@@ -166,6 +194,12 @@ const initialState = {
   ragConfigLoading: false,
   configSaving: false,
   configError: null as string | null,
+
+  chatMessages: [] as ChatMessage[],
+  chatStreaming: false,
+  chatError: null as string | null,
+  chatModelId: null as string | null,
+  llmProfiles: [] as LLMProfileOption[],
 }
 
 export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
@@ -178,7 +212,18 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
         fetch('/api/rag/config').then((r) => r.json())
       )
       if (json.success && json.data) {
-        set({ ragConfig: json.data as RAGConfig, ragConfigLoading: false })
+        const data = json.data as any
+        set({
+          ragConfig: {
+            supportedFormats: data.supportedFormats,
+            maxFileSize: data.maxFileSize,
+            globalProvider: data.globalProvider,
+            globalModel: data.globalModel,
+            availableProviders: data.availableProviders,
+          } as RAGConfig,
+          llmProfiles: (data.llmProfiles || []) as LLMProfileOption[],
+          ragConfigLoading: false,
+        })
       } else {
         set({ ragConfigLoading: false })
       }
@@ -330,6 +375,99 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     } catch (err) {
       set({ searchLoading: false, searchError: String(err) })
     }
+  },
+
+  sendChat: async (kbId: string, question: string) => {
+    const { chatModelId } = get()
+    const userMsg: ChatMessage = { role: 'user', content: question }
+
+    set((s) => ({
+      chatMessages: [...s.chatMessages, userMsg, { role: 'assistant', content: '' }],
+      chatStreaming: true,
+      chatError: null,
+    }))
+
+    try {
+      const res = await fetch(`/api/rag/knowledge-bases/${kbId}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, profileId: chatModelId || undefined }),
+      })
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }))
+        throw new Error(json.error?.message || `请求失败 (${res.status})`)
+      }
+
+      const reader = res.body?.getReader()
+      if (!reader) throw new Error('无法读取响应流')
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const event = JSON.parse(line.slice(6))
+            switch (event.type) {
+              case 'token':
+                set((s) => {
+                  const msgs = [...s.chatMessages]
+                  const last = msgs[msgs.length - 1]
+                  if (last?.role === 'assistant') {
+                    msgs[msgs.length - 1] = { ...last, content: last.content + event.text }
+                  }
+                  return { chatMessages: msgs }
+                })
+                break
+              case 'sources':
+                set((s) => {
+                  const msgs = [...s.chatMessages]
+                  const last = msgs[msgs.length - 1]
+                  if (last?.role === 'assistant') {
+                    msgs[msgs.length - 1] = { ...last, sources: event.sources }
+                  }
+                  return { chatMessages: msgs }
+                })
+                break
+              case 'done':
+                // 流完成，不需要额外操作
+                break
+              case 'error':
+                throw new Error(event.error)
+            }
+          } catch (e) {
+            if ((e as Error).message.startsWith('data: ')) continue
+            throw e
+          }
+        }
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      set((s) => {
+        const msgs = [...s.chatMessages]
+        const last = msgs[msgs.length - 1]
+        if (last?.role === 'assistant' && !last.content) {
+          // 错误且回答为空，移除空消息
+          msgs.pop()
+        }
+        return { chatMessages: msgs, chatError: errMsg }
+      })
+    } finally {
+      set({ chatStreaming: false })
+    }
+  },
+
+  clearChat: () => {
+    set({ chatMessages: [], chatError: null })
   },
 
   reset: () => set(initialState),

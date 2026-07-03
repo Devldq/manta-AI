@@ -50,5 +50,13 @@ export {
 } from './pipeline'
 export type { PipelineOptions, PipelineResult, PipelineStage } from './pipeline'
 
+// ─── 问答 ───────────────────────────────────────────────
+export {
+  extractChatContext,
+  buildRAGSystemPrompt,
+  buildRAGUserMessage,
+} from './rag-chat'
+export type { ChatContext } from './rag-chat'
+
 // ─── 文件工具 ───────────────────────────────────────────
 export { ensureDir, atomicWrite, shortId, readJsonFile, writeJsonFile, removeDir } from './fs-utils'

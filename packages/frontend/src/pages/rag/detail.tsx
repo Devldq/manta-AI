@@ -25,6 +25,8 @@ import {
   ChevronDown,
   ChevronRight,
   FileSearch,
+  MessageSquare,
+  RefreshCw,
 } from 'lucide-react'
 import {
   useRAGDetailStore,
@@ -32,6 +34,8 @@ import {
   type ChunkPreview,
   type SearchResult,
   type RAGConfig,
+  type ChatMessage,
+  type LLMProfileOption,
 } from '@/stores/rag-detail-store'
 import { formatDistanceToNow } from 'date-fns'
 import {
@@ -658,11 +662,66 @@ function SearchResultCard({ result, index }: { result: SearchResult; index: numb
   )
 }
 
+// ─── 问答消息气泡 ─────────────────────────────────────────────
+function ChatBubble({ msg, streaming }: { msg: ChatMessage; streaming: boolean }) {
+  const isUser = msg.role === 'user'
+
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className="max-w-[90%] sm:max-w-[80%] rounded-xl px-3 py-2.5"
+        style={{
+          background: isUser ? 'var(--color-accent)' : 'var(--color-surface)',
+          border: isUser ? 'none' : '1px solid var(--color-border)',
+        }}
+      >
+        {/* 用户消息 */}
+        {isUser ? (
+          <p className="text-xs whitespace-pre-wrap break-words" style={{ color: 'var(--color-text-inverse)' }}>
+            {msg.content}
+          </p>
+        ) : (
+          <>
+            {/* 来源标签 */}
+            {msg.sources && msg.sources.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2">
+                {msg.sources.map((s, i) => (
+                  <span
+                    key={i}
+                    className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                    style={{
+                      background: 'var(--color-accent-subtle)',
+                      color: 'var(--color-accent)',
+                    }}
+                  >
+                    {s.name}
+                  </span>
+                ))}
+              </div>
+            )}
+            {/* 回答内容 */}
+            <p className="text-xs whitespace-pre-wrap break-words leading-relaxed" style={{ color: 'var(--color-text-primary)' }}>
+              {msg.content}
+              {streaming && (
+                <span
+                  className="inline-block w-1.5 h-3.5 ml-0.5 animate-pulse rounded-sm"
+                  style={{ background: 'var(--color-accent)' }}
+                />
+              )}
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── 主页面组件 ───────────────────────────────────────────────
 const TABS = [
   { id: 'documents', label: '文档' },
   { id: 'search', label: '检索' },
   { id: 'chunks', label: '分块' },
+  { id: 'chat', label: '问答' },
   { id: 'settings', label: '模型' },
 ] as const
 
@@ -679,6 +738,8 @@ export default function RAGDetailPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ docId: string; name: string } | null>(null)
   const [viewChunk, setViewChunk] = useState<ChunkPreview | null>(null)
   const [chunksDocFilter, setChunksDocFilter] = useState<string>('')
+  const [chatInput, setChatInput] = useState('')
+  const chatEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -729,6 +790,20 @@ export default function RAGDetailPage() {
     store.fetchChunks(id, docId)
   }
 
+  // 自动滚动到最新消息
+  useEffect(() => {
+    if (store.chatMessages.length > 0) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [store.chatMessages])
+
+  async function handleSendChat() {
+    if (!chatInput.trim() || !id || store.chatStreaming) return
+    const question = chatInput.trim()
+    setChatInput('')
+    await store.sendChat(id, question)
+  }
+
   // 加载状态
   if (store.kbLoading && !store.kb) {
     return (
@@ -762,10 +837,10 @@ export default function RAGDetailPage() {
   const kb = store.kb!
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="min-h-full w-full flex flex-col p-4 sm:p-6">
       {/* ── 头部 ─────────────────────────────────────── */}
-      <div className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+        <div className="flex items-center gap-3 flex-wrap">
           <button
             onClick={() => navigate('/rag')}
             className="flex items-center gap-1 text-xs transition-colors"
@@ -774,7 +849,7 @@ export default function RAGDetailPage() {
             <ArrowLeft size={12} />
             返回
           </button>
-          <div className="w-px h-4" style={{ background: 'var(--color-border)' }} />
+          <div className="w-px h-4 hidden sm:block" style={{ background: 'var(--color-border)' }} />
           <h1 className="text-base font-medium" style={{ color: 'var(--color-text-primary)' }}>
             {kb.name}
           </h1>
@@ -792,7 +867,7 @@ export default function RAGDetailPage() {
 
       {/* ── Tab 导航 ─────────────────────────────────────── */}
       <div
-        className="flex gap-1 p-1 rounded-lg mb-4"
+        className="flex flex-wrap gap-1 p-1 rounded-lg mb-4"
         style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
       >
         {TABS.map((tab) => (
@@ -1058,6 +1133,111 @@ export default function RAGDetailPage() {
               <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>选择文档查看分块</p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════
+          知识问答 Tab
+      ══════════════════════════════════════════════════ */}
+      {activeTab === 'chat' && (
+        <div className="flex flex-col flex-1 min-h-0">
+          {/* 顶部操作栏 */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 flex-shrink-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* 模型选择器 */}
+              {store.llmProfiles.length > 0 && (
+                <Select
+                  value={store.chatModelId || ''}
+                  onValueChange={(v) => useRAGDetailStore.setState({ chatModelId: v || null })}
+                >
+                  <SelectTrigger className="h-7 text-[11px] min-w-0 w-full sm:min-w-[140px] sm:w-auto bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-primary)] focus:ring-[var(--color-accent)]">
+                    <SelectValue placeholder="系统默认模型" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[var(--color-surface-elevated)] border-[var(--color-border)]">
+                    <SelectItem value="" className="text-[11px] text-[var(--color-text-primary)]">系统默认</SelectItem>
+                    {store.llmProfiles.map((p) => (
+                      <SelectItem
+                        key={p.id}
+                        value={p.id}
+                        className="text-[11px] text-[var(--color-text-primary)] focus:bg-[var(--color-accent-subtle)] focus:text-[var(--color-accent)]"
+                      >
+                        {p.name} ({p.model})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {store.chatMessages.length > 0 && (
+                <button
+                  onClick={store.clearChat}
+                  className="flex items-center justify-center gap-1 text-[10px] px-2 py-1.5 rounded transition-colors"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  <RefreshCw size={10} />
+                  清空
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 消息列表 */}
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
+            {store.chatMessages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full min-h-[180px] text-center px-4">
+                <MessageSquare size={28} className="mb-3" style={{ color: 'var(--color-text-muted)' }} />
+                <p className="text-xs sm:text-sm mb-1" style={{ color: 'var(--color-text-primary)' }}>知识库问答</p>
+                <p className="text-[10px] sm:text-xs max-w-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  基于知识库内容回答你的问题，支持流式输出
+                </p>
+              </div>
+            ) : (
+              <>
+                {store.chatMessages.map((msg, i) => (
+                  <ChatBubble key={i} msg={msg} streaming={i === store.chatMessages.length - 1 && store.chatStreaming && msg.role === 'assistant'} />
+                ))}
+                <div ref={chatEndRef} />
+              </>
+            )}
+          </div>
+
+          {/* 输入区域 */}
+          <div className="flex-shrink-0 mt-3">
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-lg"
+              style={{
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+              }}
+            >
+              <input
+                type="text"
+                placeholder="输入问题，基于知识库回答..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendChat() } }}
+                disabled={store.chatStreaming}
+                className="flex-1 min-w-0 bg-transparent text-xs sm:text-sm outline-none disabled:opacity-50"
+                style={{ color: 'var(--color-text-primary)' }}
+              />
+              <button
+                onClick={handleSendChat}
+                disabled={!chatInput.trim() || store.chatStreaming}
+                className="px-3 py-2 rounded-md text-xs font-medium transition-colors disabled:opacity-50 h-8 flex items-center justify-center min-w-[56px]"
+                style={{
+                  background: 'var(--color-accent)',
+                  color: 'var(--color-text-inverse)',
+                }}
+              >
+                {store.chatStreaming ? <Loader2 size={12} className="animate-spin" /> : '发送'}
+              </button>
+            </div>
+            {store.chatError && (
+              <p className="text-[10px] sm:text-xs mt-1 flex items-center gap-1" style={{ color: 'var(--color-status-failed)' }}>
+                <AlertCircle size={10} />
+                {store.chatError}
+              </p>
+            )}
+          </div>
         </div>
       )}
 
