@@ -138,6 +138,9 @@ interface RAGDetailStore {
 
   // 上传
   uploadProgress: number | null
+  uploadStage: string | null
+  uploadMessage: string | null
+  uploadChunkCount: number | null
   uploadError: string | null
 
   // 配置
@@ -188,6 +191,9 @@ const initialState = {
   searchQuery: '',
 
   uploadProgress: null as number | null,
+  uploadStage: null as string | null,
+  uploadMessage: null as string | null,
+  uploadChunkCount: null as number | null,
   uploadError: null as string | null,
 
   ragConfig: null as RAGConfig | null,
@@ -309,30 +315,102 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
   },
 
   uploadDocument: async (kbId: string, file: File) => {
-    set({ uploadProgress: 0, uploadError: null })
+    set({
+      uploadProgress: 0,
+      uploadStage: 'uploading',
+      uploadMessage: '正在上传文件...',
+      uploadChunkCount: null,
+      uploadError: null,
+    })
     try {
       const formData = new FormData()
       formData.append('file', file)
 
-      const res = await fetch(`/api/rag/knowledge-bases/${kbId}/documents`, {
+      const res = await fetch(`/api/rag/knowledge-bases/${kbId}/documents?stream=progress`, {
         method: 'POST',
         body: formData,
       })
-      const json = await res.json()
 
-      if (json.success) {
-        set({ uploadProgress: null })
-        // 刷新列表和知识库信息
-        invalidateCache(`rag-docs:${kbId}`)
-        invalidateCache(`rag-kb:${kbId}`)
-        await get().fetchDocuments(kbId)
-        await get().fetchKnowledgeBase(kbId)
-        return true
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }))
+        set({ uploadProgress: null, uploadStage: null, uploadMessage: null, uploadError: json.error?.message ?? '上传失败' })
+        return false
       }
-      set({ uploadProgress: null, uploadError: json.error?.message ?? '上传失败' })
-      return false
+
+      const reader = res.body?.getReader()
+      if (!reader) {
+        set({ uploadProgress: null, uploadStage: null, uploadMessage: null, uploadError: '无法读取响应流' })
+        return false
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let done = false
+
+      while (!done) {
+        const { done: readerDone, value } = await reader.read()
+        if (readerDone) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const event = JSON.parse(line.slice(6))
+            switch (event.type) {
+              case 'progress': {
+                const chunkMatch = event.message?.match(/(\d+)\/(\d+)/)
+                const chunkCount = chunkMatch ? parseInt(chunkMatch[1], 10) : null
+                set({
+                  uploadStage: event.stage,
+                  uploadProgress: event.progress,
+                  uploadMessage: event.message,
+                  uploadChunkCount: chunkCount,
+                })
+                break
+              }
+              case 'done': {
+                done = true
+                set({
+                  uploadProgress: 100,
+                  uploadStage: 'done',
+                  uploadMessage: `处理完成，共 ${event.chunkCount ?? 0} 个分块`,
+                  uploadChunkCount: event.chunkCount ?? null,
+                })
+                break
+              }
+              case 'error': {
+                done = true
+                set({
+                  uploadProgress: null,
+                  uploadStage: null,
+                  uploadMessage: null,
+                  uploadError: event.error ?? '处理失败',
+                })
+                break
+              }
+            }
+          } catch {
+            // 忽略无法解析的行
+          }
+        }
+      }
+
+      // 短暂展示完成后清理状态
+      if (get().uploadStage === 'done') {
+        await new Promise((resolve) => setTimeout(resolve, 600))
+      }
+
+      set({ uploadProgress: null, uploadStage: null, uploadMessage: null, uploadChunkCount: null })
+      // 刷新列表和知识库信息
+      invalidateCache(`rag-docs:${kbId}`)
+      invalidateCache(`rag-kb:${kbId}`)
+      await get().fetchDocuments(kbId)
+      await get().fetchKnowledgeBase(kbId)
+      return true
     } catch (err) {
-      set({ uploadProgress: null, uploadError: String(err) })
+      set({ uploadProgress: null, uploadStage: null, uploadMessage: null, uploadChunkCount: null, uploadError: String(err) })
       return false
     }
   },

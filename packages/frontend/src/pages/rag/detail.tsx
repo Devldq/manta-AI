@@ -27,6 +27,7 @@ import {
   FileSearch,
   MessageSquare,
   RefreshCw,
+  Info,
 } from 'lucide-react'
 import {
   useRAGDetailStore,
@@ -520,6 +521,195 @@ function EmbeddingSettingsPanel({
   )
 }
 
+// ─── 信息条目（知识库详情面板用）──────────────────────────
+function InfoItem({
+  label,
+  value,
+  mono,
+  time,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+  time?: boolean
+}) {
+  const displayValue = time ? formatTimeFull(value) : value
+
+  return (
+    <div className="flex flex-col gap-0.5 min-w-0">
+      <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+        {label}
+      </span>
+      <span
+        className={`text-xs truncate ${mono ? 'font-mono' : ''}`}
+        style={{ color: 'var(--color-text-primary)' }}
+        title={mono ? value : undefined}
+      >
+        {displayValue}
+      </span>
+    </div>
+  )
+}
+
+function formatTimeFull(iso: string): string {
+  try {
+    const d = new Date(iso)
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    const h = String(d.getHours()).padStart(2, '0')
+    const min = String(d.getMinutes()).padStart(2, '0')
+    const s = String(d.getSeconds()).padStart(2, '0')
+    return `${y}-${m}-${day} ${h}:${min}:${s}`
+  } catch {
+    return iso
+  }
+}
+
+// ─── 文档处理进度可视化 ───────────────────────────────────────
+const PROCESS_STAGES: { id: string; label: string; icon: React.ElementType }[] = [
+  { id: 'uploading', label: '上传', icon: Upload },
+  { id: 'parsing', label: '解析', icon: FileText },
+  { id: 'chunking', label: '分块', icon: Layers },
+  { id: 'embedding', label: '向量化', icon: Bot },
+  { id: 'storing', label: '存储', icon: Database },
+]
+
+function normalizeProgress(stage: string | null, progress: number): number {
+  if (stage === 'done') return 100
+  if (stage === 'uploading') return Math.min(progress * 0.1, 10)
+  const ranges: Record<string, [number, number]> = {
+    parsing: [10, 25],
+    chunking: [25, 45],
+    embedding: [45, 80],
+    storing: [80, 95],
+  }
+  if (stage && ranges[stage]) {
+    const [start, end] = ranges[stage]
+    return start + (progress / 100) * (end - start)
+  }
+  return 0
+}
+
+function ProcessingIndicator({
+  fileName,
+  stage,
+  progress,
+  message,
+  chunkCount,
+}: {
+  fileName: string
+  stage: string | null
+  progress: number
+  message: string | null
+  chunkCount: number | null
+}) {
+  const overall = normalizeProgress(stage, progress)
+  const currentStageIndex = PROCESS_STAGES.findIndex((s) => s.id === stage)
+  const radius = 26
+  const circumference = 2 * Math.PI * radius
+  const strokeDashoffset = circumference - (overall / 100) * circumference
+
+  return (
+    <div className="w-full">
+      <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-5">
+        {/* 环形进度 */}
+        <div className="relative shrink-0 w-16 h-16">
+          <svg className="w-full h-full -rotate-90" viewBox="0 0 60 60">
+            <circle
+              cx="30"
+              cy="30"
+              r={radius}
+              fill="none"
+              stroke="var(--color-border)"
+              strokeWidth="5"
+            />
+            <circle
+              cx="30"
+              cy="30"
+              r={radius}
+              fill="none"
+              stroke="var(--color-accent)"
+              strokeWidth="5"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={strokeDashoffset}
+              style={{ transition: 'stroke-dashoffset 0.4s ease' }}
+            />
+          </svg>
+          <div
+            className="absolute inset-0 flex items-center justify-center text-xs font-semibold"
+            style={{ color: 'var(--color-accent)' }}
+          >
+            {Math.round(overall)}%
+          </div>
+        </div>
+
+        {/* 文字信息 */}
+        <div className="flex-1 text-center sm:text-left min-w-0">
+          <p className="text-xs font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
+            {fileName}
+          </p>
+          <p className="text-xs mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+            {message ?? '正在处理...'}
+          </p>
+          {chunkCount !== null && chunkCount > 0 && (
+            <p className="text-[10px] mt-1" style={{ color: 'var(--color-text-muted)' }}>
+              已处理 {chunkCount} 个分块
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* 进度条 */}
+      <div className="h-1.5 rounded-full mt-4 overflow-hidden" style={{ background: 'var(--color-border)' }}>
+        <div
+          className="h-full rounded-full"
+          style={{
+            width: `${overall}%`,
+            background: 'var(--color-accent)',
+            transition: 'width 0.4s ease',
+          }}
+        />
+      </div>
+
+      {/* 阶段节点 */}
+      <div className="flex justify-between mt-3">
+        {PROCESS_STAGES.map((s, i) => {
+          const isCompleted = currentStageIndex > i || stage === 'done'
+          const isActive = currentStageIndex === i && stage !== 'done'
+          const Icon = s.icon
+          return (
+            <div key={s.id} className="flex flex-col items-center gap-1">
+              <div
+                className="w-7 h-7 rounded-full flex items-center justify-center transition-colors"
+                style={{
+                  background: isActive || isCompleted ? 'var(--color-accent)' : 'var(--color-surface)',
+                  border: `1px solid ${isActive || isCompleted ? 'var(--color-accent)' : 'var(--color-border)'}`,
+                }}
+              >
+                {isCompleted ? (
+                  <CheckCircle2 size={12} style={{ color: 'var(--color-text-inverse)' }} />
+                ) : (
+                  <Icon size={12} style={{ color: isActive ? 'var(--color-text-inverse)' : 'var(--color-text-muted)' }} />
+                )}
+              </div>
+              <span
+                className="text-[10px]"
+                style={{
+                  color: isActive || isCompleted ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                }}
+              >
+                {s.label}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── 文档卡片 ─────────────────────────────────────────────────
 function DocCard({
   doc,
@@ -739,6 +929,7 @@ export default function RAGDetailPage() {
   const [viewChunk, setViewChunk] = useState<ChunkPreview | null>(null)
   const [chunksDocFilter, setChunksDocFilter] = useState<string>('')
   const [chatInput, setChatInput] = useState('')
+  const [uploadingFile, setUploadingFile] = useState<File | null>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -754,7 +945,12 @@ export default function RAGDetailPage() {
   const handleUpload = useCallback(
     async (file: File) => {
       if (!id) return
-      await store.uploadDocument(id, file)
+      setUploadingFile(file)
+      try {
+        await store.uploadDocument(id, file)
+      } finally {
+        setUploadingFile(null)
+      }
     },
     [id, store]
   )
@@ -807,7 +1003,7 @@ export default function RAGDetailPage() {
   // 加载状态
   if (store.kbLoading && !store.kb) {
     return (
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 w-full">
         <div className="animate-pulse space-y-4">
           <div className="h-6 w-48 rounded" style={{ background: 'var(--color-surface)' }} />
           <div className="h-12 w-full rounded" style={{ background: 'var(--color-surface)' }} />
@@ -837,39 +1033,41 @@ export default function RAGDetailPage() {
   const kb = store.kb!
 
   return (
-    <div className="min-h-full w-full flex flex-col p-4 sm:p-6">
-      {/* ── 头部 ─────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
-        <div className="flex items-center gap-3 flex-wrap">
-          <button
-            onClick={() => navigate('/rag')}
-            className="flex items-center gap-1 text-xs transition-colors"
-            style={{ color: 'var(--color-text-muted)' }}
-          >
-            <ArrowLeft size={12} />
-            返回
-          </button>
-          <div className="w-px h-4 hidden sm:block" style={{ background: 'var(--color-border)' }} />
-          <h1 className="text-base font-medium" style={{ color: 'var(--color-text-primary)' }}>
-            {kb.name}
-          </h1>
-          {kb.config.embeddingConfig?.provider === 'local' && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>
-              Ollama
-            </span>
-          )}
+    <div className="min-h-full w-full flex flex-col lg:flex-row gap-5 p-4 sm:p-6">
+      {/* ═══ 左侧：主内容区 ═══ */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* ── 头部 ─────────────────────────────────────── */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={() => navigate('/rag')}
+              className="flex items-center gap-1 text-xs transition-colors"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
+              <ArrowLeft size={12} />
+              返回
+            </button>
+            <div className="w-px h-4 hidden sm:block" style={{ background: 'var(--color-border)' }} />
+            <h1 className="text-base font-medium" style={{ color: 'var(--color-text-primary)' }}>
+              {kb.name}
+            </h1>
+            {kb.config.embeddingConfig?.provider === 'local' && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>
+                Ollama
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-4 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+            <span className="flex items-center gap-1"><FileText size={10} />{kb.documentCount}</span>
+            <span className="flex items-center gap-1"><Layers size={10} />{kb.chunkCount}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-4 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-          <span className="flex items-center gap-1"><FileText size={10} />{kb.documentCount}</span>
-          <span className="flex items-center gap-1"><Layers size={10} />{kb.chunkCount}</span>
-        </div>
-      </div>
 
-      {/* ── Tab 导航 ─────────────────────────────────────── */}
-      <div
-        className="flex flex-wrap gap-1 p-1 rounded-lg mb-4"
-        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
-      >
+        {/* ── Tab 导航 ─────────────────────────────────────── */}
+        <div
+          className="flex flex-wrap gap-1 p-1 rounded-lg mb-4"
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+        >
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -914,15 +1112,15 @@ export default function RAGDetailPage() {
           <div
             className={`rounded-lg border-2 border-dashed p-6 text-center transition-colors cursor-pointer ${
               dragOver ? '' : ''
-            }`}
+            } ${store.uploadStage !== null ? 'pointer-events-none opacity-80' : ''}`}
             style={{
               borderColor: dragOver ? 'var(--color-accent)' : 'var(--color-border)',
               background: dragOver ? 'var(--color-accent-subtle)' : 'var(--color-surface)',
             }}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+            onDragOver={(e) => { e.preventDefault(); if (!store.uploadStage) setDragOver(true) }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={onDrop}
-            onClick={() => fileInputRef.current?.click()}
+            onDrop={(e) => { if (!store.uploadStage) onDrop(e) }}
+            onClick={() => { if (!store.uploadStage) fileInputRef.current?.click() }}
           >
             <input
               ref={fileInputRef}
@@ -932,11 +1130,14 @@ export default function RAGDetailPage() {
               onChange={onFileSelect}
             />
 
-            {store.uploadProgress !== null ? (
-              <div className="flex flex-col items-center gap-2">
-                <Loader2 size={20} className="animate-spin" style={{ color: 'var(--color-accent)' }} />
-                <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>正在处理文档...</p>
-              </div>
+            {store.uploadStage !== null ? (
+              <ProcessingIndicator
+                fileName={uploadingFile?.name || '正在上传...'}
+                stage={store.uploadStage}
+                progress={store.uploadProgress ?? 0}
+                message={store.uploadMessage}
+                chunkCount={store.uploadChunkCount}
+              />
             ) : (
               <>
                 <Upload size={16} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
@@ -1260,6 +1461,42 @@ export default function RAGDetailPage() {
       />
 
       <ChunkViewerModal open={!!viewChunk} chunk={viewChunk} onClose={() => setViewChunk(null)} />
+      </div>{/* end left content */}
+
+      {/* ═══ 右侧：基本信息侧边栏 ═══ */}
+      <aside className="lg:w-60 xl:w-72 shrink-0">
+        <div
+          className="rounded-lg p-4 lg:sticky lg:top-4"
+          style={{
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+          }}
+        >
+          <h2 className="text-xs font-medium mb-3 flex items-center gap-1.5" style={{ color: 'var(--color-text-muted)' }}>
+            <Info size={10} />
+            基本信息
+          </h2>
+          <div className="space-y-3">
+            <InfoItem label="知识库编码" value={kb.id} mono />
+            <InfoItem label="描述" value={kb.description || '—'} />
+            <InfoItem
+              label="Embedding 模型"
+              value={
+                kb.config.embeddingConfig?.model
+                  || (kb.config.embeddingConfig?.provider
+                    ? `${kb.config.embeddingConfig.provider === 'openai' ? 'OpenAI' : 'Ollama'} (默认)`
+                    : '系统默认')
+              }
+            />
+            <InfoItem label="向量维度" value={String(kb.config.dimensions)} />
+            <InfoItem label="相似度阈值" value={String(kb.config.similarityThreshold)} />
+            <InfoItem label="Top-K" value={String(kb.config.topK)} />
+            <InfoItem label="创建时间" value={kb.createdAt} time />
+            <InfoItem label="更新时间" value={kb.updatedAt} time />
+            <InfoItem label="存储引擎" value={kb.providerId} />
+          </div>
+        </div>
+      </aside>
     </div>
   )
 }

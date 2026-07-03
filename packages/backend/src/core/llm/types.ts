@@ -1,6 +1,6 @@
 /* LLM 配置类型定义 */
 
-export type LLMProvider = 'openai' | 'openai-compatible' | 'ollama' | 'lm-studio'
+export type LLMProvider = 'openai' | 'openai-compatible' | 'anthropic' | 'ollama' | 'lm-studio'
 
 /** 单次 LLM 调用配置（下游使用方接口，保持不变） */
 export interface LLMConfig {
@@ -88,6 +88,7 @@ export function profileToLLMConfig(profile: ModelProfile): LLMConfig {
 export const PROVIDER_DEFAULT_MODELS: Record<LLMProvider, string[]> = {
   'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
   'openai-compatible': ['deepseek-chat', 'qwen-turbo', 'qwen-plus', 'glm-4', 'moonshot-v1-8k'],
+  'anthropic': ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
   'ollama': ['llama3.2', 'llama3.1', 'qwen2.5', 'deepseek-r1', 'mistral', 'phi4'],
   'lm-studio': ['local-model'],
 }
@@ -95,6 +96,7 @@ export const PROVIDER_DEFAULT_MODELS: Record<LLMProvider, string[]> = {
 /** provider 的默认 base URL */
 export const PROVIDER_DEFAULT_BASE_URLS: Partial<Record<LLMProvider, string>> = {
   'openai': 'https://api.openai.com/v1',
+  'anthropic': 'https://api.anthropic.com/v1',
   'ollama': 'http://localhost:11434',
   'lm-studio': 'http://localhost:1234/v1',
 }
@@ -103,6 +105,7 @@ export const PROVIDER_DEFAULT_BASE_URLS: Partial<Record<LLMProvider, string>> = 
 export const PROVIDER_META: { value: LLMProvider; label: string; desc: string }[] = [
   { value: 'openai', label: 'OpenAI', desc: 'api.openai.com — GPT-4o、GPT-3.5 等' },
   { value: 'openai-compatible', label: 'OpenAI 兼容 API', desc: 'DeepSeek、通义千问、Moonshot 等' },
+  { value: 'anthropic', label: 'Anthropic (Claude)', desc: 'api.anthropic.com — Claude Sonnet、Opus、Haiku' },
   { value: 'ollama', label: 'Ollama（本地）', desc: 'localhost:11434 — 本地运行的 Ollama 服务' },
   { value: 'lm-studio', label: 'LM Studio（本地）', desc: 'localhost:1234 — LM Studio 本地服务' },
 ]

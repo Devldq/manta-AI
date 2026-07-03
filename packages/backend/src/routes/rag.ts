@@ -26,6 +26,7 @@ import {
 } from '@manta/rag'
 import type { DocumentMetadata } from '@manta/rag'
 import { createEmbeddingService, getAvailableEmbeddingModels } from '../core/engine/rag/embedding-service.js'
+import { getEmbeddingConfig, saveEmbeddingConfig } from '../core/engine/rag/embedding-config-store'
 import { getLLMConfig, getLLMProfiles } from '../core/llm/config-store'
 import { profileToLLMConfig } from '../core/llm/types'
 import { createAISDKModel } from '../core/llm/ai-sdk-provider'
@@ -33,13 +34,18 @@ import { createAISDKModel } from '../core/llm/ai-sdk-provider'
 // ─── Embedding Service 工厂 ─────────────────────────────────────
 // 从 KB 配置或环境变量构建 embedding 服务，传入 rag 包
 
+// 优先 KB 配置，其次全局持久化配置，最后环境变量
 function buildEmbeddingService(kbConfig?: KnowledgeBaseConfig) {
+  const gc = getEmbeddingConfig()
   const ec = kbConfig?.embeddingConfig
-  const provider = ec?.provider || (process.env.EMBEDDING_PROVIDER as 'openai' | 'local') || 'openai'
-  const model = ec?.model || process.env.EMBEDDING_MODEL
-  const apiKey = ec?.apiKey || process.env.OPENAI_API_KEY
-  const baseUrl = ec?.baseUrl || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
-  const dimensions = ec?.dimensions || kbConfig?.dimensions || 1536
+
+  const provider = ec?.provider || gc.provider || (process.env.EMBEDDING_PROVIDER as 'openai' | 'local') || 'openai'
+  const model = ec?.model || gc.model || process.env.EMBEDDING_MODEL ||
+    (provider === 'local' ? 'nomic-embed-text' : undefined)
+  const apiKey = ec?.apiKey || gc.apiKey || process.env.OPENAI_API_KEY
+  // local 不读 OPENAI_BASE_URL，交给 LocalEmbeddingService 自己的默认值
+  const baseUrl = provider === 'local' ? (ec?.baseUrl || gc.baseUrl) : (ec?.baseUrl || gc.baseUrl || process.env.OPENAI_BASE_URL)
+  const dimensions = ec?.dimensions || gc.dimensions || kbConfig?.dimensions || 1536
 
   if (!model) {
     throw new Error(
@@ -47,7 +53,7 @@ function buildEmbeddingService(kbConfig?: KnowledgeBaseConfig) {
       'Set embeddingConfig.model in knowledge base config, or EMBEDDING_MODEL environment variable.'
     )
   }
-  if (!apiKey) {
+  if (provider === 'openai' && !apiKey) {
     throw new Error(
       'OpenAI API key not configured. ' +
       'Set embeddingConfig.apiKey in knowledge base config, or OPENAI_API_KEY environment variable.'
@@ -213,11 +219,15 @@ export async function ragRoutes(app: FastifyInstance) {
   })
 
   app.post('/api/rag/knowledge-bases/:id/documents', async (request: FastifyRequest, reply) => {
+    let streamProgress = false
     try {
       const { id: kbId } = request.params as { id: string }
 
       const kb = getKnowledgeBase(kbId)
       if (!kb) throw Errors.NOT_FOUND('知识库', kbId)
+
+      const query = request.query as Record<string, string>
+      streamProgress = query.stream === 'progress'
 
       const data = await request.file()
       if (!data) throw Errors.VALIDATION_ERROR('file', '未上传文件')
@@ -240,9 +250,27 @@ export async function ragRoutes(app: FastifyInstance) {
         status: 'processing',
       }
 
-      // 从 KB 配置 / 环境变量构建 embedding 服务，传入 pipeline
       const embeddingService = buildEmbeddingService(kb.config)
       const ragProvider = getSQLiteVecProvider()
+
+      const sendEvent = (event: any) => {
+        if (streamProgress && reply.raw.writable) {
+          try {
+            reply.raw.write(`data: ${JSON.stringify(event)}\n\n`)
+          } catch {
+            // 客户端可能已断开，忽略
+          }
+        }
+      }
+
+      if (streamProgress) {
+        reply.raw.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        })
+      }
 
       const pipeline = createDocumentPipeline({
         embeddingService,
@@ -252,6 +280,7 @@ export async function ragRoutes(app: FastifyInstance) {
         chunkOverlap: 200,
         onProgress: (stage, progress, message) => {
           console.log(`[RAG Pipeline] ${stage}: ${progress}% - ${message}`)
+          sendEvent({ type: 'progress', stage, progress, message })
         },
       })
 
@@ -264,12 +293,41 @@ export async function ragRoutes(app: FastifyInstance) {
         chunkCount: stats.chunkCount,
       })
 
+      sendEvent({
+        type: 'done',
+        document: result.document,
+        chunkCount: result.chunkCount,
+        processingTimeMs: result.processingTimeMs,
+      })
+
+      if (streamProgress) {
+        return reply.raw.end()
+      }
+
       return reply.send(apiSuccess({
         document: result.document,
         chunkCount: result.chunkCount,
         processingTimeMs: result.processingTimeMs,
       }))
     } catch (err) {
+      if (streamProgress) {
+        try {
+          const errorMessage = err instanceof Error ? err.message : String(err)
+          if (!reply.raw.headersSent) {
+            reply.raw.writeHead(200, {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              'Connection': 'keep-alive',
+              'X-Accel-Buffering': 'no',
+            })
+          }
+          if (reply.raw.writable) {
+            reply.raw.write(`data: ${JSON.stringify({ type: 'error', error: errorMessage })}\n\n`)
+            reply.raw.end()
+          }
+        } catch { /* ignore */ }
+        return
+      }
       return apiError(reply, err)
     }
   })
@@ -562,6 +620,7 @@ export async function ragRoutes(app: FastifyInstance) {
 
   app.get('/api/rag/config', async (_request, reply) => {
     try {
+      const config = getEmbeddingConfig()
       const { createDocumentParserFactory } = await import('@manta/rag')
       const factory = createDocumentParserFactory()
       const supportedTypes = factory.getSupportedMimeTypes()
@@ -569,14 +628,16 @@ export async function ragRoutes(app: FastifyInstance) {
       const { getAvailableEmbeddingModels: getModels } = await import('../core/engine/rag/embedding-service.js')
       const { local, openai } = await getModels()
 
-      let globalProvider = process.env.EMBEDDING_PROVIDER || 'openai'
-      let globalModel = process.env.EMBEDDING_MODEL || 'text-embedding-3-small'
+      let globalProvider = config.provider
+      let globalModel = config.model
 
-      if (process.env.EMBEDDING_PROVIDER === 'local' && local.length > 0) {
-        globalModel = local[0].id
+      if (globalProvider === 'local' && local.length > 0) {
+        if (!globalModel || !local.find(m => m.id === globalModel)) {
+          globalModel = local[0].id
+        }
       } else if (globalProvider === 'local' && local.length === 0) {
         globalProvider = 'openai'
-        globalModel = 'text-embedding-3-small'
+        globalModel = openai[0]?.id ?? 'text-embedding-3-small'
       }
 
       const availableProviders: Array<{
@@ -599,8 +660,9 @@ export async function ragRoutes(app: FastifyInstance) {
         availableProviders.push({ id: 'openai', name: 'OpenAI', models: openai })
       }
 
-      // LLM profiles（供问答 Tab 模型选择）
+      // LLM profiles（供问答 Tab 模型选择 + embedding 匹配）
       let llmProfiles: Array<{ id: string; name: string; model: string; isDefault?: boolean }> = []
+      let embeddingProfileId: string | null = null
       try {
         const profilesConfig = getLLMProfiles()
         llmProfiles = profilesConfig.profiles.map((p) => ({
@@ -609,6 +671,13 @@ export async function ragRoutes(app: FastifyInstance) {
           model: p.model,
           isDefault: p.isDefault,
         }))
+        // 匹配当前 embedding 配置对应的 profile
+        const ec = getEmbeddingConfig()
+        const match = profilesConfig.profiles.find((p) =>
+          p.model === ec.model &&
+          (ec.provider === 'local' ? p.provider === 'ollama' : p.provider === 'openai' || p.provider === 'openai-compatible' || p.provider === 'anthropic')
+        )
+        if (match) embeddingProfileId = match.id
       } catch { /* ignore */ }
 
       return reply.send(apiSuccess({
@@ -616,11 +685,82 @@ export async function ragRoutes(app: FastifyInstance) {
         maxFileSize: '50MB',
         globalProvider,
         globalModel,
+        globalConfig: config,
         availableProviders,
         llmProfiles,
+        embeddingProfileId,
       }))
     } catch (err) {
       return apiError(reply, err)
     }
   })
+
+  // ─── 从 LLM profile 同步 Embedding 配置 ───
+  app.post('/api/rag/embedding-config-from-profile', async (request, reply) => {
+    try {
+      const body = request.body as { profileId?: string; dimensions?: number }
+      if (!body.profileId) {
+        return reply.status(400).send({ success: false, error: 'profileId 不能为空' })
+      }
+      const profiles = getLLMProfiles()
+      const profile = profiles.profiles.find(p => p.id === body.profileId)
+      if (!profile) {
+        return reply.status(404).send({ success: false, error: 'Profile 不存在' })
+      }
+      // ollama / lm-studio → 'local', 其余 → 'openai'
+      const embeddingProvider: 'openai' | 'local' =
+        profile.provider === 'ollama' || profile.provider === 'lm-studio' ? 'local' : 'openai'
+      saveEmbeddingConfig({
+        provider: embeddingProvider,
+        model: profile.model,
+        baseUrl: profile.baseUrl || undefined,
+        apiKey: profile.apiKey || undefined,
+        dimensions: body.dimensions ?? (embeddingProvider === 'local' ? 768 : 1536),
+      })
+      return reply.send(apiSuccess({ profileId: body.profileId, provider: embeddingProvider, model: profile.model }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // ─── 保存全局 Embedding 配置 ───
+  app.post('/api/rag/embedding-config', async (request, reply) => {
+    try {
+      const body = request.body as Record<string, unknown>
+      const provider = body.provider as 'openai' | 'local'
+      if (!provider || !['openai', 'local'].includes(provider)) {
+        return reply.status(400).send({ success: false, error: 'provider 必须是 openai 或 local' })
+      }
+      const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : undefined
+      if (!model) {
+        return reply.status(400).send({ success: false, error: 'model 不能为空' })
+      }
+      const payload = {
+        provider,
+        model,
+        baseUrl: typeof body.baseUrl === 'string' && body.baseUrl.trim() ? body.baseUrl.trim() : undefined,
+        apiKey: typeof body.apiKey === 'string' && body.apiKey.trim() ? body.apiKey.trim() : undefined,
+        dimensions: typeof body.dimensions === 'number' ? body.dimensions : undefined,
+      }
+      saveEmbeddingConfig(payload)
+      return reply.send(apiSuccess({ config: payload }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // ─── 扫描指定 provider 的可用模型 ───
+  app.get('/api/rag/embedding-models', async (request, reply) => {
+    try {
+      const query = request.query as Record<string, string>
+      const provider = query.provider || 'local'
+      const { getAvailableEmbeddingModels: getModels } = await import('../core/engine/rag/embedding-service.js')
+      const { local, openai } = await getModels()
+      const models = provider === 'local' ? local : openai
+      return reply.send(apiSuccess({ provider, models }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
 }

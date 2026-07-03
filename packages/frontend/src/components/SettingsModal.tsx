@@ -1476,7 +1476,7 @@ function getDesignDocUrl(theme: DesignTheme): string {
 /*  start: LLM 配置 Tab — 支持 OpenAI / 兼容 API / Ollama / LM Studio */
 function LLMTab() {
   // ─── 类型定义 ───
-  type LLMProvider = 'openai' | 'openai-compatible' | 'ollama' | 'lm-studio'
+  type LLMProvider = 'openai' | 'openai-compatible' | 'anthropic' | 'ollama' | 'lm-studio'
 
   interface ModelProfileLocal {
     id: string
@@ -1499,6 +1499,7 @@ function LLMTab() {
   const PROVIDERS: { value: LLMProvider; label: string; desc: string }[] = [
     { value: 'openai', label: 'OpenAI', desc: 'api.openai.com — GPT-4o、GPT-3.5 等' },
     { value: 'openai-compatible', label: 'OpenAI 兼容 API', desc: 'DeepSeek、通义千问、Moonshot 等' },
+    { value: 'anthropic', label: 'Anthropic (Claude)', desc: 'api.anthropic.com — Claude Sonnet、Opus、Haiku' },
     { value: 'ollama', label: 'Ollama（本地）', desc: 'localhost:11434 — 本地运行的 Ollama 服务' },
     { value: 'lm-studio', label: 'LM Studio（本地）', desc: 'localhost:1234 — LM Studio 本地服务' },
   ]
@@ -1506,12 +1507,14 @@ function LLMTab() {
   const MODEL_SUGGESTIONS: Record<LLMProvider, string[]> = {
     'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
     'openai-compatible': ['deepseek-chat', 'deepseek-reasoner', 'qwen-turbo', 'qwen-plus', 'moonshot-v1-8k', 'glm-4'],
+    'anthropic': ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
     'ollama': ['llama3.2', 'llama3.1', 'qwen2.5', 'deepseek-r1', 'mistral', 'phi4'],
     'lm-studio': ['local-model'],
   }
 
   const DEFAULT_BASE_URLS: Partial<Record<LLMProvider, string>> = {
     'openai': 'https://api.openai.com/v1',
+    'anthropic': 'https://api.anthropic.com/v1',
     'ollama': 'http://localhost:11434',
     'lm-studio': 'http://localhost:1234/v1',
   }
@@ -1519,6 +1522,7 @@ function LLMTab() {
   const PROVIDER_ICON: Record<LLMProvider, string> = {
     'openai': '🟢',
     'openai-compatible': '🔵',
+    'anthropic': '🟠',
     'ollama': '🦙',
     'lm-studio': '🏠',
   }
@@ -1535,9 +1539,12 @@ function LLMTab() {
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [importing, setImporting] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [scanning, setScanning] = useState(false)
   const [showPasteDialog, setShowPasteDialog] = useState(false)
   const [pasteText, setPasteText] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [embeddingProfileId, setEmbeddingProfileId] = useState<string | null>(null)
+  const [settingEmbedding, setSettingEmbedding] = useState<string | null>(null)
 
   // ─── 加载配置 ───
   useEffect(() => {
@@ -1563,6 +1570,18 @@ function LLMTab() {
       })
       .catch(() => {})
       .finally(() => setLoading(false))
+  }, [])
+
+  // ─── 加载 Embedding 配置 ───
+  useEffect(() => {
+    fetch('/api/rag/config')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          setEmbeddingProfileId(data.data.embeddingProfileId || null)
+        }
+      })
+      .catch(() => {})
   }, [])
 
   // ─── Provider 切换（编辑表单） ───
@@ -1711,6 +1730,30 @@ function LLMTab() {
       }
     } catch {
       // ignore
+    }
+  }
+
+  // ─── 设为 Embedding 模型 ───
+  async function handleSetEmbedding(profileId: string) {
+    setSettingEmbedding(profileId)
+    setMsg(null)
+    try {
+      const res = await fetch('/api/rag/embedding-config-from-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setEmbeddingProfileId(profileId)
+        setMsg({ type: 'success', text: `已设为 Embedding 模型：${data.data?.model || ''}` })
+      } else {
+        setMsg({ type: 'error', text: data.error || '设置失败' })
+      }
+    } catch {
+      setMsg({ type: 'error', text: '设置失败' })
+    } finally {
+      setSettingEmbedding(null)
     }
   }
 
@@ -1927,6 +1970,36 @@ function LLMTab() {
     }
   }
 
+  // ─── 扫描并导入本地 Ollama 模型 ───
+  async function handleScanLocalModels() {
+    setScanning(true)
+    setMsg(null)
+    try {
+      const res = await fetch('/api/chat/config?action=scan-ollama', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseUrl: 'http://localhost:11434' }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        if (data.added > 0) {
+          setMsg({ type: 'success', text: `已导入 ${data.added} 个本地模型，跳过 ${data.skipped} 个` })
+        } else if (data.models && data.models.length > 0) {
+          setMsg({ type: 'success', text: `${data.models.length} 个本地模型已存在，未重复导入` })
+        } else {
+          setMsg({ type: 'error', text: '未扫描到本地模型，请确认 Ollama 服务已启动并已拉取模型' })
+        }
+        await reloadProfiles()
+      } else {
+        setMsg({ type: 'error', text: data.error ?? '扫描失败' })
+      }
+    } catch {
+      setMsg({ type: 'error', text: '扫描失败，请确认 Ollama 服务已启动' })
+    } finally {
+      setScanning(false)
+    }
+  }
+
   // ─── 重新加载 profiles ───
   async function reloadProfiles() {
     try {
@@ -1951,6 +2024,14 @@ function LLMTab() {
     } catch {
       // ignore
     }
+    // 同步 Embedding 配置
+    try {
+      const ragRes = await fetch('/api/rag/config')
+      const ragData = await ragRes.json()
+      if (ragData.success) {
+        setEmbeddingProfileId(ragData.data.embeddingProfileId || null)
+      }
+    } catch { /* ignore */ }
   }
 
   // ─── 渲染 ───
@@ -1962,7 +2043,7 @@ function LLMTab() {
     )
   }
 
-  const needsApiKey = editForm?.provider === 'openai' || editForm?.provider === 'openai-compatible'
+  const needsApiKey = editForm?.provider === 'openai' || editForm?.provider === 'openai-compatible' || editForm?.provider === 'anthropic'
   const needsBaseUrl = editForm?.provider !== 'openai'
 
   return (
@@ -1982,6 +2063,22 @@ function LLMTab() {
               已配置的模型
             </label>
             <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                onClick={handleScanLocalModels}
+                disabled={scanning}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '11px',
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: 'var(--color-text-secondary)',
+                  cursor: scanning ? 'not-allowed' : 'pointer',
+                  opacity: scanning ? 0.5 : 1,
+                }}
+              >
+                {scanning ? '扫描中...' : '🔍 扫描本地模型'}
+              </button>
               <button
                 onClick={triggerImport}
                 disabled={importing}
@@ -2066,6 +2163,11 @@ function LLMTab() {
                         使用中
                       </span>
                     )}
+                    {embeddingProfileId === profile.id && (
+                      <span style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '3px', background: '#8b5cf620', color: '#8b5cf6', fontWeight: 600 }}>
+                        Embedding
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {PROVIDERS.find(p => p.value === profile.provider)?.label ?? profile.provider} · {profile.model}
@@ -2091,6 +2193,23 @@ function LLMTab() {
                     ★
                   </button>
                 )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleSetEmbedding(profile.id) }}
+                  disabled={settingEmbedding === profile.id}
+                  style={{
+                    padding: '4px 6px',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    border: `1px solid ${embeddingProfileId === profile.id ? '#8b5cf6' : 'var(--color-border)'}`,
+                    background: embeddingProfileId === profile.id ? '#8b5cf620' : 'transparent',
+                    color: embeddingProfileId === profile.id ? '#8b5cf6' : 'var(--color-text-muted)',
+                    cursor: settingEmbedding === profile.id ? 'not-allowed' : 'pointer',
+                    opacity: settingEmbedding === profile.id ? 0.5 : 1,
+                  }}
+                  title="用作 Embedding 向量化模型"
+                >
+                  {settingEmbedding === profile.id ? '…' : '🧬'}
+                </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); startEdit(profile) }}
                   style={{

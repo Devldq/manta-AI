@@ -158,6 +158,15 @@ export async function createAISDKModel(config?: LLMConfig) {
       return openai.chat(cfg.model)
     }
 
+    case 'anthropic': {
+      const { createAnthropic } = await import('@ai-sdk/anthropic')
+      const anthropic = createAnthropic({
+        apiKey: cfg.apiKey || '',
+        baseURL: cfg.baseUrl || 'https://api.anthropic.com/v1',
+      })
+      return anthropic.chat(cfg.model)
+    }
+
     case 'ollama': {
       const baseURL = cfg.baseUrl
         ? `${cfg.baseUrl.replace(/\/$/, '')}/v1`

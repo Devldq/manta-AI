@@ -69,6 +69,19 @@ export async function createChatModel(config: LLMConfig): Promise<BaseChatModel>
       })
     }
 
+    case 'anthropic': {
+      // AI: Anthropic Claude API
+      // @ts-ignore — LangChain 模块已废弃
+      const { ChatAnthropic } = await import('@langchain/anthropic')
+      return new ChatAnthropic({
+        apiKey: config.apiKey || '',
+        model: config.model,
+        temperature,
+        maxTokens,
+        anthropicApiUrl: config.baseUrl || 'https://api.anthropic.com',
+      })
+    }
+
     default:
       throw new Error(`不支持的 LLM provider: ${config.provider}`)
   }

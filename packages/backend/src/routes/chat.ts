@@ -15,6 +15,7 @@ import { testLLMConnection } from '../core/llm/factory'
 import type { ModelProfile, LLMProfilesConfig } from '../core/llm/types'
 import { profileToLLMConfig } from '../core/llm/types'
 import { v4 as uuidv4 } from 'uuid'
+import { listLocalOllamaModels } from '../core/engine/rag/embedding-service.js'
 
 export async function chatConfigRoutes(app: FastifyInstance) {
   // GET /api/chat/config — 读取多模型配置列表（脱敏）
@@ -159,6 +160,46 @@ export async function chatConfigRoutes(app: FastifyInstance) {
             saveLLMProfiles(newConfig)
             return reply.send({ success: true, added: profilesWithIds.length, skipped: 0, total: profilesWithIds.length })
           }
+        }
+
+        case 'scan-ollama': {
+          const baseUrl = (request.body as { baseUrl?: string })?.baseUrl || 'http://localhost:11434'
+          const localModels = await listLocalOllamaModels()
+          if (localModels.length === 0) {
+            return reply.send({ success: true, added: 0, skipped: 0, total: 0, models: [] })
+          }
+
+          const existing = getLLMProfiles()
+          const seen = new Set(existing.profiles.map(p => `${p.provider}:${p.baseUrl || ''}:${p.model}`))
+          let addedCount = 0
+          let skippedCount = 0
+
+          for (const m of localModels) {
+            const key = `ollama:${baseUrl}:${m.name}`
+            if (seen.has(key)) { skippedCount++; continue }
+            seen.add(key)
+            existing.profiles.push({
+              id: uuidv4(),
+              name: m.name,
+              provider: 'ollama',
+              model: m.name,
+              baseUrl,
+              temperature: 0.7,
+            })
+            addedCount++
+          }
+
+          if (!existing.activeProfileId && existing.profiles.length > 0) {
+            existing.activeProfileId = existing.profiles[0].id
+          }
+          saveLLMProfiles(existing)
+          return reply.send({
+            success: true,
+            added: addedCount,
+            skipped: skippedCount,
+            total: existing.profiles.length,
+            models: localModels.map((m) => ({ id: m.name, name: m.name })),
+          })
         }
 
         default:
