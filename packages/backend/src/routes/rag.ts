@@ -234,7 +234,9 @@ export async function ragRoutes(app: FastifyInstance) {
 
       const buffer = await data.toBuffer()
       const fileName = data.filename || 'unknown'
-      const mimeType = data.mimetype || inferMimeType(fileName)
+      const mimeType = data.mimetype && data.mimetype !== 'application/octet-stream' 
+        ? data.mimetype 
+        : inferMimeType(fileName)
 
       if (buffer.length === 0) throw Errors.VALIDATION_ERROR('file', '上传的文件为空')
       if (buffer.length > 50 * 1024 * 1024) throw Errors.VALIDATION_ERROR('file', '文件大小超过 50MB 限制')

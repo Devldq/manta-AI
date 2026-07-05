@@ -41,5 +41,8 @@ next-env.d.ts
 # Takumi CLI local data
 /.takumi/.turbo/
 
+# Turborepo
+.turbo/
+
 # MCP config (contains GitHub token)
 .mcp.json

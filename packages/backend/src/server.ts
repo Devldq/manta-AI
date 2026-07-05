@@ -10,10 +10,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = parseInt(process.env.MANTA_PORT ?? '3001', 10)
 const HOST = process.env.MANTA_HOST ?? '0.0.0.0'
 const IS_DEV = process.env.NODE_ENV !== 'production'
-const DATA_DIR = process.env.MANTA_DATA_DIR ?? resolve(process.env.HOME ?? '~', '.manta-data')
 // 计算项目根目录（无论 dev/prod，始终指向 monorepo 根目录）
 const WORKSPACE_ROOT = process.env.MANTA_WORKSPACE_ROOT || resolve(__dirname, '../../..')
 process.env.MANTA_WORKSPACE_ROOT = WORKSPACE_ROOT
+const DATA_DIR = process.env.MANTA_DATA_DIR ?? resolve(process.env.HOME ?? '~', '.manta-data')
 
 // ─── 创建 Fastify 实例 ──────────────────────────────────────
 const app = Fastify({

@@ -1033,11 +1033,11 @@ export default function RAGDetailPage() {
   const kb = store.kb!
 
   return (
-    <div className="min-h-full w-full flex flex-col lg:flex-row gap-5 p-4 sm:p-6">
+    <div className="h-screen w-full flex flex-col lg:flex-row gap-5 p-4 sm:p-6 overflow-hidden">
       {/* ═══ 左侧：主内容区 ═══ */}
       <div className="flex-1 min-w-0 flex flex-col">
         {/* ── 头部 ─────────────────────────────────────── */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 flex-shrink-0">
           <div className="flex items-center gap-3 flex-wrap">
             <button
               onClick={() => navigate('/rag')}
@@ -1065,7 +1065,7 @@ export default function RAGDetailPage() {
 
         {/* ── Tab 导航 ─────────────────────────────────────── */}
         <div
-          className="flex flex-wrap gap-1 p-1 rounded-lg mb-4"
+          className="flex flex-wrap gap-1 p-1 rounded-lg mb-4 flex-shrink-0"
           style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
         >
         {TABS.map((tab) => (
@@ -1086,7 +1086,7 @@ export default function RAGDetailPage() {
       {/* ── 错误提示 ─────────────────────────────────────── */}
       {(store.kbError || store.docsError || store.uploadError) && (
         <div
-          className="mb-4 px-3 py-2 rounded-lg text-xs flex items-center gap-2"
+          className="mb-4 px-3 py-2 rounded-lg text-xs flex items-center gap-2 flex-shrink-0"
           style={{
             background: 'rgba(239, 68, 68, 0.1)',
             color: 'var(--color-status-failed)',
@@ -1107,10 +1107,10 @@ export default function RAGDetailPage() {
           文档管理 Tab
       ══════════════════════════════════════════════════ */}
       {activeTab === 'documents' && (
-        <div className="space-y-3">
+        <div className="flex-1 min-h-0 flex flex-col gap-3">
           {/* 上传区域 */}
           <div
-            className={`rounded-lg border-2 border-dashed p-6 text-center transition-colors cursor-pointer ${
+            className={`rounded-lg border-2 border-dashed p-6 text-center transition-colors cursor-pointer flex-shrink-0 ${
               dragOver ? '' : ''
             } ${store.uploadStage !== null ? 'pointer-events-none opacity-80' : ''}`}
             style={{
@@ -1148,32 +1148,34 @@ export default function RAGDetailPage() {
           </div>
 
           {/* 文档列表 */}
-          {store.docsLoading ? (
-            <div className="space-y-2">
-              {[1, 2].map((i) => (
-                <div key={i} className="h-12 rounded-lg animate-pulse" style={{ background: 'var(--color-surface)' }} />
-              ))}
-            </div>
-          ) : store.documents.length === 0 ? (
-            <div
-              className="text-center py-10 rounded-lg border"
-              style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
-            >
-              <FileText size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
-              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>暂无文档，上传文件以构建知识库</p>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {store.documents.map((doc) => (
-                <DocCard
-                  key={doc.id}
-                  doc={doc}
-                  onDelete={() => setDeleteTarget({ docId: doc.id, name: doc.name })}
-                  onViewChunks={() => handleViewChunks(doc.id)}
-                />
-              ))}
-            </div>
-          )}
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {store.docsLoading ? (
+              <div className="space-y-2">
+                {[1, 2].map((i) => (
+                  <div key={i} className="h-12 rounded-lg animate-pulse" style={{ background: 'var(--color-surface)' }} />
+                ))}
+              </div>
+            ) : store.documents.length === 0 ? (
+              <div
+                className="text-center py-10 rounded-lg border"
+                style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
+              >
+                <FileText size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>暂无文档，上传文件以构建知识库</p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {store.documents.map((doc) => (
+                  <DocCard
+                    key={doc.id}
+                    doc={doc}
+                    onDelete={() => setDeleteTarget({ docId: doc.id, name: doc.name })}
+                    onViewChunks={() => handleViewChunks(doc.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1181,10 +1183,10 @@ export default function RAGDetailPage() {
           检索测试 Tab
       ══════════════════════════════════════════════════ */}
       {activeTab === 'search' && (
-        <div className="space-y-3">
+        <div className="flex-1 min-h-0 flex flex-col gap-3">
           {/* 搜索栏 */}
           <div
-            className="flex items-center gap-2 px-3 py-2 rounded-lg"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg flex-shrink-0"
             style={{
               background: 'var(--color-surface)',
               border: '1px solid var(--color-border)',
@@ -1214,39 +1216,41 @@ export default function RAGDetailPage() {
           </div>
 
           {/* 检索结果 */}
-          {store.searchQuery && !store.searchLoading && (
-            <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-              「{store.searchQuery}」找到 {store.searchResults.length} 条结果
-            </p>
-          )}
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {store.searchQuery && !store.searchLoading && (
+              <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                「{store.searchQuery}」找到 {store.searchResults.length} 条结果
+              </p>
+            )}
 
-          {store.searchError && (
-            <p className="text-xs" style={{ color: 'var(--color-status-failed)' }}>{store.searchError}</p>
-          )}
+            {store.searchError && (
+              <p className="text-xs" style={{ color: 'var(--color-status-failed)' }}>{store.searchError}</p>
+            )}
 
-          {store.searchLoading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-20 rounded-lg animate-pulse" style={{ background: 'var(--color-surface)' }} />
-              ))}
-            </div>
-          ) : store.searchResults.length > 0 ? (
-            <div className="space-y-2">
-              {store.searchResults.map((r, i) => (
-                <SearchResultCard key={i} result={r} index={i} />
-              ))}
-            </div>
-          ) : store.searchQuery ? (
-            <div className="text-center py-8 rounded-lg" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-              <Search size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
-              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>未找到匹配结果</p>
-            </div>
-          ) : (
-            <div className="text-center py-8 rounded-lg" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-              <FileSearch size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
-              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>输入关键词测试检索效果</p>
-            </div>
-          )}
+            {store.searchLoading ? (
+              <div className="space-y-2">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-20 rounded-lg animate-pulse" style={{ background: 'var(--color-surface)' }} />
+                ))}
+              </div>
+            ) : store.searchResults.length > 0 ? (
+              <div className="space-y-2">
+                {store.searchResults.map((r, i) => (
+                  <SearchResultCard key={i} result={r} index={i} />
+                ))}
+              </div>
+            ) : store.searchQuery ? (
+              <div className="text-center py-8 rounded-lg" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+                <Search size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>未找到匹配结果</p>
+              </div>
+            ) : (
+              <div className="text-center py-8 rounded-lg" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+                <FileSearch size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>输入关键词测试检索效果</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1254,9 +1258,9 @@ export default function RAGDetailPage() {
           分块预览 Tab
       ══════════════════════════════════════════════════ */}
       {activeTab === 'chunks' && (
-        <div className="space-y-3">
+        <div className="flex-1 min-h-0 flex flex-col gap-3">
           {/* 文档选择器 */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <Select
               value={chunksDocFilter}
               onValueChange={(docId) => {
@@ -1287,53 +1291,55 @@ export default function RAGDetailPage() {
           </div>
 
           {/* 分块列表 */}
-          {store.chunksLoading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-16 rounded-lg animate-pulse" style={{ background: 'var(--color-surface)' }} />
-              ))}
-            </div>
-          ) : store.chunksError ? (
-            <p className="text-xs" style={{ color: 'var(--color-status-failed)' }}>{store.chunksError}</p>
-          ) : store.chunks.length > 0 ? (
-            <div className="space-y-1">
-              {store.chunks.map((chunk, i) => (
-                <div
-                  key={chunk.id}
-                  className="rounded-lg p-3 cursor-pointer transition-colors"
-                  style={{
-                    background: 'var(--color-surface)',
-                    border: '1px solid var(--color-border)',
-                  }}
-                  onClick={() => setViewChunk(chunk)}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span
-                      className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium"
-                      style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}
-                    >
-                      #{i + 1}
-                    </span>
-                    <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-                      {chunk.content.length} 字符
-                    </span>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {store.chunksLoading ? (
+              <div className="space-y-2">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-16 rounded-lg animate-pulse" style={{ background: 'var(--color-surface)' }} />
+                ))}
+              </div>
+            ) : store.chunksError ? (
+              <p className="text-xs" style={{ color: 'var(--color-status-failed)' }}>{store.chunksError}</p>
+            ) : store.chunks.length > 0 ? (
+              <div className="space-y-1">
+                {store.chunks.map((chunk, i) => (
+                  <div
+                    key={chunk.id}
+                    className="rounded-lg p-3 cursor-pointer transition-colors"
+                    style={{
+                      background: 'var(--color-surface)',
+                      border: '1px solid var(--color-border)',
+                    }}
+                    onClick={() => setViewChunk(chunk)}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium"
+                        style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}
+                      >
+                        #{i + 1}
+                      </span>
+                      <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                        {chunk.content.length} 字符
+                      </span>
+                    </div>
+                    <p className="text-xs line-clamp-2 leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
+                      {chunk.content}
+                    </p>
                   </div>
-                  <p className="text-xs line-clamp-2 leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
-                    {chunk.content}
-                  </p>
-                </div>
-              ))}
-            </div>
-          ) : chunksDocFilter ? (
-            <div className="text-center py-8 rounded-lg" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>未找到分块数据</p>
-            </div>
-          ) : (
-            <div className="text-center py-8 rounded-lg" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-              <Layers size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
-              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>选择文档查看分块</p>
-            </div>
-          )}
+                ))}
+              </div>
+            ) : chunksDocFilter ? (
+              <div className="text-center py-8 rounded-lg" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>未找到分块数据</p>
+              </div>
+            ) : (
+              <div className="text-center py-8 rounded-lg" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+                <Layers size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>选择文档查看分块</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1341,9 +1347,9 @@ export default function RAGDetailPage() {
           知识问答 Tab
       ══════════════════════════════════════════════════ */}
       {activeTab === 'chat' && (
-        <div className="flex flex-col flex-1 min-h-0">
+        <div className="flex flex-col flex-1 min-h-0 gap-3">
           {/* 顶部操作栏 */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 flex-shrink-0">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 flex-shrink-0">
             <div className="flex items-center gap-2 flex-wrap">
               {/* 模型选择器 */}
               {store.llmProfiles.length > 0 && (
@@ -1402,7 +1408,7 @@ export default function RAGDetailPage() {
           </div>
 
           {/* 输入区域 */}
-          <div className="flex-shrink-0 mt-3">
+          <div className="flex-shrink-0">
             <div
               className="flex items-center gap-2 px-3 py-2 rounded-lg"
               style={{

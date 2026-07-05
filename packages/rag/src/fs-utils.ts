@@ -10,11 +10,18 @@ export function ensureDir(dir: string): void {
   }
 }
 
-/** 原子写入：先写 .tmp 再 rename，避免写入中断导致文件损坏 */
+/** 原子写入：先写唯一临时文件再 rename，避免写入中断导致文件损坏 */
 export function atomicWrite(filePath: string, data: string): void {
-  const tmp = filePath + '.tmp'
-  fs.writeFileSync(tmp, data, 'utf-8')
+  const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`
+  fs.writeFileSync(tmp, data, { encoding: 'utf-8', flag: 'w' })
   fs.renameSync(tmp, filePath)
+}
+
+/** 原子写入（异步版本） */
+export async function atomicWriteAsync(filePath: string, data: string): Promise<void> {
+  const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`
+  await fs.promises.writeFile(tmp, data, { encoding: 'utf-8', flag: 'w' })
+  await fs.promises.rename(tmp, filePath)
 }
 
 /** 生成简短唯一 ID（8位随机字符串） */

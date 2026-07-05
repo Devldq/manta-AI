@@ -5,7 +5,7 @@
   "author": "lidaqing",
   "description": "Manta — Agent 调度操作系统 · Humans steer. Agents execute. Drivers are pluggable.",
   "scripts": {
-    "dev": "pnpm exec turbo run dev --filter=@manta/shared --filter=@manta/backend --filter=@manta/frontend",
+    "dev": "node scripts/start-dev.js",
     "dev:fe": "pnpm exec turbo run dev --filter=@manta/frontend",
     "dev:be": "pnpm exec turbo run dev --filter=@manta/backend",
     "dev:desktop": "pnpm exec turbo run dev --filter=@manta/desktop",
