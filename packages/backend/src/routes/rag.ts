@@ -14,7 +14,7 @@ import {
   updateKnowledgeBase,
   deleteKnowledgeBase,
 } from '../core/storage/knowledge-base/store.js'
-import type { CreateKnowledgeBaseInput, UpdateKnowledgeBaseInput, KnowledgeBaseConfig } from '../core/storage/knowledge-base/store.js'
+import type { CreateKnowledgeBaseInput, UpdateKnowledgeBaseInput, KnowledgeBaseConfig, ChunkingConfig } from '../core/storage/knowledge-base/store.js'
 import { apiSuccess, apiError, Errors } from '../core/api/error-handler.js'
 import {
   getSQLiteVecProvider,
@@ -35,17 +35,40 @@ import { createAISDKModel } from '../core/llm/ai-sdk-provider'
 // 从 KB 配置或环境变量构建 embedding 服务，传入 rag 包
 
 // 优先 KB 配置，其次全局持久化配置，最后环境变量
+// 当 provider 为 openai 但缺少 apiKey 时，自动尝试回退到本地 Ollama
 function buildEmbeddingService(kbConfig?: KnowledgeBaseConfig) {
   const gc = getEmbeddingConfig()
   const ec = kbConfig?.embeddingConfig
 
-  const provider = ec?.provider || gc.provider || (process.env.EMBEDDING_PROVIDER as 'openai' | 'local') || 'openai'
-  const model = ec?.model || gc.model || process.env.EMBEDDING_MODEL ||
+  let provider = ec?.provider || gc.provider || (process.env.EMBEDDING_PROVIDER as 'openai' | 'local') || 'openai'
+  let model = ec?.model || gc.model || process.env.EMBEDDING_MODEL ||
     (provider === 'local' ? 'nomic-embed-text' : undefined)
-  const apiKey = ec?.apiKey || gc.apiKey || process.env.OPENAI_API_KEY
+  let apiKey = ec?.apiKey || gc.apiKey || process.env.OPENAI_API_KEY
   // local 不读 OPENAI_BASE_URL，交给 LocalEmbeddingService 自己的默认值
-  const baseUrl = provider === 'local' ? (ec?.baseUrl || gc.baseUrl) : (ec?.baseUrl || gc.baseUrl || process.env.OPENAI_BASE_URL)
-  const dimensions = ec?.dimensions || gc.dimensions || kbConfig?.dimensions || 1536
+  let baseUrl = provider === 'local' ? (ec?.baseUrl || gc.baseUrl) : (ec?.baseUrl || gc.baseUrl || process.env.OPENAI_BASE_URL)
+  let dimensions = ec?.dimensions || gc.dimensions || kbConfig?.dimensions || 1536
+
+  // ── 自动回退：openai provider 但缺少 apiKey → 尝试本地 Ollama ──
+  if (provider === 'openai' && !apiKey) {
+    const fallback = tryFallbackToLocalOllama()
+    if (fallback) {
+      console.warn('[Embedding] OpenAI API key 缺失，自动回退到本地 Ollama:', fallback.model)
+      provider = 'local'
+      model = fallback.model
+      baseUrl = fallback.baseUrl
+      dimensions = fallback.dimensions
+      apiKey = undefined
+    } else {
+      // Ollama 未检测到 embedding 模型，但仍回退到 local 以避免因缺少 key 而 crash
+      // 如果 Ollama 不可用，实际 embedding 调用会给出更明确的错误信息
+      console.warn('[Embedding] OpenAI API key 缺失，Ollama 未检测到 embedding 模型，尝试使用默认 local 配置')
+      provider = 'local'
+      model = model || 'nomic-embed-text'
+      baseUrl = baseUrl || 'http://127.0.0.1:11434'
+      dimensions = 768
+      apiKey = undefined
+    }
+  }
 
   if (!model) {
     throw new Error(
@@ -63,6 +86,30 @@ function buildEmbeddingService(kbConfig?: KnowledgeBaseConfig) {
   return createEmbeddingService(provider, { apiKey, baseUrl, model, dimensions })
 }
 
+/**
+ * 尝试探测本地 Ollama 是否可用且含有 embedding 模型。
+ * 同步调用（使用 child_process 的 execSync），仅在回退路径触发。
+ * 返回 null 表示不可用。
+ */
+function tryFallbackToLocalOllama(): { model: string; baseUrl: string; dimensions: number } | null {
+  try {
+    const { execSync } = require('node:child_process')
+    const raw = execSync('ollama list', { timeout: 3000, encoding: 'utf-8' })
+    const lines = raw.trim().split('\n').slice(1) // 跳过表头
+    // 优先选择名称中含 "embedding" 的模型
+    const embeddingModel = lines
+      .map(l => l.slice(0, 24).trim())
+      .filter(Boolean)
+      .find(name => name.toLowerCase().includes('embedding'))
+    if (embeddingModel) {
+      return { model: embeddingModel, baseUrl: 'http://127.0.0.1:11434', dimensions: 1024 }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 // ─── 注册插件 ─────────────────────────────────────────────────
 
 export async function ragRoutes(app: FastifyInstance) {
@@ -73,7 +120,7 @@ export async function ragRoutes(app: FastifyInstance) {
     await app.register(plugin, {
       limits: {
         fileSize: 50 * 1024 * 1024,
-        files: 1,
+        files: 50,
       },
     })
   } catch {
@@ -172,6 +219,9 @@ export async function ragRoutes(app: FastifyInstance) {
         hybridSearch: body.hybridSearch
           ? { ...kb.config.hybridSearch, ...body.hybridSearch }
           : kb.config.hybridSearch,
+        chunkingConfig: body.chunkingConfig
+          ? { ...kb.config.chunkingConfig, ...body.chunkingConfig }
+          : kb.config.chunkingConfig,
       }
 
       const updated = updateKnowledgeBase(id, { config: newConfig })
@@ -220,6 +270,8 @@ export async function ragRoutes(app: FastifyInstance) {
 
   app.post('/api/rag/knowledge-bases/:id/documents', async (request: FastifyRequest, reply) => {
     let streamProgress = false
+    let pendingDocId: string | null = null
+    let pendingKbId: string | null = null
     try {
       const { id: kbId } = request.params as { id: string }
 
@@ -234,12 +286,22 @@ export async function ragRoutes(app: FastifyInstance) {
 
       const buffer = await data.toBuffer()
       const fileName = data.filename || 'unknown'
-      const mimeType = data.mimetype && data.mimetype !== 'application/octet-stream' 
-        ? data.mimetype 
+      const mimeType = data.mimetype && data.mimetype !== 'application/octet-stream'
+        ? data.mimetype
         : inferMimeType(fileName)
 
       if (buffer.length === 0) throw Errors.VALIDATION_ERROR('file', '上传的文件为空')
       if (buffer.length > 50 * 1024 * 1024) throw Errors.VALIDATION_ERROR('file', '文件大小超过 50MB 限制')
+
+      // 从表单字段读取分块配置，优先使用请求参数，其次 KB 配置，最后默认值
+      const fields = data.fields as Record<string, { value?: string; buffer?: Buffer } | undefined>
+      const reqChunkStrategy = fields?.chunkStrategy?.value as 'fixed' | 'semantic' | 'recursive' | undefined
+      const reqChunkSize = fields?.chunkSize?.value ? parseInt(fields.chunkSize.value, 10) : undefined
+      const reqChunkOverlap = fields?.chunkOverlap?.value ? parseInt(fields.chunkOverlap.value, 10) : undefined
+
+      const chunkStrategy = reqChunkStrategy || kb.config.chunkingConfig?.strategy || 'recursive'
+      const chunkSize = reqChunkSize || kb.config.chunkingConfig?.chunkSize || 512
+      const chunkOverlap = reqChunkOverlap || kb.config.chunkingConfig?.overlap || 50
 
       const docId = uuidv4()
       const now = new Date().toISOString()
@@ -251,6 +313,12 @@ export async function ragRoutes(app: FastifyInstance) {
         uploadedAt: now,
         status: 'processing',
       }
+
+      // ── 先写入 processing 记录，刷新页面后也能看到正在处理的文档 ──
+      const sqliteProvider = getSQLiteVecProvider()
+      await sqliteProvider.insertPendingDocument(kbId, metadata)
+      pendingDocId = docId
+      pendingKbId = kbId
 
       const embeddingService = buildEmbeddingService(kb.config)
       const ragProvider = getSQLiteVecProvider()
@@ -277,9 +345,9 @@ export async function ragRoutes(app: FastifyInstance) {
       const pipeline = createDocumentPipeline({
         embeddingService,
         ragProvider,
-        chunkStrategy: 'recursive',
-        chunkSize: 1000,
-        chunkOverlap: 200,
+        chunkStrategy,
+        chunkSize,
+        chunkOverlap,
         onProgress: (stage, progress, message) => {
           console.log(`[RAG Pipeline] ${stage}: ${progress}% - ${message}`)
           sendEvent({ type: 'progress', stage, progress, message })
@@ -295,6 +363,9 @@ export async function ragRoutes(app: FastifyInstance) {
         chunkCount: stats.chunkCount,
       })
 
+      // 清除 pending 标记（addDocument 已写入 ready 记录）
+      pendingDocId = null
+
       sendEvent({
         type: 'done',
         document: result.document,
@@ -303,7 +374,8 @@ export async function ragRoutes(app: FastifyInstance) {
       })
 
       if (streamProgress) {
-        return reply.raw.end()
+        reply.raw.end()
+        return
       }
 
       return reply.send(apiSuccess({
@@ -312,6 +384,15 @@ export async function ragRoutes(app: FastifyInstance) {
         processingTimeMs: result.processingTimeMs,
       }))
     } catch (err) {
+      // 处理失败：更新文档状态为 error
+      if (pendingDocId && pendingKbId) {
+        try {
+          const sqliteProvider = getSQLiteVecProvider()
+          const errMsg = err instanceof Error ? err.message : String(err)
+          await sqliteProvider.updateDocumentStatus(pendingDocId, 'error', errMsg)
+        } catch { /* ignore status update error */ }
+      }
+
       if (streamProgress) {
         try {
           const errorMessage = err instanceof Error ? err.message : String(err)
@@ -393,6 +474,71 @@ export async function ragRoutes(app: FastifyInstance) {
       const preview = chunks.map(({ embedding, ...rest }) => rest)
 
       return reply.send(apiSuccess({ document: doc, chunks: preview, totalChunks: doc.chunkCount }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // ═══════════════════════════════════════════════════════════
+  //  文档分块预览（处理前预览，不向量化、不存储）
+  // ═══════════════════════════════════════════════════════════
+
+  app.post('/api/rag/knowledge-bases/:id/chunk-preview', async (request: FastifyRequest, reply) => {
+    try {
+      const { id: kbId } = request.params as { id: string }
+      const kb = getKnowledgeBase(kbId)
+      if (!kb) throw Errors.NOT_FOUND('知识库', kbId)
+
+      const data = await request.file()
+      if (!data) throw Errors.VALIDATION_ERROR('file', '未上传文件')
+
+      const buffer = await data.toBuffer()
+      const fileName = data.filename || 'unknown'
+      const mimeType = data.mimetype && data.mimetype !== 'application/octet-stream'
+        ? data.mimetype
+        : inferMimeType(fileName)
+
+      if (buffer.length === 0) throw Errors.VALIDATION_ERROR('file', '上传的文件为空')
+      if (buffer.length > 50 * 1024 * 1024) throw Errors.VALIDATION_ERROR('file', '文件大小超过 50MB 限制')
+
+      // 从表单字段读取分块配置
+      const fields = data.fields as Record<string, { value?: string } | undefined>
+      const reqChunkStrategy = fields?.chunkStrategy?.value as 'fixed' | 'semantic' | 'recursive' | undefined
+      const reqChunkSize = fields?.chunkSize?.value ? parseInt(fields.chunkSize.value, 10) : undefined
+      const reqChunkOverlap = fields?.chunkOverlap?.value ? parseInt(fields.chunkOverlap.value, 10) : undefined
+
+      const chunkStrategy = reqChunkStrategy || kb.config.chunkingConfig?.strategy || 'recursive'
+      const chunkSize = reqChunkSize || kb.config.chunkingConfig?.chunkSize || 512
+      const chunkOverlap = reqChunkOverlap || kb.config.chunkingConfig?.overlap || 50
+
+      const docId = uuidv4()
+      const metadata: DocumentMetadata = {
+        id: docId,
+        name: fileName,
+        type: mimeType,
+        size: buffer.length,
+        uploadedAt: new Date().toISOString(),
+        status: 'processing',
+      }
+
+      // 构建 pipeline（只需要解析+分块，不需要 embedding/storing）
+      const pipeline = createDocumentPipeline({
+        embeddingService: null as any,
+        ragProvider: null as any,
+        chunkStrategy,
+        chunkSize,
+        chunkOverlap,
+      })
+
+      const chunks = await pipeline.previewChunks(buffer, metadata)
+      const preview = chunks.map(({ embedding, ...rest }) => rest)
+
+      return reply.send(apiSuccess({
+        document: { ...metadata, status: 'pending' },
+        chunks: preview,
+        totalChunks: chunks.length,
+        config: { chunkStrategy, chunkSize, chunkOverlap },
+      }))
     } catch (err) {
       return apiError(reply, err)
     }
@@ -548,13 +694,15 @@ export async function ragRoutes(app: FastifyInstance) {
         'X-Accel-Buffering': 'no',
       })
 
-      // 发送检索到的来源信息
+      // 发送检索到的来源信息（含 chunk 元数据）
       reply.raw.write(`data: ${JSON.stringify({
         type: 'sources',
         sources: context.chunks.map((c) => ({
           name: c.sourceName,
           documentId: c.documentId,
           score: c.score,
+          index: c.index,
+          tokenEstimate: c.tokenEstimate,
         })),
       })}\n\n`)
 

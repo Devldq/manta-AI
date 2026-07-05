@@ -131,6 +131,22 @@ await app.register(approvalSSERoutes)
 // ─── 启动服务器 ─────────────────────────────────────────────
 async function start() {
   try {
+    // 清理上次未完成的文档处理任务（stuck in processing）
+    try {
+      const { getSQLiteVecProvider } = await import('@manta/rag')
+      const provider = getSQLiteVecProvider()
+      await provider.initialize()
+      const staleDocs = await provider.cleanupStaleDocuments()
+      if (staleDocs.length > 0) {
+        app.log.info(
+          `[RAG Startup] 清理了 ${staleDocs.length} 个中断的文档处理任务: ` +
+          staleDocs.map((d) => `${d.docName}(${d.kbId})`).join(', ')
+        )
+      }
+    } catch (cleanupErr) {
+      app.log.warn(`[RAG Startup] 清理中断文档失败（不影响启动）: ${cleanupErr}`)
+    }
+
     // 初始化：扫描并加载 skills/ 目录中的所有 SKILL.md
     const skillResult = initializeSkills()
     app.log.info(

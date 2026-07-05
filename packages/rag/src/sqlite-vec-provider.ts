@@ -48,6 +48,13 @@ export class SQLiteVecProvider implements RAGProvider {
   private initialized = false
   private dbPath: string
 
+  /**
+   * 获取底层数据库实例（供 EmbeddingCacheManager 复用）
+   */
+  getDatabase(): Database.Database {
+    return this.db
+  }
+
   constructor(storageDir?: string) {
     const dir = storageDir || path.join(os.homedir(), '.manta-data', 'rag')
     this.dbPath = path.join(dir, 'vectors.db')
@@ -198,6 +205,87 @@ export class SQLiteVecProvider implements RAGProvider {
     })
 
     tx()
+  }
+
+  /**
+   * 插入一条 status='processing' 的文档记录（处理前写入，刷新页面后可见）
+   * 如果该 docId 已存在则替换（重复上传同一文件）
+   */
+  async insertPendingDocument(
+    knowledgeBaseId: string,
+    document: DocumentMetadata
+  ): Promise<void> {
+    await this.ensureInitialized()
+
+    this.db.prepare(`
+      INSERT OR REPLACE INTO documents (id, kb_id, name, mime_type, size, status, chunk_count, uploaded_at, processed_at, error)
+      VALUES (?, ?, ?, ?, ?, 'processing', 0, ?, NULL, NULL)
+    `).run(
+      document.id,
+      knowledgeBaseId,
+      document.name,
+      document.type,
+      document.size,
+      document.uploadedAt
+    )
+  }
+
+  /**
+   * 更新文档状态（处理完成后或失败时调用）
+   */
+  async updateDocumentStatus(
+    documentId: string,
+    status: DocumentMetadata['status'],
+    error?: string
+  ): Promise<void> {
+    await this.ensureInitialized()
+
+    const processedAt = status === 'ready' || status === 'error' ? new Date().toISOString() : null
+
+    this.db.prepare(`
+      UPDATE documents SET status = ?, error = ?, processed_at = COALESCE(?, processed_at)
+      WHERE id = ?
+    `).run(status, error ?? null, processedAt, documentId)
+  }
+
+  /**
+   * 清理所有 stuck 在 processing 状态的文档（后端重启时调用）
+   * 将它们标记为 error，避免永远卡在 processing
+   * 返回被清理的文档列表（kbId → docId → docName）
+   */
+  async cleanupStaleDocuments(): Promise<
+    { kbId: string; docId: string; docName: string }[]
+  > {
+    await this.ensureInitialized()
+
+    const staleDocs = this.db.prepare(`
+      SELECT id, kb_id, name FROM documents WHERE status = 'processing'
+    `).all() as { id: string; kb_id: string; name: string }[]
+
+    if (staleDocs.length === 0) return []
+
+    const now = new Date().toISOString()
+    const updateStmt = this.db.prepare(`
+      UPDATE documents SET status = 'error', error = ?, processed_at = ?
+      WHERE id = ?
+    `)
+
+    const tx = this.db.transaction(() => {
+      for (const doc of staleDocs) {
+        updateStmt.run(
+          '处理被中断（服务器重启），请重新上传此文件',
+          now,
+          doc.id
+        )
+      }
+    })
+    tx()
+
+    return staleDocs.map((d) => ({
+      kbId: d.kb_id,
+      docId: d.id,
+      docName: d.name,
+    }))
   }
 
   async search(

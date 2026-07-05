@@ -50,13 +50,20 @@ export {
 } from './pipeline'
 export type { PipelineOptions, PipelineResult, PipelineStage } from './pipeline'
 
+// ─── Embedding 缓存 ─────────────────────────────────────
+export {
+  EmbeddingCacheManager,
+  CachedEmbeddingService,
+  createCachedEmbeddingService,
+} from './embedding-cache'
+
 // ─── 问答 ───────────────────────────────────────────────
 export {
   extractChatContext,
   buildRAGSystemPrompt,
   buildRAGUserMessage,
 } from './rag-chat'
-export type { ChatContext } from './rag-chat'
+export type { ChatContext, ChatContextChunk } from './rag-chat'
 
 // ─── 文件工具 ───────────────────────────────────────────
 export { ensureDir, atomicWrite, shortId, readJsonFile, writeJsonFile, removeDir } from './fs-utils'

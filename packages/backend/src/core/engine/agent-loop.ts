@@ -517,6 +517,24 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           }
         }
 
+        // ── 发送当前步骤的 token 用量到前端（实时渲染，不等 loop 结束）──
+        if (stepCollect.usage.inputTokens > 0 || stepCollect.usage.outputTokens > 0) {
+          sendChunk({
+            type: 'manta:step-usage',
+            stepIndex,
+            usage: {
+              inputTokens: stepCollect.usage.inputTokens,
+              outputTokens: stepCollect.usage.outputTokens,
+              cacheReadTokens: stepCollect.usage.cacheReadTokens,
+              cacheWriteTokens: stepCollect.usage.cacheWriteTokens,
+              noCacheTokens: stepCollect.usage.noCacheTokens,
+            },
+            toolNames: stepCollect.toolCalls.length > 0
+              ? stepCollect.toolCalls.map(c => c.toolName)
+              : undefined,
+          })
+        }
+
         const stepDurationMs = Math.round(performance.now() - stepStartTime)
 
         // ── 提取 Prompt Cache 命中信息 ──

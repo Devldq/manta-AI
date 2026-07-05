@@ -2,11 +2,11 @@ import type { ChunkingStrategy, ChunkingOptions } from './types'
 
 /**
  * 固定大小分块策略
- * 将文本按固定字符数分割，支持重叠
+ * 按字符数分割文本，支持重叠（配置层以 Token 为单位，Pipeline 层转换为字符数）
  */
 export class FixedSizeChunkingStrategy implements ChunkingStrategy {
   private defaultOptions: Required<ChunkingOptions> = {
-    chunkSize: 1000,
+    chunkSize: 2048,
     overlap: 200,
     separators: ['\n\n', '\n', '。', '！', '？', '.', '!', '?', ' '],
   }
@@ -77,7 +77,7 @@ export class SemanticChunkingStrategy implements ChunkingStrategy {
     const paragraphs = text.split(/\n\s*\n/).filter((p) => p.trim())
     const chunks: string[] = []
 
-    const chunkSize = options?.chunkSize || 1000
+    const chunkSize = options?.chunkSize || 2048
     let currentChunk = ''
 
     for (const paragraph of paragraphs) {
@@ -102,7 +102,7 @@ export class SemanticChunkingStrategy implements ChunkingStrategy {
  */
 export class RecursiveChunkingStrategy implements ChunkingStrategy {
   private defaultOptions: Required<ChunkingOptions> = {
-    chunkSize: 1000,
+    chunkSize: 2048,
     overlap: 200,
     separators: ['\n\n', '\n', '。', '！', '？', '.', '!', '?', '；', ';', '，', ',', ' '],
   }

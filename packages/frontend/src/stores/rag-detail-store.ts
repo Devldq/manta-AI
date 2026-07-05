@@ -2,6 +2,21 @@
 
 import { create } from 'zustand'
 import { swrFetch, invalidateCache } from '@/stores/lib/swr-fetch'
+import {
+  saveStagedFiles,
+  loadStagedFiles,
+  removeStagedFileById,
+  clearAllForKb,
+  saveBatchMeta,
+  loadBatchMeta,
+  clearBatchMeta,
+} from '@/stores/lib/staged-files-db'
+
+// ── 文档列表轮询定时器（有 processing 文档时自动刷新）─────────
+let docPollTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Worker 活跃标记 —— 防止 processStagedFiles 重入 */
+let workersActive = false
 
 /** 知识库详情 */
 export interface KnowledgeBaseDetail {
@@ -33,6 +48,34 @@ export interface KnowledgeBaseConfig {
     baseUrl?: string
     dimensions?: number
   }
+  chunkingConfig?: ChunkingConfig
+}
+
+/** 分块配置 */
+export interface ChunkingConfig {
+  strategy: 'fixed' | 'semantic' | 'recursive'
+  chunkSize: number
+  overlap: number
+  batchConcurrency: number
+}
+
+/** 暂存文件（浏览器端暂存，未上传到服务器） */
+export interface StagedFile {
+  id: string
+  file: File
+  name: string
+  size: number
+  type: string
+  /** 相对路径（文件夹上传时保留目录结构） */
+  relativePath?: string
+}
+
+/** 默认分块配置（单位：Token） */
+const DEFAULT_CHUNKING_CONFIG: ChunkingConfig = {
+  strategy: 'recursive',
+  chunkSize: 512,
+  overlap: 50,
+  batchConcurrency: 1,
 }
 
 /** 可选的 Embedding 模型 */
@@ -76,7 +119,12 @@ export interface ChunkPreview {
   id: string
   documentId: string
   content: string
-  metadata: Record<string, unknown>
+  metadata: {
+    source?: string
+    index?: number
+    tokenEstimate?: number
+    [key: string]: unknown
+  }
   startIndex?: number
   endIndex?: number
 }
@@ -101,6 +149,8 @@ export interface ChatMessage {
     name: string
     documentId: string
     score: number
+    index?: number
+    tokenEstimate?: number
   }>
 }
 
@@ -117,6 +167,8 @@ interface RAGDetailStore {
   kb: KnowledgeBaseDetail | null
   kbLoading: boolean
   kbError: string | null
+  kbSaving: boolean
+  kbSaveError: string | null
 
   // 文档列表
   documents: DocumentInfo[]
@@ -130,6 +182,12 @@ interface RAGDetailStore {
   chunksDocId: string | null
   chunksTotal: number
 
+  // 处理前分块预览（暂存文件预览）
+  previewChunks: ChunkPreview[]
+  previewChunksLoading: boolean
+  previewChunksError: string | null
+  previewChunksFileName: string | null
+
   // 检索
   searchResults: SearchResult[]
   searchLoading: boolean
@@ -142,6 +200,20 @@ interface RAGDetailStore {
   uploadMessage: string | null
   uploadChunkCount: number | null
   uploadError: string | null
+
+  // 暂存区（浏览器端暂存文件，未上传到服务器）
+  stagedFiles: StagedFile[]
+  chunkingConfig: ChunkingConfig
+  /** 当前知识库 ID（用于 IndexedDB 持久化） */
+  currentKbId: string | null
+
+  // 批量处理
+  batchProcessing: boolean
+  batchTotal: number
+  batchCompletedCount: number
+  batchActiveFiles: { name: string; progress: number; stage: string | null }[]
+  batchErrors: string[]
+  batchDone: boolean
 
   // 配置
   ragConfig: RAGConfig | null
@@ -158,22 +230,45 @@ interface RAGDetailStore {
 
   // 操作
   fetchKnowledgeBase: (id: string) => Promise<void>
+  updateKBInfo: (kbId: string, patch: { name?: string; description?: string }) => Promise<boolean>
   fetchDocuments: (kbId: string) => Promise<void>
   fetchChunks: (kbId: string, docId: string) => Promise<void>
   fetchRAGConfig: () => Promise<void>
-  uploadDocument: (kbId: string, file: File) => Promise<boolean>
+  /** 处理前预览：上传文件到后端解析+分块，不向量化不存储 */
+  fetchChunkPreview: (kbId: string, file: File, chunkingConfig?: ChunkingConfig) => Promise<void>
+  clearPreviewChunks: () => void
+  uploadDocument: (kbId: string, file: File, chunkingConfig?: ChunkingConfig) => Promise<boolean>
   deleteDocument: (kbId: string, docId: string) => Promise<boolean>
   search: (kbId: string, query: string, topK?: number) => Promise<void>
   updateConfig: (kbId: string, config: Partial<KnowledgeBaseConfig>) => Promise<boolean>
   sendChat: (kbId: string, question: string) => Promise<void>
   clearChat: () => void
   reset: () => void
+
+  /** 检查是否有 processing 文档，如有则自动启动轮询 */
+  checkProcessingDocs: (kbId: string) => void
+  /** 停止文档轮询 */
+  stopDocPolling: () => void
+
+  // 暂存区操作
+  addStagedFiles: (files: File[]) => void
+  removeStagedFile: (id: string) => void
+  clearStagedFiles: () => void
+  updateChunkingConfig: (config: Partial<ChunkingConfig>) => void
+  /** 批量处理所有暂存文件，逐个上传并处理 */
+  processStagedFiles: (kbId: string, options?: { alreadyCompleted?: number }) => Promise<void>
+  /** 移除单个暂存文件 */
+  removeStagedFileById: (id: string) => void
+  /** 刷新页面后恢复未完成的批处理会话 */
+  restoreBatchSession: (kbId: string) => Promise<void>
 }
 
 const initialState = {
   kb: null as KnowledgeBaseDetail | null,
   kbLoading: false,
   kbError: null as string | null,
+  kbSaving: false,
+  kbSaveError: null as string | null,
 
   documents: [] as DocumentInfo[],
   docsLoading: false,
@@ -185,6 +280,11 @@ const initialState = {
   chunksDocId: null as string | null,
   chunksTotal: 0,
 
+  previewChunks: [] as ChunkPreview[],
+  previewChunksLoading: false,
+  previewChunksError: null as string | null,
+  previewChunksFileName: null as string | null,
+
   searchResults: [] as SearchResult[],
   searchLoading: false,
   searchError: null as string | null,
@@ -195,6 +295,17 @@ const initialState = {
   uploadMessage: null as string | null,
   uploadChunkCount: null as number | null,
   uploadError: null as string | null,
+
+  stagedFiles: [] as StagedFile[],
+  chunkingConfig: { ...DEFAULT_CHUNKING_CONFIG } as ChunkingConfig,
+  currentKbId: null as string | null,
+
+  batchProcessing: false,
+  batchTotal: 0,
+  batchCompletedCount: 0,
+  batchActiveFiles: [] as { name: string; progress: number; stage: string | null }[],
+  batchErrors: [] as string[],
+  batchDone: false,
 
   ragConfig: null as RAGConfig | null,
   ragConfigLoading: false,
@@ -261,18 +372,46 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
   },
 
   fetchKnowledgeBase: async (id: string) => {
-    set({ kbLoading: true, kbError: null })
+    set({ kbLoading: true, kbError: null, currentKbId: id })
     try {
       const json = await swrFetch(`rag-kb:${id}`, () =>
         fetch(`/api/rag/knowledge-bases/${id}`).then((r) => r.json())
       )
       if (json.success && json.data?.knowledgeBase) {
-        set({ kb: json.data.knowledgeBase, kbLoading: false })
+        const kb = json.data.knowledgeBase as KnowledgeBaseDetail
+        // 同步 KB 配置中的分块配置到 store
+        if (kb.config?.chunkingConfig) {
+          set({ chunkingConfig: { ...kb.config.chunkingConfig } })
+        }
+        set({ kb, kbLoading: false })
       } else {
         set({ kbLoading: false, kbError: json.error?.message ?? '获取知识库失败' })
       }
     } catch (err) {
       set({ kbLoading: false, kbError: String(err) })
+    }
+  },
+
+  updateKBInfo: async (kbId: string, patch: { name?: string; description?: string }) => {
+    set({ kbSaving: true, kbSaveError: null })
+    try {
+      const res = await fetch(`/api/rag/knowledge-bases/${kbId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      const json = await res.json()
+      if (json.success && json.data?.knowledgeBase) {
+        set({ kb: json.data.knowledgeBase as KnowledgeBaseDetail, kbSaving: false })
+        invalidateCache(`rag-kb:${kbId}`)
+        invalidateCache('knowledge-bases:')
+        return true
+      }
+      set({ kbSaving: false, kbSaveError: json.error?.message ?? '保存失败' })
+      return false
+    } catch (err) {
+      set({ kbSaving: false, kbSaveError: String(err) })
+      return false
     }
   },
 
@@ -284,11 +423,102 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       )
       if (json.success && json.data?.documents) {
         set({ documents: json.data.documents, docsLoading: false })
+        // 检查是否有 processing 文档，有则启动轮询
+        get().checkProcessingDocs(kbId)
       } else {
         set({ documents: [], docsLoading: false, docsError: json.error?.message ?? '获取文档列表失败' })
       }
     } catch (err) {
       set({ docsLoading: false, docsError: String(err) })
+    }
+  },
+
+  checkProcessingDocs: (kbId: string) => {
+    const { documents } = get()
+    const hasProcessing = documents.some(
+      (d) => d.status === 'processing' || d.status === 'pending'
+    )
+
+    if (hasProcessing) {
+      // 已有定时器则跳过
+      if (docPollTimer) return
+
+      const poll = async () => {
+        // 清除缓存确保拿到最新数据
+        invalidateCache(`rag-docs:${kbId}`)
+        try {
+          const res = await fetch(`/api/rag/knowledge-bases/${kbId}/documents`)
+          const json = await res.json()
+          if (json.success && json.data?.documents) {
+            const docs = json.data.documents
+            set({ documents: docs })
+
+            // 如果批处理中且 workers 未活跃（刷新恢复阶段），更新进度
+            const { batchProcessing, batchActiveFiles, batchTotal, stagedFiles } = get()
+            if (batchProcessing) {
+              if (batchActiveFiles.length === 0) {
+                // 首次恢复：用后端 processing docs 填充 activeFiles
+                const processingDocs = docs.filter(
+                  (d: DocumentInfo) => d.status === 'processing' || d.status === 'pending'
+                )
+                if (processingDocs.length > 0) {
+                  set({
+                    batchActiveFiles: processingDocs.map((d) => ({
+                      name: d.name,
+                      progress: 0,
+                      stage: 'processing' as const,
+                    })),
+                  })
+                }
+              } else {
+                // 后续轮询：移除不再 processing 的文档（已完成或失败）
+                const processingNames = new Set(
+                  docs
+                    .filter((d: DocumentInfo) => d.status === 'processing' || d.status === 'pending')
+                    .map((d) => d.name)
+                )
+                const updatedActive = batchActiveFiles.filter((f) => processingNames.has(f.name))
+                set({ batchActiveFiles: updatedActive })
+              }
+
+              const processingCount = docs.filter(
+                (d: DocumentInfo) => d.status === 'processing' || d.status === 'pending'
+              ).length
+              const completed = batchTotal - stagedFiles.length - processingCount
+              set({ batchCompletedCount: Math.max(0, completed) })
+            }
+          }
+        } catch { /* ignore poll error */ }
+
+        // 检查是否还有 processing 文档
+        const stillProcessing = get().documents.some(
+          (d) => d.status === 'processing' || d.status === 'pending'
+        )
+
+        if (stillProcessing) {
+          docPollTimer = setTimeout(poll, 3000)
+        } else {
+          docPollTimer = null
+          // 处理完成，刷新知识库统计
+          invalidateCache(`rag-kb:${kbId}`)
+          get().fetchKnowledgeBase(kbId)
+
+          // 如果批处理中且有暂存文件待处理（刷新恢复场景），自动继续处理
+          const { batchProcessing, stagedFiles } = get()
+          if (batchProcessing && stagedFiles.length > 0 && !workersActive) {
+            get().processStagedFiles(kbId, { alreadyCompleted: get().batchCompletedCount })
+          }
+        }
+      }
+
+      docPollTimer = setTimeout(poll, 3000)
+    }
+  },
+
+  stopDocPolling: () => {
+    if (docPollTimer) {
+      clearTimeout(docPollTimer)
+      docPollTimer = null
     }
   },
 
@@ -314,7 +544,41 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     }
   },
 
-  uploadDocument: async (kbId: string, file: File) => {
+  fetchChunkPreview: async (kbId: string, file: File, chunkingConfig?: ChunkingConfig) => {
+    set({ previewChunksLoading: true, previewChunksError: null, previewChunksFileName: file.name })
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const config = chunkingConfig || get().chunkingConfig
+      if (config) {
+        formData.append('chunkStrategy', config.strategy)
+        formData.append('chunkSize', String(config.chunkSize))
+        formData.append('chunkOverlap', String(config.overlap))
+      }
+
+      const res = await fetch(`/api/rag/knowledge-bases/${kbId}/chunk-preview`, {
+        method: 'POST',
+        body: formData,
+      })
+      const json = await res.json()
+      if (json.success && json.data) {
+        set({
+          previewChunks: json.data.chunks || [],
+          previewChunksLoading: false,
+        })
+      } else {
+        set({ previewChunks: [], previewChunksLoading: false, previewChunksError: json.error?.message ?? '预览失败' })
+      }
+    } catch (err) {
+      set({ previewChunksLoading: false, previewChunksError: String(err) })
+    }
+  },
+
+  clearPreviewChunks: () => {
+    set({ previewChunks: [], previewChunksError: null, previewChunksFileName: null })
+  },
+
+  uploadDocument: async (kbId: string, file: File, chunkingConfig?: ChunkingConfig) => {
     set({
       uploadProgress: 0,
       uploadStage: 'uploading',
@@ -325,6 +589,13 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     try {
       const formData = new FormData()
       formData.append('file', file)
+      // 附加分块配置到表单字段
+      const config = chunkingConfig || get().chunkingConfig
+      if (config) {
+        formData.append('chunkStrategy', config.strategy)
+        formData.append('chunkSize', String(config.chunkSize))
+        formData.append('chunkOverlap', String(config.overlap))
+      }
 
       const res = await fetch(`/api/rag/knowledge-bases/${kbId}/documents?stream=progress`, {
         method: 'POST',
@@ -548,5 +819,331 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     set({ chatMessages: [], chatError: null })
   },
 
-  reset: () => set(initialState),
+  // ── 暂存区操作 ──────────────────────────────────────────
+
+  addStagedFiles: (files: File[]) => {
+    const staged: StagedFile[] = files.map((file) => {
+      // webkitRelativePath 保留文件夹上传时的路径
+      const relativePath = (file as any).webkitRelativePath || undefined
+      return {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        file,
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        relativePath,
+      }
+    })
+    set((s) => ({ stagedFiles: [...s.stagedFiles, ...staged] }))
+    // 持久化到 IndexedDB（fire-and-forget）
+    const kbId = get().currentKbId
+    if (kbId) saveStagedFiles(kbId, get().stagedFiles).catch(() => {})
+  },
+
+  removeStagedFile: (id: string) => {
+    set((s) => ({ stagedFiles: s.stagedFiles.filter((f) => f.id !== id) }))
+    removeStagedFileById(id).catch(() => {})
+  },
+
+  removeStagedFileById: (id: string) => {
+    set((s) => ({ stagedFiles: s.stagedFiles.filter((f) => f.id !== id) }))
+    removeStagedFileById(id).catch(() => {})
+  },
+
+  clearStagedFiles: () => {
+    set({ stagedFiles: [] })
+    const kbId = get().currentKbId
+    if (kbId) clearAllForKb(kbId).catch(() => {})
+  },
+
+  updateChunkingConfig: (config: Partial<ChunkingConfig>) => {
+    set((s) => ({ chunkingConfig: { ...s.chunkingConfig, ...config } }))
+  },
+
+  processStagedFiles: async (kbId: string, options?: { alreadyCompleted?: number }) => {
+    // 防止重入：如果 workers 已在运行，直接返回
+    if (workersActive) return
+
+    const { stagedFiles, chunkingConfig } = get()
+    if (stagedFiles.length === 0) return
+
+    workersActive = true
+    const alreadyCompleted = options?.alreadyCompleted ?? 0
+
+    // 保存批处理元数据到 IndexedDB（用于刷新后恢复）
+    await saveBatchMeta({
+      kbId,
+      processingStarted: true,
+      totalFiles: stagedFiles.length + alreadyCompleted,
+      concurrency: chunkingConfig.batchConcurrency || 1,
+      chunkingConfig: { ...chunkingConfig },
+      startedAt: new Date().toISOString(),
+    }).catch(() => {})
+
+    const concurrency = Math.max(1, Math.min(chunkingConfig.batchConcurrency || 1, 5, stagedFiles.length))
+
+    set({
+      batchProcessing: true,
+      batchTotal: stagedFiles.length + alreadyCompleted,
+      batchCompletedCount: alreadyCompleted,
+      batchActiveFiles: [],
+      batchErrors: [],
+      batchDone: false,
+    })
+
+    const errors: string[] = []
+    let completedCount = alreadyCompleted
+    let nextIndex = 0
+
+    // 更新 active files 的辅助函数
+    const updateActiveFile = (name: string, progress: number, stage: string | null) => {
+      const current = get().batchActiveFiles
+      const idx = current.findIndex((f) => f.name === name)
+      if (idx >= 0) {
+        const updated = [...current]
+        updated[idx] = { name, progress, stage }
+        set({ batchActiveFiles: updated })
+      }
+    }
+
+    const removeActiveFile = (name: string) => {
+      const current = get().batchActiveFiles
+      set({ batchActiveFiles: current.filter((f) => f.name !== name) })
+    }
+
+    // 处理单个文件的 worker
+    const processOne = async () => {
+      while (nextIndex < stagedFiles.length) {
+        const myIndex = nextIndex++
+        const sf = stagedFiles[myIndex]
+
+        // 加入 active 列表
+        set((s) => ({ batchActiveFiles: [...s.batchActiveFiles, { name: sf.name, progress: 0, stage: 'uploading' }] }))
+
+        try {
+          const formData = new FormData()
+          formData.append('file', sf.file)
+          formData.append('chunkStrategy', chunkingConfig.strategy)
+          formData.append('chunkSize', String(chunkingConfig.chunkSize))
+          formData.append('chunkOverlap', String(chunkingConfig.overlap))
+
+          const res = await fetch(`/api/rag/knowledge-bases/${kbId}/documents?stream=progress`, {
+            method: 'POST',
+            body: formData,
+          })
+
+          if (!res.ok) {
+            const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }))
+            errors.push(`${sf.name}: ${json.error?.message ?? '上传失败'}`)
+            removeActiveFile(sf.name)
+            completedCount++
+            set({ batchCompletedCount: completedCount })
+            continue
+          }
+
+          const reader = res.body?.getReader()
+          if (!reader) {
+            errors.push(`${sf.name}: 无法读取响应流`)
+            removeActiveFile(sf.name)
+            completedCount++
+            set({ batchCompletedCount: completedCount })
+            continue
+          }
+
+          const decoder = new TextDecoder()
+          let buffer = ''
+          let fileDone = false
+
+          while (!fileDone) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue
+              try {
+                const event = JSON.parse(line.slice(6))
+                switch (event.type) {
+                  case 'progress': {
+                    updateActiveFile(sf.name, event.progress, event.stage)
+                    break
+                  }
+                  case 'done': {
+                    fileDone = true
+                    updateActiveFile(sf.name, 100, 'done')
+                    break
+                  }
+                  case 'error': {
+                    fileDone = true
+                    errors.push(`${sf.name}: ${event.error ?? '处理失败'}`)
+                    break
+                  }
+                }
+              } catch {
+                // 忽略无法解析的行
+              }
+            }
+          }
+        } catch (err) {
+          errors.push(`${sf.name}: ${String(err)}`)
+        }
+
+        removeActiveFile(sf.name)
+        completedCount++
+        set({ batchCompletedCount: completedCount })
+      }
+    }
+
+    // 启动 N 个 worker 并发处理
+    await Promise.all(
+      Array.from({ length: concurrency }, () => processOne())
+    )
+
+    // 刷新列表和知识库信息
+    invalidateCache(`rag-docs:${kbId}`)
+    invalidateCache(`rag-kb:${kbId}`)
+    await get().fetchDocuments(kbId)
+    await get().fetchKnowledgeBase(kbId)
+
+    set({
+      batchProcessing: false,
+      batchDone: true,
+      batchErrors: errors,
+      stagedFiles: [],
+      batchActiveFiles: [],
+    })
+
+    workersActive = false
+
+    // 清除 IndexedDB 中的批处理数据
+    await clearAllForKb(kbId).catch(() => {})
+
+    // 短暂展示完成后清理
+    setTimeout(() => {
+      set({ batchDone: false })
+    }, 2000)
+  },
+
+  /** 刷新页面后恢复未完成的批处理会话 */
+  restoreBatchSession: async (kbId: string) => {
+    try {
+      const meta = await loadBatchMeta(kbId)
+
+      // 没有批处理元数据 —— 可能只有暂存文件（用户还没点执行）
+      if (!meta || !meta.processingStarted) {
+        const persistedFiles = await loadStagedFiles(kbId)
+        if (persistedFiles.length > 0) {
+          set({
+            stagedFiles: persistedFiles.map((f) => ({
+              id: f.id,
+              file: f.file,
+              name: f.name,
+              size: f.size,
+              type: f.type,
+              relativePath: f.relativePath,
+            })),
+            chunkingConfig: meta?.chunkingConfig ?? get().chunkingConfig,
+          })
+        }
+        return
+      }
+
+      // 有批处理元数据 —— 需要恢复处理
+      const persistedFiles = await loadStagedFiles(kbId)
+      if (persistedFiles.length === 0) {
+        // IndexedDB 中没有文件，清除元数据
+        await clearAllForKb(kbId).catch(() => {})
+        return
+      }
+
+      // 同步 chunkingConfig
+      set({ chunkingConfig: { ...meta.chunkingConfig } })
+
+      // 获取后端文档列表，判断哪些文件已在处理中
+      invalidateCache(`rag-docs:${kbId}`)
+      let backendDocs: DocumentInfo[] = []
+      try {
+        const res = await fetch(`/api/rag/knowledge-bases/${kbId}/documents`)
+        const json = await res.json()
+        if (json.success && json.data?.documents) {
+          backendDocs = json.data.documents
+          set({ documents: backendDocs })
+        }
+      } catch { /* ignore */ }
+
+      // 用 name+size 匹配，过滤掉已在后端的文件
+      // processing/pending = 正在处理中，ready = 已完成 → 从队列移除
+      // error = 失败，保留在队列中以便重试
+      const backendFileKeys = new Set(
+        backendDocs
+          .filter((d) => d.status === 'processing' || d.status === 'ready' || d.status === 'pending')
+          .map((d) => `${d.name}::${d.size}`)
+      )
+
+      const remainingFiles = persistedFiles.filter(
+        (f) => !backendFileKeys.has(`${f.name}::${f.size}`)
+      )
+
+      const processingDocs = backendDocs.filter((d) => d.status === 'processing' || d.status === 'pending')
+      
+      // 仅统计属于此批次的已就绪文档
+      const batchFileKeys = new Set(persistedFiles.map((f) => `${f.name}::${f.size}`))
+      const readyCount = backendDocs.filter(
+        (d) => d.status === 'ready' && batchFileKeys.has(`${d.name}::${d.size}`)
+      ).length
+
+      // 恢复暂存文件
+      set({
+        stagedFiles: remainingFiles.map((f) => ({
+          id: f.id,
+          file: f.file,
+          name: f.name,
+          size: f.size,
+          type: f.type,
+          relativePath: f.relativePath,
+        })),
+        batchProcessing: true,
+        batchTotal: meta.totalFiles,
+        batchCompletedCount: readyCount,
+        batchActiveFiles: [],
+        batchErrors: [],
+        batchDone: false,
+      })
+
+      // 如果有正在处理的文档，等待它们完成（轮询会自动处理）
+      if (processingDocs.length > 0) {
+        // 填充正在处理的文件列表到 batchActiveFiles，让 UI 能看到进度
+        set({
+          batchActiveFiles: processingDocs.map((d) => ({
+            name: d.name,
+            progress: 0, // 未知进度
+            stage: 'processing' as const,
+          })),
+        })
+        get().checkProcessingDocs(kbId)
+      } else if (remainingFiles.length > 0) {
+        // 没有正在处理的文档，直接继续处理剩余文件
+        get().processStagedFiles(kbId, { alreadyCompleted: readyCount })
+      } else {
+        // 所有文件都已处理完成
+        set({ batchProcessing: false, batchDone: true, stagedFiles: [], batchActiveFiles: [] })
+        await clearAllForKb(kbId).catch(() => {})
+        setTimeout(() => set({ batchDone: false }), 2000)
+      }
+    } catch {
+      // 恢复失败，静默处理
+    }
+  },
+
+  reset: () => {
+    // 停止轮询定时器
+    if (docPollTimer) {
+      clearTimeout(docPollTimer)
+      docPollTimer = null
+    }
+    workersActive = false
+    set(initialState)
+  },
 }))

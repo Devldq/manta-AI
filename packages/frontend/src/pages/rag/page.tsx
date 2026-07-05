@@ -1,7 +1,7 @@
 /* 知识库管理页 — /rag */
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Library, Plus, Search, MoreHorizontal, Trash2, FileText, Layers } from 'lucide-react'
+import { Library, Plus, Search, MoreHorizontal, Trash2, FileText, Layers, Edit2 } from 'lucide-react'
 import { useRAGStore, type KnowledgeBaseSummary } from '@/stores/rag-store'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
@@ -214,14 +214,146 @@ function ConfirmModal({
   )
 }
 
+// ─── 编辑知识库弹窗 ───────────────────────────────────────────────
+function EditKBModal({
+  open,
+  kb,
+  onClose,
+  onSave,
+}: {
+  open: boolean
+  kb: KnowledgeBaseSummary | null
+  onClose: () => void
+  onSave: (id: string, name: string, desc: string) => Promise<boolean>
+}) {
+  const [name, setName] = useState('')
+  const [desc, setDesc] = useState('')
+  const [saving, setSaving] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (open && kb) {
+      setName(kb.name)
+      setDesc(kb.description || '')
+      setTimeout(() => inputRef.current?.focus(), 100)
+    }
+  }, [open, kb])
+
+  if (!open || !kb) return null
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!name.trim() || saving) return
+    setSaving(true)
+    const ok = await onSave(kb!.id, name.trim(), desc.trim())
+    setSaving(false)
+    if (ok) onClose()
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.4)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md mx-4 rounded-xl p-6"
+        style={{
+          background: 'var(--color-background)',
+          border: '1px solid var(--color-border)',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2
+          className="text-lg font-semibold mb-4"
+          style={{ color: 'var(--color-text-primary)' }}
+        >
+          编辑知识库
+        </h2>
+        <form onSubmit={handleSubmit}>
+          <label
+            className="block text-xs font-medium mb-1.5"
+            style={{ color: 'var(--color-text-secondary)' }}
+          >
+            名称 *
+          </label>
+          <input
+            ref={inputRef}
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="例如：产品文档库"
+            maxLength={30}
+            className="w-full px-3 py-2 rounded-lg text-sm mb-3 outline-none transition-colors"
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-primary)',
+            }}
+          />
+
+          <label
+            className="block text-xs font-medium mb-1.5"
+            style={{ color: 'var(--color-text-secondary)' }}
+          >
+            描述（可选）
+          </label>
+          <textarea
+            value={desc}
+            onChange={(e) => setDesc(e.target.value)}
+            placeholder="简要描述知识库的用途..."
+            rows={3}
+            className="w-full px-3 py-2 rounded-lg text-sm mb-4 outline-none resize-none transition-colors"
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-primary)',
+            }}
+          />
+
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg text-sm transition-colors"
+              style={{
+                color: 'var(--color-text-secondary)',
+                border: '1px solid var(--color-border)',
+                background: 'transparent',
+              }}
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              disabled={!name.trim() || saving}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-opacity"
+              style={{
+                background: 'var(--color-accent)',
+                color: 'var(--color-text-inverse)',
+                opacity: name.trim() && !saving ? 1 : 0.5,
+              }}
+            >
+              {saving ? '保存中...' : '保存'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── 知识库卡片 ───────────────────────────────────────────────
 function KBCard({
   kb,
   onOpen,
+  onEdit,
   onDelete,
 }: {
   kb: KnowledgeBaseSummary
   onOpen: (id: string) => void
+  onEdit: (kb: KnowledgeBaseSummary) => void
   onDelete: (id: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -296,6 +428,24 @@ function KBCard({
             >
               <button
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                style={{ color: 'var(--color-text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onEdit(kb)
+                  setMenuOpen(false)
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-surface-hover, var(--color-surface))'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent'
+                }}
+              >
+                <Edit2 size={12} />
+                编辑
+              </button>
+              <button
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
                 style={{ color: '#ef4444', background: 'transparent', border: 'none', cursor: 'pointer' }}
                 onClick={(e) => {
                   e.stopPropagation()
@@ -327,19 +477,31 @@ function KBCard({
 
       {/* 底部 */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-            <FileText size={10} />
-            {kb.documentCount ?? 0} 文档
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1">
+            <FileText size={11} style={{ color: 'var(--color-accent)' }} />
+            <span
+              className="text-xs font-semibold"
+              style={{ color: 'var(--color-text-primary)' }}
+            >
+              {kb.documentCount ?? 0}
+            </span>
+            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>文档</span>
           </div>
-          <div className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-            <Layers size={10} />
-            {kb.chunkCount ?? 0} 分块
+          <div className="flex items-center gap-1">
+            <Layers size={11} style={{ color: 'var(--color-accent)' }} />
+            <span
+              className="text-xs font-semibold"
+              style={{ color: 'var(--color-text-primary)' }}
+            >
+              {kb.chunkCount ?? 0}
+            </span>
+            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>分块</span>
           </div>
         </div>
         <span
           className="text-[10px]"
-          style={{ color: 'var(--color-text-muted)' }}
+          style={{ color: 'var(--color-text-secondary)' }}
         >
           {formatRelativeTime(kb.updatedAt)}
         </span>
@@ -351,11 +513,12 @@ function KBCard({
 // ─── 主页面组件 ───────────────────────────────────────────────
 export default function RagPage() {
   const navigate = useNavigate()
-  const { knowledgeBases, loading, error, fetchKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase } =
+  const { knowledgeBases, loading, error, fetchKnowledgeBases, createKnowledgeBase, updateKnowledgeBase, deleteKnowledgeBase } =
     useRAGStore()
 
   const [searchQuery, setSearchQuery] = useState('')
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [editingKB, setEditingKB] = useState<KnowledgeBaseSummary | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{
     id: string
     name: string
@@ -389,6 +552,10 @@ export default function RagPage() {
         navigate(`/rag/${created.id}`)
       }
     }
+  }
+
+  async function handleEdit(id: string, name: string, desc: string) {
+    return updateKnowledgeBase(id, { name, description: desc })
   }
 
   function handleOpen(id: string) {
@@ -523,6 +690,7 @@ export default function RagPage() {
               key={kb.id}
               kb={kb}
               onOpen={handleOpen}
+              onEdit={(kb) => setEditingKB(kb)}
               onDelete={(id) =>
                 setConfirmDelete({
                   id,
@@ -539,6 +707,14 @@ export default function RagPage() {
         open={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onCreate={handleCreate}
+      />
+
+      {/* 编辑弹窗 */}
+      <EditKBModal
+        open={!!editingKB}
+        kb={editingKB}
+        onClose={() => setEditingKB(null)}
+        onSave={handleEdit}
       />
 
       {/* 删除确认弹窗 */}

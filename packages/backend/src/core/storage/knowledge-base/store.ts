@@ -13,6 +13,17 @@ import { shortId, readJsonFile, writeJsonFile, removeDir } from '@manta/rag'
 
 // ─── 类型定义 ─────────────────────────────────────────────────
 
+export interface ChunkingConfig {
+  /** 分块策略：fixed=固定长度, semantic=语义, recursive=递归多级 */
+  strategy: 'fixed' | 'semantic' | 'recursive'
+  /** 分块大小（Token 数） */
+  chunkSize: number
+  /** 重叠大小（Token 数） */
+  overlap: number
+  /** 批量上传并行处理数（1-5） */
+  batchConcurrency?: number
+}
+
 export interface KnowledgeBaseConfig {
   dimensions: number
   similarityThreshold: number
@@ -30,6 +41,8 @@ export interface KnowledgeBaseConfig {
     baseUrl?: string
     dimensions?: number
   }
+  /** 分块配置（用于文档处理时生效） */
+  chunkingConfig?: ChunkingConfig
 }
 
 export interface KnowledgeBase {
@@ -76,6 +89,11 @@ const DEFAULT_CONFIG: KnowledgeBaseConfig = {
   dimensions: 1536,
   similarityThreshold: 0.7,
   topK: 5,
+  chunkingConfig: {
+    strategy: 'recursive',
+    chunkSize: 512,
+    overlap: 50,
+  },
 }
 
 // ─── 工具函数 ─────────────────────────────────────────────────

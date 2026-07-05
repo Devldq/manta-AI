@@ -1,12 +1,13 @@
 /**
  * 文档处理流水线 — 解析 → 分块 → 向量化 → 写入向量库
  * Embedding 模型和存储 Provider 由调用方注入
+ * 支持 Embedding 缓存（通过 CachedEmbeddingService）
  */
 
-import { v4 as uuidv4 } from 'uuid'
 import type { DocumentMetadata, DocumentChunk, EmbeddingService, RAGProvider, ChunkingStrategy } from './types'
 import { ChunkingStrategyFactory } from './chunking-strategy'
 import { createDocumentParserFactory } from './document-parser'
+import { CachedEmbeddingService, EmbeddingCacheManager } from './embedding-cache'
 
 // ── 类型 ────────────────────────────────────────────────────
 
@@ -14,10 +15,19 @@ export interface PipelineOptions {
   embeddingService: EmbeddingService
   ragProvider: RAGProvider
   chunkStrategy?: 'fixed' | 'semantic' | 'recursive'
+  /** 分块大小（Token 数），内部会按 ~4 字符/Token 转换为字符数 */
   chunkSize?: number
+  /** 重叠大小（Token 数） */
   chunkOverlap?: number
   onProgress?: (stage: PipelineStage, progress: number, message: string) => void
+  /** Embedding 缓存管理器（可选，提供后自动启用缓存） */
+  cacheManager?: EmbeddingCacheManager
+  /** 缓存使用的模型标识（可选，默认 'default'） */
+  cacheModel?: string
 }
+
+/** Token → 字符近似转换系数（混合中英文约 1 Token ≈ 4 字符） */
+const TOKEN_TO_CHAR = 4
 
 export interface PipelineResult {
   document: DocumentMetadata
@@ -37,9 +47,21 @@ export class DocumentPipeline {
   private ragProvider: RAGProvider
   private chunkStrategy: ChunkingStrategy
   private options: PipelineOptions
+  private cacheManager?: EmbeddingCacheManager
 
   constructor(options: PipelineOptions) {
-    this.embeddingService = options.embeddingService
+    // 如果提供了缓存管理器，使用带缓存的 EmbeddingService
+    if (options.cacheManager) {
+      this.embeddingService = new CachedEmbeddingService(
+        options.embeddingService,
+        options.cacheManager,
+        options.cacheModel || 'default'
+      )
+      this.cacheManager = options.cacheManager
+    } else {
+      this.embeddingService = options.embeddingService
+    }
+
     this.ragProvider = options.ragProvider
     this.chunkStrategy = ChunkingStrategyFactory.create(options.chunkStrategy || 'recursive')
     this.options = options
@@ -61,7 +83,7 @@ export class DocumentPipeline {
 
       // 2. 分块
       emit('chunking', 0, '正在分块...')
-      const chunks = this.rechunk(rawChunks, metadata.id)
+      const chunks = this.rechunk(rawChunks, metadata.id, metadata.name)
       emit('chunking', 100, `分块完成，共 ${chunks.length} 个块`)
 
       if (chunks.length === 0) {
@@ -118,29 +140,54 @@ export class DocumentPipeline {
     return this.parserFactory.parseDocument(buffer, metadata)
   }
 
-  async chunkPreview(text: string): Promise<string[]> {
-    return this.chunkStrategy.chunk(text, {
-      chunkSize: this.options.chunkSize || 1000,
-      overlap: this.options.chunkOverlap || 200,
-    })
+  /**
+   * 预览分块（不向量化、不存储）— 解析 + 分块，返回带完整元数据的 chunks
+   */
+  async previewChunks(buffer: Buffer, metadata: DocumentMetadata): Promise<DocumentChunk[]> {
+    const rawChunks = await this.parserFactory.parseDocument(buffer, metadata)
+    return this.rechunk(rawChunks, metadata.id, metadata.name)
   }
 
-  private rechunk(rawChunks: DocumentChunk[], documentId: string): DocumentChunk[] {
+  private rechunk(rawChunks: DocumentChunk[], documentId: string, documentName?: string): DocumentChunk[] {
     const result: DocumentChunk[] = []
+    const charSize = (this.options.chunkSize || 512) * TOKEN_TO_CHAR
+    const charOverlap = (this.options.chunkOverlap || 50) * TOKEN_TO_CHAR
+    const sourceName = documentName || documentId
+    let globalIndex = 0
 
     for (const raw of rawChunks) {
       const subTexts = this.chunkStrategy.chunk(raw.content, {
-        chunkSize: this.options.chunkSize || 1000,
-        overlap: this.options.chunkOverlap || 200,
+        chunkSize: charSize,
+        overlap: charOverlap,
       })
 
+      // 顺序查找每个 subText 在 raw.content 中的位置，以追踪原文偏移
+      let searchFrom = 0
       for (const subText of subTexts) {
+        const relStart = raw.content.indexOf(subText, searchFrom)
+        const startRel = relStart >= 0 ? relStart : searchFrom
+        const endRel = startRel + subText.length
+        searchFrom = relStart >= 0 ? endRel : searchFrom + subText.length
+
+        const absStart = (raw.startIndex ?? 0) + startRel
+        const absEnd = (raw.startIndex ?? 0) + endRel
+        const tokenEstimate = Math.ceil(subText.length / TOKEN_TO_CHAR)
+
         result.push({
-          id: uuidv4(),
+          id: `${sourceName}_${globalIndex}`,
           documentId,
           content: subText,
-          metadata: { ...raw.metadata, parentChunkId: raw.id },
+          startIndex: absStart,
+          endIndex: absEnd,
+          metadata: {
+            ...raw.metadata,
+            parentChunkId: raw.id,
+            source: sourceName,
+            index: globalIndex,
+            tokenEstimate,
+          },
         })
+        globalIndex++
       }
     }
 

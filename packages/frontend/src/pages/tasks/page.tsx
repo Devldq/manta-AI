@@ -1,6 +1,6 @@
 /* 会话聊天页面 — 性能优化版 */
 
-import { useState, useEffect, useRef, Suspense, useCallback } from 'react'
+import { useState, useEffect, useRef, Suspense, useCallback, useMemo } from 'react'
 import { AlertCircle, Loader2, PanelRight, ArrowLeft, Trash2 } from 'lucide-react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useChat } from '@ai-sdk/react'
@@ -19,10 +19,91 @@ import {
   KimInputBar,
 } from './components'
 import type { WorkspaceEntry } from './components/WorkspaceSelector'
-import type { Conversation, AgentEntry } from './utils'
+import type { Conversation, AgentEntry, StepUsageData } from './utils'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 
 const DEFAULT_AGENT = 'main'
+
+// ─── Step Usage 拦截器：从 SSE 流中提取 manta:step-usage 事件 ──────────────────
+
+interface StepUsageEvent {
+  stepIndex: number
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    noCacheTokens?: number
+  }
+  toolNames?: string[]
+}
+
+/**
+ * 创建一个自定义 fetch 函数，拦截 SSE 响应流中的 manta:step-usage 事件。
+ * DefaultChatTransport 会忽略非 UIMessageChunk 格式的事件，
+ * 所以我们需要在 raw 字节层面拦截，提取 step-usage 数据后原样传递。
+ */
+function createStepUsageInterceptor(
+  onStepUsage: (data: StepUsageEvent) => void,
+): typeof globalThis.fetch {
+  return async (input, init) => {
+    const response = await globalThis.fetch(input, init)
+
+    if (!response.body) return response
+    const ct = response.headers.get('content-type') ?? ''
+    if (!ct.includes('text/event-stream')) return response
+
+    let buffer = ''
+    const decoder = new TextDecoder()
+
+    const transformedBody = response.body.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          // 原样传递给 DefaultChatTransport 处理
+          controller.enqueue(chunk)
+
+          // 同时解析 SSE 事件，提取 step-usage
+          buffer += decoder.decode(chunk, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const dataStr = line.slice(6).trim()
+            if (!dataStr || dataStr === '[DONE]') continue
+            try {
+              const event = JSON.parse(dataStr)
+              if (event.type === 'manta:step-usage') {
+                onStepUsage(event)
+              }
+            } catch {
+              // 忽略解析错误
+            }
+          }
+        },
+        flush() {
+          // 处理 buffer 中剩余的数据
+          const remaining = buffer.trim()
+          if (!remaining.startsWith('data: ')) return
+          try {
+            const event = JSON.parse(remaining.slice(6).trim())
+            if (event.type === 'manta:step-usage') {
+              onStepUsage(event)
+            }
+          } catch {
+            // 忽略
+          }
+        },
+      }),
+    )
+
+    return new Response(transformedBody, {
+      headers: response.headers,
+      status: response.status,
+      statusText: response.statusText,
+    })
+  }
+}
 
 // ─── ChatView（有会话时） ─────────────────────────────────────────────────────
 
@@ -41,6 +122,28 @@ function ChatView({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [inputText, setInputText] = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  // ─── 实时 Step Usage 状态（流式期间从 SSE 拦截，不等 loop 结束）──
+  const [liveStepUsages, setLiveStepUsages] = useState<StepUsageData[]>([])
+
+  // 创建 fetch 拦截器，捕获 manta:step-usage 事件
+  const interceptedFetch = useMemo(
+    () =>
+      createStepUsageInterceptor((data) => {
+        setLiveStepUsages((prev) => [
+          ...prev,
+          {
+            inputTokens: data.usage.inputTokens,
+            outputTokens: data.usage.outputTokens,
+            cacheReadTokens: data.usage.cacheReadTokens,
+            cacheWriteTokens: data.usage.cacheWriteTokens,
+            noCacheTokens: data.usage.noCacheTokens,
+            toolNames: data.toolNames,
+          },
+        ])
+      }),
+    [],
+  )
 
   // 删除当前任务
   async function handleDeleteTask() {
@@ -124,6 +227,7 @@ function ChatView({
         ? `/api/conversations/${convId}/ai-stream?type=workspace&workspaceId=${workspaceId}`
         : `/api/conversations/${convId}/ai-stream`,
       body: { agentName },
+      fetch: interceptedFetch,
     }),
     messages: initialMessages,
     id: convId,
@@ -132,7 +236,24 @@ function ChatView({
   const isLoading = status === 'submitted' || status === 'streaming'
 
   // ─── SSE 重连 ─────────────────────────────────────────────────────────
-  const reconnect = useReconnectSSE(convId, !isLoading && status === 'ready', workspaceId)
+  const reconnect = useReconnectSSE(
+    convId,
+    !isLoading && status === 'ready',
+    workspaceId,
+    (data) => {
+      setLiveStepUsages((prev) => [
+        ...prev,
+        {
+          inputTokens: data.usage.inputTokens,
+          outputTokens: data.usage.outputTokens,
+          cacheReadTokens: data.usage.cacheReadTokens,
+          cacheWriteTokens: data.usage.cacheWriteTokens,
+          noCacheTokens: data.usage.noCacheTokens,
+          toolNames: data.toolNames,
+        },
+      ])
+    },
+  )
 
   // 当发送新消息时，重置重连状态
   useEffect(() => {
@@ -179,6 +300,7 @@ function ChatView({
               }
             })
           setMessages(refreshed)
+          setLiveStepUsages([])
           reconnect.reset()
         })
         .catch(() => {})
@@ -218,6 +340,8 @@ function ChatView({
               return msg
             })
           })
+          // 服务端数据已加载（含完整 usage + stepUsages），清除实时数据
+          setLiveStepUsages([])
         })
         .catch(() => {})
     }
@@ -239,6 +363,7 @@ function ChatView({
   function handleSend() {
     reconnectFinishedRef.current = false
     reconnect.reset()
+    setLiveStepUsages([])
     const msg = inputText.trim()
     if (!msg || isLoading) return
     setInputText('')
@@ -379,7 +504,7 @@ function ChatView({
             const streaming = isReconnectMsg ? showReconnectStreaming : isLoading && isLastAssistant
             return (
               <div key={msg.id} style={{ width: '100%' }}>
-                <MessageRow message={msg} agentName={agentName} isStreaming={streaming} isLastAssistant={isLastAssistant} />
+                <MessageRow message={msg} agentName={agentName} isStreaming={streaming} isLastAssistant={isLastAssistant} liveStepUsages={isLastAssistant && streaming ? liveStepUsages : undefined} />
               </div>
             )
           })}

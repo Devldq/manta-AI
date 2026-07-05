@@ -6,6 +6,7 @@ import { markdownComponents } from '../utils/markdown'
 import { getTextContent, formatTime, fmtTokens } from '../utils/formatters'
 import { ToolCallLog } from './ToolCallLog'
 import { TokenBreakdown } from './TokenBreakdown'
+import type { StepUsageData } from '../utils/types'
 
 const MarkdownContent = memo(function MarkdownContent({ content, streaming }: { content: string; streaming?: boolean }) {
   return (
@@ -29,9 +30,11 @@ interface MessageRowProps {
   isStreaming: boolean
   /** 是否是最后一条 assistant 消息（用于自动折叠历史消息） */
   isLastAssistant?: boolean
+  /** 流式期间实时收集的 step usage 数据（来自 SSE manta:step-usage 事件） */
+  liveStepUsages?: StepUsageData[]
 }
 
-export const MessageRow = memo(function MessageRow({ message, agentName, isStreaming, isLastAssistant = true }: MessageRowProps) {
+export const MessageRow = memo(function MessageRow({ message, agentName, isStreaming, isLastAssistant = true, liveStepUsages }: MessageRowProps) {
   const [hovered, setHovered] = useState(false)
   const [copied, setCopied] = useState(false)
   const [toolsExpanded, setToolsExpanded] = useState(isLastAssistant) // 历史消息默认折叠工具调用
@@ -65,9 +68,30 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
   } | undefined
 
   const timestamp = formatTime(meta?.timestamp)
-  const usage = meta?.usage
-  const stepUsages = meta?.stepUsages
-  const hasStepUsages = stepUsages && stepUsages.length > 1
+
+  // ── 计算有效的 usage 和 stepUsages ──
+  // 优先使用 metadata 中的完整数据（loop 结束后从服务端获取）
+  // 如果没有（流式期间），则从 liveStepUsages 实时数据中计算
+  const metaUsage = meta?.usage
+  const metaStepUsages = meta?.stepUsages
+
+  const hasLive = liveStepUsages && liveStepUsages.length > 0
+  const effectiveStepUsages = metaStepUsages ?? (hasLive ? liveStepUsages : undefined)
+  const effectiveUsage = metaUsage ?? (hasLive ? {
+    inputTokens: liveStepUsages!.reduce((a, s) => a + s.inputTokens, 0),
+    outputTokens: liveStepUsages!.reduce((a, s) => a + s.outputTokens, 0),
+    cacheReadTokens: liveStepUsages!.reduce((a, s) => a + (s.cacheReadTokens ?? 0), 0) || undefined,
+    cacheWriteTokens: liveStepUsages!.reduce((a, s) => a + (s.cacheWriteTokens ?? 0), 0) || undefined,
+    noCacheTokens: liveStepUsages!.reduce((a, s) => a + (s.noCacheTokens ?? 0), 0) || undefined,
+  } : undefined)
+
+  // Token 分析的显示条件：
+  // - 非流式：有 usage 数据就显示（和原来一样）
+  // - 流式：有 live step usages 就显示（不等 loop 结束）
+  const showTokenAnalysis = effectiveUsage && (effectiveUsage.inputTokens != null || effectiveUsage.outputTokens != null)
+  // 分步面板：非流式时 >1 步才显示，流式时 ≥1 步就显示（实时查看进度）
+  const hasStepUsages = effectiveStepUsages && (isStreaming ? effectiveStepUsages.length >= 1 : effectiveStepUsages.length > 1)
+
   // 判断是否是已完成的历史消息（非最后一条 assistant，且非流式）
   const isHistorical = !isLastAssistant && !isStreaming
 
@@ -180,29 +204,36 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
           </span>
         )}
 
-        {/* 底部：token 消耗 */}
-        {!isStreaming && usage && (usage.inputTokens != null || usage.outputTokens != null) && (
+        {/* 底部：token 消耗（流式期间也显示实时数据） */}
+        {showTokenAnalysis && (
           <div style={{ marginTop: '6px' }}>
             {/* 紧凑摘要行 */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              {usage.inputTokens != null && (
-                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>in {fmtTokens(usage.inputTokens)}</span>
+              {effectiveUsage.inputTokens != null && (
+                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>in {fmtTokens(effectiveUsage.inputTokens)}</span>
               )}
-              {usage.outputTokens != null && (
-                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>out {fmtTokens(usage.outputTokens)}</span>
+              {effectiveUsage.outputTokens != null && (
+                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>out {fmtTokens(effectiveUsage.outputTokens)}</span>
               )}
-              {usage.inputTokens != null && usage.outputTokens != null && (
-                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>· {fmtTokens(usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0))} total</span>
+              {effectiveUsage.inputTokens != null && effectiveUsage.outputTokens != null && (
+                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>· {fmtTokens(effectiveUsage.inputTokens + effectiveUsage.outputTokens + (effectiveUsage.cacheReadTokens ?? 0))} total</span>
               )}
-              {usage.cacheReadTokens != null && usage.cacheReadTokens > 0 && (
-                <span style={{ fontSize: '9px', color: 'var(--color-text-success, #10b981)', fontFamily: 'var(--font-mono)' }}>cache hit {fmtTokens(usage.cacheReadTokens)}</span>
+              {effectiveUsage.cacheReadTokens != null && effectiveUsage.cacheReadTokens > 0 && (
+                <span style={{ fontSize: '9px', color: 'var(--color-text-success, #10b981)', fontFamily: 'var(--font-mono)' }}>cache hit {fmtTokens(effectiveUsage.cacheReadTokens)}</span>
+              )}
+              {/* 流式期间的实时指示 */}
+              {isStreaming && hasLive && (
+                <span style={{ fontSize: '9px', color: 'var(--color-accent)', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                  <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'var(--color-accent)', display: 'inline-block', animation: 'pulse-soft 1.5s ease-in-out infinite' }} />
+                  live
+                </span>
               )}
             </div>
 
-            {/* 分步分析面板（仅多步时显示） */}
+            {/* 分步分析面板 */}
             {hasStepUsages && (
               <TokenBreakdown
-                steps={stepUsages!}
+                steps={effectiveStepUsages!}
                 open={tokenDetailOpen}
                 onToggle={() => setTokenDetailOpen((v) => !v)}
               />

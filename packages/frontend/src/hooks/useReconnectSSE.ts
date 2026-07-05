@@ -29,8 +29,14 @@ export interface ReconnectStreamState {
  * @param convId 会话 ID
  * @param enabled 是否启用重连（通常当 useChat 处于 ready 状态时启用）
  * @param workspaceId 工作空间 ID（可选，用于工作空间会话）
+ * @param onStepUsage step-usage 事件回调（实时 token 用量）
  */
-export function useReconnectSSE(convId: string, enabled: boolean, workspaceId?: string | null) {
+export function useReconnectSSE(
+  convId: string,
+  enabled: boolean,
+  workspaceId?: string | null,
+  onStepUsage?: (data: { stepIndex: number; usage: Record<string, number | undefined>; toolNames?: string[] }) => void,
+) {
   const [state, setState] = useState<ReconnectStreamState>({
     connected: false,
     reconnecting: false,
@@ -42,6 +48,9 @@ export function useReconnectSSE(convId: string, enabled: boolean, workspaceId?: 
   const abortRef = useRef<AbortController | null>(null)
   // 跟踪从 SSE 事件中接收到的最后 seq（用于精确重连）
   const lastSeqRef = useRef(0)
+  // 使用 ref 存储 onStepUsage 回调，避免 connect 函数频繁重建
+  const onStepUsageRef = useRef(onStepUsage)
+  useEffect(() => { onStepUsageRef.current = onStepUsage }, [onStepUsage])
 
   // sessionStorage key for this conversation's last seq
   const storedSeqKey = `manta:seq:${convId}`
@@ -122,6 +131,12 @@ export function useReconnectSSE(convId: string, enabled: boolean, workspaceId?: 
                   finished: true,
                 }))
                 return
+              }
+
+              // manta:step-usage 事件 — 实时 token 用量（非 UIMessageChunk，单独处理）
+              if (event.type === 'manta:step-usage') {
+                onStepUsageRef.current?.(event)
+                continue
               }
 
               // 将 SSE 事件转换为 UIMessage part

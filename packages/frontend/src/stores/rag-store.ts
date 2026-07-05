@@ -26,6 +26,7 @@ interface RAGStore {
     providerId?: string
     config?: Record<string, unknown>
   }) => Promise<boolean>
+  updateKnowledgeBase: (id: string, patch: { name?: string; description?: string }) => Promise<boolean>
   deleteKnowledgeBase: (id: string) => Promise<boolean>
 }
 
@@ -69,6 +70,27 @@ export const useRAGStore = create<RAGStore>((set, get) => ({
         return true
       }
       set({ error: json.error?.message ?? '创建知识库失败' })
+      return false
+    } catch (err) {
+      set({ error: String(err) })
+      return false
+    }
+  },
+
+  updateKnowledgeBase: async (id, patch) => {
+    try {
+      const res = await fetch(`/api/rag/knowledge-bases/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      const json = await res.json()
+      if (json.success) {
+        invalidateCache('knowledge-bases:')
+        await get().fetchKnowledgeBases()
+        return true
+      }
+      set({ error: json.error?.message ?? '更新知识库失败' })
       return false
     } catch (err) {
       set({ error: String(err) })
