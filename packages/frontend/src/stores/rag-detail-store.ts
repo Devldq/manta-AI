@@ -70,12 +70,19 @@ export interface StagedFile {
   relativePath?: string
 }
 
+/** 暂存文件处理进度 */
+export interface StagedFileProgress {
+  stage: 'pending' | 'uploading' | 'parsing' | 'chunking' | 'embedding' | 'storing' | 'done' | 'error'
+  progress: number
+  error?: string
+}
+
 /** 默认分块配置（单位：Token） */
 const DEFAULT_CHUNKING_CONFIG: ChunkingConfig = {
   strategy: 'recursive',
   chunkSize: 512,
   overlap: 50,
-  batchConcurrency: 1,
+  batchConcurrency: 5,
 }
 
 /** 可选的 Embedding 模型 */
@@ -203,6 +210,7 @@ interface RAGDetailStore {
 
   // 暂存区（浏览器端暂存文件，未上传到服务器）
   stagedFiles: StagedFile[]
+  stagedFileProgress: Record<string, StagedFileProgress>
   chunkingConfig: ChunkingConfig
   /** 当前知识库 ID（用于 IndexedDB 持久化） */
   currentKbId: string | null
@@ -220,6 +228,10 @@ interface RAGDetailStore {
   ragConfigLoading: boolean
   configSaving: boolean
   configError: string | null
+
+  // 向量模型检测
+  embeddingChecking: boolean
+  embeddingCheckResult: { available: boolean; provider?: string; model?: string; dimensions?: number; error?: string } | null
 
   // 问答
   chatMessages: ChatMessage[]
@@ -261,6 +273,8 @@ interface RAGDetailStore {
   removeStagedFileById: (id: string) => void
   /** 刷新页面后恢复未完成的批处理会话 */
   restoreBatchSession: (kbId: string) => Promise<void>
+  /** 检测向量模型是否可用（处理前校验） */
+  checkEmbeddingHealth: (kbId: string) => Promise<boolean>
 }
 
 const initialState = {
@@ -297,6 +311,7 @@ const initialState = {
   uploadError: null as string | null,
 
   stagedFiles: [] as StagedFile[],
+  stagedFileProgress: {} as Record<string, StagedFileProgress>,
   chunkingConfig: { ...DEFAULT_CHUNKING_CONFIG } as ChunkingConfig,
   currentKbId: null as string | null,
 
@@ -311,6 +326,9 @@ const initialState = {
   ragConfigLoading: false,
   configSaving: false,
   configError: null as string | null,
+
+  embeddingChecking: false,
+  embeddingCheckResult: null as { available: boolean; provider?: string; model?: string; dimensions?: number; error?: string } | null,
 
   chatMessages: [] as ChatMessage[],
   chatStreaming: false,
@@ -841,7 +859,14 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
   },
 
   removeStagedFile: (id: string) => {
-    set((s) => ({ stagedFiles: s.stagedFiles.filter((f) => f.id !== id) }))
+    set((s) => {
+      const nextProgress = { ...s.stagedFileProgress }
+      delete nextProgress[id]
+      return {
+        stagedFiles: s.stagedFiles.filter((f) => f.id !== id),
+        stagedFileProgress: nextProgress,
+      }
+    })
     removeStagedFileById(id).catch(() => {})
   },
 
@@ -851,7 +876,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
   },
 
   clearStagedFiles: () => {
-    set({ stagedFiles: [] })
+    set({ stagedFiles: [], stagedFileProgress: {} })
     const kbId = get().currentKbId
     if (kbId) clearAllForKb(kbId).catch(() => {})
   },
@@ -880,7 +905,13 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       startedAt: new Date().toISOString(),
     }).catch(() => {})
 
-    const concurrency = Math.max(1, Math.min(chunkingConfig.batchConcurrency || 1, 5, stagedFiles.length))
+    const concurrency = Math.max(1, Math.min(chunkingConfig.batchConcurrency || 1, 50, stagedFiles.length))
+
+    // 初始化每个暂存文件的进度：pending 0%
+    const initialProgress: Record<string, StagedFileProgress> = {}
+    for (const sf of stagedFiles) {
+      initialProgress[sf.id] = { stage: 'pending', progress: 0 }
+    }
 
     set({
       batchProcessing: true,
@@ -889,13 +920,27 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       batchActiveFiles: [],
       batchErrors: [],
       batchDone: false,
+      stagedFileProgress: initialProgress,
     })
 
     const errors: string[] = []
     let completedCount = alreadyCompleted
     let nextIndex = 0
 
-    // 更新 active files 的辅助函数
+    // 更新指定暂存文件进度
+    const setProgress = (id: string, patch: Partial<StagedFileProgress>) => {
+      set((s) => {
+        const current = s.stagedFileProgress[id]
+        if (!current) return s
+        return {
+          stagedFileProgress: {
+            ...s.stagedFileProgress,
+            [id]: { ...current, ...patch },
+          },
+        }
+      })
+    }
+
     const updateActiveFile = (name: string, progress: number, stage: string | null) => {
       const current = get().batchActiveFiles
       const idx = current.findIndex((f) => f.name === name)
@@ -911,13 +956,14 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       set({ batchActiveFiles: current.filter((f) => f.name !== name) })
     }
 
-    // 处理单个文件的 worker
+    // 处理单个文件的 worker：完成一个立即从队列取下一个（流水线并发）
     const processOne = async () => {
       while (nextIndex < stagedFiles.length) {
         const myIndex = nextIndex++
         const sf = stagedFiles[myIndex]
 
-        // 加入 active 列表
+        // 标记为上传中，并加入 active 列表
+        setProgress(sf.id, { stage: 'uploading', progress: 0 })
         set((s) => ({ batchActiveFiles: [...s.batchActiveFiles, { name: sf.name, progress: 0, stage: 'uploading' }] }))
 
         try {
@@ -934,7 +980,9 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
 
           if (!res.ok) {
             const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }))
-            errors.push(`${sf.name}: ${json.error?.message ?? '上传失败'}`)
+            const message = json.error?.message ?? '上传失败'
+            errors.push(`${sf.name}: ${message}`)
+            setProgress(sf.id, { stage: 'error', progress: 0, error: message })
             removeActiveFile(sf.name)
             completedCount++
             set({ batchCompletedCount: completedCount })
@@ -944,6 +992,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
           const reader = res.body?.getReader()
           if (!reader) {
             errors.push(`${sf.name}: 无法读取响应流`)
+            setProgress(sf.id, { stage: 'error', progress: 0, error: '无法读取响应流' })
             removeActiveFile(sf.name)
             completedCount++
             set({ batchCompletedCount: completedCount })
@@ -967,17 +1016,22 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
                 const event = JSON.parse(line.slice(6))
                 switch (event.type) {
                   case 'progress': {
+                    const stage = (event.stage as StagedFileProgress['stage']) || 'processing'
+                    setProgress(sf.id, { stage, progress: event.progress })
                     updateActiveFile(sf.name, event.progress, event.stage)
                     break
                   }
                   case 'done': {
                     fileDone = true
+                    setProgress(sf.id, { stage: 'done', progress: 100 })
                     updateActiveFile(sf.name, 100, 'done')
                     break
                   }
                   case 'error': {
                     fileDone = true
-                    errors.push(`${sf.name}: ${event.error ?? '处理失败'}`)
+                    const message = event.error ?? '处理失败'
+                    errors.push(`${sf.name}: ${message}`)
+                    setProgress(sf.id, { stage: 'error', progress: 0, error: message })
                     break
                   }
                 }
@@ -987,7 +1041,9 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
             }
           }
         } catch (err) {
-          errors.push(`${sf.name}: ${String(err)}`)
+          const message = String(err)
+          errors.push(`${sf.name}: ${message}`)
+          setProgress(sf.id, { stage: 'error', progress: 0, error: message })
         }
 
         removeActiveFile(sf.name)
@@ -1013,6 +1069,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       batchErrors: errors,
       stagedFiles: [],
       batchActiveFiles: [],
+      stagedFileProgress: {},
     })
 
     workersActive = false
@@ -1094,7 +1151,11 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
         (d) => d.status === 'ready' && batchFileKeys.has(`${d.name}::${d.size}`)
       ).length
 
-      // 恢复暂存文件
+      // 恢复暂存文件，同时初始化进度（pending = 尚未开始处理）
+      const restoredProgress: Record<string, StagedFileProgress> = {}
+      for (const f of remainingFiles) {
+        restoredProgress[f.id] = { stage: 'pending', progress: 0 }
+      }
       set({
         stagedFiles: remainingFiles.map((f) => ({
           id: f.id,
@@ -1104,6 +1165,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
           type: f.type,
           relativePath: f.relativePath,
         })),
+        stagedFileProgress: restoredProgress,
         batchProcessing: true,
         batchTotal: meta.totalFiles,
         batchCompletedCount: readyCount,
@@ -1134,6 +1196,24 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       }
     } catch {
       // 恢复失败，静默处理
+    }
+  },
+
+  /** 检测向量模型是否可用（处理前校验） */
+  checkEmbeddingHealth: async (kbId: string) => {
+    set({ embeddingChecking: true, embeddingCheckResult: null })
+    try {
+      const res = await fetch(`/api/rag/knowledge-bases/${kbId}/embedding-check`)
+      const json = await res.json()
+      const result = json.success ? json.data : { available: false, error: json.error || '检测失败' }
+      set({ embeddingCheckResult: result, embeddingChecking: false })
+      return result.available === true
+    } catch (err) {
+      set({
+        embeddingChecking: false,
+        embeddingCheckResult: { available: false, error: String(err) },
+      })
+      return false
     }
   },
 

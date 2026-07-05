@@ -990,24 +990,39 @@ function ChunkingConfigPanel({ kbId }: { kbId?: string }) {
         </div>
         <div className="flex items-center gap-1 ml-auto">
           <label className="text-[10px] shrink-0" style={{ color: 'var(--color-text-muted)' }}>并行</label>
-          <input
-            type="number"
+          <select
             value={config.batchConcurrency}
-            onChange={(e) => store.updateChunkingConfig({ batchConcurrency: Math.max(1, Math.min(5, parseInt(e.target.value) || 1)) })}
-            min={1}
-            max={5}
-            step={1}
-            className="w-10 px-1.5 py-0.5 rounded text-[11px] outline-none tabular-nums text-center"
+            onChange={(e) => store.updateChunkingConfig({ batchConcurrency: parseInt(e.target.value) })}
+            className="w-12 px-1 py-0.5 rounded text-[11px] outline-none tabular-nums text-center appearance-none"
             style={{
               background: 'var(--color-background)',
               border: '1px solid var(--color-border)',
               color: 'var(--color-text-primary)',
             }}
-          />
+          >
+            {[1, 5, 10, 20, 50].map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
         </div>
       </div>
     </div>
   )
+}
+
+function stageLabel(stage: string | null | undefined): string {
+  switch (stage) {
+    case 'done': return '完成'
+    case 'processing': return '处理中'
+    case 'embedding': return '向量化'
+    case 'chunking': return '分块'
+    case 'parsing': return '解析'
+    case 'storing': return '存储'
+    case 'uploading': return '上传中'
+    case 'pending': return '等待中'
+    case 'error': return '失败'
+    default: return '处理中'
+  }
 }
 
 // ─── 暂存文件卡片 ─────────────────────────────────────────────
@@ -1016,6 +1031,9 @@ function StagedFileItem({
   name,
   size,
   relativePath,
+  stage,
+  progress,
+  error,
   onRemove,
   onPreview,
   previewing,
@@ -1023,51 +1041,96 @@ function StagedFileItem({
   name: string
   size: number
   relativePath?: string
+  stage?: string | null
+  progress?: number
+  error?: string
   onRemove?: () => void
   onPreview?: () => void
   previewing?: boolean
 }) {
+  const processing = stage !== undefined && stage !== null
+  const progressColor = stage === 'error'
+    ? 'var(--color-status-failed)'
+    : stage === 'done'
+      ? 'var(--color-status-done)'
+      : 'var(--color-accent)'
+
   return (
     <div
-      className="group flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors"
+      className="group rounded-lg transition-colors px-2.5 py-2"
       style={{ background: 'var(--color-background)' }}
     >
-      <div
-        className="w-7 h-7 rounded flex items-center justify-center flex-shrink-0"
-        style={{ background: 'var(--color-accent-subtle)' }}
-      >
-        <FileText size={12} style={{ color: 'var(--color-accent)' }} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
-          {name}
-        </p>
-        <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-          <span>{formatBytes(size)}</span>
-          {relativePath && <span className="truncate">{relativePath}</span>}
+      <div className="flex items-center gap-2">
+        <div
+          className="w-7 h-7 rounded flex items-center justify-center flex-shrink-0"
+          style={{ background: 'var(--color-accent-subtle)' }}
+        >
+          <FileText size={12} style={{ color: 'var(--color-accent)' }} />
         </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
+            {name}
+          </p>
+          <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+            <span>{formatBytes(size)}</span>
+            {relativePath && <span className="truncate">{relativePath}</span>}
+          </div>
+        </div>
+        {processing ? (
+          <div className="flex flex-col items-end gap-0.5 min-w-[4.5rem]">
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <span
+                className="tabular-nums"
+                style={{ color: stage === 'error' ? 'var(--color-status-failed)' : 'var(--color-text-secondary)' }}
+              >
+                {stageLabel(stage)}
+              </span>
+              <span className="tabular-nums font-medium" style={{ color: progressColor }}>
+                {stage === 'done' ? 100 : Math.round(progress ?? 0)}%
+              </span>
+            </div>
+            {/* 单文件进度条 */}
+            <div className="h-1 w-full rounded-full overflow-hidden" style={{ background: 'var(--color-border-subtle)' }}>
+              <div
+                className="h-full rounded-full transition-all duration-300"
+                style={{
+                  width: `${stage === 'done' ? 100 : Math.max(0, Math.min(100, progress ?? 0))}%`,
+                  background: progressColor,
+                }}
+              />
+            </div>
+            {error && (
+              <span className="text-[9px] truncate max-w-[8rem]" style={{ color: 'var(--color-status-failed)' }}>
+                {error}
+              </span>
+            )}
+          </div>
+        ) : (
+          <>
+            {onPreview && (
+              <button
+                onClick={onPreview}
+                disabled={previewing}
+                className="p-1 rounded transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
+                style={{ color: 'var(--color-text-muted)' }}
+                title="预览分块"
+              >
+                {previewing ? <Loader2 size={14} className="animate-spin" /> : <Layers size={14} />}
+              </button>
+            )}
+            {onRemove && (
+              <button
+                onClick={onRemove}
+                className="p-1 rounded transition-colors opacity-0 group-hover:opacity-100"
+                style={{ color: 'var(--color-status-failed)' }}
+                title="移除"
+              >
+                <XCircle size={14} />
+              </button>
+            )}
+          </>
+        )}
       </div>
-      {onPreview && (
-        <button
-          onClick={onPreview}
-          disabled={previewing}
-          className="p-1 rounded transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
-          style={{ color: 'var(--color-text-muted)' }}
-          title="预览分块"
-        >
-          {previewing ? <Loader2 size={14} className="animate-spin" /> : <Layers size={14} />}
-        </button>
-      )}
-      {onRemove && (
-        <button
-          onClick={onRemove}
-          className="p-1 rounded transition-colors opacity-0 group-hover:opacity-100"
-          style={{ color: 'var(--color-status-failed)' }}
-          title="移除"
-        >
-          <XCircle size={14} />
-        </button>
-      )}
     </div>
   )
 }
@@ -1086,8 +1149,10 @@ function BatchProcessingIndicator() {
     : 0
   const overallProgress = Math.round((completedRatio + activeRatio) * 100)
 
-  // 等待处理的文件数 = 暂存文件数
-  const waitingCount = store.stagedFiles.length
+  // 等待处理的文件数 = 当前仍处于 pending 状态的暂存文件
+  const waitingCount = store.stagedFiles.filter(
+    (f) => (store.stagedFileProgress[f.id]?.stage ?? 'pending') === 'pending'
+  ).length
 
   return (
     <div
@@ -1131,7 +1196,7 @@ function BatchProcessingIndicator() {
                 {f.name}
               </span>
               <span className="text-[10px] flex-shrink-0 tabular-nums" style={{ color: 'var(--color-text-muted)' }}>
-                {f.stage === 'done' ? '完成' : f.stage === 'processing' ? '处理中' : f.stage === 'embedding' ? '向量化' : f.stage === 'chunking' ? '分块' : f.stage === 'parsing' ? '解析' : f.stage === 'storing' ? '存储' : '上传中'}
+                {stageLabel(f.stage)}
               </span>
               <span className="text-[10px] flex-shrink-0 tabular-nums font-medium" style={{ color: 'var(--color-accent)' }}>
                 {f.progress}%
@@ -1710,10 +1775,17 @@ export default function RAGDetailPage() {
                 <div className="flex items-center gap-1.5">
                   <Clock size={11} style={{ color: 'var(--color-text-muted)' }} />
                   <span className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                    待处理文件
+                    {store.batchProcessing ? '处理中文件' : '待处理文件'}
                   </span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>
-                    {store.stagedFiles.length}
+                    {store.batchProcessing
+                      ? (() => {
+                          const pending = store.stagedFiles.filter(
+                            (f) => (store.stagedFileProgress[f.id]?.stage ?? 'pending') === 'pending'
+                          ).length
+                          return `${pending}/${store.stagedFiles.length}`
+                        })()
+                      : store.stagedFiles.length}
                   </span>
                 </div>
                 {!store.batchProcessing && (
@@ -1739,6 +1811,9 @@ export default function RAGDetailPage() {
                     name={sf.name}
                     size={sf.size}
                     relativePath={sf.relativePath}
+                    stage={store.batchProcessing ? store.stagedFileProgress[sf.id]?.stage ?? 'pending' : undefined}
+                    progress={store.stagedFileProgress[sf.id]?.progress}
+                    error={store.stagedFileProgress[sf.id]?.error}
                     onRemove={store.batchProcessing ? undefined : () => store.removeStagedFile(sf.id)}
                     onPreview={id && !store.batchProcessing ? () => store.fetchChunkPreview(id, sf.file) : undefined}
                     previewing={store.previewChunksLoading && store.previewChunksFileName === sf.name}
@@ -1809,19 +1884,60 @@ export default function RAGDetailPage() {
               <ChunkingConfigPanel kbId={id} />
 
               <button
-                onClick={() => {
-                  if (id) store.processStagedFiles(id)
+                onClick={async () => {
+                  if (!id) return
+                  // 检测向量模型可用性
+                  store.updateChunkingConfig({}) // 触发 re-render 占位，实际靠下方 display
+                  const available = await store.checkEmbeddingHealth(id)
+                  if (!available) {
+                    // 模型不可用，不启动处理（用户会看到下方错误提示）
+                    return
+                  }
+                  store.processStagedFiles(id)
                 }}
-                disabled={store.stagedFiles.length === 0}
+                disabled={store.stagedFiles.length === 0 || store.embeddingChecking}
                 className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
                 style={{
                   background: 'var(--color-accent)',
                   color: 'var(--color-text-inverse)',
                 }}
               >
-                <Play size={12} />
-                处理全部 ({store.stagedFiles.length} 个文件)
+                {store.embeddingChecking ? (
+                  <><Loader2 size={12} className="animate-spin" />检测向量模型...</>
+                ) : (
+                  <><Play size={12} />处理全部 ({store.stagedFiles.length} 个文件)</>
+                )}
               </button>
+              {/* 向量模型检测结果 */}
+              {store.embeddingCheckResult && !store.embeddingCheckResult.available && (
+                <div
+                  className="flex items-start gap-1.5 px-2 py-1.5 rounded text-[11px]"
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    color: 'var(--color-text-primary)',
+                  }}
+                >
+                  <AlertCircle size={12} className="shrink-0 mt-0.5" style={{ color: 'var(--color-danger, #ef4444)' }} />
+                  <span>
+                    向量模型不可用：{store.embeddingCheckResult.error || '未知错误'}
+                    <br />请检查 Embedding 配置或确认 Ollama 服务已启动。
+                  </span>
+                </div>
+              )}
+              {store.embeddingCheckResult?.available && (
+                <div
+                  className="flex items-center gap-1 px-2 py-1 rounded text-[11px]"
+                  style={{
+                    background: 'rgba(34, 197, 94, 0.1)',
+                    border: '1px solid rgba(34, 197, 94, 0.3)',
+                    color: 'var(--color-text-primary)',
+                  }}
+                >
+                  <CheckCircle2 size={12} style={{ color: 'var(--color-success, #22c55e)' }} />
+                  向量模型可用（{store.embeddingCheckResult.model}，{store.embeddingCheckResult.dimensions}维）
+                </div>
+              )}
                 </>
               )}
             </div>

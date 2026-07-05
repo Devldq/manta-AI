@@ -765,6 +765,42 @@ export async function ragRoutes(app: FastifyInstance) {
   })
 
   // ═══════════════════════════════════════════════════════════
+  //  向量模型可用性检测（处理前校验，避免处理一半报错）
+  // ═══════════════════════════════════════════════════════════
+
+  app.get('/api/rag/knowledge-bases/:id/embedding-check', async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string }
+      const kb = getKnowledgeBase(id)
+      if (!kb) throw Errors.NOT_FOUND('知识库', id)
+
+      const provider = kb.config.embeddingConfig?.provider || 'openai'
+      const model = kb.config.embeddingConfig?.model || 'unknown'
+
+      try {
+        const embeddingService = buildEmbeddingService(kb.config)
+        const testEmbedding = await embeddingService.embed('test')
+        const available = Array.isArray(testEmbedding) && testEmbedding.length > 0
+        return reply.send(apiSuccess({
+          available,
+          provider,
+          model,
+          dimensions: testEmbedding.length,
+        }))
+      } catch (err) {
+        return reply.send(apiSuccess({
+          available: false,
+          provider,
+          model,
+          error: err instanceof Error ? err.message : String(err),
+        }))
+      }
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // ═══════════════════════════════════════════════════════════
   //  配置查询（供前端使用）— 动态读取 ollama list
   // ═══════════════════════════════════════════════════════════
 
