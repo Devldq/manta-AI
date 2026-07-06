@@ -75,6 +75,10 @@ export interface StagedFileProgress {
   stage: 'pending' | 'uploading' | 'parsing' | 'chunking' | 'embedding' | 'storing' | 'done' | 'error'
   progress: number
   error?: string
+  /** 开始处理时间（进入 uploading 阶段时记录） */
+  startTime?: number
+  /** 完成处理时间（done 或 error 时记录） */
+  endTime?: number
 }
 
 /** 默认分块配置（单位：Token） */
@@ -222,6 +226,8 @@ interface RAGDetailStore {
   batchActiveFiles: { name: string; progress: number; stage: string | null }[]
   batchErrors: string[]
   batchDone: boolean
+  /** 批处理过程中新完成的文档ID（用于显示"新"标记，6秒后自动清除） */
+  newDocIds: string[]
 
   // 配置
   ragConfig: RAGConfig | null
@@ -243,7 +249,7 @@ interface RAGDetailStore {
   // 操作
   fetchKnowledgeBase: (id: string) => Promise<void>
   updateKBInfo: (kbId: string, patch: { name?: string; description?: string }) => Promise<boolean>
-  fetchDocuments: (kbId: string) => Promise<void>
+  fetchDocuments: (kbId: string, opts?: { silent?: boolean }) => Promise<void>
   fetchChunks: (kbId: string, docId: string) => Promise<void>
   fetchRAGConfig: () => Promise<void>
   /** 处理前预览：上传文件到后端解析+分块，不向量化不存储 */
@@ -321,6 +327,7 @@ const initialState = {
   batchActiveFiles: [] as { name: string; progress: number; stage: string | null }[],
   batchErrors: [] as string[],
   batchDone: false,
+  newDocIds: [] as string[],
 
   ragConfig: null as RAGConfig | null,
   ragConfigLoading: false,
@@ -433,21 +440,68 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     }
   },
 
-  fetchDocuments: async (kbId: string) => {
-    set({ docsLoading: true, docsError: null })
+  fetchDocuments: async (kbId: string, opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true
+    if (!silent) {
+      set({ docsLoading: true, docsError: null })
+    }
     try {
       const json = await swrFetch(`rag-docs:${kbId}`, () =>
         fetch(`/api/rag/knowledge-bases/${kbId}/documents`).then((r) => r.json())
       )
       if (json.success && json.data?.documents) {
-        set({ documents: json.data.documents, docsLoading: false })
+        const newDocs = json.data.documents as DocumentInfo[]
+        if (silent) {
+          // 静默刷新：增量合并，保留已有文档，新增/更新后端返回的文档
+          const prevDocs = get().documents
+          const prevMap = new Map(prevDocs.map((d) => [d.id, d]))
+          const prevIds = new Set(prevMap.keys())
+          // 按 processedAt 降序排（最新在前）
+          const merged = [...newDocs].sort((a, b) => {
+            const ta = a.processedAt ? new Date(a.processedAt).getTime() : 0
+            const tb = b.processedAt ? new Date(b.processedAt).getTime() : 0
+            return tb - ta
+          })
+          set({ documents: merged })
+          // 检测新完成的文档
+          const newlyArrived = newDocs.filter((d) => !prevIds.has(d.id)).map((d) => d.id)
+          if (newlyArrived.length > 0) {
+            set((s) => ({ newDocIds: [...s.newDocIds, ...newlyArrived] }))
+            setTimeout(() => {
+              set((s) => ({ newDocIds: s.newDocIds.filter((id) => !newlyArrived.includes(id)) }))
+            }, 6000)
+          }
+        } else {
+          const prevIds = new Set(get().documents.map((d) => d.id))
+          // 按 processedAt 降序排（最新在前）
+          const sorted = [...newDocs].sort((a, b) => {
+            const ta = a.processedAt ? new Date(a.processedAt).getTime() : 0
+            const tb = b.processedAt ? new Date(b.processedAt).getTime() : 0
+            return tb - ta
+          })
+          set({ documents: sorted, docsLoading: false })
+          // 检测新完成的文档（仅在批处理中标记）
+          if (get().batchProcessing) {
+            const newlyArrived = newDocs.filter((d: DocumentInfo) => !prevIds.has(d.id)).map((d: DocumentInfo) => d.id)
+            if (newlyArrived.length > 0) {
+              set((s) => ({ newDocIds: [...s.newDocIds, ...newlyArrived] }))
+              setTimeout(() => {
+                set((s) => ({ newDocIds: s.newDocIds.filter((id) => !newlyArrived.includes(id)) }))
+              }, 6000)
+            }
+          }
+        }
         // 检查是否有 processing 文档，有则启动轮询
         get().checkProcessingDocs(kbId)
       } else {
-        set({ documents: [], docsLoading: false, docsError: json.error?.message ?? '获取文档列表失败' })
+        if (!silent) {
+          set({ documents: [], docsLoading: false, docsError: json.error?.message ?? '获取文档列表失败' })
+        }
       }
     } catch (err) {
-      set({ docsLoading: false, docsError: String(err) })
+      if (!silent) {
+        set({ docsLoading: false, docsError: String(err) })
+      }
     }
   },
 
@@ -468,8 +522,23 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
           const res = await fetch(`/api/rag/knowledge-bases/${kbId}/documents`)
           const json = await res.json()
           if (json.success && json.data?.documents) {
-            const docs = json.data.documents
-            set({ documents: docs })
+            const docs = json.data.documents as DocumentInfo[]
+            const oldIds = new Set(get().documents.map((d) => d.id))
+            // 静默合并，按 processedAt 降序（最新在前）
+            const merged = [...docs].sort((a, b) => {
+              const ta = a.processedAt ? new Date(a.processedAt).getTime() : 0
+              const tb = b.processedAt ? new Date(b.processedAt).getTime() : 0
+              return tb - ta
+            })
+            set({ documents: merged })
+            // 检测新完成的文档
+            const newlyArrived = docs.filter((d) => !oldIds.has(d.id)).map((d) => d.id)
+            if (newlyArrived.length > 0) {
+              set((s) => ({ newDocIds: [...s.newDocIds, ...newlyArrived] }))
+              setTimeout(() => {
+                set((s) => ({ newDocIds: s.newDocIds.filter((id) => !newlyArrived.includes(id)) }))
+              }, 6000)
+            }
 
             // 如果批处理中且 workers 未活跃（刷新恢复阶段），更新进度
             const { batchProcessing, batchActiveFiles, batchTotal, stagedFiles } = get()
@@ -962,8 +1031,8 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
         const myIndex = nextIndex++
         const sf = stagedFiles[myIndex]
 
-        // 标记为上传中，并加入 active 列表
-        setProgress(sf.id, { stage: 'uploading', progress: 0 })
+        // 标记为上传中，记录开始时间，并加入 active 列表
+        setProgress(sf.id, { stage: 'uploading', progress: 0, startTime: Date.now() })
         set((s) => ({ batchActiveFiles: [...s.batchActiveFiles, { name: sf.name, progress: 0, stage: 'uploading' }] }))
 
         try {
@@ -981,8 +1050,9 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
           if (!res.ok) {
             const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }))
             const message = json.error?.message ?? '上传失败'
+            console.error(`[RAG Batch] 文件上传 HTTP 错误 [文件=${sf.name}]: ${message}`)
             errors.push(`${sf.name}: ${message}`)
-            setProgress(sf.id, { stage: 'error', progress: 0, error: message })
+            setProgress(sf.id, { stage: 'error', progress: 0, error: message, endTime: Date.now() })
             removeActiveFile(sf.name)
             completedCount++
             set({ batchCompletedCount: completedCount })
@@ -991,8 +1061,9 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
 
           const reader = res.body?.getReader()
           if (!reader) {
+            console.error(`[RAG Batch] 无法读取响应流 [文件=${sf.name}]`)
             errors.push(`${sf.name}: 无法读取响应流`)
-            setProgress(sf.id, { stage: 'error', progress: 0, error: '无法读取响应流' })
+            setProgress(sf.id, { stage: 'error', progress: 0, error: '无法读取响应流', endTime: Date.now() })
             removeActiveFile(sf.name)
             completedCount++
             set({ batchCompletedCount: completedCount })
@@ -1023,15 +1094,16 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
                   }
                   case 'done': {
                     fileDone = true
-                    setProgress(sf.id, { stage: 'done', progress: 100 })
+                    setProgress(sf.id, { stage: 'done', progress: 100, endTime: Date.now() })
                     updateActiveFile(sf.name, 100, 'done')
                     break
                   }
                   case 'error': {
                     fileDone = true
                     const message = event.error ?? '处理失败'
+                    console.error(`[RAG Batch] 服务端处理错误 [文件=${sf.name}]: ${message}`)
                     errors.push(`${sf.name}: ${message}`)
-                    setProgress(sf.id, { stage: 'error', progress: 0, error: message })
+                    setProgress(sf.id, { stage: 'error', progress: 0, error: message, endTime: Date.now() })
                     break
                   }
                 }
@@ -1042,13 +1114,17 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
           }
         } catch (err) {
           const message = String(err)
+          console.error(`[RAG Batch] 文件处理异常 [文件=${sf.name}]:`, err)
           errors.push(`${sf.name}: ${message}`)
-          setProgress(sf.id, { stage: 'error', progress: 0, error: message })
+          setProgress(sf.id, { stage: 'error', progress: 0, error: message, endTime: Date.now() })
         }
 
         removeActiveFile(sf.name)
         completedCount++
         set({ batchCompletedCount: completedCount })
+        // 每个文件完成后静默刷新文档列表，增量合并不闪烁
+        invalidateCache(`rag-docs:${kbId}`)
+        get().fetchDocuments(kbId, { silent: true })
       }
     }
 
@@ -1060,7 +1136,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     // 刷新列表和知识库信息
     invalidateCache(`rag-docs:${kbId}`)
     invalidateCache(`rag-kb:${kbId}`)
-    await get().fetchDocuments(kbId)
+    await get().fetchDocuments(kbId, { silent: true })
     await get().fetchKnowledgeBase(kbId)
 
     set({
@@ -1073,6 +1149,13 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     })
 
     workersActive = false
+
+    // 批处理结果日志
+    if (errors.length > 0) {
+      console.warn(`[RAG Batch] 批量处理完成: ${stagedFiles.length + alreadyCompleted} 个文件, ${errors.length} 个失败`, errors)
+    } else {
+      console.log(`[RAG Batch] 批量处理全部成功: ${stagedFiles.length + alreadyCompleted} 个文件`)
+    }
 
     // 清除 IndexedDB 中的批处理数据
     await clearAllForKb(kbId).catch(() => {})

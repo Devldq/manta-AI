@@ -384,11 +384,13 @@ export async function ragRoutes(app: FastifyInstance) {
         processingTimeMs: result.processingTimeMs,
       }))
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      console.error(`[RAG] 文件上传处理失败 [docId=${pendingDocId} kbId=${pendingKbId}]:`, errMsg, err)
+
       // 处理失败：更新文档状态为 error
       if (pendingDocId && pendingKbId) {
         try {
           const sqliteProvider = getSQLiteVecProvider()
-          const errMsg = err instanceof Error ? err.message : String(err)
           await sqliteProvider.updateDocumentStatus(pendingDocId, 'error', errMsg)
         } catch { /* ignore status update error */ }
       }

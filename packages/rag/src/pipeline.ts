@@ -47,8 +47,6 @@ export class DocumentPipeline {
   private ragProvider: RAGProvider
   private chunkStrategy: ChunkingStrategy
   private options: PipelineOptions
-  private cacheManager?: EmbeddingCacheManager
-
   constructor(options: PipelineOptions) {
     // 如果提供了缓存管理器，使用带缓存的 EmbeddingService
     if (options.cacheManager) {
@@ -57,7 +55,6 @@ export class DocumentPipeline {
         options.cacheManager,
         options.cacheModel || 'default'
       )
-      this.cacheManager = options.cacheManager
     } else {
       this.embeddingService = options.embeddingService
     }

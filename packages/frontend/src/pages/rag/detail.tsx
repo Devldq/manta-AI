@@ -2,6 +2,7 @@
  * 设计方向：与项目整体风格对齐，克制、精致、轻量
  */
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -61,6 +62,15 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** 格式化耗时（毫秒 → 可读字符串） */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  const min = Math.floor(ms / 60_000)
+  const sec = Math.round((ms % 60_000) / 1000)
+  return sec > 0 ? `${min}m${sec}s` : `${min}m`
 }
 
 function formatTime(iso: string): string {
@@ -1025,6 +1035,54 @@ function stageLabel(stage: string | null | undefined): string {
   }
 }
 
+// ─── 截断标题 + 1s 延迟 tooltip ────────────────────────────
+
+function TruncatedTitle({ text, className = '', style }: { text: string; className?: string; style?: React.CSSProperties }) {
+  const [showTip, setShowTip] = useState(false)
+  const [tipPos, setTipPos] = useState({ top: 0, left: 0 })
+  const triggerRef = useRef<HTMLSpanElement>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const updatePos = useCallback(() => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect()
+      setTipPos({ top: rect.top - 8, left: rect.left })
+    }
+  }, [])
+
+  const handleEnter = () => {
+    updatePos()
+    timerRef.current = setTimeout(() => setShowTip(true), 1000)
+  }
+  const handleLeave = () => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
+    setShowTip(false)
+  }
+
+  return (
+    <>
+      <span ref={triggerRef} className="block truncate" style={style} onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
+        <span className={`${className}`}>{text}</span>
+      </span>
+      {showTip && createPortal(
+        <span
+          className="fixed z-[9999] max-w-xs px-2 py-1 rounded text-[11px] leading-relaxed shadow-lg pointer-events-none whitespace-nowrap"
+          style={{
+            top: tipPos.top - 28,
+            left: tipPos.left,
+            background: 'var(--color-surface-elevated)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text-primary)',
+          }}
+        >
+          {text}
+        </span>,
+        document.body,
+      )}
+    </>
+  )
+}
+
 // ─── 暂存文件卡片 ─────────────────────────────────────────────
 
 function StagedFileItem({
@@ -1037,6 +1095,7 @@ function StagedFileItem({
   onRemove,
   onPreview,
   previewing,
+  startTime,
 }: {
   name: string
   size: number
@@ -1047,13 +1106,19 @@ function StagedFileItem({
   onRemove?: () => void
   onPreview?: () => void
   previewing?: boolean
+  startTime?: number
 }) {
-  const processing = stage !== undefined && stage !== null
-  const progressColor = stage === 'error'
+  const processing = stage !== undefined && stage !== null && stage !== 'pending'
+  const isDone = stage === 'done'
+  const isError = stage === 'error'
+  const progressColor = isError
     ? 'var(--color-status-failed)'
-    : stage === 'done'
+    : isDone
       ? 'var(--color-status-done)'
       : 'var(--color-accent)'
+
+  // 计算耗时（处理中的实时更新，完成的显示最终耗时）
+  const elapsed = startTime ? Date.now() - startTime : undefined
 
   return (
     <div
@@ -1065,40 +1130,56 @@ function StagedFileItem({
           className="w-7 h-7 rounded flex items-center justify-center flex-shrink-0"
           style={{ background: 'var(--color-accent-subtle)' }}
         >
-          <FileText size={12} style={{ color: 'var(--color-accent)' }} />
+          {isDone ? (
+            <CheckCircle2 size={12} style={{ color: 'var(--color-status-done)' }} />
+          ) : isError ? (
+            <AlertCircle size={12} style={{ color: 'var(--color-status-failed)' }} />
+          ) : processing ? (
+            <Loader2 size={12} className="animate-spin" style={{ color: 'var(--color-accent)' }} />
+          ) : (
+            <FileText size={12} style={{ color: 'var(--color-accent)' }} />
+          )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
-            {name}
+          <p style={{ color: 'var(--color-text-primary)' }}>
+            <TruncatedTitle text={name} className="text-xs font-medium" />
           </p>
           <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
             <span>{formatBytes(size)}</span>
             {relativePath && <span className="truncate">{relativePath}</span>}
           </div>
         </div>
-        {processing ? (
-          <div className="flex flex-col items-end gap-0.5 min-w-[4.5rem]">
+        {(processing || isDone || isError) ? (
+          <div className="flex flex-col items-end gap-0.5 min-w-[5rem]">
             <div className="flex items-center gap-1.5 text-[10px]">
               <span
                 className="tabular-nums"
-                style={{ color: stage === 'error' ? 'var(--color-status-failed)' : 'var(--color-text-secondary)' }}
+                style={{ color: isError ? 'var(--color-status-failed)' : 'var(--color-text-secondary)' }}
               >
                 {stageLabel(stage)}
               </span>
               <span className="tabular-nums font-medium" style={{ color: progressColor }}>
-                {stage === 'done' ? 100 : Math.round(progress ?? 0)}%
+                {isDone ? 100 : Math.round(progress ?? 0)}%
               </span>
+              {/* 耗时 */}
+              {elapsed !== undefined && (
+                <span className="tabular-nums" style={{ color: 'var(--color-text-muted)' }}>
+                  {formatDuration(elapsed)}
+                </span>
+              )}
             </div>
             {/* 单文件进度条 */}
-            <div className="h-1 w-full rounded-full overflow-hidden" style={{ background: 'var(--color-border-subtle)' }}>
-              <div
-                className="h-full rounded-full transition-all duration-300"
-                style={{
-                  width: `${stage === 'done' ? 100 : Math.max(0, Math.min(100, progress ?? 0))}%`,
-                  background: progressColor,
-                }}
-              />
-            </div>
+            {!stage?.includes('error') && !isDone && (
+              <div className="h-1 w-full rounded-full overflow-hidden" style={{ background: 'var(--color-border-subtle)' }}>
+                <div
+                  className="h-full rounded-full transition-all duration-300"
+                  style={{
+                    width: `${Math.max(0, Math.min(100, progress ?? 0))}%`,
+                    background: progressColor,
+                  }}
+                />
+              </div>
+            )}
             {error && (
               <span className="text-[9px] truncate max-w-[8rem]" style={{ color: 'var(--color-status-failed)' }}>
                 {error}
@@ -1188,7 +1269,7 @@ function BatchProcessingIndicator() {
 
       {/* 活跃文件列表 */}
       {store.batchActiveFiles.length > 0 && (
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 max-h-48 overflow-y-auto">
           {store.batchActiveFiles.map((f) => (
             <div key={f.name} className="flex items-center gap-2">
               <FileText size={10} style={{ color: 'var(--color-text-muted)' }} className="flex-shrink-0" />
@@ -1224,10 +1305,12 @@ function DocCard({
   doc,
   onDelete,
   onViewChunks,
+  compactStatus,
 }: {
   doc: DocumentInfo
   onDelete: () => void
   onViewChunks: () => void
+  compactStatus?: boolean
 }) {
   const s = STATUS_CONFIG[doc.status] || STATUS_CONFIG.pending
   const [hovered, setHovered] = useState(false)
@@ -1261,23 +1344,38 @@ function DocCard({
       {/* 信息 */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <h4 className="text-xs font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>
-            {doc.name}
-          </h4>
           <span
             className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
             style={{ background: s.color + '20', color: s.color }}
           >
             {s.icon}
-            {s.label}
+            {!(compactStatus && doc.status === 'ready') && s.label}
           </span>
+          <h4 className="min-w-0 flex-1" style={{ color: 'var(--color-text-primary)' }}>
+            <TruncatedTitle text={doc.name} className="text-xs font-medium" />
+          </h4>
         </div>
-        <div className="flex items-center gap-3 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+        <p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>
           <span>{docTypeLabel(doc.type)}</span>
+          <span className="mx-1.5 opacity-40">|</span>
           <span>{formatBytes(doc.size)}</span>
-          {doc.chunkCount !== undefined && doc.chunkCount > 0 && <span>{doc.chunkCount} 块</span>}
-          <span>{formatTime(doc.uploadedAt)}</span>
-        </div>
+          {doc.chunkCount !== undefined && doc.chunkCount > 0 && (
+            <>
+              <span className="mx-1.5 opacity-40">|</span>
+              <span>{doc.chunkCount} 块</span>
+            </>
+          )}
+          {doc.processedAt && (
+            <>
+              <span className="mx-1.5 opacity-40">|</span>
+              <span>完成于 {formatTimeFull(doc.processedAt)}</span>
+              {(() => {
+                const dur = new Date(doc.processedAt!).getTime() - new Date(doc.uploadedAt).getTime()
+                return dur > 0 ? <><span className="mx-1.5 opacity-40">|</span><span style={{ color: 'var(--color-accent)' }}>耗时 {formatDuration(dur)}</span></> : null
+              })()}
+            </>
+          )}
+        </p>
         {/* 错误信息 */}
         {isError && doc.error && (
           <p className="text-[10px] mt-1 truncate" style={{ color: 'var(--color-status-failed)' }} title={doc.error}>
@@ -1468,6 +1566,9 @@ export default function RAGDetailPage() {
   const [chatInput, setChatInput] = useState('')
   const [uploadingFile, setUploadingFile] = useState<File | null>(null)
   const [editingKBInfo, setEditingKBInfo] = useState(false)
+  const [infoCollapsed, setInfoCollapsed] = useState(false)
+  // 预览激活时自动折叠基本信息
+  const hasPreview = store.previewChunksLoading || store.previewChunks.length > 0
   const chatEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -1481,6 +1582,11 @@ export default function RAGDetailPage() {
     }
     return () => { store.reset() }
   }, [id])
+
+  // 预览激活时自动折叠基本信息
+  useEffect(() => {
+    if (hasPreview) setInfoCollapsed(true)
+  }, [hasPreview])
 
   const handleUpload = useCallback(
     async (file: File) => {
@@ -1744,9 +1850,6 @@ export default function RAGDetailPage() {
             )}
           </div>
 
-          {/* 批量处理进度 */}
-          {store.batchProcessing && <BatchProcessingIndicator />}
-
           {/* 批量处理完成提示 */}
           {store.batchDone && !store.batchProcessing && (
             <div
@@ -1768,219 +1871,174 @@ export default function RAGDetailPage() {
             </div>
           )}
 
-          {/* 暂存区 */}
-          {store.stagedFiles.length > 0 && (
+          {/* ═══════════ 两栏布局：已处理 | 处理中 ═══════════ */}
+          <div className="flex-1 min-h-0 flex flex-col gap-3" style={{ overflowY: 'auto' }}>
+
+          {/* ─── 全宽行：解析配置 + 处理按钮 ─── */}
+          {!store.batchProcessing && store.stagedFiles.length > 0 && (
             <div className="flex-shrink-0 space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <Clock size={11} style={{ color: 'var(--color-text-muted)' }} />
-                  <span className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                    {store.batchProcessing ? '处理中文件' : '待处理文件'}
-                  </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>
-                    {store.batchProcessing
-                      ? (() => {
-                          const pending = store.stagedFiles.filter(
-                            (f) => (store.stagedFileProgress[f.id]?.stage ?? 'pending') === 'pending'
-                          ).length
-                          return `${pending}/${store.stagedFiles.length}`
-                        })()
-                      : store.stagedFiles.length}
-                  </span>
-                </div>
-                {!store.batchProcessing && (
-                  <button
-                    onClick={() => store.clearStagedFiles()}
-                    className="text-[10px] flex items-center gap-1 transition-colors"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
-                    <X size={10} />
-                    清空
-                  </button>
-                )}
-              </div>
-
-              {/* 暂存文件列表 */}
-              <div
-                className="rounded-lg p-2 space-y-1 max-h-48 overflow-y-auto"
-                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
-              >
-                {store.stagedFiles.map((sf) => (
-                  <StagedFileItem
-                    key={sf.id}
-                    name={sf.name}
-                    size={sf.size}
-                    relativePath={sf.relativePath}
-                    stage={store.batchProcessing ? store.stagedFileProgress[sf.id]?.stage ?? 'pending' : undefined}
-                    progress={store.stagedFileProgress[sf.id]?.progress}
-                    error={store.stagedFileProgress[sf.id]?.error}
-                    onRemove={store.batchProcessing ? undefined : () => store.removeStagedFile(sf.id)}
-                    onPreview={id && !store.batchProcessing ? () => store.fetchChunkPreview(id, sf.file) : undefined}
-                    previewing={store.previewChunksLoading && store.previewChunksFileName === sf.name}
-                  />
-                ))}
-              </div>
-
-              {/* 分块预览面板（处理前预览）— 仅非批处理时显示 */}
-              {!store.batchProcessing && (
-                <>
-              {store.previewChunksError && (
-                <div className="rounded-lg px-3 py-2 flex items-center gap-2 text-xs" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--color-status-failed)' }}>
-                  <AlertCircle size={12} />
-                  <span className="flex-1">{store.previewChunksError}</span>
-                </div>
-              )}
-              {store.previewChunksLoading && (
-                <div className="rounded-lg px-3 py-3 flex items-center gap-2 text-xs" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-                  <Loader2 size={12} className="animate-spin" style={{ color: 'var(--color-accent)' }} />
-                  <span style={{ color: 'var(--color-text-muted)' }}>正在解析并预览分块...</span>
-                </div>
-              )}
-              {!store.previewChunksLoading && store.previewChunks.length > 0 && (
-                <div className="rounded-lg overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-                  <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'var(--color-border-subtle)' }}>
-                    <div className="flex items-center gap-1.5">
-                      <Layers size={11} style={{ color: 'var(--color-text-muted)' }} />
-                      <span className="text-[11px] font-medium" style={{ color: 'var(--color-text-secondary)' }}>
-                        预览: {store.previewChunksFileName}
-                      </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>
-                        {store.previewChunks.length} 块
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => store.clearPreviewChunks()}
-                      className="p-0.5 rounded"
-                      style={{ color: 'var(--color-text-muted)' }}
-                    >
-                      <X size={11} />
-                    </button>
-                  </div>
-                  <div className="max-h-56 overflow-y-auto p-1.5 space-y-1">
-                    {store.previewChunks.map((chunk, i) => (
-                      <div
-                        key={chunk.id}
-                        className="rounded-lg p-2 cursor-pointer transition-colors hover:bg-[var(--color-accent-subtle)]"
-                        onClick={() => { setViewChunkList(store.previewChunks); setViewChunkIndex(i) }}
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] px-1 py-0.5 rounded font-mono font-medium" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>
-                            #{chunk.metadata?.index ?? i}
-                          </span>
-                          <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-                            ~{chunk.metadata?.tokenEstimate ?? Math.ceil(chunk.content.length / 4)} tok
-                          </span>
-                        </div>
-                        <p className="text-[11px] line-clamp-2 leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
-                          {chunk.content}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 分块配置 + 处理按钮 */}
               <ChunkingConfigPanel kbId={id} />
-
               <button
                 onClick={async () => {
                   if (!id) return
-                  // 检测向量模型可用性
-                  store.updateChunkingConfig({}) // 触发 re-render 占位，实际靠下方 display
+                  store.updateChunkingConfig({})
                   const available = await store.checkEmbeddingHealth(id)
-                  if (!available) {
-                    // 模型不可用，不启动处理（用户会看到下方错误提示）
-                    return
-                  }
+                  if (!available) return
                   store.processStagedFiles(id)
                 }}
                 disabled={store.stagedFiles.length === 0 || store.embeddingChecking}
                 className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
-                style={{
-                  background: 'var(--color-accent)',
-                  color: 'var(--color-text-inverse)',
-                }}
+                style={{ background: 'var(--color-accent)', color: 'var(--color-text-inverse)' }}
               >
-                {store.embeddingChecking ? (
-                  <><Loader2 size={12} className="animate-spin" />检测向量模型...</>
-                ) : (
-                  <><Play size={12} />处理全部 ({store.stagedFiles.length} 个文件)</>
-                )}
+                {store.embeddingChecking ? <><Loader2 size={12} className="animate-spin" />检测向量模型...</> : <><Play size={12} />处理全部 ({store.stagedFiles.length} 个文件)</>}
               </button>
-              {/* 向量模型检测结果 */}
               {store.embeddingCheckResult && !store.embeddingCheckResult.available && (
-                <div
-                  className="flex items-start gap-1.5 px-2 py-1.5 rounded text-[11px]"
-                  style={{
-                    background: 'rgba(239, 68, 68, 0.1)',
-                    border: '1px solid rgba(239, 68, 68, 0.3)',
-                    color: 'var(--color-text-primary)',
-                  }}
-                >
+                <div className="flex items-start gap-1.5 px-2 py-1.5 rounded text-[11px]" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: 'var(--color-text-primary)' }}>
                   <AlertCircle size={12} className="shrink-0 mt-0.5" style={{ color: 'var(--color-danger, #ef4444)' }} />
-                  <span>
-                    向量模型不可用：{store.embeddingCheckResult.error || '未知错误'}
-                    <br />请检查 Embedding 配置或确认 Ollama 服务已启动。
-                  </span>
+                  <span>向量模型不可用：{store.embeddingCheckResult.error || '未知错误'}<br />请检查 Embedding 配置或确认 Ollama 服务已启动。</span>
                 </div>
               )}
               {store.embeddingCheckResult?.available && (
-                <div
-                  className="flex items-center gap-1 px-2 py-1 rounded text-[11px]"
-                  style={{
-                    background: 'rgba(34, 197, 94, 0.1)',
-                    border: '1px solid rgba(34, 197, 94, 0.3)',
-                    color: 'var(--color-text-primary)',
-                  }}
-                >
-                  <CheckCircle2 size={12} style={{ color: 'var(--color-success, #22c55e)' }} />
-                  向量模型可用（{store.embeddingCheckResult.model}，{store.embeddingCheckResult.dimensions}维）
+                <div className="flex items-center gap-1 px-2 py-1 rounded text-[11px]" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)', color: 'var(--color-text-primary)' }}>
+                  <CheckCircle2 size={12} style={{ color: 'var(--color-success, #22c55e)' }} />向量模型可用（{store.embeddingCheckResult.model}，{store.embeddingCheckResult.dimensions}维）
                 </div>
-              )}
-                </>
               )}
             </div>
           )}
 
-          {/* 文档列表 */}
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="flex items-center gap-1.5 mb-2">
-              <FileText size={11} style={{ color: 'var(--color-text-muted)' }} />
-              <span className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>
-                已处理文档
-              </span>
-              <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-                ({store.documents.length})
-              </span>
+          {/* ─── 左右两栏：已处理 | 处理中 ─── */}
+          <div className={`flex-1 min-h-0 grid ${store.stagedFiles.length > 0 ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
+
+            {/* 左栏：已处理完成 */}
+            <div className="flex flex-col min-h-0 overflow-hidden">
+              <div className="flex items-center gap-1.5 mb-2 flex-shrink-0">
+                <CheckCircle2 size={11} style={{ color: 'var(--color-status-done)' }} />
+                <span className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>已处理完成</span>
+                <span className="text-[10px] tabular-nums" style={{ color: 'var(--color-text-muted)' }}>({store.documents.length})</span>
+              </div>
+              {store.docsLoading ? (
+                <div className="space-y-2">
+                  {[1, 2].map((i) => <div key={i} className="h-14 rounded-lg animate-pulse" style={{ background: 'var(--color-surface)' }} />)}
+                </div>
+              ) : store.documents.length === 0 ? (
+                <div className="text-center py-10 rounded-lg border" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
+                  <FileText size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
+                  <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>暂无文档，上传文件以构建知识库</p>
+                </div>
+              ) : (
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
+                  {(() => {
+                    const sorted = [...store.documents].sort((a, b) => {
+                      if (!a.processedAt && !b.processedAt) return 0
+                      if (!a.processedAt) return 1
+                      if (!b.processedAt) return -1
+                      return new Date(b.processedAt).getTime() - new Date(a.processedAt).getTime()
+                    })
+                    return sorted.map((doc) => (
+                      <div key={doc.id} className="relative">
+                        {store.newDocIds.includes(doc.id) && (
+                          <span className="absolute -top-1 -right-1 z-10 px-1 py-0.5 rounded text-[9px] font-bold animate-pulse"
+                            style={{ background: 'var(--color-accent)', color: 'var(--color-text-inverse)' }}>新</span>
+                        )}
+                        <DocCard
+                          doc={doc}
+                          onDelete={() => setDeleteTarget({ docId: doc.id, name: doc.name })}
+                          onViewChunks={() => handleViewChunks(doc.id)}
+                          compactStatus={store.stagedFiles.length > 0}
+                        />
+                      </div>
+                    ))
+                  })()}
+                </div>
+              )}
             </div>
-            {store.docsLoading ? (
-              <div className="space-y-2">
-                {[1, 2].map((i) => (
-                  <div key={i} className="h-12 rounded-lg animate-pulse" style={{ background: 'var(--color-surface)' }} />
-                ))}
-              </div>
-            ) : store.documents.length === 0 ? (
-              <div
-                className="text-center py-10 rounded-lg border"
-                style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
-              >
-                <FileText size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
-                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>暂无文档，上传文件以构建知识库</p>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {store.documents.map((doc) => (
-                  <DocCard
-                    key={doc.id}
-                    doc={doc}
-                    onDelete={() => setDeleteTarget({ docId: doc.id, name: doc.name })}
-                    onViewChunks={() => handleViewChunks(doc.id)}
-                  />
-                ))}
+
+            {/* 右栏：处理中 + 等待 */}
+            {store.stagedFiles.length > 0 && (
+              <div className="flex flex-col min-h-0 overflow-hidden space-y-3">
+                {/* ─── 处理中队列 ─── */}
+                {store.stagedFiles.filter((f) => {
+                  const s = store.stagedFileProgress[f.id]?.stage
+                  return s !== undefined && s !== null && s !== 'pending' && s !== 'done' && s !== 'error'
+                }).sort(
+                  (a, b) => (store.stagedFileProgress[a.id]?.startTime ?? 0) - (store.stagedFileProgress[b.id]?.startTime ?? 0)
+                ).length > 0 && (
+                  <div className="flex-shrink-0 space-y-2">
+                    <div className="flex items-center gap-1.5">
+                      <Loader2 size={11} className="animate-spin" style={{ color: 'var(--color-accent)' }} />
+                      <span className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>处理中队列</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium tabular-nums" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>
+                        {store.stagedFiles.filter((f) => {
+                          const s = store.stagedFileProgress[f.id]?.stage
+                          return s !== undefined && s !== null && s !== 'pending' && s !== 'done' && s !== 'error'
+                        }).length}
+                      </span>
+                    </div>
+                    <div className="rounded-lg p-2 space-y-1 max-h-56 overflow-y-auto" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-accent)' }}>
+                      {store.stagedFiles.filter((f) => {
+                        const s = store.stagedFileProgress[f.id]?.stage
+                        return s !== undefined && s !== null && s !== 'pending' && s !== 'done' && s !== 'error'
+                      }).sort(
+                        (a, b) => (store.stagedFileProgress[a.id]?.startTime ?? 0) - (store.stagedFileProgress[b.id]?.startTime ?? 0)
+                      ).map((sf) => (
+                        <StagedFileItem
+                          key={sf.id}
+                          name={sf.name}
+                          size={sf.size}
+                          relativePath={sf.relativePath}
+                          stage={store.stagedFileProgress[sf.id]?.stage}
+                          progress={store.stagedFileProgress[sf.id]?.progress}
+                          error={store.stagedFileProgress[sf.id]?.error}
+                          startTime={store.stagedFileProgress[sf.id]?.startTime}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── 等待处理 ─── */}
+                {store.stagedFiles.filter(
+                  (f) => (store.stagedFileProgress[f.id]?.stage ?? 'pending') === 'pending'
+                ).length > 0 && (
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    <div className="flex items-center justify-between mb-1 flex-shrink-0">
+                      <div className="flex items-center gap-1.5">
+                        <Clock size={11} style={{ color: 'var(--color-text-muted)' }} />
+                        <span className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>等待处理</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium tabular-nums" style={{ background: 'var(--color-border-subtle)', color: 'var(--color-text-muted)' }}>
+                          {store.stagedFiles.filter(
+                            (f) => (store.stagedFileProgress[f.id]?.stage ?? 'pending') === 'pending'
+                          ).length} 个文件
+                        </span>
+                      </div>
+                      {!store.batchProcessing && (
+                        <button onClick={() => store.clearStagedFiles()} className="text-[10px] flex items-center gap-1 transition-colors" style={{ color: 'var(--color-text-muted)' }}>
+                          <X size={10} />清空
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex-1 min-h-0 rounded-lg p-2 space-y-1 overflow-y-auto" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+                      {store.stagedFiles.filter(
+                        (f) => (store.stagedFileProgress[f.id]?.stage ?? 'pending') === 'pending'
+                      ).map((sf) => (
+                        <StagedFileItem
+                          key={sf.id}
+                          name={sf.name}
+                          size={sf.size}
+                          relativePath={sf.relativePath}
+                          stage={'pending'}
+                          onRemove={store.batchProcessing ? undefined : () => store.removeStagedFile(sf.id)}
+                          onPreview={id && !store.batchProcessing ? () => store.fetchChunkPreview(id, sf.file) : undefined}
+                          previewing={store.previewChunksLoading && store.previewChunksFileName === sf.name}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
-          </div>
+          </div>{/* end grid */}
+          </div>{/* end zones wrapper */}
         </div>
       )}
 
@@ -2082,8 +2140,9 @@ export default function RAGDetailPage() {
                     key={doc.id}
                     value={doc.id}
                     className="text-xs text-[var(--color-text-primary)] focus:bg-[var(--color-accent-subtle)] focus:text-[var(--color-accent)]"
+                    title={doc.name}
                   >
-                    {doc.name}
+                    <span className="truncate block max-w-[220px]">{doc.name}</span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -2298,7 +2357,7 @@ export default function RAGDetailPage() {
       </div>{/* end left content */}
 
       {/* ═══ 右侧：基本信息侧边栏 ═══ */}
-      <aside className="lg:w-60 xl:w-72 shrink-0">
+      <aside className="lg:w-60 xl:w-72 shrink-0 flex flex-col gap-3">
         <div
           className="rounded-lg p-4 lg:sticky lg:top-4"
           style={{
@@ -2306,30 +2365,95 @@ export default function RAGDetailPage() {
             border: '1px solid var(--color-border)',
           }}
         >
-          <h2 className="text-xs font-medium mb-3 flex items-center gap-1.5" style={{ color: 'var(--color-text-muted)' }}>
-            <Info size={10} />
-            基本信息
-          </h2>
-          <div className="space-y-3">
-            <InfoItem label="知识库编码" value={kb.id} mono />
-            <InfoItem label="描述" value={kb.description || '—'} />
-            <InfoItem
-              label="Embedding 模型"
-              value={
-                kb.config.embeddingConfig?.model
-                  || (kb.config.embeddingConfig?.provider
-                    ? `${kb.config.embeddingConfig.provider === 'openai' ? 'OpenAI' : 'Ollama'} (默认)`
-                    : '系统默认')
-              }
-            />
-            <InfoItem label="向量维度" value={String(kb.config.dimensions)} />
-            <InfoItem label="相似度阈值" value={String(kb.config.similarityThreshold)} />
-            <InfoItem label="Top-K" value={String(kb.config.topK)} />
-            <InfoItem label="创建时间" value={kb.createdAt} time />
-            <InfoItem label="更新时间" value={kb.updatedAt} time />
-            <InfoItem label="存储引擎" value={kb.providerId} />
-          </div>
+          <button
+            className="w-full flex items-center justify-between gap-1.5 text-xs font-medium"
+            style={{ color: 'var(--color-text-muted)' }}
+            onClick={() => setInfoCollapsed(!infoCollapsed)}
+          >
+            <span className="flex items-center gap-1.5">
+              <Info size={10} />
+              基本信息
+            </span>
+            {infoCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+          </button>
+          {!infoCollapsed && (
+            <div className="space-y-3 mt-3">
+              <InfoItem label="知识库编码" value={kb.id} mono />
+              <InfoItem label="描述" value={kb.description || '—'} />
+              <InfoItem
+                label="Embedding 模型"
+                value={
+                  kb.config.embeddingConfig?.model
+                    || (kb.config.embeddingConfig?.provider
+                      ? `${kb.config.embeddingConfig.provider === 'openai' ? 'OpenAI' : 'Ollama'} (默认)`
+                      : '系统默认')
+                }
+              />
+              <InfoItem label="向量维度" value={String(kb.config.dimensions)} />
+              <InfoItem label="相似度阈值" value={String(kb.config.similarityThreshold)} />
+              <InfoItem label="Top-K" value={String(kb.config.topK)} />
+              <InfoItem label="创建时间" value={kb.createdAt} time />
+              <InfoItem label="更新时间" value={kb.updatedAt} time />
+              <InfoItem label="存储引擎" value={kb.providerId} />
+            </div>
+          )}
         </div>
+
+        {/* 分块预览（在暂存文件上右键预览时显示） */}
+        {(store.previewChunksLoading || store.previewChunks.length > 0) && (
+          <div
+            className="rounded-lg p-3 flex-1 min-h-0 flex flex-col"
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              marginTop: '0.75rem',
+            }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                <Layers size={11} className="shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                <span className="text-[11px] font-medium shrink-0" style={{ color: 'var(--color-text-secondary)' }}>预览:</span>
+                <span className="min-w-0 flex-1">
+                  <TruncatedTitle text={store.previewChunksFileName || '解析中...'} className="text-[11px] font-medium" style={{ color: 'var(--color-text-secondary)' }} />
+                </span>
+                {store.previewChunks.length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>
+                    {store.previewChunks.length} 块
+                  </span>
+                )}
+              </div>
+              {store.previewChunks.length > 0 && (
+                <button onClick={() => store.clearPreviewChunks()} className="p-0.5 rounded" style={{ color: 'var(--color-text-muted)' }}><X size={11} /></button>
+              )}
+            </div>
+            {store.previewChunksLoading && (
+              <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+                <Loader2 size={12} className="animate-spin" style={{ color: 'var(--color-accent)' }} />
+                正在解析并预览分块...
+              </div>
+            )}
+            {store.previewChunksError && (
+              <div className="text-[11px]" style={{ color: 'var(--color-status-failed)' }}>{store.previewChunksError}</div>
+            )}
+            {!store.previewChunksLoading && store.previewChunks.length > 0 && (
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
+                {store.previewChunks.map((chunk, i) => (
+                  <div
+                    key={chunk.id}
+                    className="rounded-lg p-2 cursor-pointer transition-colors hover:bg-[var(--color-accent-subtle)]"
+                    onClick={() => { setViewChunkList(store.previewChunks); setViewChunkIndex(i) }}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] px-1 py-0.5 rounded font-mono font-medium" style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}>#{chunk.metadata?.index ?? i}</span>
+                      <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>~{chunk.metadata?.tokenEstimate ?? Math.ceil(chunk.content.length / 4)} tok</span>
+                    </div>
+                    <p className="text-[11px] line-clamp-2 leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>{chunk.content}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </aside>
 
       {/* ── 编辑知识库信息弹窗 ──────────────────────────── */}
