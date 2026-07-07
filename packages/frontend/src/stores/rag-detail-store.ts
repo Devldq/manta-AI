@@ -467,9 +467,6 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
           const newlyArrived = newDocs.filter((d) => !prevIds.has(d.id)).map((d) => d.id)
           if (newlyArrived.length > 0) {
             set((s) => ({ newDocIds: [...s.newDocIds, ...newlyArrived] }))
-            setTimeout(() => {
-              set((s) => ({ newDocIds: s.newDocIds.filter((id) => !newlyArrived.includes(id)) }))
-            }, 6000)
           }
         } else {
           const prevIds = new Set(get().documents.map((d) => d.id))
@@ -535,9 +532,6 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
             const newlyArrived = docs.filter((d) => !oldIds.has(d.id)).map((d) => d.id)
             if (newlyArrived.length > 0) {
               set((s) => ({ newDocIds: [...s.newDocIds, ...newlyArrived] }))
-              setTimeout(() => {
-                set((s) => ({ newDocIds: s.newDocIds.filter((id) => !newlyArrived.includes(id)) }))
-              }, 6000)
             }
 
             // 如果批处理中且 workers 未活跃（刷新恢复阶段），更新进度

@@ -34,6 +34,7 @@ import {
   Play,
   Settings2,
   Scissors,
+  Sparkles,
   XCircle,
   Edit2,
 } from 'lucide-react'
@@ -1306,11 +1307,13 @@ function DocCard({
   onDelete,
   onViewChunks,
   compactStatus,
+  isNew,
 }: {
   doc: DocumentInfo
   onDelete: () => void
   onViewChunks: () => void
   compactStatus?: boolean
+  isNew?: boolean
 }) {
   const s = STATUS_CONFIG[doc.status] || STATUS_CONFIG.pending
   const [hovered, setHovered] = useState(false)
@@ -1344,13 +1347,22 @@ function DocCard({
       {/* 信息 */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span
-            className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
-            style={{ background: s.color + '20', color: s.color }}
-          >
-            {s.icon}
-            {!(compactStatus && doc.status === 'ready') && s.label}
-          </span>
+          {/* 状态标签：新文档显示 NEW */}
+          {isNew && doc.status === 'ready' ? (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
+              style={{ background: '#ef444420', color: '#ef4444' }}>
+              <Sparkles size={10} />
+              NEW
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0"
+              style={{ background: s.color + '20', color: s.color }}
+            >
+              {s.icon}
+              {!(compactStatus && doc.status === 'ready') && s.label}
+            </span>
+          )}
           <h4 className="min-w-0 flex-1" style={{ color: 'var(--color-text-primary)' }}>
             <TruncatedTitle text={doc.name} className="text-xs font-medium" />
           </h4>
@@ -1914,13 +1926,13 @@ export default function RAGDetailPage() {
               <div className="flex items-center gap-1.5 mb-2 flex-shrink-0">
                 <CheckCircle2 size={11} style={{ color: 'var(--color-status-done)' }} />
                 <span className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>已处理完成</span>
-                <span className="text-[10px] tabular-nums" style={{ color: 'var(--color-text-muted)' }}>({store.documents.length})</span>
+                <span className="text-[10px] tabular-nums" style={{ color: 'var(--color-text-muted)' }}>({store.documents.filter(d => d.status === 'ready').length})</span>
               </div>
               {store.docsLoading ? (
                 <div className="space-y-2">
                   {[1, 2].map((i) => <div key={i} className="h-14 rounded-lg animate-pulse" style={{ background: 'var(--color-surface)' }} />)}
                 </div>
-              ) : store.documents.length === 0 ? (
+              ) : store.documents.filter(d => d.status === 'ready').length === 0 ? (
                 <div className="text-center py-10 rounded-lg border" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
                   <FileText size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-muted)' }} />
                   <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>暂无文档，上传文件以构建知识库</p>
@@ -1928,7 +1940,8 @@ export default function RAGDetailPage() {
               ) : (
                 <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
                   {(() => {
-                    const sorted = [...store.documents].sort((a, b) => {
+                    const readyDocs = store.documents.filter((d) => d.status === 'ready')
+                    const sorted = [...readyDocs].sort((a, b) => {
                       if (!a.processedAt && !b.processedAt) return 0
                       if (!a.processedAt) return 1
                       if (!b.processedAt) return -1
@@ -1936,12 +1949,9 @@ export default function RAGDetailPage() {
                     })
                     return sorted.map((doc) => (
                       <div key={doc.id} className="relative">
-                        {store.newDocIds.includes(doc.id) && (
-                          <span className="absolute -top-1 -right-1 z-10 px-1 py-0.5 rounded text-[9px] font-bold animate-pulse"
-                            style={{ background: 'var(--color-accent)', color: 'var(--color-text-inverse)' }}>新</span>
-                        )}
                         <DocCard
                           doc={doc}
+                          isNew={store.newDocIds.includes(doc.id)}
                           onDelete={() => setDeleteTarget({ docId: doc.id, name: doc.name })}
                           onViewChunks={() => handleViewChunks(doc.id)}
                           compactStatus={store.stagedFiles.length > 0}
