@@ -112,6 +112,7 @@ export class ToolRegistry {
 
   /** 移除一个工具 */
   unregister(name: string): boolean {
+    this.discoveredTools.delete(name);
     return this.tools.delete(name);
   }
 
