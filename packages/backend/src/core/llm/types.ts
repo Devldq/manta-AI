@@ -87,7 +87,7 @@ export function profileToLLMConfig(profile: ModelProfile): LLMConfig {
 /** 各 provider 的默认模型建议列表 */
 export const PROVIDER_DEFAULT_MODELS: Record<LLMProvider, string[]> = {
   'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-  'openai-compatible': ['deepseek-chat', 'qwen-turbo', 'qwen-plus', 'glm-4', 'moonshot-v1-8k'],
+  'openai-compatible': ['glm-4.7', 'glm-4.1v-thinking-flashx', 'glm-4.5-air', 'glm-4.6v', 'deepseek-chat', 'qwen-turbo', 'qwen-plus', 'moonshot-v1-8k'],
   'anthropic': ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
   'ollama': ['llama3.2', 'llama3.1', 'qwen2.5', 'deepseek-r1', 'mistral', 'phi4'],
   'lm-studio': ['local-model'],
