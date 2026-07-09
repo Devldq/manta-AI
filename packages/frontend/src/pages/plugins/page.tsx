@@ -35,6 +35,8 @@ import {
   Terminal,
   FolderOpen,
   Globe,
+  RefreshCw,
+  ExternalLink,
 } from 'lucide-react';
 
 // ── 类型 ──────────────────────────────────────────────────────────────────
@@ -131,6 +133,30 @@ interface RegistrySummary {
   hookStats: Record<string, { lastRun?: string; successCount: number; failCount: number }>;
 }
 
+interface MarketplaceItem {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  detailUrl: string;
+  worksWith: string[];
+  verified: boolean;
+  installCount?: number;
+  marketplaceName: string;
+  pluginId: string;
+  installCommand: string;
+  source: 'claude.com';
+  updatedAt: string;
+  installed?: boolean;
+}
+
+interface MarketplaceResponse {
+  sourceUrl: string;
+  refreshedAt: string;
+  total: number;
+  items: MarketplaceItem[];
+}
+
 // ── API 辅助 ──────────────────────────────────────────────────────────────
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -166,6 +192,7 @@ function PluginStateBadge({ state }: { state: PluginState }) {
 // ── 页面主体 ──────────────────────────────────────────────────────────────
 
 export default function PluginsPage() {
+  const [activeView, setActiveView] = useState<'installed' | 'marketplace'>('installed');
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -195,6 +222,14 @@ export default function PluginsPage() {
   // 卸载确认
   const [uninstalling, setUninstalling] = useState<string | null>(null);
 
+  // Claude 市场
+  const [marketplace, setMarketplace] = useState<MarketplaceResponse | null>(null);
+  const [marketLoading, setMarketLoading] = useState(true);
+  const [marketRefreshing, setMarketRefreshing] = useState(false);
+  const [marketError, setMarketError] = useState('');
+  const [marketSearch, setMarketSearch] = useState('');
+  const [marketInstalling, setMarketInstalling] = useState<string | null>(null);
+
   // ═══ 数据加载 ══════════════════════════════════════════════════════════
 
   const loadPlugins = useCallback(async () => {
@@ -216,7 +251,24 @@ export default function PluginsPage() {
     } catch { /* 忽略 */ }
   }, []);
 
-  useEffect(() => { loadPlugins(); loadRegistry(); }, [loadPlugins, loadRegistry]);
+  const loadMarketplace = useCallback(async (options?: { refresh?: boolean }) => {
+    try {
+      setMarketError('');
+      const qs = options?.refresh ? '?refresh=true' : '';
+      const data = await apiFetch<{ data: MarketplaceResponse }>(`/api/plugins/marketplace${qs}`);
+      setMarketplace(data.data || null);
+    } catch (e: any) {
+      setMarketError(e.message);
+    } finally {
+      setMarketLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPlugins();
+    loadRegistry();
+    loadMarketplace();
+  }, [loadPlugins, loadRegistry, loadMarketplace]);
 
   const fetchDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
@@ -345,16 +397,16 @@ export default function PluginsPage() {
 
   async function handleInstall() {
     if (!installPath.trim()) {
-      setInstallError('插件路径不能为空');
+      setInstallError('插件来源不能为空');
       return;
     }
     setInstalling(true);
     setInstallError('');
     try {
-      await apiFetch('/api/plugins/install-file', {
+      await apiFetch('/api/plugins/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourcePath: installPath.trim() }),
+        body: JSON.stringify({ source: installPath.trim() }),
       });
       setShowInstallModal(false);
       setInstallPath('');
@@ -364,6 +416,33 @@ export default function PluginsPage() {
       setInstallError(e.message);
     } finally {
       setInstalling(false);
+    }
+  }
+
+  async function handleRefreshMarketplace() {
+    setMarketRefreshing(true);
+    try {
+      await loadMarketplace({ refresh: true });
+    } finally {
+      setMarketRefreshing(false);
+    }
+  }
+
+  async function handleInstallMarketplace(item: MarketplaceItem) {
+    setMarketInstalling(item.pluginId);
+    try {
+      await apiFetch('/api/plugins/marketplace/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pluginId: item.pluginId }),
+      });
+      await loadPlugins();
+      await loadRegistry();
+      await loadMarketplace();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setMarketInstalling(null);
     }
   }
 
@@ -378,7 +457,7 @@ export default function PluginsPage() {
   }
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className="p-8 max-w-6xl">
       {/* 头部 */}
       <div className="flex items-start justify-between mb-8 gap-4">
         <div className="flex-1">
@@ -390,25 +469,61 @@ export default function PluginsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={openScanModal}
-            className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg border transition-colors"
-            style={{ color: 'var(--color-text-secondary)', borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
-          >
-            <FileSearch size={14} /> 扫描注册
-          </button>
-          <button
-            onClick={() => setShowInstallModal(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors"
-            style={{ background: 'var(--color-accent)', color: 'var(--color-text-inverse)' }}
-          >
-            <Package size={16} /> 安装插件
-          </button>
+          {activeView === 'installed' ? (
+            <>
+              <button
+                onClick={openScanModal}
+                className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg border transition-colors"
+                style={{ color: 'var(--color-text-secondary)', borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
+              >
+                <FileSearch size={14} /> 扫描注册
+              </button>
+              <button
+                onClick={() => setShowInstallModal(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors"
+                style={{ background: 'var(--color-accent)', color: 'var(--color-text-inverse)' }}
+              >
+                <Package size={16} /> 安装插件
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={handleRefreshMarketplace}
+              disabled={marketRefreshing}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+              style={{ background: 'var(--color-accent)', color: 'var(--color-text-inverse)' }}
+            >
+              <RefreshCw size={16} className={marketRefreshing ? 'animate-spin' : ''} /> 刷新市场
+            </button>
+          )}
         </div>
       </div>
 
+      <div className="mb-6 inline-flex rounded-lg border p-1" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
+        <button
+          onClick={() => setActiveView('installed')}
+          className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+          style={{
+            background: activeView === 'installed' ? 'var(--color-background)' : 'transparent',
+            color: activeView === 'installed' ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+          }}
+        >
+          已安装
+        </button>
+        <button
+          onClick={() => setActiveView('marketplace')}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+          style={{
+            background: activeView === 'marketplace' ? 'var(--color-background)' : 'transparent',
+            color: activeView === 'marketplace' ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+          }}
+        >
+          <Globe size={13} /> Claude 市场
+        </button>
+      </div>
+
       {/* 注册表摘要 */}
-      {registry && (
+      {activeView === 'installed' && registry && (
         <div className="mb-6 p-3 rounded-lg border flex items-center gap-6 text-xs" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
           <span style={{ color: 'var(--color-text-secondary)' }}>概述：</span>
           <span style={{ color: 'var(--color-text-primary)' }}>共 <strong>{registry.total}</strong> 个</span>
@@ -424,7 +539,7 @@ export default function PluginsPage() {
       )}
 
       {/* 错误提示 */}
-      {error && (
+      {activeView === 'installed' && error && (
         <div className="mb-6 p-3 rounded-lg text-sm" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }}>
           {error}
           <button onClick={loadPlugins} className="ml-3 underline" style={{ color: '#ef4444' }}>重试</button>
@@ -432,7 +547,18 @@ export default function PluginsPage() {
       )}
 
       {/* 空状态 */}
-      {plugins.length === 0 ? (
+      {activeView === 'marketplace' ? (
+        <MarketplacePanel
+          marketplace={marketplace}
+          loading={marketLoading}
+          error={marketError}
+          search={marketSearch}
+          installing={marketInstalling}
+          onSearch={setMarketSearch}
+          onRetry={() => loadMarketplace({ refresh: true })}
+          onInstall={handleInstallMarketplace}
+        />
+      ) : plugins.length === 0 ? (
         <div className="text-center py-16 rounded-xl border" style={{ borderColor: 'var(--color-border)', background: 'var(--color-background)' }}>
           <Package size={48} className="mx-auto mb-4" style={{ color: 'var(--color-text-muted)' }} />
           <p className="text-sm mb-2" style={{ color: 'var(--color-text-secondary)' }}>尚未安装任何插件</p>
@@ -505,6 +631,166 @@ export default function PluginsPage() {
           onClose={() => { setShowInstallModal(false); setInstallPath(''); setInstallError(''); }}
         />
       )}
+    </div>
+  );
+}
+
+// ── Claude 市场 ────────────────────────────────────────────────────────────────
+
+function MarketplacePanel({
+  marketplace,
+  loading,
+  error,
+  search,
+  installing,
+  onSearch,
+  onRetry,
+  onInstall,
+}: {
+  marketplace: MarketplaceResponse | null;
+  loading: boolean;
+  error: string;
+  search: string;
+  installing: string | null;
+  onSearch: (value: string) => void;
+  onRetry: () => void;
+  onInstall: (item: MarketplaceItem) => void;
+}) {
+  const normalizedSearch = search.trim().toLowerCase();
+  const items = (marketplace?.items || []).filter((item) => {
+    if (!normalizedSearch) return true;
+    return (
+      item.name.toLowerCase().includes(normalizedSearch) ||
+      item.slug.toLowerCase().includes(normalizedSearch) ||
+      (item.description || '').toLowerCase().includes(normalizedSearch)
+    );
+  });
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[40vh]">
+        <Loader2 size={24} className="animate-spin" style={{ color: 'var(--color-text-muted)' }} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-muted)' }} />
+          <input
+            value={search}
+            onChange={(e) => onSearch(e.target.value)}
+            placeholder="搜索 Claude 插件"
+            className="w-full pl-8 pr-3 py-2 text-xs rounded-lg border focus:outline-none"
+            style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
+          />
+        </div>
+        {marketplace && (
+          <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            {items.length} / {marketplace.total} · {formatDate(marketplace.refreshedAt)}
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div className="p-3 rounded-lg text-sm" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }}>
+          {error}
+          <button onClick={onRetry} className="ml-3 underline" style={{ color: '#ef4444' }}>重试</button>
+        </div>
+      )}
+
+      {items.length === 0 ? (
+        <div className="text-center py-16 rounded-xl border" style={{ borderColor: 'var(--color-border)', background: 'var(--color-background)' }}>
+          <Globe size={42} className="mx-auto mb-4" style={{ color: 'var(--color-text-muted)' }} />
+          <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>没有匹配的 Claude 插件</p>
+        </div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {items.map((item) => (
+            <MarketplaceCard
+              key={item.id}
+              item={item}
+              installing={installing === item.pluginId}
+              onInstall={() => onInstall(item)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MarketplaceCard({
+  item,
+  installing,
+  onInstall,
+}: {
+  item: MarketplaceItem;
+  installing: boolean;
+  onInstall: () => void;
+}) {
+  return (
+    <div className="rounded-lg border p-4 flex flex-col gap-3" style={{ borderColor: 'var(--color-border)', background: 'var(--color-background)' }}>
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'var(--color-surface)' }}>
+          <Package size={20} style={{ color: 'var(--color-accent)' }} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>{item.name}</h3>
+            {item.verified && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(34,197,94,0.12)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.24)' }}>
+                verified
+              </span>
+            )}
+            {item.installed && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(99,102,241,0.12)', color: 'var(--color-accent)', border: '1px solid rgba(99,102,241,0.24)' }}>
+                已安装
+              </span>
+            )}
+          </div>
+          <p className="text-xs mt-1 line-clamp-2" style={{ color: 'var(--color-text-muted)' }}>
+            {item.description || item.pluginId}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+        {item.worksWith.map((target) => (
+          <span key={target} className="px-1.5 py-0.5 rounded" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+            {target}
+          </span>
+        ))}
+        {typeof item.installCount === 'number' && (
+          <span>{item.installCount.toLocaleString()} installs</span>
+        )}
+      </div>
+
+      <code className="block text-[10px] px-2 py-1.5 rounded truncate" style={{ background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
+        {item.installCommand}
+      </code>
+
+      <div className="flex items-center justify-between gap-2 mt-auto">
+        <a
+          href={item.detailUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 text-xs"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
+          <ExternalLink size={13} /> 详情
+        </a>
+        <button
+          onClick={onInstall}
+          disabled={installing || item.installed}
+          className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+          style={{ background: item.installed ? 'var(--color-surface)' : 'var(--color-accent)', color: item.installed ? 'var(--color-text-muted)' : 'var(--color-text-inverse)' }}
+        >
+          {installing ? <><Loader2 size={14} className="animate-spin" /> 安装中...</> : item.installed ? <><Check size={14} /> 已安装</> : <><Download size={14} /> 一键安装</>}
+        </button>
+      </div>
     </div>
   );
 }
@@ -873,7 +1159,7 @@ function InstallModal({
         <div className="space-y-3">
           <div>
             <label className="block text-xs font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>
-              插件目录路径 *
+              插件来源 *
             </label>
             <div className="relative">
               <FolderOpen size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-muted)' }} />
@@ -881,14 +1167,14 @@ function InstallModal({
                 type="text"
                 value={installPath}
                 onChange={(e) => onChange(e.target.value)}
-                placeholder="输入本地插件目录路径，如 /path/to/my-plugin"
+                placeholder="本地目录，或 claude plugin install frontend-design@claude-plugins-official"
                 className="w-full pl-8 pr-3 py-2 text-xs rounded-lg border focus:outline-none font-mono transition-colors"
                 style={{ background: 'var(--color-surface)', borderColor: error ? '#ef4444' : 'var(--color-border)', color: 'var(--color-text-primary)' }}
                 onKeyDown={(e) => e.key === 'Enter' && onInstall()}
               />
             </div>
             <p className="text-[10px] mt-1" style={{ color: 'var(--color-text-muted)' }}>
-              目录必须包含 plugin.yaml 清单文件，支持 ~ 路径展开
+              支持本地 plugin.yaml 目录、Claude 插件 ID，或完整 claude plugin install 命令
             </p>
           </div>
 

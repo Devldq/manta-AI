@@ -46,3 +46,7 @@ next-env.d.ts
 
 # MCP config (contains GitHub token)
 .mcp.json
+
+# Manta runtime plugin data
+.manta/plugin-marketplace/
+.manta/plugins/

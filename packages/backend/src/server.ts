@@ -98,6 +98,7 @@ import { runnerRoutes } from './routes/runners.js'
 import { workflowRoutes } from './routes/workflow.js'
 import { skillRoutes } from './routes/skills.js'
 import { initializeSkills } from './core/storage/skill/store.js'
+import { startClaudeMarketplaceScheduler } from './core/storage/plugin/marketplace.js'
 import { default as auditRoutes } from './routes/audit.js'
 import { default as approvalRoutes } from './routes/approval.js'
 import { default as approvalSSERoutes } from './routes/approval-sse.js'
@@ -153,6 +154,9 @@ async function start() {
       `[Skill Init] 扫描完成: 总计 ${skillResult.total}, 新导入 ${skillResult.imported}, 同步更新 ${skillResult.updated}` +
       (skillResult.errors.length ? `, 错误 ${skillResult.errors.length}` : '')
     )
+
+    // 初始化 Claude 插件市场缓存，并定时从 claude.com/plugins 刷新。
+    startClaudeMarketplaceScheduler(app.log)
 
     await app.listen({ port: PORT, host: HOST })
     app.log.info(`Manta Backend running at http://${HOST}:${PORT}`)

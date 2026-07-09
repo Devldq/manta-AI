@@ -39,6 +39,12 @@ import {
   getPluginsBaseDir,
 } from '../core/storage/plugin/scanner'
 import { pluginRegistry } from '../core/storage/plugin/registry'
+import {
+  getClaudeMarketplace,
+  installClaudePlugin,
+  isClaudePluginInstallSource,
+  refreshClaudeMarketplace,
+} from '../core/storage/plugin/marketplace'
 import { apiSuccess, apiError, Errors } from '../core/api/error-handler'
 import type {
   PluginHookEvent,
@@ -70,6 +76,82 @@ export async function pluginRoutes(app: FastifyInstance) {
     try {
       const summary = pluginRegistry.getSummary()
       return reply.send(apiSuccess(summary))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // GET /api/plugins/marketplace — 获取内置 Claude 插件市场
+  app.get('/api/plugins/marketplace', async (request, reply) => {
+    try {
+      const query = request.query as Record<string, string | undefined>
+      const search = (query.search || '').trim().toLowerCase()
+      const refresh = query.refresh === 'true'
+      const cache = await getClaudeMarketplace({ refresh })
+      const installed = listPlugins()
+      const installedNames = new Set(installed.map((p) => p.name.toLowerCase()))
+
+      const items = cache.items
+        .filter((item) => {
+          if (!search) return true
+          return (
+            item.name.toLowerCase().includes(search) ||
+            item.slug.toLowerCase().includes(search) ||
+            (item.description || '').toLowerCase().includes(search)
+          )
+        })
+        .map((item) => ({
+          ...item,
+          installed: installedNames.has(item.name.toLowerCase()) ||
+            installedNames.has(item.slug.toLowerCase()),
+        }))
+
+      return reply.send(apiSuccess({
+        sourceUrl: cache.sourceUrl,
+        refreshedAt: cache.refreshedAt,
+        total: cache.items.length,
+        items,
+      }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // POST /api/plugins/marketplace/refresh — 手动刷新 Claude 插件市场缓存
+  app.post('/api/plugins/marketplace/refresh', async (_request, reply) => {
+    try {
+      const cache = await refreshClaudeMarketplace()
+      return reply.send(apiSuccess({
+        sourceUrl: cache.sourceUrl,
+        refreshedAt: cache.refreshedAt,
+        total: cache.items.length,
+        items: cache.items,
+      }))
+    } catch (err) {
+      return apiError(reply, err)
+    }
+  })
+
+  // POST /api/plugins/marketplace/install — 一键安装 Claude 市场插件
+  app.post('/api/plugins/marketplace/install', async (request, reply) => {
+    try {
+      const body = request.body as { pluginId?: string; command?: string }
+      const source = (body.pluginId || body.command || '').trim()
+      if (!source) {
+        throw Errors.VALIDATION_ERROR('pluginId', '插件 ID 不能为空')
+      }
+
+      const result = await installClaudePlugin(source)
+      await pluginRegistry.onPostInstall(result.plugin.id)
+
+      return reply.status(201).send(apiSuccess({
+        plugin: result.plugin,
+        marketplaceItem: result.marketplaceItem,
+        command: result.command.join(' '),
+        stdout: result.stdout,
+        stderr: result.stderr,
+        message: `Claude 插件 "${result.plugin.manifest.name}" 安装成功`,
+      }))
     } catch (err) {
       return apiError(reply, err)
     }
@@ -252,6 +334,19 @@ export async function pluginRoutes(app: FastifyInstance) {
       if (body.isNpm) {
         // TODO: npm 包安装逻辑
         throw Errors.INVALID_PARAM('isNpm', 'npm 安装暂未实现')
+      }
+
+      if (isClaudePluginInstallSource(source)) {
+        const result = await installClaudePlugin(source)
+        await pluginRegistry.onPostInstall(result.plugin.id)
+        return reply.status(201).send(apiSuccess({
+          plugin: result.plugin,
+          marketplaceItem: result.marketplaceItem,
+          command: result.command.join(' '),
+          stdout: result.stdout,
+          stderr: result.stderr,
+          message: `Claude 插件 "${result.plugin.manifest.name}" 安装成功`,
+        }))
       }
 
       // 本地目录安装
