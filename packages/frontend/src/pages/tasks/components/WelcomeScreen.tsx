@@ -1,30 +1,14 @@
 import { memo } from 'react'
 import type { AgentEntry } from '../utils/types'
 
-// 快捷能力标签
-export const CAPABILITY_TAGS = [
-  { icon: '📄', label: '文档处理' },
-  { icon: '🎬', label: '视频生成' },
-  { icon: '🔍', label: '深度研究' },
-  { icon: '$', label: '金融服务' },
-  { icon: '📊', label: '数据分析' },
-  { icon: '📈', label: '数据可视化' },
-  { icon: '🖥', label: '幻灯片' },
-  { icon: '📁', label: '产品管理' },
-  { icon: '🎨', label: '图像设计' },
-  { icon: '💻', label: '代码开发' },
-]
-
 export const WelcomeScreen = memo(function WelcomeScreen({
   agentName,
   agents,
   onAgentChange,
-  onTagClick,
 }: {
   agentName: string
   agents: AgentEntry[]
   onAgentChange: (name: string) => void
-  onTagClick: (label: string) => void
 }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 20px 20px', minHeight: 0 }}>

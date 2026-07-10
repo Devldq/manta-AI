@@ -15,7 +15,6 @@ import {
   MessageRow,
   FsAccessBanner,
   WelcomeScreen,
-  CapabilityTags,
   KimInputBar,
 } from './components'
 import type { WorkspaceEntry } from './components/WorkspaceSelector'
@@ -119,7 +118,10 @@ function ChatView({
   onSwitchWorkspace: (workspaceId: string | null) => void
 }) {
   const navigate = useNavigate()
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const shouldAutoScrollRef = useRef(true)
+  const prevMessageCountRef = useRef(initialMessages.length)
   const [inputText, setInputText] = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -356,9 +358,13 @@ function ChatView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  const updateAutoScrollState = useCallback(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    shouldAutoScrollRef.current = distanceToBottom <= 80
+  }, [])
 
   function handleSend() {
     reconnectFinishedRef.current = false
@@ -366,6 +372,7 @@ function ChatView({
     setLiveStepUsages([])
     const msg = inputText.trim()
     if (!msg || isLoading) return
+    shouldAutoScrollRef.current = true
     setInputText('')
     sendMessage({ text: msg })
   }
@@ -406,6 +413,21 @@ function ChatView({
         return result
       })()
     : ((replacedMsgIdxRef.current = -1), messages)
+
+  useEffect(() => {
+    if (!shouldAutoScrollRef.current) return
+
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    const nextMessageCount = displayMessages.length
+    const behavior = nextMessageCount > prevMessageCountRef.current ? 'smooth' : 'auto'
+    prevMessageCountRef.current = nextMessageCount
+
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' })
+    })
+  }, [displayMessages])
 
   const isReconnecting = reconnect.reconnecting
   const showReconnectStreaming = hasReconnectContent && !reconnect.finished
@@ -488,7 +510,11 @@ function ChatView({
         </div>
 
         {/* 消息列表 */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '6px 20px 12px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div
+          ref={messagesContainerRef}
+          onScroll={updateAutoScrollState}
+          style={{ flex: 1, overflowY: 'auto', padding: '6px 20px 12px', display: 'flex', flexDirection: 'column', gap: '14px' }}
+        >
           {isReconnecting && (
             <div style={{ padding: '12px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 500, background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent)', color: 'var(--color-accent)', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Loader2 size={14} className="tool-spinner" />
@@ -520,9 +546,6 @@ function ChatView({
           )}
           <div ref={messagesEndRef} />
         </div>
-
-        {/* 能力标签 */}
-        {displayMessages.length === 0 && <CapabilityTags onSelect={(label) => setInputText(label + ' ')} />}
 
         {/* 文件访问授权 */}
         <FsAccessBanner />
@@ -653,11 +676,7 @@ function NewChatDraft({
         agentName={agentName}
         agents={agents}
         onAgentChange={onAgentChange}
-        onTagClick={(label) => setInput(label + ' ')}
       />
-
-      {/* 能力标签 */}
-      <CapabilityTags onSelect={(label) => setInput(label + ' ')} />
 
       {/* 文件访问授权 */}
       <FsAccessBanner />
@@ -700,6 +719,12 @@ function TasksPage() {
   const [loading, setLoading] = useState(false)
   const [agents, setAgents] = useState<AgentEntry[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([])
+  const convRef = useRef<Conversation | null>(null)
+  const loadSeqRef = useRef(0)
+
+  useEffect(() => {
+    convRef.current = conv
+  }, [conv])
 
   // 加载 agent 列表
   useEffect(() => {
@@ -737,12 +762,16 @@ function TasksPage() {
   }
 
   const loadConv = useCallback(async (id: string) => {
-    setLoading(true)
+    const seq = ++loadSeqRef.current
+    const currentConv = convRef.current
+    const shouldBlock = !currentConv || currentConv.id === id
+    if (shouldBlock) setLoading(true)
     try {
       const typeParam = workspaceIdParam ? 'workspace' : 'global'
       const wsParam = workspaceIdParam ? `&workspaceId=${workspaceIdParam}` : ''
       const url = `/api/conversations/${id}?type=${typeParam}${wsParam}`
       const res = await fetch(url)
+      if (seq !== loadSeqRef.current) return
       if (res.ok) {
         const data = await res.json()
         setConv(data.conversation)
@@ -750,9 +779,12 @@ function TasksPage() {
         setConv(null)
       }
     } catch {
+      if (seq !== loadSeqRef.current) return
       setConv(null)
     } finally {
-      setLoading(false)
+      if (seq === loadSeqRef.current) {
+        setLoading(false)
+      }
     }
   }, [workspaceIdParam])
 
@@ -858,7 +890,6 @@ function TasksPage() {
 
     return (
       <ChatView
-        key={conv.id}
         convId={conv.id}
         agentName={conv.agentName}
         initialMessages={initialMessages}

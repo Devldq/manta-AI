@@ -2,9 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Plus, Square, ChevronRight } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
-import { zhCN } from 'date-fns/locale'
+import { Plus, ChevronRight, Trash2 } from 'lucide-react'
 import { useConversationStore } from '@/stores/conversation-store'
 import { useSidebarStore } from '@/stores/sidebar-store'
 
@@ -46,17 +44,6 @@ export function ConversationList() {
     return filtered.filter((c) => c.title.toLowerCase().includes(q))
   }, [items, searchQuery])
 
-  function formatTime(date?: string) {
-    if (!date) return ''
-    try {
-      return formatDistanceToNow(new Date(date), { addSuffix: true, locale: zhCN })
-        .replace('大约 ', '')
-        .replace(' 前', '天前')
-    } catch {
-      return ''
-    }
-  }
-
   async function handleDelete(e: React.MouseEvent, id: string) {
     e.stopPropagation()
     if (activeId === id) {
@@ -77,71 +64,71 @@ export function ConversationList() {
 
   return (
     <div className={`flex-shrink-0 flex flex-col overflow-hidden ${collapsed ? '' : 'max-h-[40%]'}`}>
-      {/* ── 任务分组头（可折叠，固定不滚动） ── */}
       <div
-        className="flex items-center justify-between pl-3 pr-1 py-1 cursor-pointer hover:bg-border/30 rounded transition-colors flex-shrink-0"
+        className="mx-2.5 mt-1 flex items-center justify-between py-0.5 cursor-pointer transition-colors flex-shrink-0"
         onClick={() => setCollapsed(!collapsed)}
       >
         <div className="flex items-center gap-1.5">
           <ChevronRight
-            size={12}
+            size={11}
             className={`text-text-muted flex-shrink-0 transition-transform ${collapsed ? '' : 'rotate-90'}`}
           />
-          <span className={`text-xs font-medium text-text-muted uppercase select-none ${collapsed ? '' : 'text-sidebar-text'}`}>任务</span>
+          <span className={`text-[12px] font-semibold text-text-muted select-none ${collapsed ? '' : 'text-sidebar-text-secondary'}`}>任务</span>
+          {!collapsed && standaloneItems.length > 0 && (
+            <span className="text-[11px] text-text-muted leading-none">
+              {standaloneItems.length}
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 opacity-70 hover:opacity-100">
           <button
-            className="p-0.5 rounded hover:bg-border text-text-muted hover:text-sidebar-text-secondary mr-2"
+            className="mr-0.5 flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-border/50 hover:text-sidebar-text-secondary transition-colors"
             onClick={(e) => { e.stopPropagation(); handleNewAction() }}
             title="新建任务"
           >
-            <Plus size={12} />
+            <Plus size={11} />
           </button>
         </div>
       </div>
 
       {!collapsed && (
         standaloneItems.length === 0 ? (
-          <div className="px-4 py-2 flex-shrink-0">
-            <span className="text-[11px] text-text-muted">
+          <div className="px-3 py-1 flex-shrink-0">
+            <span className="text-[12px] text-text-muted">
               {searchQuery ? '无匹配任务' : '暂无任务'}
             </span>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto scrollbar-none px-0.5">
+          <div className="sidebar-scrollbar flex-1 overflow-y-auto px-2 pb-0.5">
             {standaloneItems.map((conv) => {
               const isActive = activeId === conv.id
               return (
                 <div
                   key={conv.id}
-                  className={`group relative flex items-center gap-2 px-3 py-1.5 mx-2 rounded cursor-pointer transition-colors ${
+                  className={`group relative mb-px flex items-center gap-1.5 rounded-md px-2 py-0.5 cursor-pointer transition-colors ${
                     isActive
-                      ? 'bg-border text-sidebar-text'
-                      : 'text-sidebar-text-secondary hover:bg-border/50'
+                      ? 'bg-border/45 text-sidebar-text'
+                      : 'text-sidebar-text-secondary hover:bg-border/20'
                   }`}
                   onClick={() => handleClick(conv.id)}
                 >
-                  {/* Checkbox 图标 */}
-                  <Square size={15} className={`flex-shrink-0 ${isActive ? 'text-accent' : 'text-text-muted'}`} />
-                  {/* 标题 */}
-                  <span
-                    className={`text-xs flex-1 truncate text-left ${isActive ? 'font-medium' : ''}`}
-                    title={conv.title}
-                  >
-                    {conv.title}
-                  </span>
-                  {/* 时间 */}
-                  <span className="text-[10px] text-text-muted flex-shrink-0 group-hover:hidden">
-                    {formatTime(conv.updatedAt)}
-                  </span>
-                  {/* 删除按钮 */}
-                  <button
-                    className="hidden group-hover:flex items-center justify-center w-4 h-4 rounded flex-shrink-0 text-text-muted hover:text-status-failed transition-colors"
-                    onClick={(e) => handleDelete(e, conv.id)}
-                    title="删除"
-                  >
-                    <span className="text-[11px]">×</span>
-                  </button>
+                  <div className="min-w-0 flex-1">
+                    <span
+                      className={`block truncate text-[12px] text-left leading-snug ${isActive ? 'font-semibold text-sidebar-text' : 'font-medium'}`}
+                      title={conv.title}
+                    >
+                      {conv.title}
+                    </span>
+                  </div>
+                  <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
+                    <button
+                      className="flex h-5 w-5 items-center justify-center rounded text-text-muted opacity-0 pointer-events-none hover:bg-status-failed/10 hover:text-status-failed transition-colors group-hover:opacity-100 group-hover:pointer-events-auto"
+                      onClick={(e) => handleDelete(e, conv.id)}
+                      title="删除"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
                 </div>
               )
             })}

@@ -2,12 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { ChevronRight, Plus, Folder, Square, Trash2 } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
-import { zhCN } from 'date-fns/locale'
+import { ChevronRight, Plus, FolderOpen, Trash2 } from 'lucide-react'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useConversationStore } from '@/stores/conversation-store'
-import { SkeletonSidebarList } from '@/components/skeleton'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 
 export function WorkspaceList() {
@@ -45,7 +42,7 @@ export function WorkspaceList() {
       if (!expandedIds.has(urlWorkspaceId)) {
         toggleExpand(urlWorkspaceId)
       }
-      fetchConversations(urlWorkspaceId, true)
+      fetchConversations(urlWorkspaceId)
     }
   }, [urlWorkspaceId, items.length])
 
@@ -56,17 +53,6 @@ export function WorkspaceList() {
 
     if (!wasExpanded) {
       await fetchConversations(wsId)
-    }
-  }
-
-  function formatTime(date?: string) {
-    if (!date) return ''
-    try {
-      return formatDistanceToNow(new Date(date), { addSuffix: true, locale: zhCN })
-        .replace('大约 ', '')
-        .replace(' 前', '天前')
-    } catch {
-      return ''
     }
   }
 
@@ -141,27 +127,25 @@ export function WorkspaceList() {
 
   if (items.length === 0) {
     return (
-      <div className="pt-1 flex-1 flex flex-col overflow-hidden">
-        {/* ── 工作空间分组头（吸顶） ── */}
-        <div className="flex items-center justify-between pl-3 pr-1 py-1 flex-shrink-0">
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="mx-2.5 mt-0.5 flex items-center justify-between py-0.5 flex-shrink-0">
           <div className="flex items-center gap-1.5">
-            <ChevronRight size={12} className="text-text-muted flex-shrink-0" />
-            <span className="text-xs font-medium text-text-muted uppercase select-none">工作空间</span>
+            <ChevronRight size={11} className="text-text-muted flex-shrink-0" />
+            <span className="text-[12px] font-semibold text-sidebar-text-secondary select-none">项目</span>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 opacity-70 hover:opacity-100">
             <button
-              className="p-0.5 rounded hover:bg-border text-text-muted hover:text-sidebar-text-secondary mr-2"
+              className="mr-0.5 flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-border/50 hover:text-sidebar-text-secondary transition-colors"
               onClick={handleNewWorkspace}
               title="新建工作空间"
             >
-              <Plus size={12} />
+              <Plus size={11} />
             </button>
           </div>
         </div>
-        {/* 列表区域（可滚动） */}
-        <div className="flex-1 overflow-y-auto scrollbar-none">
-          <div className="px-4 py-2">
-            <span className="text-[11px] text-text-muted">暂无工作空间</span>
+        <div className="sidebar-scrollbar flex-1 overflow-y-auto">
+          <div className="px-3 py-1">
+            <span className="text-[12px] text-text-muted">暂无项目</span>
           </div>
         </div>
       </div>
@@ -169,84 +153,85 @@ export function WorkspaceList() {
   }
 
   return (
-    <div className="pt-1 flex-1 flex flex-col overflow-hidden">
-      {/* ── 工作空间分组头（吸顶，可折叠） ── */}
+    <div className="flex-1 flex flex-col overflow-hidden">
       <div
-        className="flex items-center justify-between pl-3 pr-1 py-1 cursor-pointer hover:bg-border/30 rounded transition-colors flex-shrink-0"
+        className="mx-2.5 mt-0.5 flex items-center justify-between py-0.5 cursor-pointer transition-colors flex-shrink-0"
         onClick={() => setCollapsed(!collapsed)}
       >
         <div className="flex items-center gap-1.5">
           <ChevronRight
-            size={12}
+            size={11}
             className={`text-text-muted flex-shrink-0 transition-transform ${collapsed ? '' : 'rotate-90'}`}
           />
-          <span className={`text-xs font-medium uppercase select-none ${collapsed ? 'text-text-muted' : 'text-sidebar-text'}`}>工作空间</span>
+          <span className={`text-[12px] font-semibold select-none ${collapsed ? 'text-text-muted' : 'text-sidebar-text-secondary'}`}>项目</span>
+          {!collapsed && items.length > 0 && (
+            <span className="text-[11px] text-text-muted leading-none">
+              {items.length}
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 opacity-70 hover:opacity-100">
           <button
-            className="p-0.5 rounded hover:bg-border text-text-muted hover:text-sidebar-text-secondary mr-2"
+            className="mr-0.5 flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-border/50 hover:text-sidebar-text-secondary transition-colors"
             onClick={(e) => { e.stopPropagation(); handleNewWorkspace() }}
             title="新建工作空间"
           >
-            <Plus size={12} />
+            <Plus size={11} />
           </button>
         </div>
       </div>
 
-      {/* ── 工作空间列表（可滚动） ── */}
       {!collapsed && (
-        <div className="flex-1 overflow-y-auto scrollbar-none">
+        <div className="sidebar-scrollbar flex-1 overflow-y-auto px-2 pb-0.5">
           {items.map((ws) => {
             const isExpanded = expandedIds.has(ws.id)
             const isLoading = loadingWsIds.has(ws.id)
             const conversations = conversationsByWs[ws.id]
 
             return (
-              <div key={ws.id}>
-                {/* 工作空间一级项 */}
+              <div key={ws.id} className="mb-0.5">
                 <div
-                  className="group flex items-center gap-2 pl-3 pr-2 py-1.5 rounded cursor-pointer text-sidebar-text-secondary hover:bg-border/50 transition-colors"
+                  className="group flex items-center gap-1.5 px-0.5 py-0.5 cursor-pointer text-sidebar-text-secondary transition-colors"
                   onClick={() => handleToggle(ws.id)}
                 >
                   <ChevronRight
-                    size={12}
-                    className={`text-text-muted flex-shrink-0 transition-transform ${
-                      isExpanded ? 'rotate-90' : ''
-                    }`}
+                    size={11}
+                    className={`text-text-muted flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
                   />
-                  <Folder size={14} className="text-text-muted flex-shrink-0" />
-                  <span className="text-xs flex-1 truncate">{ws.name}</span>
-                  <span className="text-[10px] text-text-muted group-hover:hidden">
-                    {conversations ? `${conversations.length}` : ws.conversationCount > 0 ? `${ws.conversationCount}` : ''}
-                  </span>
-                  {/* 新建会话按钮 */}
-                  <button
-                    className="hidden group-hover:flex items-center justify-center p-0.5 rounded hover:bg-border text-text-muted hover:text-sidebar-text-secondary"
-                    onClick={(e) => handleNewConversation(ws.id, e)}
-                    title="新建会话"
-                  >
-                    <Plus size={12} />
-                  </button>
-                  {/* 删除工作空间按钮 */}
-                  <button
-                    className="hidden group-hover:flex items-center justify-center p-0.5 rounded hover:bg-border text-text-muted hover:text-status-failed transition-colors"
-                    onClick={(e) => { e.stopPropagation(); setDelWsId(ws.id) }}
-                    title="删除工作空间"
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                  <FolderOpen size={16} className="text-sidebar-text-secondary flex-shrink-0" strokeWidth={1.8} />
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-[12px] font-medium leading-tight text-sidebar-text">{ws.name}</span>
+                  </div>
+                  <div className="flex w-[54px] flex-shrink-0 items-center justify-end gap-1">
+                    <span className="text-[10px] text-text-muted transition-opacity group-hover:opacity-0">
+                      {conversations ? `${conversations.length}` : ws.conversationCount > 0 ? `${ws.conversationCount}` : ''}
+                    </span>
+                    <button
+                      className="flex h-5 w-5 items-center justify-center rounded text-text-muted opacity-0 pointer-events-none hover:bg-border/50 hover:text-sidebar-text-secondary transition-colors group-hover:opacity-100 group-hover:pointer-events-auto"
+                      onClick={(e) => handleNewConversation(ws.id, e)}
+                      title="新建会话"
+                    >
+                      <Plus size={11} />
+                    </button>
+                    <button
+                      className="flex h-5 w-5 items-center justify-center rounded text-text-muted opacity-0 pointer-events-none hover:bg-status-failed/10 hover:text-status-failed transition-colors group-hover:opacity-100 group-hover:pointer-events-auto"
+                      onClick={(e) => { e.stopPropagation(); setDelWsId(ws.id) }}
+                      title="删除工作空间"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
                 </div>
 
-                {/* 二级会话列表（展开时） */}
                 {isExpanded && (
-                  <div className="ml-4 py-0.5 border-l border-border-subtle">
+                  <div className="ml-5 mt-0.5">
                     {isLoading ? (
-                      <div className="ml-2">
-                        <SkeletonSidebarList itemCount={3} />
+                      <div className="px-1.5 py-1">
+                        <span className="text-[12px] text-text-muted">加载中...</span>
                       </div>
                     ) : !conversations || conversations.length === 0 ? (
-                      <div className="px-3 py-2">
-                        <span className="text-[11px] text-text-muted">暂无任务</span>
+                      <div className="px-1.5 py-1">
+                        <span className="text-[12px] text-text-muted">无任务</span>
                       </div>
                     ) : (
                       conversations.map((conv) => {
@@ -254,30 +239,30 @@ export function WorkspaceList() {
                         return (
                           <div
                             key={conv.id}
-                            className={`group relative flex items-center gap-2 px-3 py-1.5 mx-2 rounded cursor-pointer transition-colors ${
+                            className={`group relative mb-px flex items-center gap-1.5 rounded-md px-2 py-0.5 cursor-pointer transition-colors ${
                               isActiveConv
-                                ? 'bg-border text-sidebar-text'
-                                : 'text-sidebar-text-secondary hover:bg-border/50'
+                                ? 'bg-border/45 text-sidebar-text'
+                                : 'text-sidebar-text-secondary hover:bg-border/20'
                             }`}
                             onClick={() => handleConvClick(conv.id, ws.id)}
                           >
-                            <Square size={15} className={`flex-shrink-0 ${isActiveConv ? 'text-accent' : 'text-text-muted'}`} />
-                            <span
-                              className={`text-xs flex-1 truncate ${isActiveConv ? 'font-medium' : ''}`}
-                              title={conv.title}
-                            >
-                              {conv.title}
-                            </span>
-                            <span className="text-[10px] text-text-muted flex-shrink-0 group-hover:hidden">
-                              {formatTime(conv.updatedAt)}
-                            </span>
-                            <button
-                              className="hidden group-hover:flex items-center justify-center w-4 h-4 rounded flex-shrink-0 text-text-muted hover:text-status-failed transition-colors"
-                              onClick={(e) => handleDeleteConversation(ws.id, conv.id, e)}
-                              title="删除"
-                            >
-                              <span className="text-[11px]">×</span>
-                            </button>
+                            <div className="min-w-0 flex-1">
+                              <span
+                                className={`block truncate text-[12px] leading-snug ${isActiveConv ? 'font-semibold text-sidebar-text' : 'font-medium'}`}
+                                title={conv.title}
+                              >
+                                {conv.title}
+                              </span>
+                            </div>
+                            <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
+                              <button
+                                className="flex h-5 w-5 items-center justify-center rounded text-text-muted opacity-0 pointer-events-none hover:bg-status-failed/10 hover:text-status-failed transition-colors group-hover:opacity-100 group-hover:pointer-events-auto"
+                                onClick={(e) => handleDeleteConversation(ws.id, conv.id, e)}
+                                title="删除"
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
                           </div>
                         )
                       })

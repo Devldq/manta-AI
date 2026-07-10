@@ -50,3 +50,7 @@ next-env.d.ts
 # Manta runtime plugin data
 .manta/plugin-marketplace/
 .manta/plugins/
+
+
+
+.*
