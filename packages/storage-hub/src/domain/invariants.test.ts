@@ -11,7 +11,7 @@ const volume = (id: string, parentPath: string) => ({
 })
 
 describe('storage bootstrap invariants', () => {
-  it('rejects a group assigned to two active volume locations', () => {
+  it('rejects duplicate active volume roots', () => {
     const bootstrap = {
       schemaVersion: 1,
       generation: 1,

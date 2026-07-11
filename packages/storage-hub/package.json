@@ -8,15 +8,20 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "pnpm build && vitest run --coverage --coverage.reporter=json --coverage.reporter=text-summary",
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p test/fixtures/tsconfig.json"
   },
   "dependencies": {
     "zod": "^4.4.3"
@@ -24,6 +29,7 @@
   "devDependencies": {
     "@manta/shared": "workspace:*",
     "@types/node": "^22",
+    "@vitest/coverage-v8": "^2.1.9",
     "tsup": "^8.5.0",
     "typescript": "^5",
     "vitest": "^2.0.0"
