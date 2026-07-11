@@ -65,15 +65,14 @@ Expected: FAIL with `No test files found`.
 
 - [ ] **Step 2: Add one executable smoke test per package and root test orchestration**
 
-Each baseline test contains a real package assertion, for example:
+Each baseline test contains a real package assertion:
 
-```ts
-import { describe, expect, it } from 'vitest'
-
-describe('package baseline', () => {
-  it('runs under vitest', () => expect(true).toBe(true))
-})
-```
+- Shared asserts `DEFAULT_LLM_CONFIG.MAX_STEPS === 200`.
+- RAG asserts `inferMimeType('notes.md') === 'text/markdown'`.
+- Agent Sandbox asserts a child path is accepted by `isPathInAllowedRoots`.
+- Backend asserts `apiSuccess({ ok: true })` returns the canonical success envelope.
+- Frontend asserts `getThemeById('cli-pixel')` resolves a configured theme.
+- Desktop reads its package manifest and asserts the Electron main entry is `dist/main.js`.
 
 Add `"test": "vitest run"` to each package, `"test": "pnpm exec turbo run test"` to root, and this Turbo task:
 
