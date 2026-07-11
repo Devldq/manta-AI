@@ -1,18 +1,23 @@
-import { copyFile, chmod, lstat, mkdir, readdir, readlink, stat, symlink } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, symlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { StorageInventory } from '../inventory/file-inventory'
+import type { FileInventoryEntry, StorageInventory } from '../inventory/file-inventory'
+
+function sourcePath(root: string, entry: FileInventoryEntry): string { return join(root, ...entry.relativePath.split('/')) }
+function linkCreationType(entry: FileInventoryEntry): 'file' | 'dir' | 'junction' | undefined {
+  if (entry.linkType === 'file') return 'file'
+  if (entry.linkType === 'directory') return 'dir'
+  if (entry.linkType === 'junction') return 'junction'
+  return undefined
+}
 
 export async function copyTree(source: string, target: string, inventory: StorageInventory, progress?: (files: number, bytes: number) => void): Promise<void> {
-  await mkdir(target, { recursive: true })
-  let files = 0; let bytes = 0
-  async function walk(from: string, to: string): Promise<void> {
-    for (const name of (await readdir(from)).sort()) {
-      const sourcePath = join(from, name); const targetPath = join(to, name); const stats = await lstat(sourcePath)
-      if (stats.isSymbolicLink()) { await mkdir(dirname(targetPath), { recursive: true }); const followed = await stat(sourcePath).catch(() => undefined); const type = followed?.isDirectory() ? (process.platform === 'win32' ? 'junction' : 'dir') : followed?.isFile() ? 'file' : undefined; await symlink(await readlink(sourcePath), targetPath, type) }
-      else if (stats.isDirectory()) { await mkdir(targetPath, { recursive: true }); await chmod(targetPath, stats.mode); await walk(sourcePath, targetPath) }
-      else if (stats.isFile()) { await copyFile(sourcePath, targetPath); await chmod(targetPath, stats.mode); files += 1; bytes += stats.size; progress?.(files, bytes) }
-    }
+  await mkdir(target, { recursive: true }); let files = 0; let bytes = 0
+  const ordered = [...inventory.entries].sort((left, right) => Number(left.kind !== 'directory') - Number(right.kind !== 'directory') || left.relativePath.localeCompare(right.relativePath))
+  for (const entry of ordered) {
+    const from = sourcePath(source, entry); const to = sourcePath(target, entry); await mkdir(dirname(to), { recursive: true })
+    if (entry.kind === 'directory') { await mkdir(to, { recursive: true }); await chmod(to, (await lstat(from)).mode) }
+    else if (entry.kind === 'file') { const stats = await lstat(from); if (!stats.isFile() || stats.size !== entry.size) throw new Error(`Source changed after inventory: ${entry.relativePath}`); await copyFile(from, to); await chmod(to, stats.mode); files += 1; bytes += entry.size; progress?.(files, bytes) }
+    else { if (!entry.linkTarget || entry.linkType === 'unknown') throw new Error(`Cannot faithfully recreate link: ${entry.relativePath}`); await symlink(entry.linkTarget, to, linkCreationType(entry)) }
   }
-  await walk(source, target)
   if (files !== inventory.files || bytes !== inventory.bytes) throw new Error('Copied byte or file count does not match inventory')
 }

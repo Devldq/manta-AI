@@ -73,6 +73,7 @@ export class MigrationCoordinator {
       if (PRECOMMIT.has(journal.phase)) { await this.isolate(paths.staging, paths.final, journal.id); await this.writeManifests(previous); await this.reopen(previous, journal.groups); await this.options.store.write(previous); return previous }
       try {
         await this.verifyTargets(current, journal, journal.groups)
+        await this.writeManifests(current)
         if (journal.kind === 'group') { await mkdir(dirname(paths.backup), { recursive: true }); await this.renameIfPresent(paths.source, paths.backup) } else { const sourceVolume = this.volume(previous, journal.sourceVolumeId); await this.writeManifest(paths.source, sourceVolume, journal.groups, journal.sourceGeneration, 'backup', journal.id) }
         await this.complete(current, journal); return (await this.options.store.read())!
       } catch (error) { await this.cleanup(error, [() => this.restoreBackup(paths.backup, paths.source), () => this.rollback(previous, journal.groups, paths.staging, paths.final, journal.id)]); throw error }
