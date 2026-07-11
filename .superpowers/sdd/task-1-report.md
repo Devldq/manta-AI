@@ -64,3 +64,14 @@ Configuration/manifests: `package.json`, `turbo.json`, six package manifests, `p
 - `pnpm test` — exit 0; 10/10 tasks and seven tests passed across six packages. Each package emitted `coverage/coverage-final.json`; no Turbo missing-output warning.
 - `pnpm typecheck` — exit 0; 10/10 tasks across six packages.
 - `pnpm build` — exit 0; 6/6 packages. Only the pre-existing Vite chunk-size advisory remains.
+
+### Provider behavior re-review
+
+- Replaced the unused compile-helper/function-existence assertions with two real, awaited construction tests. Using explicit dummy keys, `.invalid` base URLs, and model IDs, the tests construct OpenAI-compatible and Anthropic models without invoking generation or sending a network request.
+- The OpenAI-compatible result asserts `specificationVersion === 'v3'`, provider `openai.chat`, and the configured model ID. The Anthropic result asserts `specificationVersion === 'v3'`, provider `anthropic.messages`, and its configured model ID.
+- Focused contract command — `pnpm --filter @manta/backend exec vitest run src/core/llm/ai-sdk-provider.contract.test.ts --coverage --coverage.reporter=text-summary --coverage.reporter=json --coverage.exclude=**/*.test.ts`: exit 0, one file/two tests passed.
+- `pnpm --filter @manta/backend typecheck`: exit 0.
+- `pnpm --filter @manta/backend test`: exit 0, two files/three tests passed.
+- `pnpm test`: exit 0, 10/10 Turbo tasks and eight tests passed; coverage outputs recognized with no missing-output warnings.
+- `pnpm typecheck`: exit 0, 10/10 Turbo tasks.
+- `pnpm build`: exit 0, 6/6 Turbo tasks; the only warning is the separately noted pre-existing Vite chunk-size advisory.
