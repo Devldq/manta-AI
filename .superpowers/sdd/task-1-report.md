@@ -46,3 +46,21 @@ Configuration/manifests: `package.json`, `turbo.json`, six package manifests, `p
 - The AI provider packages can return V4 models while the installed `ai` call signature accepts through V3; the precise call-boundary assertions preserve runtime behavior but dependency alignment should be revisited separately.
 - Turbo's `coverage/**` declaration intentionally produces warnings until coverage is enabled; it is retained verbatim from the task brief.
 - Vite's existing large bundle warning remains outside Task 1 scope.
+
+## Reviewer fixes
+
+### RED
+
+- Added `packages/backend/src/core/llm/ai-sdk-provider.contract.test.ts`, which compiles the factory result directly into both `generateText` and `streamText` call boundaries.
+- Removed the three prior call-site assertions and ran `pnpm --filter @manta/backend typecheck` — exit 2. The new contract and all three production call sites reported `LanguageModelV3 | LanguageModelV4` was not assignable to the `ai@6.0.177` V2/V3 `LanguageModel` input.
+- Package inspection showed `ai@6.0.177` and `@ai-sdk/openai@3.0.63` depend on `@ai-sdk/provider@3`, while `@ai-sdk/anthropic@4.0.7` depends on provider V4 and returns `LanguageModelV4`.
+
+### GREEN
+
+- Aligned Anthropic to `@ai-sdk/anthropic@3.0.96`, whose dependency is `@ai-sdk/provider@3.0.14`; `createAISDKModel` now infers only call-compatible V3 models. No model assertion remains in compaction, agent loop, RAG, or the contract test.
+- Added matching `@vitest/coverage-v8@^2.1.9` to all six packages. Each test script now emits JSON coverage under `coverage/`, prints a compact summary, and excludes test files from source coverage. Added `coverage/` to `.gitignore` while preserving Turbo's `coverage/**` output contract.
+- `pnpm --filter @manta/backend typecheck` — exit 0.
+- `pnpm --filter @manta/backend test` — exit 0; two files/two tests passed, including the provider call-boundary contract.
+- `pnpm test` — exit 0; 10/10 tasks and seven tests passed across six packages. Each package emitted `coverage/coverage-final.json`; no Turbo missing-output warning.
+- `pnpm typecheck` — exit 0; 10/10 tasks across six packages.
+- `pnpm build` — exit 0; 6/6 packages. Only the pre-existing Vite chunk-size advisory remains.

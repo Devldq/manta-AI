@@ -709,7 +709,7 @@ export async function ragRoutes(app: FastifyInstance) {
       })}\n\n`)
 
       const result = streamText({
-        model: model as Parameters<typeof streamText>[0]['model'],
+        model,
         system: systemPrompt,
         prompt: userMessage,
         temperature: 0.3,
