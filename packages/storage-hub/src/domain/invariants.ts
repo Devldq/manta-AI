@@ -14,6 +14,14 @@ export function volumeRoot(parentPath: string): string {
 }
 
 export function validateBootstrap(input: unknown): AshBootstrap {
+  const rawAssignments = input && typeof input === 'object' && 'groupAssignments' in input
+    ? (input as { groupAssignments?: unknown }).groupAssignments
+    : undefined
+  if (!rawAssignments || typeof rawAssignments !== 'object' || Array.isArray(rawAssignments)
+    || Object.keys(rawAssignments).length !== STORAGE_GROUP_IDS.length
+    || Object.keys(rawAssignments).some((group) => !STORAGE_GROUP_IDS.includes(group as (typeof STORAGE_GROUP_IDS)[number]))) {
+    throw new StorageInvariantError('Bootstrap assignments must cover exactly the seven storage groups')
+  }
   const bootstrap = AshBootstrapSchema.parse(input)
   const volumeIds = new Set<string>()
   const roots = new Set<string>()
