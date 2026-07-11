@@ -15,7 +15,7 @@ if ! command -v node &> /dev/null; then
 fi
 
 # 检查版本更新脚本是否存在
-SCRIPT_FILE="scripts/update-version.ts"
+SCRIPT_FILE="scripts/release/update-version.ts"
 if [ ! -f "$SCRIPT_FILE" ]; then
   echo "⚠️  未找到版本更新脚本: $SCRIPT_FILE"
   echo "跳过版本更新"

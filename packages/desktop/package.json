@@ -9,7 +9,8 @@
     "build:mac": "pnpm build && electron-builder --mac",
     "build:win": "pnpm build && electron-builder --win",
     "build:linux": "pnpm build && electron-builder --linux",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@manta/backend": "workspace:*",
@@ -19,6 +20,7 @@
     "@types/node": "^22",
     "electron": "^41.0.4",
     "electron-builder": "^26.8.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.0.0"
   }
 }

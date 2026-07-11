@@ -246,8 +246,8 @@ function ChatView({
       setLiveStepUsages((prev) => [
         ...prev,
         {
-          inputTokens: data.usage.inputTokens,
-          outputTokens: data.usage.outputTokens,
+          inputTokens: data.usage.inputTokens ?? 0,
+          outputTokens: data.usage.outputTokens ?? 0,
           cacheReadTokens: data.usage.cacheReadTokens,
           cacheWriteTokens: data.usage.cacheWriteTokens,
           noCacheTokens: data.usage.noCacheTokens,

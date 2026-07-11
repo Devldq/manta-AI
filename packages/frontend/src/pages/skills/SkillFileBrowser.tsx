@@ -39,6 +39,8 @@ interface FileTab {
   content: string
   isDirty: boolean
   loading: boolean
+  size?: number
+  extension?: string
 }
 
 // ─── 工具 ─────────────────────────────────────────────────────
@@ -171,6 +173,8 @@ export default function SkillFileBrowser({ skillName, onBack }: Props) {
       content: '',
       isDirty: false,
       loading: true,
+      size: entry.size,
+      extension: entry.extension,
     }
     setTabs((prev) => [...prev, newTab])
     setActivePath(entry.path)

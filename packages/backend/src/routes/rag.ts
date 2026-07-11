@@ -98,9 +98,9 @@ function tryFallbackToLocalOllama(): { model: string; baseUrl: string; dimension
     const lines = raw.trim().split('\n').slice(1) // 跳过表头
     // 优先选择名称中含 "embedding" 的模型
     const embeddingModel = lines
-      .map(l => l.slice(0, 24).trim())
+      .map((l: string) => l.slice(0, 24).trim())
       .filter(Boolean)
-      .find(name => name.toLowerCase().includes('embedding'))
+      .find((name: string) => name.toLowerCase().includes('embedding'))
     if (embeddingModel) {
       return { model: embeddingModel, baseUrl: 'http://127.0.0.1:11434', dimensions: 1024 }
     }
@@ -709,7 +709,7 @@ export async function ragRoutes(app: FastifyInstance) {
       })}\n\n`)
 
       const result = streamText({
-        model,
+        model: model as Parameters<typeof streamText>[0]['model'],
         system: systemPrompt,
         prompt: userMessage,
         temperature: 0.3,

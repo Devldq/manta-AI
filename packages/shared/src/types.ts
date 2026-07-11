@@ -739,7 +739,7 @@ export interface ConversationSummary {
 export type SkillType = 'writing' | 'tool' | 'workflow'
 
 /** Skill 来源 */
-export type SkillSource = 'builtin' | 'user' | 'plugin'
+export type SkillSource = 'builtin' | 'user' | 'plugin' | 'file' | 'ai-generated'
 
 /** Skill 参数 JSON Schema */
 export interface SkillParameter {
@@ -802,6 +802,8 @@ export interface SkillSummary {
   type: SkillType
   version?: string
   source?: SkillSource
+  metadata: SkillMetadata
+  tools?: string[]
   enabled: boolean
   boundAgents?: string[]
   createdAt: string

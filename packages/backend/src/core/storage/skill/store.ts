@@ -19,6 +19,7 @@ import type {
   SkillSummary,
   SkillMetadata,
   SkillParameter,
+  SkillType,
   CreateSkillInput,
   UpdateSkillInput,
 } from '@manta/shared'
@@ -46,6 +47,8 @@ function toSummary(def: SkillDefinition): SkillSummary {
     type: def.metadata.type,
     version: def.metadata.version,
     source: def.metadata.source,
+    metadata: def.metadata,
+    tools: def.tools,
     enabled: def.enabled,
     boundAgents: def.boundAgents,
     createdAt: def.createdAt,
@@ -410,7 +413,7 @@ export function createAndImportSkill(input: CreateAndImportInput): CreateAndImpo
         content: input.content,
         tools: input.tools,
       })
-      return { success: true, skill: updated, filePath: mdPath }
+      return { success: true, skill: updated ?? undefined, filePath: mdPath }
     }
 
     // 新建导入

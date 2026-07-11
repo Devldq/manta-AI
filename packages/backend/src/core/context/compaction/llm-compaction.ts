@@ -255,7 +255,7 @@ export async function compactMessages(
       : undefined
 
     const { text: summary } = await generateText({
-      model,
+      model: model as Parameters<typeof generateText>[0]['model'],
       system: COMPRESS_PROMPT,
       prompt: userPrompt,
       maxOutputTokens: 1000,
