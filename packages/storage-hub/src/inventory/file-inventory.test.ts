@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { inventoryTree } from './file-inventory'
+import { inspectWindowsLinks } from './windows-link-type'
 
 describe('inventoryTree', () => {
   it('records stable file metadata and does not follow symbolic links', async () => {
@@ -30,5 +31,11 @@ describe('inventoryTree', () => {
     const root = await mkdtemp(join(tmpdir(), 'ash-dir-link-')); await mkdir(join(root, 'dir'))
     try { await symlink(`${join(root, 'dir')}\\`, join(root, 'dir-link'), 'dir') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM') return; throw error }
     expect((await inventoryTree(root)).entries.find((entry) => entry.relativePath === 'dir-link')?.linkType).toBe('directory')
+  })
+
+  it('classifies hundreds of Windows links in bounded chunks with stable ids', async () => {
+    const calls: string[] = []; const links = Array.from({ length: 500 }, (_, index) => ({ id: `link-${index}`, path: `C:\\links\\${index}` }))
+    const result = await inspectWindowsLinks(links, { chunkSize: 200, run: async (_script, input) => { calls.push(input); const rows = JSON.parse(input) as typeof links; return JSON.stringify(rows.map((row, index) => ({ id: row.id, linkType: index % 2 ? 'SymbolicLink' : 'Junction', isContainer: true }))) } })
+    expect(calls).toHaveLength(3); expect(result.get('link-0')).toEqual({ linkType: 'Junction', isContainer: true }); expect(result.get('link-201')).toEqual({ linkType: 'SymbolicLink', isContainer: true })
   })
 })

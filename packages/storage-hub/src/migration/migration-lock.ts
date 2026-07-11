@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { execFile } from 'node:child_process'
 import { open, readFile, rename, unlink } from 'node:fs/promises'
+import { powershell } from '../platform/powershell'
 
 interface LockOwner { token: string; pid: number; processIdentity: string; createdAt: string }
 export interface ProcessInspection { alive: boolean; identity?: string }
@@ -12,12 +12,12 @@ function parseOwner(text: string): LockOwner | undefined {
   try { const value = JSON.parse(text) as Partial<LockOwner>; return typeof value.token === 'string' && Number.isInteger(value.pid) && typeof value.processIdentity === 'string' && typeof value.createdAt === 'string' ? value as LockOwner : undefined } catch { return undefined }
 }
 async function ownerAt(path: string): Promise<LockOwner | undefined> { return readFile(path, 'utf8').then(parseOwner, () => undefined) }
-function run(file: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> { return new Promise((resolve, reject) => execFile(file, args, { env }, (error, stdout) => error ? reject(error) : resolve(stdout.trim()))) }
+async function run(file: string, args: string[]): Promise<string> { const { execFile } = await import('node:child_process'); return new Promise((resolve, reject) => execFile(file, args, (error, stdout) => error ? reject(error) : resolve(stdout.trim()))) }
 export async function inspectProcess(pid: number): Promise<ProcessInspection> {
   try { process.kill(pid, 0) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return { alive: false }; throw error }
   try {
     if (process.platform === 'linux') { const text = await readFile(`/proc/${pid}/stat`, 'utf8'); const fields = text.slice(text.lastIndexOf(') ') + 2).split(' '); return { alive: true, identity: fields[19] ? `linux:${fields[19]}` : undefined } }
-    if (process.platform === 'win32') { const script = "(Get-Process -Id ([int]$env:ASH_LOCK_PID) -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString()"; const value = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { ...process.env, ASH_LOCK_PID: String(pid) }); return { alive: true, identity: value ? `win32:${value}` : undefined } }
+    if (process.platform === 'win32') { const script = "(Get-Process -Id ([int]$env:ASH_LOCK_PID) -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString()"; const value = await powershell.run(script, '', { ...process.env, ASH_LOCK_PID: String(pid) }); return { alive: true, identity: value ? `win32:${value}` : undefined } }
     if (process.platform === 'darwin') { const value = await run('ps', ['-o', 'lstart=', '-p', String(pid)]); return { alive: true, identity: value ? `darwin:${value}` : undefined } }
     return { alive: true }
   } catch { return { alive: true } }
