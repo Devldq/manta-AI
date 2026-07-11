@@ -28,7 +28,7 @@ describe('inventoryTree', () => {
 
   it.runIf(process.platform === 'win32')('distinguishes a directory symlink from a junction when privileges allow', async () => {
     const root = await mkdtemp(join(tmpdir(), 'ash-dir-link-')); await mkdir(join(root, 'dir'))
-    try { await symlink(join(root, 'dir'), join(root, 'dir-link'), 'dir') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM') return; throw error }
+    try { await symlink(`${join(root, 'dir')}\\`, join(root, 'dir-link'), 'dir') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM') return; throw error }
     expect((await inventoryTree(root)).entries.find((entry) => entry.relativePath === 'dir-link')?.linkType).toBe('directory')
   })
 })

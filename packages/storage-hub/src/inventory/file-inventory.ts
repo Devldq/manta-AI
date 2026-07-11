@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, readdir, readlink, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { inspectWindowsLink } from './windows-link-type'
 
 export type InventoryKind = 'file' | 'directory' | 'symlink'
 export type LinkType = 'file' | 'directory' | 'junction' | 'unknown'
@@ -20,7 +21,10 @@ export async function inventoryTree(root: string): Promise<StorageInventory> {
     for (const name of (await readdir(directory)).sort()) {
       const absolute = join(directory, name); const relativePath = prefix ? `${prefix}/${name}` : name; const stats = await lstat(absolute)
       if (stats.isSymbolicLink()) {
-        const linkTarget = await readlink(absolute); const target = await stat(absolute).then((value) => value.isFile() ? 'file' as const : value.isDirectory() ? (process.platform === 'win32' && /[\\/]$/.test(linkTarget) ? 'junction' as const : 'directory' as const) : 'unknown' as const, () => 'unknown' as const)
+        const linkTarget = await readlink(absolute)
+        const target = process.platform === 'win32'
+          ? await inspectWindowsLink(absolute).then((value) => value.linkType === 'Junction' ? 'junction' as const : value.isContainer ? 'directory' as const : 'file' as const)
+          : await stat(absolute).then((value) => value.isFile() ? 'file' as const : value.isDirectory() ? 'directory' as const : 'unknown' as const, () => 'unknown' as const)
         entries.push({ relativePath, kind: 'symlink', size: stats.size, linkTarget, linkType: target })
       }
       else if (stats.isDirectory()) { entries.push({ relativePath, kind: 'directory', size: 0 }); await walk(absolute, relativePath) }

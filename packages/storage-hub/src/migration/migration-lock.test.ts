@@ -19,7 +19,22 @@ describe('migration file lock', () => {
   })
 
   it('recovers a well-formed lock whose owner process is dead', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'ash-lock-')); const bootstrap = join(root, 'bootstrap.json'); await writeFile(`${bootstrap}.migration.lock`, JSON.stringify({ token: 'stale', pid: 2_147_483_647, createdAt: new Date().toISOString() }))
+    const root = await mkdtemp(join(tmpdir(), 'ash-lock-')); const bootstrap = join(root, 'bootstrap.json'); await writeFile(`${bootstrap}.migration.lock`, JSON.stringify({ token: 'stale', pid: 2_147_483_647, processIdentity: 'old', createdAt: new Date().toISOString() }))
     const lock = await acquireMigrationFileLock(bootstrap, { breakStale: true }); await lock.release()
+  })
+
+  it('cleans a reused pid only when its process start identity differs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ash-lock-')); const bootstrap = join(root, 'bootstrap.json'); await writeFile(`${bootstrap}.migration.lock`, JSON.stringify({ token: 'stale', pid: process.pid, processIdentity: 'old-start', createdAt: new Date().toISOString() }))
+    const lock = await acquireMigrationFileLock(bootstrap, { breakStale: true, inspectProcess: async () => ({ alive: true, identity: 'new-start' }) }); await lock.release()
+  })
+
+  it('retains a lock with the same pid and start identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ash-lock-')); const bootstrap = join(root, 'bootstrap.json'); await writeFile(`${bootstrap}.migration.lock`, JSON.stringify({ token: 'live', pid: process.pid, processIdentity: 'same-start', createdAt: new Date().toISOString() }))
+    await expect(acquireMigrationFileLock(bootstrap, { breakStale: true, inspectProcess: async () => ({ alive: true, identity: 'same-start' }) })).rejects.toThrow(/already held/i)
+  })
+
+  it('fails closed when process identity cannot be obtained', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ash-lock-')); const bootstrap = join(root, 'bootstrap.json'); await writeFile(`${bootstrap}.migration.lock`, JSON.stringify({ token: 'unknown', pid: process.pid, processIdentity: 'old-start', createdAt: new Date().toISOString() }))
+    await expect(acquireMigrationFileLock(bootstrap, { breakStale: true, inspectProcess: async () => ({ alive: true }) })).rejects.toThrow(/identity.*unavailable/i)
   })
 })
