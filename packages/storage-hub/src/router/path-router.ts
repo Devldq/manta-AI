@@ -1,7 +1,7 @@
 import { posix, win32 } from 'node:path'
 import type { StorageGroupId } from '@manta/shared'
 import { StorageInvariantError } from '../domain/errors'
-import { volumeRoot } from '../domain/invariants'
+import { isWindowsPath, volumeRoot } from '../domain/invariants'
 import { VolumeRegistry } from '../registry/volume-registry'
 
 function validateSegment(segment: string): void {
@@ -15,7 +15,7 @@ export class StoragePathRouter {
   resolve(group: StorageGroupId, ...segments: string[]): string {
     segments.forEach(validateSegment)
     const volume = this.registry.volumeFor(group)
-    const paths = /^[A-Za-z]:[\\/]/.test(volume.parentPath) ? win32 : posix
+    const paths = isWindowsPath(volume.parentPath) ? win32 : posix
     const root = paths.join(volumeRoot(volume.parentPath), group)
     const resolved = paths.resolve(root, ...segments)
     const relative = paths.relative(root, resolved)

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { AshBootstrap } from '@manta/shared'
@@ -9,6 +9,7 @@ import { recoverBootstrap } from './recovery'
 const dirs: string[] = []
 const groups = { extensions: 'v1', knowledge: 'v1', work: 'v1', config: 'v1', secrets: 'v1', diagnostics: 'v1', cache: 'v1' } as const
 const snapshot = (generation = 1): AshBootstrap => ({ schemaVersion: 1, generation, volumes: [{ id: 'v1', name: 'main', parentPath: '/data', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], groupAssignments: groups })
+const journal = (phase: AshBootstrap['pendingMigration'] extends infer _ ? 'planned' | 'quiescing' | 'copying' | 'validating' | 'committing' | 'restarting' | 'verifying' | 'completed' | 'rolling-back' | 'failed' : never, sourceGeneration = 1, targetGeneration = 2) => ({ id: 'm1', kind: 'volume' as const, sourceVolumeId: 'v1', targetParentPath: '/new', groups: ['work' as const], sourceGeneration, targetGeneration, phase, filesCompleted: 0, filesTotal: 1, bytesCompleted: 0, bytesTotal: 1 })
 
 afterEach(async () => Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))))
 async function fresh(): Promise<string> { const dir = await mkdtemp(path.join(tmpdir(), 'ash-bootstrap-')); dirs.push(dir); return dir }
@@ -57,5 +58,31 @@ describe('recoverBootstrap', () => {
     const previous = { ...snapshot(1), schemaVersion: undefined, volumes: [...snapshot(1).volumes, { ...snapshot(1).volumes[0], parentPath: '/other' }] }
     await writeFile(file, JSON.stringify({ ...current, previous, pendingMigration: { id: 'm1', kind: 'volume', sourceVolumeId: 'v1', targetParentPath: '/new', groups: ['work'], sourceGeneration: 1, targetGeneration: 2, phase: 'copying', filesCompleted: 0, filesTotal: 1, bytesCompleted: 0, bytesTotal: 1 } }))
     expect(await recoverBootstrap(file)).toBeUndefined()
+  })
+
+  it.each(['planned', 'quiescing', 'copying', 'validating', 'rolling-back', 'failed'] as const)('rejects %s without previous', async (phase) => {
+    const file = path.join(await fresh(), 'bootstrap.json')
+    await writeFile(file, JSON.stringify({ ...snapshot(2), pendingMigration: journal(phase) }))
+    expect(await recoverBootstrap(file)).toBeUndefined()
+  })
+
+  it('rejects inconsistent pre-commit journal generations', async () => {
+    const file = path.join(await fresh(), 'bootstrap.json')
+    await writeFile(file, JSON.stringify({ ...snapshot(4), previous: { ...snapshot(1), schemaVersion: undefined }, pendingMigration: journal('copying', 1, 2) }))
+    expect(await recoverBootstrap(file)).toBeUndefined()
+  })
+
+  it.each(['committing', 'restarting', 'verifying', 'completed'] as const)('rejects inconsistent %s generations', async (phase) => {
+    const file = path.join(await fresh(), 'bootstrap.json')
+    await writeFile(file, JSON.stringify({ ...snapshot(3), previous: { ...snapshot(1), schemaVersion: undefined }, pendingMigration: journal(phase, 1, 2) }))
+    expect(await recoverBootstrap(file)).toBeUndefined()
+  })
+
+  it('prefers a committed canonical snapshot over a newer-mtime stale temp by effective generation', async () => {
+    const dir = await fresh(); const file = path.join(dir, 'bootstrap.json'); const stale = `${file}.stale.tmp`
+    await writeFile(file, JSON.stringify({ ...snapshot(4), pendingMigration: journal('completed', 3, 4) }))
+    await writeFile(stale, JSON.stringify(snapshot(3)))
+    await utimes(file, new Date(0), new Date(0)); await utimes(stale, new Date(), new Date())
+    expect((await recoverBootstrap(file))?.generation).toBe(4)
   })
 })

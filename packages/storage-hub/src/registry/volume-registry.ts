@@ -1,13 +1,12 @@
 import type { AshBootstrap, StorageGroupId, StorageVolumeRecord } from '@manta/shared'
-import { validateBootstrap, volumeRoot } from '../domain/invariants'
+import { posix, win32 } from 'node:path'
+import { comparableVolumeRoot, validateBootstrap } from '../domain/invariants'
 import { StorageInvariantError } from '../domain/errors'
 
-function canonical(filePath: string): string {
-  return filePath.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-}
-
-function contains(parent: string, child: string): boolean {
-  return child === parent || child.startsWith(`${parent}/`)
+function contains(flavor: 'windows' | 'posix', parent: string, child: string): boolean {
+  const paths = flavor === 'windows' ? win32 : posix
+  const relative = paths.relative(parent, child)
+  return relative === '' || (!paths.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${paths.sep}`))
 }
 
 export class VolumeRegistry {
@@ -16,10 +15,12 @@ export class VolumeRegistry {
 
   constructor(bootstrap: AshBootstrap) {
     this.bootstrap = validateBootstrap(bootstrap)
-    const roots = this.bootstrap.volumes.map((volume) => canonical(volumeRoot(volume.parentPath)))
+    const roots = this.bootstrap.volumes.map((volume) => comparableVolumeRoot(volume.parentPath))
     for (let left = 0; left < roots.length; left += 1) {
       for (let right = left + 1; right < roots.length; right += 1) {
-        if (contains(roots[left], roots[right]) || contains(roots[right], roots[left])) {
+        if (roots[left].flavor === roots[right].flavor
+          && (contains(roots[left].flavor, roots[left].path, roots[right].path)
+            || contains(roots[left].flavor, roots[right].path, roots[left].path))) {
           throw new StorageInvariantError('Active volume roots must not be nested')
         }
       }

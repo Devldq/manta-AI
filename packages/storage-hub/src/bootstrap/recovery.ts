@@ -6,8 +6,15 @@ import { validateBootstrap } from '../domain/invariants'
 const committedPhases = new Set(['committing', 'restarting', 'verifying', 'completed'])
 
 function effectiveSnapshot(value: AshBootstrap): AshBootstrap {
-  if (!value.pendingMigration || committedPhases.has(value.pendingMigration.phase) || !value.previous) return value
-  const previous: AshLocationSnapshot = value.previous
+  const journal = value.pendingMigration
+  if (!journal) return value
+  if (journal.targetGeneration !== journal.sourceGeneration + 1 || value.generation !== journal.targetGeneration) {
+    throw new Error('Migration generations are inconsistent')
+  }
+  const previous: AshLocationSnapshot | undefined = value.previous
+  if (previous && previous.generation !== journal.sourceGeneration) throw new Error('Previous generation is inconsistent')
+  if (committedPhases.has(journal.phase)) return value
+  if (!previous) throw new Error('Pre-commit migration requires previous state')
   return validateBootstrap({ schemaVersion: 1, ...previous })
 }
 

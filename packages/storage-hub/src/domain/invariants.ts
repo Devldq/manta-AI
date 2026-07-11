@@ -8,9 +8,18 @@ import type { AshBootstrap } from '@manta/shared'
 import { StorageInvariantError } from './errors'
 
 export function volumeRoot(parentPath: string): string {
-  return /^[A-Za-z]:[\\/]/.test(parentPath)
+  return isWindowsPath(parentPath)
     ? win32.join(parentPath, ASH_VOLUME_DIR_NAME)
     : posix.join(parentPath, ASH_VOLUME_DIR_NAME)
+}
+
+export function isWindowsPath(filePath: string): boolean {
+  return win32.isAbsolute(filePath) && !posix.isAbsolute(filePath)
+}
+
+export function comparableVolumeRoot(parentPath: string): { flavor: 'windows' | 'posix'; path: string } {
+  if (isWindowsPath(parentPath)) return { flavor: 'windows', path: win32.normalize(volumeRoot(parentPath)).toLowerCase() }
+  return { flavor: 'posix', path: posix.normalize(volumeRoot(parentPath)) }
 }
 
 export function validateBootstrap(input: unknown): AshBootstrap {
@@ -27,12 +36,13 @@ export function validateBootstrap(input: unknown): AshBootstrap {
   const roots = new Set<string>()
 
   for (const volume of bootstrap.volumes) {
-    const root = volumeRoot(volume.parentPath).toLowerCase()
-    if (volumeIds.has(volume.id) || roots.has(root)) {
+    const root = comparableVolumeRoot(volume.parentPath)
+    const rootKey = `${root.flavor}:${root.path}`
+    if (volumeIds.has(volume.id) || roots.has(rootKey)) {
       throw new StorageInvariantError('Each storage group must resolve to exactly one volume')
     }
     volumeIds.add(volume.id)
-    roots.add(root)
+    roots.add(rootKey)
   }
 
   for (const group of STORAGE_GROUP_IDS) {
