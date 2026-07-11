@@ -17,4 +17,12 @@ describe('inventoryTree', () => {
     ]))
     expect(inventory.entries.filter((entry) => entry.relativePath.includes('linked/'))).toEqual([])
   })
+
+  it('classifies file and directory links so copy can recreate their type', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ash-links-')); await mkdir(join(root, 'dir')); await writeFile(join(root, 'file'), 'x')
+    try { await symlink(join(root, 'file'), join(root, 'file-link'), 'file'); await symlink(join(root, 'dir'), join(root, 'dir-link'), process.platform === 'win32' ? 'junction' : 'dir') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM') return; throw error }
+    const entries = (await inventoryTree(root)).entries
+    expect(entries.find((entry) => entry.relativePath === 'file-link')?.linkType).toBe('file')
+    expect(entries.find((entry) => entry.relativePath === 'dir-link')?.linkType).toMatch(/directory|junction/)
+  })
 })

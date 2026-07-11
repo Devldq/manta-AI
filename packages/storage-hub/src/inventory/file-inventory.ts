@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { lstat, readdir, readlink } from 'node:fs/promises'
+import { lstat, readdir, readlink, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export type InventoryKind = 'file' | 'directory' | 'symlink'
-export interface FileInventoryEntry { relativePath: string; kind: InventoryKind; size: number; sha256?: string; linkTarget?: string }
+export type LinkType = 'file' | 'directory' | 'unknown'
+export interface FileInventoryEntry { relativePath: string; kind: InventoryKind; size: number; sha256?: string; linkTarget?: string; linkType?: LinkType }
 export interface StorageInventory { root: string; entries: FileInventoryEntry[]; files: number; bytes: number }
 
 async function digest(filePath: string): Promise<string> {
@@ -18,7 +19,10 @@ export async function inventoryTree(root: string): Promise<StorageInventory> {
   async function walk(directory: string, prefix: string): Promise<void> {
     for (const name of (await readdir(directory)).sort()) {
       const absolute = join(directory, name); const relativePath = prefix ? `${prefix}/${name}` : name; const stats = await lstat(absolute)
-      if (stats.isSymbolicLink()) entries.push({ relativePath, kind: 'symlink', size: stats.size, linkTarget: await readlink(absolute) })
+      if (stats.isSymbolicLink()) {
+        const target = await stat(absolute).then((value) => value.isFile() ? 'file' as const : value.isDirectory() ? 'directory' as const : 'unknown' as const, () => 'unknown' as const)
+        entries.push({ relativePath, kind: 'symlink', size: stats.size, linkTarget: await readlink(absolute), linkType: target })
+      }
       else if (stats.isDirectory()) { entries.push({ relativePath, kind: 'directory', size: 0 }); await walk(absolute, relativePath) }
       else if (stats.isFile()) entries.push({ relativePath, kind: 'file', size: stats.size, sha256: await digest(absolute) })
     }
