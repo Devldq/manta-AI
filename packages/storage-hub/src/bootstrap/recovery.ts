@@ -5,6 +5,19 @@ import { validateBootstrap } from '../domain/invariants'
 
 const committedPhases = new Set(['committing', 'restarting', 'verifying', 'completed'])
 
+export interface RecoveryCandidate {
+  name: string
+  canonical: boolean
+  snapshot: AshBootstrap
+}
+
+export function compareRecoveryCandidates(left: RecoveryCandidate, right: RecoveryCandidate): number {
+  const generationOrder = right.snapshot.generation - left.snapshot.generation
+  if (generationOrder !== 0) return generationOrder
+  if (left.canonical !== right.canonical) return left.canonical ? -1 : 1
+  return left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+}
+
 function effectiveSnapshot(value: AshBootstrap): AshBootstrap {
   const journal = value.pendingMigration
   if (!journal) return value
@@ -18,9 +31,9 @@ function effectiveSnapshot(value: AshBootstrap): AshBootstrap {
   return validateBootstrap({ schemaVersion: 1, ...previous })
 }
 
-async function parseCandidate(filePath: string): Promise<AshBootstrap | undefined> {
+async function parseCandidate(filePath: string, name: string, canonical: boolean): Promise<RecoveryCandidate | undefined> {
   try {
-    return effectiveSnapshot(validateBootstrap(JSON.parse(await readFile(filePath, 'utf8'))))
+    return { name, canonical, snapshot: effectiveSnapshot(validateBootstrap(JSON.parse(await readFile(filePath, 'utf8')))) }
   } catch {
     return undefined
   }
@@ -32,7 +45,7 @@ export async function recoverBootstrap(filePath: string): Promise<AshBootstrap |
   const base = basename(filePath)
   const candidates = names
     .filter((name) => name === base || (name.startsWith(`${base}.`) && name.endsWith('.tmp')))
-    .map((name) => parseCandidate(join(dirname(filePath), name)))
-  const valid = (await Promise.all(candidates)).filter((value): value is AshBootstrap => value !== undefined)
-  return valid.sort((a, b) => b.generation - a.generation)[0]
+    .map((name) => parseCandidate(join(dirname(filePath), name), name, name === base))
+  const valid = (await Promise.all(candidates)).filter((value): value is RecoveryCandidate => value !== undefined)
+  return valid.sort(compareRecoveryCandidates)[0]?.snapshot
 }

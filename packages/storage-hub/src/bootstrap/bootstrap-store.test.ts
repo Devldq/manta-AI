@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { AshBootstrap } from '@manta/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BootstrapStore } from './bootstrap-store'
-import { recoverBootstrap } from './recovery'
+import { compareRecoveryCandidates, recoverBootstrap } from './recovery'
 
 const dirs: string[] = []
 const groups = { extensions: 'v1', knowledge: 'v1', work: 'v1', config: 'v1', secrets: 'v1', diagnostics: 'v1', cache: 'v1' } as const
@@ -37,6 +37,19 @@ describe('BootstrapStore', () => {
 })
 
 describe('recoverBootstrap', () => {
+  it('orders equal-generation recovery candidates independently of enumeration order', () => {
+    const candidates = [
+      { name: 'bootstrap.json.z.tmp', canonical: false, snapshot: snapshot(2) },
+      { name: 'bootstrap.json.a.tmp', canonical: false, snapshot: snapshot(2) },
+      { name: 'bootstrap.json', canonical: true, snapshot: snapshot(2) },
+    ]
+    expect(candidates.sort(compareRecoveryCandidates).map(({ name }) => name)).toEqual([
+      'bootstrap.json',
+      'bootstrap.json.a.tmp',
+      'bootstrap.json.z.tmp',
+    ])
+  })
+
   it('selects the highest-generation valid interrupted snapshot without using mtime', async () => {
     const dir = await fresh(); const file = path.join(dir, 'bootstrap.json')
     await writeFile(file, JSON.stringify(snapshot(1)))
@@ -84,5 +97,19 @@ describe('recoverBootstrap', () => {
     await writeFile(stale, JSON.stringify(snapshot(3)))
     await utimes(file, new Date(0), new Date(0)); await utimes(stale, new Date(), new Date())
     expect((await recoverBootstrap(file))?.generation).toBe(4)
+  })
+
+  it('prefers canonical over a conflicting valid temp at the same effective generation', async () => {
+    const dir = await fresh(); const file = path.join(dir, 'bootstrap.json')
+    await writeFile(`${file}.a.tmp`, JSON.stringify({ ...snapshot(2), volumes: [{ ...snapshot(2).volumes[0], name: 'temp' }] }))
+    await writeFile(file, JSON.stringify({ ...snapshot(2), volumes: [{ ...snapshot(2).volumes[0], name: 'canonical' }] }))
+    expect((await recoverBootstrap(file))?.volumes[0].name).toBe('canonical')
+  })
+
+  it('uses ascending filename order for equal-generation temps without canonical', async () => {
+    const dir = await fresh(); const file = path.join(dir, 'bootstrap.json')
+    await writeFile(`${file}.z.tmp`, JSON.stringify({ ...snapshot(2), volumes: [{ ...snapshot(2).volumes[0], name: 'z-temp' }] }))
+    await writeFile(`${file}.a.tmp`, JSON.stringify({ ...snapshot(2), volumes: [{ ...snapshot(2).volumes[0], name: 'a-temp' }] }))
+    expect((await recoverBootstrap(file))?.volumes[0].name).toBe('a-temp')
   })
 })
