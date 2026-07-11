@@ -38,4 +38,9 @@ describe('inventoryTree', () => {
     const result = await inspectWindowsLinks(links, { chunkSize: 200, run: async (_script, input) => { calls.push(input); const rows = JSON.parse(input) as typeof links; return JSON.stringify(rows.map((row, index) => ({ id: row.id, linkType: index % 2 ? 'SymbolicLink' : 'Junction', isContainer: true }))) } })
     expect(calls).toHaveLength(3); expect(result.get('link-0')).toEqual({ linkType: 'Junction', isContainer: true }); expect(result.get('link-201')).toEqual({ linkType: 'SymbolicLink', isContainer: true })
   })
+
+  it.runIf(process.platform === 'win32')('round-trips non-ASCII paths and stable ids through real PowerShell', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ash-中文-😀-')); const target = join(root, '目录-😀'); const link = join(root, '链接-😀'); await mkdir(target); await symlink(target, link, 'junction')
+    const id = '相对/链接-😀'; const result = await inspectWindowsLinks([{ id, path: link }]); expect(result.get(id)).toEqual({ linkType: 'Junction', isContainer: true })
+  })
 })
