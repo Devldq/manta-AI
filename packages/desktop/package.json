@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@manta/backend": "workspace:*",
+    "@manta/storage-hub": "workspace:*",
     "electron-updater": "^6.8.3"
   },
   "devDependencies": {

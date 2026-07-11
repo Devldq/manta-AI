@@ -9,11 +9,11 @@
     "dev:fe": "pnpm exec turbo run dev --filter=@manta/frontend",
     "dev:be": "pnpm exec turbo run dev --filter=@manta/backend",
     "dev:desktop": "pnpm exec turbo run dev --filter=@manta/desktop",
-    "build": "pnpm exec turbo run build --filter=@manta/shared --filter=@manta/rag --filter=@manta/agent-sandbox --filter=@manta/backend --filter=@manta/frontend --filter=@manta/desktop",
+    "build": "pnpm exec turbo run build --filter=@manta/shared --filter=@manta/storage-hub --filter=@manta/rag --filter=@manta/agent-sandbox --filter=@manta/backend --filter=@manta/frontend --filter=@manta/desktop",
     "build:docker": "docker compose -f docker/docker-compose.yml build",
     "start:docker": "docker compose -f docker/docker-compose.yml up",
     "start": "pnpm --filter @manta/backend start",
-    "typecheck": "pnpm exec turbo run typecheck --filter=@manta/shared --filter=@manta/rag --filter=@manta/agent-sandbox --filter=@manta/backend --filter=@manta/frontend --filter=@manta/desktop",
+    "typecheck": "pnpm exec turbo run typecheck --filter=@manta/shared --filter=@manta/storage-hub --filter=@manta/rag --filter=@manta/agent-sandbox --filter=@manta/backend --filter=@manta/frontend --filter=@manta/desktop",
     "test": "pnpm exec turbo run test",
     "lint": "pnpm exec turbo run lint",
     "clean": "pnpm exec turbo run clean"

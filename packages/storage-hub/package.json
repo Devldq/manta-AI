@@ -1,0 +1,31 @@
+{
+  "name": "@manta/storage-hub",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@manta/shared": "workspace:*",
+    "@types/node": "^22",
+    "tsup": "^8.5.0",
+    "typescript": "^5",
+    "vitest": "^2.0.0"
+  }
+}
