@@ -1,180 +1,83 @@
-import Fastify from 'fastify'
-import cors from '@fastify/cors'
-import { existsSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import type { AddressInfo } from 'node:net'
+import { pathToFileURL } from 'node:url'
+import { buildApp } from './app'
+import type { BackendStorageRuntime } from './storage/runtime'
+import { startClaudeMarketplaceScheduler, stopClaudeMarketplaceScheduler } from './core/storage/plugin/marketplace'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+export interface StartServerOptions {
+  storage: BackendStorageRuntime
+  port?: number
+  host?: string
+  startSchedulers?: boolean
+  registerRoutes?: boolean
+}
 
-// ─── 配置 ───────────────────────────────────────────────────
-const PORT = parseInt(process.env.MANTA_PORT ?? '3001', 10)
-const HOST = process.env.MANTA_HOST ?? '0.0.0.0'
-const IS_DEV = process.env.NODE_ENV !== 'production'
-// 计算项目根目录（无论 dev/prod，始终指向 monorepo 根目录）
-const WORKSPACE_ROOT = process.env.MANTA_WORKSPACE_ROOT || resolve(__dirname, '../../..')
-process.env.MANTA_WORKSPACE_ROOT = WORKSPACE_ROOT
-const DATA_DIR = process.env.MANTA_DATA_DIR ?? resolve(process.env.HOME ?? '~', '.manta-data')
+export interface MantaServerHandle {
+  readonly port: number
+  quiesce(): Promise<void>
+  close(): Promise<void>
+  healthCheck(): Promise<{ ok: boolean; error?: string }>
+}
 
-// ─── 创建 Fastify 实例 ──────────────────────────────────────
-const app = Fastify({
-  logger: {
-    level: IS_DEV ? 'info' : 'warn',
-    transport: IS_DEV
-      ? { target: 'pino-pretty', options: { colorize: true } }
-      : undefined,
-  },
-})
-
-// ─── CORS 插件 ──────────────────────────────────────────────
-await app.register(cors, {
-  origin: IS_DEV
-    ? ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001']
-    : false,
-  credentials: true,
-})
-
-// ─── 健康检查 ───────────────────────────────────────────────
-app.get('/api/health', async () => {
-  return {
-    success: true,
-    data: {
-      status: 'ok',
-      version: '2.0.0',
-      timestamp: new Date().toISOString(),
-      dataDir: DATA_DIR,
+export async function startServer(options: StartServerOptions): Promise<MantaServerHandle> {
+  const app = await buildApp({ storage: options.storage, registerRoutes: options.registerRoutes })
+  await app.listen({ port: options.port ?? 0, host: options.host ?? '127.0.0.1' })
+  const address = app.server.address() as AddressInfo
+  if (options.startSchedulers !== false) startClaudeMarketplaceScheduler(app.log)
+  let quiesced = false
+  let closed = false
+  const quiesce = async () => {
+    if (quiesced) return
+    quiesced = true
+    app.quiesceWrites()
+    await options.storage.quiesce()
+  }
+  const handle: MantaServerHandle = {
+    port: address.port,
+    quiesce,
+    async close() {
+      if (closed) return
+      closed = true
+      const errors: unknown[] = []
+      const attempt = async (operation: () => void | Promise<void>) => {
+        try { await operation() } catch (error) { errors.push(error) }
+      }
+      await attempt(quiesce)
+      await attempt(() => options.storage.checkpoint())
+      await attempt(() => stopClaudeMarketplaceScheduler())
+      if (options.registerRoutes !== false) await attempt(async () => {
+        const { stopLogSchedulers } = await import('./core/observability/log/index.js')
+        stopLogSchedulers()
+      })
+      await attempt(() => app.close())
+      await attempt(() => options.storage.close())
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1) throw new AggregateError(errors, 'Server shutdown failed')
+    },
+    async healthCheck() {
+      if (closed) return { ok: false, error: 'closed' }
+      return options.storage.healthCheck()
     },
   }
-})
-
-// ─── 静态文件服务（Docker 模式） ─────────────────────────────
-if (!IS_DEV) {
-  try {
-    const { default: fastifyStatic } = await import('@fastify/static')
-    const frontendDist = resolve(__dirname, '../../frontend/dist')
-
-    if (existsSync(frontendDist)) {
-      await app.register(fastifyStatic, {
-        root: frontendDist,
-        prefix: '/',
-        wildcard: false,
-      })
-
-      // SPA fallback: 所有非 API 路由返回 index.html
-      app.setNotFoundHandler((request, reply) => {
-        if (!request.url.startsWith('/api/')) {
-          return reply.sendFile('index.html')
-        }
-        reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } })
-      })
-
-      app.log.info(`Static files served from: ${frontendDist}`)
-    }
-  } catch (err) {
-    app.log.warn('Failed to load static file serving: %s', err instanceof Error ? err.message : String(err))
-  }
+  return handle
 }
 
-// ─── API 路由注册 ────────────────────────────────────────────
-import { agentRoutes } from './routes/agents.js'
-import { conversationRoutes } from './routes/conversations.js'
-import { conversationDetailRoutes } from './routes/conversation-detail.js'
-import { taskRoutes } from './routes/tasks.js'
-import { appRoutes } from './routes/apps.js'
-import { workspaceRoutes } from './routes/workspaces.js'
-import { workspaceDetailRoutes } from './routes/workspace-detail.js'
-import { configRoutes } from './routes/config.js'
-import { configWorkspaceRoutes } from './routes/config-workspace.js'
-import { toolRoutes } from './routes/tools.js'
-import { toolsTestRoutes } from './routes/tools-test.js'
-import { chatConfigRoutes } from './routes/chat.js'
-import { mcpRoutes } from './routes/mcp.js'
-import { logRoutes } from './routes/logs.js'
-import { fsRoutes } from './routes/fs.js'
-import { metricsRoutes } from './routes/metrics.js'
-import { pluginRoutes } from './routes/plugins.js'
-import { ragRoutes } from './routes/rag.js'
-import { readmeRoutes } from './routes/readme.js'
-import { runnerRoutes } from './routes/runners.js'
-import { workflowRoutes } from './routes/workflow.js'
-import { skillRoutes } from './routes/skills.js'
-import { initializeSkills } from './core/storage/skill/store.js'
-import { startClaudeMarketplaceScheduler } from './core/storage/plugin/marketplace.js'
-import { default as auditRoutes } from './routes/audit.js'
-import { default as approvalRoutes } from './routes/approval.js'
-import { default as approvalSSERoutes } from './routes/approval-sse.js'
-
-await app.register(agentRoutes)
-await app.register(conversationRoutes)
-await app.register(conversationDetailRoutes)
-await app.register(taskRoutes)
-await app.register(appRoutes)
-await app.register(workspaceRoutes)
-await app.register(workspaceDetailRoutes)
-await app.register(configRoutes)
-await app.register(configWorkspaceRoutes)
-await app.register(toolRoutes)
-await app.register(toolsTestRoutes)
-await app.register(chatConfigRoutes)
-await app.register(mcpRoutes)
-await app.register(logRoutes)
-await app.register(fsRoutes)
-await app.register(metricsRoutes)
-await app.register(pluginRoutes)
-await app.register(ragRoutes)
-await app.register(readmeRoutes)
-await app.register(runnerRoutes)
-await app.register(workflowRoutes)
-await app.register(skillRoutes)
-await app.register(auditRoutes)
-await app.register(approvalRoutes)
-await app.register(approvalSSERoutes)
-
-// ─── 启动服务器 ─────────────────────────────────────────────
-async function start() {
-  try {
-    // 清理上次未完成的文档处理任务（stuck in processing）
-    try {
-      const { getSQLiteVecProvider } = await import('@manta/rag')
-      const provider = getSQLiteVecProvider()
-      await provider.initialize()
-      const staleDocs = await provider.cleanupStaleDocuments()
-      if (staleDocs.length > 0) {
-        app.log.info(
-          `[RAG Startup] 清理了 ${staleDocs.length} 个中断的文档处理任务: ` +
-          staleDocs.map((d) => `${d.docName}(${d.kbId})`).join(', ')
-        )
-      }
-    } catch (cleanupErr) {
-      app.log.warn(`[RAG Startup] 清理中断文档失败（不影响启动）: ${cleanupErr}`)
-    }
-
-    // 初始化：扫描并加载 skills/ 目录中的所有 SKILL.md
-    const skillResult = initializeSkills()
-    app.log.info(
-      `[Skill Init] 扫描完成: 总计 ${skillResult.total}, 新导入 ${skillResult.imported}, 同步更新 ${skillResult.updated}` +
-      (skillResult.errors.length ? `, 错误 ${skillResult.errors.length}` : '')
-    )
-
-    // 初始化 Claude 插件市场缓存，并定时从 claude.com/plugins 刷新。
-    startClaudeMarketplaceScheduler(app.log)
-
-    await app.listen({ port: PORT, host: HOST })
-    app.log.info(`Manta Backend running at http://${HOST}:${PORT}`)
-    app.log.info(`Data directory: ${DATA_DIR}`)
-  } catch (err) {
-    app.log.error(err)
-    process.exit(1)
-  }
+async function runCli(): Promise<void> {
+  const bootstrapPath = process.env.MANTA_BOOTSTRAP_PATH
+  if (!bootstrapPath) throw new Error('MANTA_BOOTSTRAP_PATH is required for headless startup')
+  const { BootstrapStore, createStorageHub } = await import('@manta/storage-hub')
+  const { createBackendStorageRuntime } = await import('./storage/runtime.js')
+  const hub = await createStorageHub({ bootstrap: new BootstrapStore(bootstrapPath) })
+  const handle = await startServer({
+    storage: createBackendStorageRuntime(hub),
+    port: Number.parseInt(process.env.MANTA_PORT ?? '3001', 10),
+    host: process.env.MANTA_HOST ?? '127.0.0.1',
+  })
+  const shutdown = async () => { await handle.close() }
+  process.once('SIGINT', shutdown)
+  process.once('SIGTERM', shutdown)
 }
 
-// ─── 优雅关闭 ───────────────────────────────────────────────
-const shutdown = async (signal: string) => {
-  app.log.info(`Received ${signal}, shutting down...`)
-  await app.close()
-  process.exit(0)
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runCli().catch((error) => { console.error(error); process.exitCode = 1 })
 }
-
-process.on('SIGINT', () => shutdown('SIGINT'))
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-
-start()

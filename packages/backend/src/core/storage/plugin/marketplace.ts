@@ -379,3 +379,9 @@ export function startClaudeMarketplaceScheduler(log?: { info: (message: string) 
   }, MARKETPLACE_REFRESH_INTERVAL_MS)
   refreshTimer.unref()
 }
+
+export function stopClaudeMarketplaceScheduler(): void {
+  if (!refreshTimer) return
+  clearInterval(refreshTimer)
+  refreshTimer = null
+}

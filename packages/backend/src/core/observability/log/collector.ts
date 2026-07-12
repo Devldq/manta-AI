@@ -283,7 +283,7 @@ export class DefaultLogCollector implements LogCollector {
   }
 
   /** 停止自动上报 */
-  private stopAutoReport(): void {
+  stopAutoReport(): void {
     if (this.reportTimer) {
       clearInterval(this.reportTimer)
       this.reportTimer = null

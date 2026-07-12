@@ -32,7 +32,9 @@ export {
 export {
   SQLiteVecProvider,
   createSQLiteVecProvider,
+  configureSQLiteVecProvider,
   getSQLiteVecProvider,
+  resetSQLiteVecProvider,
 } from './sqlite-vec-provider'
 
 // ─── 文档解析 ───────────────────────────────────────────

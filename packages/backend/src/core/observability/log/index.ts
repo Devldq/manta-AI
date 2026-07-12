@@ -591,3 +591,8 @@ export const useLogSystem = () => {
     exportLogs: logger.exportLogs,
   }
 }
+
+/** Stop process-wide reporting timers during managed server shutdown. */
+export function stopLogSchedulers(): void {
+  defaultLogCollector.stopAutoReport()
+}

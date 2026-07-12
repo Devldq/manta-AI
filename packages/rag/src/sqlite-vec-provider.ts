@@ -1,6 +1,5 @@
 import Database from 'better-sqlite3'
 import * as path from 'path'
-import * as os from 'os'
 import { ensureDir } from './fs-utils'
 import type {
   RAGProvider,
@@ -55,9 +54,9 @@ export class SQLiteVecProvider implements RAGProvider {
     return this.db
   }
 
-  constructor(storageDir?: string) {
-    const dir = storageDir || path.join(os.homedir(), '.manta-data', 'rag')
-    this.dbPath = path.join(dir, 'vectors.db')
+  constructor(storageDir: string) {
+    if (!storageDir) throw new Error('RAG storage directory is required')
+    this.dbPath = path.join(storageDir, 'vectors.db')
   }
 
   async initialize(): Promise<void> {
@@ -494,11 +493,29 @@ export class SQLiteVecProvider implements RAGProvider {
   /**
    * 关闭数据库连接
    */
-  close(): void {
+  async checkpoint(): Promise<void> {
+    if (this.initialized) this.db.pragma('wal_checkpoint(TRUNCATE)')
+  }
+
+  async integrityCheck(): Promise<{ ok: boolean; error?: string }> {
+    await this.ensureInitialized()
+    const rows = this.db.pragma('integrity_check') as Array<{ integrity_check: string }>
+    const error = rows.map((row) => row.integrity_check).find((value) => value !== 'ok')
+    return error ? { ok: false, error } : { ok: true }
+  }
+
+  async close(): Promise<void> {
     if (this.db) {
       this.db.close()
       this.initialized = false
     }
+  }
+
+  async reopen(storageDir: string): Promise<void> {
+    if (!storageDir) throw new Error('RAG storage directory is required')
+    await this.close()
+    this.dbPath = path.join(storageDir, 'vectors.db')
+    await this.initialize()
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -572,17 +589,24 @@ function escapeRegExp(str: string): string {
 
 let providerInstance: SQLiteVecProvider | null = null
 
-export function createSQLiteVecProvider(): RAGProvider {
-  if (!providerInstance) {
-    providerInstance = new SQLiteVecProvider()
-  }
+export function createSQLiteVecProvider(storageDir: string): SQLiteVecProvider {
+  return new SQLiteVecProvider(storageDir)
+}
+
+export function configureSQLiteVecProvider(storageDir: string): SQLiteVecProvider {
+  if (providerInstance) throw new Error('SQLiteVecProvider is already configured; reset it before reconfiguring')
+  providerInstance = new SQLiteVecProvider(storageDir)
   return providerInstance
 }
 
 /** 获取 SQLiteVecProvider 实例（带具体类型，用于调用扩展方法） */
 export function getSQLiteVecProvider(): SQLiteVecProvider {
-  if (!providerInstance) {
-    providerInstance = new SQLiteVecProvider()
-  }
+  if (!providerInstance) throw new Error('SQLiteVecProvider has not been configured with a storage directory')
   return providerInstance
+}
+
+export async function resetSQLiteVecProvider(): Promise<void> {
+  const current = providerInstance
+  await current?.close()
+  if (providerInstance === current) providerInstance = null
 }

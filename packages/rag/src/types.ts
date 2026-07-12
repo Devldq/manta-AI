@@ -45,6 +45,10 @@ export interface RAGProvider {
   /** 关键词检索 */
   search(knowledgeBaseId: string, query: string, options?: SearchOptions): Promise<RetrievalResult[]>
   getStats(knowledgeBaseId: string): Promise<KnowledgeBaseStats>
+  checkpoint(): Promise<void>
+  integrityCheck(): Promise<{ ok: boolean; error?: string }>
+  close(): Promise<void>
+  reopen(storageDir: string): Promise<void>
 }
 
 /** 知识库配置（仅含存储/检索参数，不含 embedding） */
