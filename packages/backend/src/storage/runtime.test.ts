@@ -286,6 +286,59 @@ describe('backend lifecycle', () => {
     expect(readFileSync(join(root, 'system.log'), 'utf8')).toBe(content)
   })
 
+  it('dual-writes conversation logs and serves the real session file route', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-conversation-diagnostics-'))
+    const writer = new RuntimeDiagnosticsWriter(root)
+    const { buildApp } = await import('../app')
+    const { logRoutes } = await import('../routes/logs')
+    const app = await buildApp({ storage: { ...fakeStorage(root), diagnosticsWriter: writer }, registerRoutes: false })
+    await app.register(logRoutes)
+    handles.push(app)
+    const entry = {
+      level: 'info', type: 'system', source: 'server', message: 'conversation-owned',
+      metadata: { conversationId: 'conversation-42' },
+    }
+    expect((await app.inject({ method: 'POST', url: '/api/logs', payload: { logs: [entry] } })).statusCode).toBe(200)
+    const response = await app.inject({ method: 'GET', url: '/api/logs/file?conversationId=conversation-42' })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().entries).toEqual([expect.objectContaining({ message: 'conversation-owned' })])
+    expect(readFileSync(join(root, 'system.log'), 'utf8')).toContain('conversation-owned')
+    expect(readFileSync(join(root, 'conversations', 'conversation-42', 'log.ndjson'), 'utf8')).toContain('conversation-owned')
+  })
+
+  it('rejects unsafe conversation ids without escaping the diagnostics root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-safe-diagnostics-'))
+    const writer = new RuntimeDiagnosticsWriter(root)
+    expect(writer.getSessionLogFilePath('../escape')).toBe('')
+    expect(writer.append({ id: 'unsafe', timestamp: new Date().toISOString(), metadata: { conversationId: '../escape' } })).toBe(true)
+    expect(existsSync(join(root, 'conversations'))).toBe(false)
+    expect(readFileSync(join(root, 'system.log'), 'utf8')).toContain('unsafe')
+  })
+
+  it('contains persistent I/O failures and reports append failure', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-failed-diagnostics-'))
+    writeFileSync(join(root, 'system.log'), 'blocks-directory', 'utf8')
+    const writer = new RuntimeDiagnosticsWriter(join(root, 'system.log'))
+    expect(() => writer.append({ id: 'does-not-crash-business', timestamp: new Date().toISOString() })).not.toThrow()
+    expect(writer.append({ id: 'failed', timestamp: new Date().toISOString() })).toBe(false)
+    writer.quiesce()
+    expect(writer.append({ id: 'buffered', timestamp: new Date().toISOString() })).toBe(true)
+    expect(() => writer.reopen(join(root, 'system.log'))).not.toThrow()
+  })
+
+  it('crosses the terminal dispose barrier even when buffered flush fails', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-terminal-diagnostics-'))
+    const blockedRoot = join(root, 'not-a-directory')
+    writeFileSync(blockedRoot, 'blocked', 'utf8')
+    const writer = new RuntimeDiagnosticsWriter(blockedRoot)
+    writer.quiesce()
+    expect(writer.append({ id: 'will-be-dropped', timestamp: new Date().toISOString() })).toBe(true)
+    expect(() => writer.dispose()).not.toThrow()
+    expect(writer.append({ id: 'late', timestamp: new Date().toISOString() })).toBe(false)
+    expect(() => writer.reopen(root)).toThrow(/disposed/i)
+    expect(() => writer.dispose()).not.toThrow()
+  })
+
   it('rejects promise continuations that retain ALS after server close', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-late-context-'))
     const { createBackendStorageRuntime } = await import('./runtime')

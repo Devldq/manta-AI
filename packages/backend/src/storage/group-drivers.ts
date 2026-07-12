@@ -30,16 +30,38 @@ export function createGroupDriver(id: StorageGroupId, resources: ManagedResource
   return {
     id,
     async quiesce() { await lifecycle?.quiesce() },
-    async checkpoint() { await lifecycle?.checkpoint(); await Promise.all(resources.map((resource) => resource.checkpoint())) },
-    async close() { await lifecycle?.close(); await Promise.all(resources.map((resource) => resource.close())) },
+    async checkpoint() {
+      await allSettledOrThrow(`${id} checkpoint failed`, [
+        ...lifecycle ? [() => lifecycle.checkpoint()] : [],
+        ...resources.map((resource) => () => resource.checkpoint()),
+      ])
+    },
+    async close() {
+      await allSettledOrThrow(`${id} close failed`, [
+        ...lifecycle ? [() => lifecycle.close()] : [],
+        ...resources.map((resource) => () => resource.close()),
+      ])
+    },
     async validate(root) {
-      for (const resource of resources) {
-        const result = await resource.integrityCheck()
-        if (!result.ok) return result
+      const results = await Promise.allSettled(resources.map((resource) => Promise.resolve().then(() => resource.integrityCheck())))
+      const errors: unknown[] = []
+      for (const result of results) {
+        if (result.status === 'rejected') errors.push(result.reason)
+        else if (!result.value.ok) errors.push(new Error(result.value.error ?? `${id} integrity check failed`))
       }
+      if (errors.length) return { ok: false, error: errors.map(String).join('; ') }
       try { await inventoryTree(root); return { ok: true } } catch (error) { return { ok: false, error: String(error) } }
     },
-    async reopen(root) { await Promise.all(resources.map((resource) => resource.reopen(root))); await lifecycle?.reopen(root) },
+    async reopen(root) {
+      const errors: unknown[] = []
+      try { await allSettledOrThrow(`${id} resource reopen failed`, resources.map((resource) => () => resource.reopen(root))) }
+      catch (error) { errors.push(...error instanceof AggregateError ? error.errors : [error]) }
+      if (lifecycle) {
+        try { await lifecycle.reopen(root) } catch (error) { errors.push(error) }
+      }
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1) throw new AggregateError(errors, `${id} reopen failed: ${errors.map(String).join('; ')}`)
+    },
     inventory: inventoryTree,
   }
 }
