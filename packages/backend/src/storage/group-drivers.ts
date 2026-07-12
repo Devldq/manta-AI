@@ -11,6 +11,21 @@ async function allSettledOrThrow(label: string, operations: Array<() => void | P
   if (errors.length > 1) throw new AggregateError(errors, `${label}: ${errors.map(String).join('; ')}`)
 }
 
+async function lifecycleThenResources(
+  label: string,
+  lifecycleOperation: (() => void | Promise<void>) | undefined,
+  resourceOperations: Array<() => void | Promise<void>>,
+): Promise<void> {
+  const errors: unknown[] = []
+  if (lifecycleOperation) {
+    try { await lifecycleOperation() } catch (error) { errors.push(error) }
+  }
+  const results = await Promise.allSettled(resourceOperations.map((operation) => Promise.resolve().then(operation)))
+  for (const result of results) if (result.status === 'rejected') errors.push(result.reason)
+  if (errors.length === 1) throw errors[0]
+  if (errors.length > 1) throw new AggregateError(errors, `${label}: ${errors.map(String).join('; ')}`)
+}
+
 export interface ManagedResource {
   checkpoint(): void | Promise<void>
   close(): void | Promise<void>
@@ -31,16 +46,18 @@ export function createGroupDriver(id: StorageGroupId, resources: ManagedResource
     id,
     async quiesce() { await lifecycle?.quiesce() },
     async checkpoint() {
-      await allSettledOrThrow(`${id} checkpoint failed`, [
-        ...lifecycle ? [() => lifecycle.checkpoint()] : [],
-        ...resources.map((resource) => () => resource.checkpoint()),
-      ])
+      await lifecycleThenResources(
+        `${id} checkpoint failed`,
+        lifecycle ? () => lifecycle.checkpoint() : undefined,
+        resources.map((resource) => () => resource.checkpoint()),
+      )
     },
     async close() {
-      await allSettledOrThrow(`${id} close failed`, [
-        ...lifecycle ? [() => lifecycle.close()] : [],
-        ...resources.map((resource) => () => resource.close()),
-      ])
+      await lifecycleThenResources(
+        `${id} close failed`,
+        lifecycle ? () => lifecycle.close() : undefined,
+        resources.map((resource) => () => resource.close()),
+      )
     },
     async validate(root) {
       const results = await Promise.allSettled(resources.map((resource) => Promise.resolve().then(() => resource.integrityCheck())))

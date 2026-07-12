@@ -41,6 +41,40 @@ describe('knowledge group driver best-effort lifecycle', () => {
 })
 
 describe('generic group driver best-effort lifecycle', () => {
+  for (const phase of ['checkpoint', 'close'] as const) {
+    it(`settles lifecycle ${phase} before starting resources and still aggregates all failures`, async () => {
+      let release!: () => void
+      const barrier = new Promise<void>((resolve) => { release = resolve })
+      const lifecyclePhase = vi.fn(async () => { await barrier; throw new Error(`lifecycle ${phase} failed`) })
+      const resourcePhase = (name: string) => vi.fn(async () => { throw new Error(`${name} ${phase} failed`) })
+      const firstPhase = resourcePhase('first')
+      const secondPhase = resourcePhase('second')
+      const lifecycle = {
+        quiesce() {}, checkpoint: phase === 'checkpoint' ? lifecyclePhase : vi.fn(),
+        close: phase === 'close' ? lifecyclePhase : vi.fn(), reopen() {}, dispose() {},
+      } satisfies ManagedGroupLifecycle
+      const resource = (operation: () => Promise<void>): ManagedResource => ({
+        checkpoint: phase === 'checkpoint' ? operation : vi.fn(),
+        close: phase === 'close' ? operation : vi.fn(),
+        reopen() {}, integrityCheck: async () => ({ ok: true }),
+      })
+      const driver = createGroupDriver('config', [resource(firstPhase), resource(secondPhase)], lifecycle)
+      const pending = driver[phase]().catch((error) => error)
+      await Promise.resolve()
+      expect(lifecyclePhase).toHaveBeenCalledOnce()
+      expect(firstPhase).not.toHaveBeenCalled()
+      expect(secondPhase).not.toHaveBeenCalled()
+      release()
+      const error = await pending
+      expect(error).toBeInstanceOf(AggregateError)
+      expect(error.message).toContain(`lifecycle ${phase} failed`)
+      expect(error.message).toContain(`first ${phase} failed`)
+      expect(error.message).toContain(`second ${phase} failed`)
+      expect(firstPhase).toHaveBeenCalledOnce()
+      expect(secondPhase).toHaveBeenCalledOnce()
+    })
+  }
+
   for (const phase of ['checkpoint', 'close', 'reopen'] as const) {
     it(`attempts lifecycle and every resource during ${phase} and aggregates failures`, async () => {
       const calls: string[] = []
