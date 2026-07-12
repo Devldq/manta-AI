@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { StorageGroupId } from '@manta/shared'
 import { BootstrapStore } from '@manta/storage-hub'
 import type { ManagedGroupLifecycle } from './group-drivers'
@@ -270,5 +270,72 @@ describe('backend lifecycle', () => {
     expect(readFileSync(join(firstRoot, 'system.log'), 'utf8')).toContain('timer-a')
     expect(readFileSync(join(firstRoot, 'system.log'), 'utf8')).not.toContain('background-b')
     expect(readFileSync(join(secondRoot, 'system.log'), 'utf8')).toContain('background-b')
+  })
+
+  it('makes diagnostics disposal permanent and idempotent', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-diagnostics-dispose-'))
+    const writer = new RuntimeDiagnosticsWriter(root)
+    writer.quiesce()
+    expect(writer.append({ id: 'accepted-before-dispose', timestamp: new Date().toISOString() })).toBe(true)
+    writer.dispose()
+    const content = readFileSync(join(root, 'system.log'), 'utf8')
+    expect(content).toContain('accepted-before-dispose')
+    expect(writer.append({ id: 'late-after-dispose', timestamp: new Date().toISOString() })).toBe(false)
+    writer.quiesce(); writer.checkpoint(); writer.close(); writer.dispose()
+    expect(() => writer.reopen(root)).toThrow(/disposed/i)
+    expect(readFileSync(join(root, 'system.log'), 'utf8')).toBe(content)
+  })
+
+  it('rejects promise continuations that retain ALS after server close', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-late-context-'))
+    const { createBackendStorageRuntime } = await import('./runtime')
+    const { startServer } = await import('../server')
+    const runtime = createBackendStorageRuntime(fakeStorage(root))
+    runtime.runInStorageContext(() => logFileWriter.appendToFile({ id: 'before-close', timestamp: new Date().toISOString() }))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const late = runtime.runInStorageContext(async () => {
+      await gate
+      logFileWriter.appendToFile({ id: 'late-after-close', timestamp: new Date().toISOString() })
+    })
+    const handle = await startServer({ storage: runtime, port: 0, registerRoutes: false, startSchedulers: false, startup: false })
+    await handle.close()
+    const file = join(root, 'diagnostics', 'system.log')
+    const closedContent = readFileSync(file, 'utf8')
+    release(); await late
+    expect(readFileSync(file, 'utf8')).toBe(closedContent)
+    expect(closedContent).not.toContain('late-after-close')
+  })
+
+  it('runs global marketplace ticks without capturing the first owner context', async () => {
+    vi.useFakeTimers()
+    try {
+      const roots = ['a', 'b', 'c'].map((name) => mkdtempSync(join(tmpdir(), `manta-tick-${name}-`)))
+      const writers = roots.map((root) => new RuntimeDiagnosticsWriter(root))
+      const calls: string[] = []
+      const owner = (index: number) => createClaudeMarketplaceRuntimeOwner(
+        join(roots[index], 'marketplace'),
+        async () => {
+          const id = ['a', 'b', 'c'][index]; calls.push(id)
+          logFileWriter.appendToFile({ id: `tick-${id}`, timestamp: new Date().toISOString() })
+          return { sourceUrl: 'test', refreshedAt: new Date().toISOString(), items: [] } as any
+        },
+        (operation) => runWithDiagnosticsOwner(writers[index], operation),
+      )
+      const first = owner(0); const second = owner(1)
+      const releaseFirst = first.acquire(); const releaseSecond = second.acquire()
+      await Promise.resolve(); calls.length = 0
+      releaseFirst()
+      await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000)
+      expect(calls).toEqual(['b'])
+      expect(readFileSync(join(roots[1], 'system.log'), 'utf8')).toContain('tick-b')
+      expect(readFileSync(join(roots[0], 'system.log'), 'utf8')).not.toContain('tick-b')
+      releaseSecond(); calls.length = 0
+      await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000)
+      expect(calls).toEqual([])
+      const third = owner(2); const releaseThird = third.acquire(); await Promise.resolve()
+      expect(calls).toEqual(['c'])
+      releaseThird(); first.dispose(); second.dispose(); third.dispose()
+    } finally { vi.useRealTimers() }
   })
 })

@@ -8,6 +8,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { ensureDir, readJsonFile, writeJsonFile } from '../shared/fs-utils'
 import { registerPlugin } from './store'
+import { runWithoutDiagnosticsOwner } from '../../../storage/runtime-diagnostics'
 
 const execFileAsync = promisify(execFile)
 
@@ -58,6 +59,7 @@ interface MarketplaceSchedulerState {
   paused: boolean
   dataDir: string
   refresh: (dataDir: string) => Promise<PluginMarketplaceCache>
+  runInContext: <T>(operation: () => T) => T
   log?: { info: (message: string) => void; warn: (message: string) => void }
 }
 const schedulerOwners = new Map<symbol, MarketplaceSchedulerState>()
@@ -377,7 +379,7 @@ export function isClaudePluginInstallSource(source: string): boolean {
 function runScheduledRefresh(): void {
   for (const owner of schedulerOwners.values()) {
     if (owner.paused) continue
-    void owner.refresh(owner.dataDir)
+    void owner.runInContext(() => owner.refresh(owner.dataDir))
       .then((cache) => owner.log?.info(`[Plugin Marketplace] Claude 市场刷新完成: ${cache.items.length} 个插件`))
       .catch((err) => owner.log?.warn(`[Plugin Marketplace] Claude 市场刷新失败: ${err instanceof Error ? err.message : String(err)}`))
   }
@@ -392,9 +394,9 @@ function reconcileScheduler(): void {
   if (refreshTimer) return
   runScheduledRefresh()
 
-  refreshTimer = setInterval(() => {
+  refreshTimer = runWithoutDiagnosticsOwner(() => setInterval(() => {
     runScheduledRefresh()
-  }, MARKETPLACE_REFRESH_INTERVAL_MS)
+  }, MARKETPLACE_REFRESH_INTERVAL_MS))
   refreshTimer.unref()
 }
 
@@ -415,6 +417,7 @@ export interface ClaudeMarketplaceRuntimeOwner {
 export function createClaudeMarketplaceRuntimeOwner(
   initialDataDir = getMarketplaceDataDir(),
   refresh: (dataDir: string) => Promise<PluginMarketplaceCache> = refreshClaudeMarketplace,
+  runInContext: <T>(operation: () => T) => T = (operation) => operation(),
 ): ClaudeMarketplaceRuntimeOwner {
   const id = Symbol('marketplace-runtime-owner')
   let dataDir = initialDataDir
@@ -431,7 +434,7 @@ export function createClaudeMarketplaceRuntimeOwner(
     acquire(log) {
       if (acquired) throw new Error('Marketplace scheduler owner is already acquired')
       acquired = true
-      schedulerOwners.set(id, { paused, dataDir, refresh: ownedRefresh, log }); reconcileScheduler()
+      schedulerOwners.set(id, { paused, dataDir, refresh: ownedRefresh, runInContext, log }); reconcileScheduler()
       let released = false
       return () => { if (!released) { released = true; acquired = false; schedulerOwners.delete(id); reconcileScheduler() } }
     },
@@ -444,7 +447,7 @@ export function createClaudeMarketplaceRuntimeOwner(
         if (resumed) return
         resumed = true; paused = false
         const current = schedulerOwners.get(id)
-        if (current) { current.paused = false; void current.refresh(current.dataDir).catch((error) => current.log?.warn(String(error))) }
+        if (current) current.runInContext(() => { void current.refresh(current.dataDir).catch((error) => current.log?.warn(String(error))) })
         reconcileScheduler()
       }
     },

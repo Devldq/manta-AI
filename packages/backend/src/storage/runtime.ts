@@ -28,7 +28,11 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   const provider = configureSQLiteVecProvider(storage.resolve('knowledge', 'rag'))
   const cache = new EmbeddingCacheManager(storage.resolve('knowledge', 'rag', 'cache'))
   const diagnosticsWriter = new RuntimeDiagnosticsWriter(storage.resolve('diagnostics'))
-  const marketplaceScheduler = createClaudeMarketplaceRuntimeOwner(storage.resolve('extensions', 'plugin-marketplace'), options.marketplaceRefresh)
+  const marketplaceScheduler = createClaudeMarketplaceRuntimeOwner(
+    storage.resolve('extensions', 'plugin-marketplace'),
+    options.marketplaceRefresh,
+    (operation) => runWithDiagnosticsOwner(diagnosticsWriter, operation),
+  )
   const lifecycles = new Map<StorageGroupId, ManagedGroupLifecycle>()
   let resumeMarketplace: (() => void) | undefined
   const extensionLifecycle = options.groupLifecycles?.extensions ?? {

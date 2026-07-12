@@ -47,7 +47,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
         (log) => options.storage.marketplaceScheduler?.acquire(log) ?? acquireClaudeMarketplaceScheduler(log),
         () => acquireLogScheduler(),
       ]
-      for (const acquire of acquirers) schedulerDisposers.push(runInStorageContext(() => acquire(app!.log)))
+      for (const acquire of acquirers) schedulerDisposers.push(acquire(app.log))
     }
     if (startup) {
       await runInStorageContext(() => startup.cleanupStaleRag())
@@ -55,7 +55,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
     }
   } catch (error) {
     const cleanupErrors: unknown[] = []
-    for (const dispose of schedulerDisposers.splice(0)) { try { runInStorageContext(dispose) } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
+    for (const dispose of schedulerDisposers.splice(0)) { try { dispose() } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
     if (app) { try { await runInStorageContext(() => app!.close()) } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
     try { await runInStorageContext(() => options.storage.close()) } catch (cleanupError) { cleanupErrors.push(cleanupError) }
     if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], 'Server startup failed and cleanup was incomplete')
@@ -83,7 +83,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
         }
         await attempt(quiesce)
         await attempt(() => runInStorageContext(() => options.storage.checkpoint()))
-        for (const dispose of schedulerDisposers.splice(0)) await attempt(() => runInStorageContext(dispose))
+        for (const dispose of schedulerDisposers.splice(0)) await attempt(dispose)
         await attempt(() => runInStorageContext(() => app.close()))
         await attempt(() => runInStorageContext(() => options.storage.close()))
         if (errors.length === 1) throw errors[0]
