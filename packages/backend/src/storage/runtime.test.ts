@@ -1,10 +1,12 @@
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { StorageGroupId } from '@manta/shared'
 import { BootstrapStore } from '@manta/storage-hub'
 import type { ManagedGroupLifecycle } from './group-drivers'
+import { RuntimeDiagnosticsWriter } from './runtime-diagnostics'
+import { createClaudeMarketplaceRuntimeOwner } from '../core/storage/plugin/marketplace'
 
 const handles: Array<{ close(): Promise<void> }> = []
 afterEach(async () => { await Promise.all(handles.splice(0).map((handle) => handle.close())) })
@@ -131,6 +133,21 @@ describe('backend lifecycle', () => {
     await restarted.close(); expect(owners).toBe(0)
   })
 
+  it('releases scheduler owners acquired before a later acquirer throws', async () => {
+    const { startServer } = await import('../server')
+    let owners = 0
+    const events: string[] = []
+    await expect(startServer({
+      storage: fakeStorage(mkdtempSync(join(tmpdir(), 'manta-owner-failure-')), events), port: 0, registerRoutes: false, startup: false,
+      schedulerAcquirers: [
+        () => { owners += 1; return () => { owners -= 1 } },
+        () => { throw new Error('second scheduler failed') },
+      ],
+    })).rejects.toThrow(/second scheduler failed/)
+    expect(owners).toBe(0)
+    expect(events).toEqual(['close'])
+  })
+
   it('runs explicit startup initialization and cleans up if it fails', async () => {
     const { startServer } = await import('../server')
     const events: string[] = []
@@ -167,5 +184,39 @@ describe('backend lifecycle', () => {
     const second = createBackendStorageRuntime(fakeStorage(mkdtempSync(join(tmpdir(), 'manta-reset-b-'))))
     expect((await second.healthCheck()).ok).toBe(true)
     await second.close()
+  })
+
+  it('buffers only the migrating diagnostics owner while another runtime keeps writing', () => {
+    const firstRoot = mkdtempSync(join(tmpdir(), 'manta-diagnostics-a-'))
+    const nextRoot = mkdtempSync(join(tmpdir(), 'manta-diagnostics-a-next-'))
+    const secondRoot = mkdtempSync(join(tmpdir(), 'manta-diagnostics-b-'))
+    const first = new RuntimeDiagnosticsWriter(firstRoot)
+    const second = new RuntimeDiagnosticsWriter(secondRoot)
+    first.append({ id: 'a-before', timestamp: new Date().toISOString() })
+    first.quiesce()
+    first.append({ id: 'a-buffered', timestamp: new Date().toISOString() })
+    second.append({ id: 'b-during-a-migration', timestamp: new Date().toISOString() })
+    expect(readFileSync(join(secondRoot, 'system.log'), 'utf8')).toContain('b-during-a-migration')
+    expect(readFileSync(join(firstRoot, 'system.log'), 'utf8')).not.toContain('a-buffered')
+    expect(existsSync(join(nextRoot, 'system.log'))).toBe(false)
+    first.reopen(nextRoot)
+    expect(readFileSync(join(nextRoot, 'system.log'), 'utf8')).toContain('a-buffered')
+  })
+
+  it('pauses only the migrating marketplace owner and resumes its routed cache', async () => {
+    const calls: string[] = []
+    const refresh = async (dataDir: string) => { calls.push(dataDir); return { sourceUrl: 'test', refreshedAt: new Date().toISOString(), items: [] } as any }
+    const first = createClaudeMarketplaceRuntimeOwner('extensions-a/marketplace', refresh)
+    const second = createClaudeMarketplaceRuntimeOwner('extensions-b/marketplace', refresh)
+    const resumeFirst = first.pause()
+    const releaseFirst = first.acquire()
+    const releaseSecond = second.acquire()
+    await Promise.resolve()
+    expect(calls).toContain('extensions-b/marketplace')
+    expect(calls).not.toContain('extensions-a/marketplace')
+    resumeFirst()
+    await Promise.resolve()
+    expect(calls).toContain('extensions-a/marketplace')
+    releaseSecond(); releaseFirst(); first.dispose(); second.dispose()
   })
 })

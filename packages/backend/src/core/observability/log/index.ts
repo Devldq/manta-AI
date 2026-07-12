@@ -593,10 +593,9 @@ export const useLogSystem = () => {
 }
 
 let schedulerOwners = 0
-let schedulerPauses = 0
 
 function reconcileLogScheduler(): void {
-  if (schedulerOwners > 0 && schedulerPauses === 0) defaultLogCollector.startAutoReport()
+  if (schedulerOwners > 0) defaultLogCollector.startAutoReport()
   else defaultLogCollector.stopAutoReport()
 }
 
@@ -608,20 +607,6 @@ export function acquireLogScheduler(): () => void {
     if (released) return
     released = true
     schedulerOwners -= 1
-    reconcileLogScheduler()
-  }
-}
-
-export function pauseLogScheduler(): () => void {
-  schedulerPauses += 1
-  const resumeWriter = logFileWriter.pause()
-  reconcileLogScheduler()
-  let resumed = false
-  return () => {
-    if (resumed) return
-    resumed = true
-    schedulerPauses -= 1
-    resumeWriter()
     reconcileLogScheduler()
   }
 }

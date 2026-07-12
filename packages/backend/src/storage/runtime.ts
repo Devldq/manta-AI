@@ -2,27 +2,29 @@ import type { StorageGroupId } from '@manta/shared'
 import { STORAGE_GROUP_IDS } from '@manta/shared'
 import { EmbeddingCacheManager, configureSQLiteVecProvider, resetSQLiteVecProvider } from '@manta/rag'
 import { BootstrapStore, createStorageHub, type StorageGroupDriver } from '@manta/storage-hub'
-import { checkpointClaudeMarketplaceScheduler, pauseClaudeMarketplaceScheduler } from '../core/storage/plugin/marketplace'
-import { pauseLogScheduler } from '../core/observability/log/index'
+import { createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner } from '../core/storage/plugin/marketplace'
 import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } from './group-drivers'
+import { RuntimeDiagnosticsWriter } from './runtime-diagnostics'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
 export interface BackendStorageRuntime extends StorageResolver {
   readonly drivers: Map<StorageGroupId, StorageGroupDriver>
+  readonly diagnosticsWriter: RuntimeDiagnosticsWriter
+  readonly marketplaceScheduler: ClaudeMarketplaceRuntimeOwner
   quiesce(): Promise<void>
   checkpoint(): Promise<void>
   close(): Promise<void>
   healthCheck(): Promise<{ ok: boolean; error?: string }>
 }
 
-function pausingLifecycle(pause: () => () => void, checkpoint: () => void | Promise<void> = () => {}): ManagedGroupLifecycle {
+function pausingLifecycle(pause: () => () => void, checkpoint: () => void | Promise<void> = () => {}, dispose: () => void | Promise<void> = () => {}): ManagedGroupLifecycle {
   let resume: (() => void) | undefined
   return {
     quiesce() { resume ??= pause() },
     checkpoint,
     close() {},
     reopen() { resume?.(); resume = undefined },
-    dispose() { resume?.(); resume = undefined },
+    async dispose() { resume?.(); resume = undefined; await dispose() },
   }
 }
 
@@ -33,9 +35,14 @@ export interface BackendRuntimeOptions {
 export function createBackendStorageRuntime(storage: StorageResolver, options: BackendRuntimeOptions = {}): BackendStorageRuntime {
   const provider = configureSQLiteVecProvider(storage.resolve('knowledge', 'rag'))
   const cache = new EmbeddingCacheManager(storage.resolve('knowledge', 'rag', 'cache'))
+  const diagnosticsWriter = new RuntimeDiagnosticsWriter(storage.resolve('diagnostics'))
+  const marketplaceScheduler = createClaudeMarketplaceRuntimeOwner(storage.resolve('extensions', 'plugin-marketplace'))
   const lifecycles = new Map<StorageGroupId, ManagedGroupLifecycle>()
-  const extensionLifecycle = options.groupLifecycles?.extensions ?? pausingLifecycle(pauseClaudeMarketplaceScheduler, checkpointClaudeMarketplaceScheduler)
-  const diagnosticsLifecycle = options.groupLifecycles?.diagnostics ?? pausingLifecycle(pauseLogScheduler)
+  const extensionLifecycle = options.groupLifecycles?.extensions ?? pausingLifecycle(marketplaceScheduler.pause, marketplaceScheduler.checkpoint, marketplaceScheduler.dispose)
+  const diagnosticsLifecycle = options.groupLifecycles?.diagnostics ?? {
+    quiesce: () => diagnosticsWriter.quiesce(), checkpoint: () => diagnosticsWriter.checkpoint(), close: () => diagnosticsWriter.close(),
+    reopen: (root) => diagnosticsWriter.reopen(root), dispose: () => diagnosticsWriter.dispose(),
+  }
   lifecycles.set('extensions', extensionLifecycle)
   lifecycles.set('diagnostics', diagnosticsLifecycle)
   const drivers = new Map<StorageGroupId, StorageGroupDriver>()
@@ -45,7 +52,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   let quiesced = false
   let closed = false
   return {
-    resolve: storage.resolve.bind(storage), drivers,
+    resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler,
     async quiesce() {
       quiesced = true
       const results = await Promise.allSettled([...drivers.values()].map((driver) => driver.quiesce()))

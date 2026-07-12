@@ -53,17 +53,22 @@ interface CommandOutput {
 }
 
 let refreshTimer: NodeJS.Timeout | null = null
-let inFlightRefresh: Promise<PluginMarketplaceCache> | null = null
-let schedulerPauses = 0
-const schedulerLogs = new Map<symbol, { info: (message: string) => void; warn: (message: string) => void } | undefined>()
+const inFlightRefresh = new Map<string, Promise<PluginMarketplaceCache>>()
+interface MarketplaceSchedulerState {
+  paused: boolean
+  dataDir: string
+  refresh: (dataDir: string) => Promise<PluginMarketplaceCache>
+  log?: { info: (message: string) => void; warn: (message: string) => void }
+}
+const schedulerOwners = new Map<symbol, MarketplaceSchedulerState>()
 
 function getMarketplaceDataDir(): string {
   const root = process.env.MANTA_WORKSPACE_ROOT || process.cwd()
   return path.join(root, '.manta', 'plugin-marketplace')
 }
 
-function getCachePath(): string {
-  return path.join(getMarketplaceDataDir(), 'claude.json')
+function getCachePath(dataDir = getMarketplaceDataDir()): string {
+  return path.join(dataDir, 'claude.json')
 }
 
 function decodeHtml(value: string): string {
@@ -236,14 +241,15 @@ async function fetchText(url: string): Promise<string> {
   }
 }
 
-export function readClaudeMarketplaceCache(): PluginMarketplaceCache | null {
-  return readJsonFile<PluginMarketplaceCache>(getCachePath())
+export function readClaudeMarketplaceCache(dataDir = getMarketplaceDataDir()): PluginMarketplaceCache | null {
+  return readJsonFile<PluginMarketplaceCache>(getCachePath(dataDir))
 }
 
-export async function refreshClaudeMarketplace(): Promise<PluginMarketplaceCache> {
-  if (inFlightRefresh) return inFlightRefresh
+export async function refreshClaudeMarketplace(dataDir = getMarketplaceDataDir()): Promise<PluginMarketplaceCache> {
+  const existing = inFlightRefresh.get(dataDir)
+  if (existing) return existing
 
-  inFlightRefresh = (async () => {
+  const refresh = (async () => {
     const html = await fetchText(CLAUDE_MARKETPLACE_URL)
     const items = parseClaudePluginsPage(html)
     if (items.length === 0) {
@@ -255,15 +261,16 @@ export async function refreshClaudeMarketplace(): Promise<PluginMarketplaceCache
       refreshedAt: new Date().toISOString(),
       items,
     }
-    ensureDir(getMarketplaceDataDir())
-    writeJsonFile(getCachePath(), cache)
+    ensureDir(dataDir)
+    writeJsonFile(getCachePath(dataDir), cache)
     return cache
   })()
+  inFlightRefresh.set(dataDir, refresh)
 
   try {
-    return await inFlightRefresh
+    return await refresh
   } finally {
-    inFlightRefresh = null
+    if (inFlightRefresh.get(dataDir) === refresh) inFlightRefresh.delete(dataDir)
   }
 }
 
@@ -367,14 +374,17 @@ export function isClaudePluginInstallSource(source: string): boolean {
     /^[a-zA-Z0-9._-]+@claude-plugins-official$/.test(trimmed)
 }
 
-function runScheduledRefresh(log = [...schedulerLogs.values()].at(-1)): void {
-  void refreshClaudeMarketplace()
-    .then((cache) => log?.info(`[Plugin Marketplace] Claude 市场刷新完成: ${cache.items.length} 个插件`))
-    .catch((err) => log?.warn(`[Plugin Marketplace] Claude 市场刷新失败: ${err instanceof Error ? err.message : String(err)}`))
+function runScheduledRefresh(): void {
+  for (const owner of schedulerOwners.values()) {
+    if (owner.paused) continue
+    void owner.refresh(owner.dataDir)
+      .then((cache) => owner.log?.info(`[Plugin Marketplace] Claude 市场刷新完成: ${cache.items.length} 个插件`))
+      .catch((err) => owner.log?.warn(`[Plugin Marketplace] Claude 市场刷新失败: ${err instanceof Error ? err.message : String(err)}`))
+  }
 }
 
 function reconcileScheduler(): void {
-  if (schedulerLogs.size === 0 || schedulerPauses > 0) {
+  if (![...schedulerOwners.values()].some((owner) => !owner.paused)) {
     if (refreshTimer) clearInterval(refreshTimer)
     refreshTimer = null
     return
@@ -389,30 +399,51 @@ function reconcileScheduler(): void {
 }
 
 export function acquireClaudeMarketplaceScheduler(log?: { info: (message: string) => void; warn: (message: string) => void }): () => void {
-  const owner = Symbol('marketplace-scheduler-owner')
-  schedulerLogs.set(owner, log)
-  reconcileScheduler()
-  let released = false
-  return () => {
-    if (released) return
-    released = true
-    schedulerLogs.delete(owner)
-    reconcileScheduler()
-  }
+  const owner = createClaudeMarketplaceRuntimeOwner()
+  const release = owner.acquire(log)
+  return () => { release(); owner.dispose() }
 }
 
-export function pauseClaudeMarketplaceScheduler(): () => void {
-  schedulerPauses += 1
-  reconcileScheduler()
-  let resumed = false
-  return () => {
-    if (resumed) return
-    resumed = true
-    schedulerPauses -= 1
-    reconcileScheduler()
+export interface ClaudeMarketplaceRuntimeOwner {
+  acquire(log?: { info: (message: string) => void; warn: (message: string) => void }): () => void
+  pause(): () => void
+  checkpoint(): Promise<void>
+  dispose(): void
+}
+
+export function createClaudeMarketplaceRuntimeOwner(
+  dataDir = getMarketplaceDataDir(),
+  refresh: (dataDir: string) => Promise<PluginMarketplaceCache> = refreshClaudeMarketplace,
+): ClaudeMarketplaceRuntimeOwner {
+  const id = Symbol('marketplace-runtime-owner')
+  let paused = false
+  let acquired = false
+  return {
+    acquire(log) {
+      if (acquired) throw new Error('Marketplace scheduler owner is already acquired')
+      acquired = true
+      schedulerOwners.set(id, { paused, dataDir, refresh, log }); reconcileScheduler()
+      let released = false
+      return () => { if (!released) { released = true; acquired = false; schedulerOwners.delete(id); reconcileScheduler() } }
+    },
+    pause() {
+      paused = true
+      const state = schedulerOwners.get(id); if (state) state.paused = true
+      reconcileScheduler()
+      let resumed = false
+      return () => {
+        if (resumed) return
+        resumed = true; paused = false
+        const current = schedulerOwners.get(id)
+        if (current) { current.paused = false; void current.refresh(current.dataDir).catch((error) => current.log?.warn(String(error))) }
+        reconcileScheduler()
+      }
+    },
+    async checkpoint() { await inFlightRefresh.get(dataDir) },
+    dispose() { schedulerOwners.delete(id); acquired = false; reconcileScheduler() },
   }
 }
 
 export async function checkpointClaudeMarketplaceScheduler(): Promise<void> {
-  await inFlightRefresh
+  await Promise.all(inFlightRefresh.values())
 }

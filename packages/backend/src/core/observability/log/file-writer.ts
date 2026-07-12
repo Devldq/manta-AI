@@ -4,12 +4,15 @@
  * 日志文件写入器（仅服务端使用）
  * 该模块使用 Node.js fs 模块，只能在服务端环境中使用
  */
+import { AsyncLocalStorage } from 'node:async_hooks'
+import type { DiagnosticEntry, RuntimeDiagnosticsWriter } from '../../../storage/runtime-diagnostics'
+
 export class LogFileWriter {
   private static instance: LogFileWriter | null = null
   private fs: typeof import('fs') | null = null
   private path: typeof import('path') | null = null
   private os: typeof import('os') | null = null
-  private pauseCount = 0
+  private ownerContext = new AsyncLocalStorage<RuntimeDiagnosticsWriter>()
 
   private constructor() {
     // 动态导入 Node.js 模块，避免客户端打包
@@ -60,7 +63,9 @@ export class LogFileWriter {
 
   /** 将日志追加写入文件 */
   appendToFile(entry: { id: string; timestamp: string; [key: string]: unknown }): void {
-    if (!this.isAvailable() || this.pauseCount > 0) return
+    const owner = this.ownerContext.getStore()
+    if (owner) { owner.append(entry as DiagnosticEntry); return }
+    if (!this.isAvailable()) return
 
     try {
       // 1. 写入全局日志文件
@@ -91,15 +96,10 @@ export class LogFileWriter {
     }
   }
 
-  pause(): () => void {
-    this.pauseCount += 1
-    let resumed = false
-    return () => {
-      if (resumed) return
-      resumed = true
-      this.pauseCount -= 1
-    }
+  runWithOwner<T>(owner: RuntimeDiagnosticsWriter, operation: () => T): T {
+    return this.ownerContext.run(owner, operation)
   }
+
 }
 
 /** 全局日志文件写入器实例 */
