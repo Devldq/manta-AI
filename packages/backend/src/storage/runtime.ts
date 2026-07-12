@@ -2,43 +2,42 @@ import type { StorageGroupId } from '@manta/shared'
 import { STORAGE_GROUP_IDS } from '@manta/shared'
 import { EmbeddingCacheManager, configureSQLiteVecProvider, resetSQLiteVecProvider } from '@manta/rag'
 import { BootstrapStore, createStorageHub, type StorageGroupDriver } from '@manta/storage-hub'
-import { createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner } from '../core/storage/plugin/marketplace'
+import { createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner, type PluginMarketplaceCache } from '../core/storage/plugin/marketplace'
 import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } from './group-drivers'
-import { RuntimeDiagnosticsWriter } from './runtime-diagnostics'
+import { runWithDiagnosticsOwner, RuntimeDiagnosticsWriter } from './runtime-diagnostics'
+import { join } from 'node:path'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
 export interface BackendStorageRuntime extends StorageResolver {
   readonly drivers: Map<StorageGroupId, StorageGroupDriver>
   readonly diagnosticsWriter: RuntimeDiagnosticsWriter
   readonly marketplaceScheduler: ClaudeMarketplaceRuntimeOwner
+  runInStorageContext<T>(operation: () => T): T
   quiesce(): Promise<void>
   checkpoint(): Promise<void>
   close(): Promise<void>
   healthCheck(): Promise<{ ok: boolean; error?: string }>
 }
 
-function pausingLifecycle(pause: () => () => void, checkpoint: () => void | Promise<void> = () => {}, dispose: () => void | Promise<void> = () => {}): ManagedGroupLifecycle {
-  let resume: (() => void) | undefined
-  return {
-    quiesce() { resume ??= pause() },
-    checkpoint,
-    close() {},
-    reopen() { resume?.(); resume = undefined },
-    async dispose() { resume?.(); resume = undefined; await dispose() },
-  }
-}
-
 export interface BackendRuntimeOptions {
   groupLifecycles?: Partial<Record<StorageGroupId, ManagedGroupLifecycle>>
+  marketplaceRefresh?: (dataDir: string) => Promise<PluginMarketplaceCache>
 }
 
 export function createBackendStorageRuntime(storage: StorageResolver, options: BackendRuntimeOptions = {}): BackendStorageRuntime {
   const provider = configureSQLiteVecProvider(storage.resolve('knowledge', 'rag'))
   const cache = new EmbeddingCacheManager(storage.resolve('knowledge', 'rag', 'cache'))
   const diagnosticsWriter = new RuntimeDiagnosticsWriter(storage.resolve('diagnostics'))
-  const marketplaceScheduler = createClaudeMarketplaceRuntimeOwner(storage.resolve('extensions', 'plugin-marketplace'))
+  const marketplaceScheduler = createClaudeMarketplaceRuntimeOwner(storage.resolve('extensions', 'plugin-marketplace'), options.marketplaceRefresh)
   const lifecycles = new Map<StorageGroupId, ManagedGroupLifecycle>()
-  const extensionLifecycle = options.groupLifecycles?.extensions ?? pausingLifecycle(marketplaceScheduler.pause, marketplaceScheduler.checkpoint, marketplaceScheduler.dispose)
+  let resumeMarketplace: (() => void) | undefined
+  const extensionLifecycle = options.groupLifecycles?.extensions ?? {
+    quiesce() { resumeMarketplace ??= marketplaceScheduler.pause() },
+    checkpoint: () => marketplaceScheduler.checkpoint(),
+    close() {},
+    async reopen(root) { await marketplaceScheduler.reopen(join(root, 'plugin-marketplace')); resumeMarketplace?.(); resumeMarketplace = undefined },
+    dispose() { resumeMarketplace?.(); resumeMarketplace = undefined; marketplaceScheduler.dispose() },
+  }
   const diagnosticsLifecycle = options.groupLifecycles?.diagnostics ?? {
     quiesce: () => diagnosticsWriter.quiesce(), checkpoint: () => diagnosticsWriter.checkpoint(), close: () => diagnosticsWriter.close(),
     reopen: (root) => diagnosticsWriter.reopen(root), dispose: () => diagnosticsWriter.dispose(),
@@ -53,6 +52,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   let closed = false
   return {
     resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler,
+    runInStorageContext: (operation) => runWithDiagnosticsOwner(diagnosticsWriter, operation),
     async quiesce() {
       quiesced = true
       const results = await Promise.allSettled([...drivers.values()].map((driver) => driver.quiesce()))

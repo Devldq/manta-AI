@@ -4,8 +4,7 @@ import type { StorageResolver } from './storage/runtime'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { logFileWriter } from './core/observability/log/file-writer'
-import type { RuntimeDiagnosticsWriter } from './storage/runtime-diagnostics'
+import { runWithDiagnosticsOwner, type RuntimeDiagnosticsWriter } from './storage/runtime-diagnostics'
 
 export interface BuildAppOptions { storage: StorageResolver & { diagnosticsWriter?: RuntimeDiagnosticsWriter }; isDev?: boolean; registerRoutes?: boolean }
 
@@ -15,7 +14,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   let acceptingWrites = true
   app.decorate('quiesceWrites', () => { acceptingWrites = false })
   if (options.storage.diagnosticsWriter) {
-    app.addHook('onRequest', (_request, _reply, done) => logFileWriter.runWithOwner(options.storage.diagnosticsWriter!, done))
+    app.addHook('onRequest', (_request, _reply, done) => runWithDiagnosticsOwner(options.storage.diagnosticsWriter!, done))
   }
   app.addHook('onRequest', async (request, reply) => {
     if (!acceptingWrites && !['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {

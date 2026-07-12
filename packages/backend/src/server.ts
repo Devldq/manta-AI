@@ -11,8 +11,8 @@ export interface ServerStartupHooks {
   initializeSkills(): void | Promise<void>
 }
 
-export type ManagedBackendStorage = Omit<BackendStorageRuntime, 'drivers' | 'diagnosticsWriter' | 'marketplaceScheduler'> &
-  Partial<Pick<BackendStorageRuntime, 'diagnosticsWriter' | 'marketplaceScheduler'>>
+export type ManagedBackendStorage = Omit<BackendStorageRuntime, 'drivers' | 'diagnosticsWriter' | 'marketplaceScheduler' | 'runInStorageContext'> &
+  Partial<Pick<BackendStorageRuntime, 'diagnosticsWriter' | 'marketplaceScheduler' | 'runInStorageContext'>>
 
 export interface StartServerOptions {
   storage: ManagedBackendStorage
@@ -36,6 +36,9 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
   let app: FastifyInstance | undefined
   const schedulerDisposers: Array<() => void> = []
   const startup = options.startup === false ? undefined : options.startup ?? defaultStartupHooks()
+  const runInStorageContext = <T>(operation: () => T): T => options.storage.runInStorageContext
+    ? options.storage.runInStorageContext(operation)
+    : operation()
   try {
     app = await (options.appFactory ?? buildApp)({ storage: options.storage, registerRoutes: options.registerRoutes })
     await app.listen({ port: options.port ?? 0, host: options.host ?? '127.0.0.1' })
@@ -44,15 +47,17 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
         (log) => options.storage.marketplaceScheduler?.acquire(log) ?? acquireClaudeMarketplaceScheduler(log),
         () => acquireLogScheduler(),
       ]
-      for (const acquire of acquirers) schedulerDisposers.push(acquire(app.log))
+      for (const acquire of acquirers) schedulerDisposers.push(runInStorageContext(() => acquire(app!.log)))
     }
-    await startup?.cleanupStaleRag()
-    await startup?.initializeSkills()
+    if (startup) {
+      await runInStorageContext(() => startup.cleanupStaleRag())
+      await runInStorageContext(() => startup.initializeSkills())
+    }
   } catch (error) {
     const cleanupErrors: unknown[] = []
-    for (const dispose of schedulerDisposers.splice(0)) { try { dispose() } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
-    if (app) { try { await app.close() } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
-    try { await options.storage.close() } catch (cleanupError) { cleanupErrors.push(cleanupError) }
+    for (const dispose of schedulerDisposers.splice(0)) { try { runInStorageContext(dispose) } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
+    if (app) { try { await runInStorageContext(() => app!.close()) } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
+    try { await runInStorageContext(() => options.storage.close()) } catch (cleanupError) { cleanupErrors.push(cleanupError) }
     if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], 'Server startup failed and cleanup was incomplete')
     throw error
   }
@@ -64,7 +69,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
     if (quiesced) return
     quiesced = true
     app.quiesceWrites()
-    await options.storage.quiesce()
+    await runInStorageContext(() => options.storage.quiesce())
   }
   const handle: MantaServerHandle = {
     port: address.port,
@@ -77,10 +82,10 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
           try { await operation() } catch (error) { errors.push(error) }
         }
         await attempt(quiesce)
-        await attempt(() => options.storage.checkpoint())
-        for (const dispose of schedulerDisposers.splice(0)) await attempt(dispose)
-        await attempt(() => app.close())
-        await attempt(() => options.storage.close())
+        await attempt(() => runInStorageContext(() => options.storage.checkpoint()))
+        for (const dispose of schedulerDisposers.splice(0)) await attempt(() => runInStorageContext(dispose))
+        await attempt(() => runInStorageContext(() => app.close()))
+        await attempt(() => runInStorageContext(() => options.storage.close()))
         if (errors.length === 1) throw errors[0]
         if (errors.length > 1) throw new AggregateError(errors, 'Server shutdown failed')
       })()

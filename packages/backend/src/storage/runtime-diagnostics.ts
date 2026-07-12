@@ -1,7 +1,12 @@
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 export interface DiagnosticEntry { id: string; timestamp: string; [key: string]: unknown }
+
+const ownerContext = new AsyncLocalStorage<RuntimeDiagnosticsWriter>()
+export const currentDiagnosticsOwner = () => ownerContext.getStore()
+export const runWithDiagnosticsOwner = <T>(owner: RuntimeDiagnosticsWriter, operation: () => T): T => ownerContext.run(owner, operation)
 
 export class RuntimeDiagnosticsWriter {
   private paused = false
@@ -12,6 +17,9 @@ export class RuntimeDiagnosticsWriter {
     if (this.paused) { this.buffered.push(entry); return }
     this.appendNow(entry)
   }
+
+  getLogFilePath(): string { return join(this.root, 'system.log') }
+  getSessionLogFilePath(conversationId: string): string { return join(this.root, 'conversations', conversationId, 'log.ndjson') }
 
   quiesce(): void { this.paused = true }
   checkpoint(): void {}

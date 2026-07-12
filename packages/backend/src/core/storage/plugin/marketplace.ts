@@ -408,21 +408,30 @@ export interface ClaudeMarketplaceRuntimeOwner {
   acquire(log?: { info: (message: string) => void; warn: (message: string) => void }): () => void
   pause(): () => void
   checkpoint(): Promise<void>
+  reopen(dataDir: string): Promise<void>
   dispose(): void
 }
 
 export function createClaudeMarketplaceRuntimeOwner(
-  dataDir = getMarketplaceDataDir(),
+  initialDataDir = getMarketplaceDataDir(),
   refresh: (dataDir: string) => Promise<PluginMarketplaceCache> = refreshClaudeMarketplace,
 ): ClaudeMarketplaceRuntimeOwner {
   const id = Symbol('marketplace-runtime-owner')
+  let dataDir = initialDataDir
   let paused = false
   let acquired = false
+  let ownerInFlight: Promise<PluginMarketplaceCache> | undefined
+  const ownedRefresh = (target: string) => {
+    const running = refresh(target)
+    ownerInFlight = running
+    void running.finally(() => { if (ownerInFlight === running) ownerInFlight = undefined }).catch(() => {})
+    return running
+  }
   return {
     acquire(log) {
       if (acquired) throw new Error('Marketplace scheduler owner is already acquired')
       acquired = true
-      schedulerOwners.set(id, { paused, dataDir, refresh, log }); reconcileScheduler()
+      schedulerOwners.set(id, { paused, dataDir, refresh: ownedRefresh, log }); reconcileScheduler()
       let released = false
       return () => { if (!released) { released = true; acquired = false; schedulerOwners.delete(id); reconcileScheduler() } }
     },
@@ -439,7 +448,14 @@ export function createClaudeMarketplaceRuntimeOwner(
         reconcileScheduler()
       }
     },
-    async checkpoint() { await inFlightRefresh.get(dataDir) },
+    async checkpoint() { await ownerInFlight; await inFlightRefresh.get(dataDir) },
+    async reopen(nextDataDir) {
+      await ownerInFlight
+      await inFlightRefresh.get(dataDir)
+      dataDir = nextDataDir
+      const current = schedulerOwners.get(id)
+      if (current) current.dataDir = nextDataDir
+    },
     dispose() { schedulerOwners.delete(id); acquired = false; reconcileScheduler() },
   }
 }

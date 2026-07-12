@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,6 +7,8 @@ import { BootstrapStore } from '@manta/storage-hub'
 import type { ManagedGroupLifecycle } from './group-drivers'
 import { RuntimeDiagnosticsWriter } from './runtime-diagnostics'
 import { createClaudeMarketplaceRuntimeOwner } from '../core/storage/plugin/marketplace'
+import { logFileWriter } from '../core/observability/log/file-writer'
+import { runWithDiagnosticsOwner } from './runtime-diagnostics'
 
 const handles: Array<{ close(): Promise<void> }> = []
 afterEach(async () => { await Promise.all(handles.splice(0).map((handle) => handle.close())) })
@@ -151,11 +153,21 @@ describe('backend lifecycle', () => {
   it('runs explicit startup initialization and cleans up if it fails', async () => {
     const { startServer } = await import('../server')
     const events: string[] = []
+    const diagnosticsRoot = mkdtempSync(join(tmpdir(), 'manta-startup-diagnostics-'))
+    const diagnosticsWriter = new RuntimeDiagnosticsWriter(diagnosticsRoot)
+    const storage = Object.assign(fakeStorage(mkdtempSync(join(tmpdir(), 'manta-startup-')), events), {
+      diagnosticsWriter,
+      runInStorageContext: <T>(operation: () => T) => runWithDiagnosticsOwner(diagnosticsWriter, operation),
+    })
     await expect(startServer({
-      storage: fakeStorage(mkdtempSync(join(tmpdir(), 'manta-startup-')), events), port: 0, registerRoutes: false, startSchedulers: false,
-      startup: { async cleanupStaleRag() { events.push('stale') }, async initializeSkills() { events.push('skills'); throw new Error('skill initialization failed') } },
+      storage, port: 0, registerRoutes: false, startSchedulers: false,
+      startup: {
+        async cleanupStaleRag() { events.push('stale'); logFileWriter.appendToFile({ id: 'startup-owned', timestamp: new Date().toISOString() }) },
+        async initializeSkills() { events.push('skills'); throw new Error('skill initialization failed') },
+      },
     })).rejects.toThrow(/skill initialization failed/)
     expect(events).toEqual(['stale', 'skills', 'close'])
+    expect(readFileSync(join(diagnosticsRoot, 'system.log'), 'utf8')).toContain('startup-owned')
   })
 
   it('quiesces and reopens extension and diagnostics lifecycle owners', async () => {
@@ -218,5 +230,45 @@ describe('backend lifecycle', () => {
     await Promise.resolve()
     expect(calls).toContain('extensions-a/marketplace')
     releaseSecond(); releaseFirst(); first.dispose(); second.dispose()
+  })
+
+  it('atomically rebinds the extensions driver marketplace cache before resuming', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-marketplace-rebind-'))
+    const nextExtensions = mkdtempSync(join(tmpdir(), 'manta-marketplace-next-'))
+    let revision = 0
+    const refresh = async (dataDir: string) => {
+      mkdirSync(dataDir, { recursive: true })
+      writeFileSync(join(dataDir, 'claude.json'), `revision-${++revision}`, 'utf8')
+      return { sourceUrl: 'test', refreshedAt: new Date().toISOString(), items: [] } as any
+    }
+    const { createBackendStorageRuntime } = await import('./runtime')
+    const runtime = createBackendStorageRuntime(fakeStorage(root), { marketplaceRefresh: refresh })
+    const release = runtime.marketplaceScheduler.acquire()
+    await runtime.marketplaceScheduler.checkpoint()
+    const oldFile = join(root, 'extensions', 'plugin-marketplace', 'claude.json')
+    const oldContent = readFileSync(oldFile, 'utf8')
+    const driver = runtime.drivers.get('extensions')!
+    await driver.quiesce(); await driver.checkpoint(); await driver.reopen(nextExtensions)
+    await runtime.marketplaceScheduler.checkpoint()
+    expect(readFileSync(oldFile, 'utf8')).toBe(oldContent)
+    expect(readFileSync(join(nextExtensions, 'plugin-marketplace', 'claude.json'), 'utf8')).not.toBe(oldContent)
+    release(); await runtime.close()
+  })
+
+  it('persists only inside explicit diagnostics owner contexts, including inherited timers', async () => {
+    const firstRoot = mkdtempSync(join(tmpdir(), 'manta-context-a-'))
+    const secondRoot = mkdtempSync(join(tmpdir(), 'manta-context-b-'))
+    const first = new RuntimeDiagnosticsWriter(firstRoot)
+    const second = new RuntimeDiagnosticsWriter(secondRoot)
+    expect(logFileWriter.getLogFilePath()).toBe('')
+    logFileWriter.appendToFile({ id: 'unowned', timestamp: new Date().toISOString() })
+    expect(existsSync(join(firstRoot, 'system.log'))).toBe(false)
+    await new Promise<void>((resolve) => runWithDiagnosticsOwner(first, () => setTimeout(() => {
+      logFileWriter.appendToFile({ id: 'timer-a', timestamp: new Date().toISOString() }); resolve()
+    }, 0)))
+    runWithDiagnosticsOwner(second, () => logFileWriter.appendToFile({ id: 'background-b', timestamp: new Date().toISOString() }))
+    expect(readFileSync(join(firstRoot, 'system.log'), 'utf8')).toContain('timer-a')
+    expect(readFileSync(join(firstRoot, 'system.log'), 'utf8')).not.toContain('background-b')
+    expect(readFileSync(join(secondRoot, 'system.log'), 'utf8')).toContain('background-b')
   })
 })
