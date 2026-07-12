@@ -1,34 +1,77 @@
 import type { StorageGroupId } from '@manta/shared'
 import { STORAGE_GROUP_IDS } from '@manta/shared'
 import { EmbeddingCacheManager, configureSQLiteVecProvider, resetSQLiteVecProvider } from '@manta/rag'
-import type { StorageGroupDriver } from '@manta/storage-hub'
-import { createGroupDriver, createKnowledgeDriver } from './group-drivers'
+import { BootstrapStore, createStorageHub, type StorageGroupDriver } from '@manta/storage-hub'
+import { checkpointClaudeMarketplaceScheduler, pauseClaudeMarketplaceScheduler } from '../core/storage/plugin/marketplace'
+import { pauseLogScheduler } from '../core/observability/log/index'
+import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } from './group-drivers'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
 export interface BackendStorageRuntime extends StorageResolver {
-  readonly drivers?: Map<StorageGroupId, StorageGroupDriver>
+  readonly drivers: Map<StorageGroupId, StorageGroupDriver>
   quiesce(): Promise<void>
   checkpoint(): Promise<void>
   close(): Promise<void>
   healthCheck(): Promise<{ ok: boolean; error?: string }>
 }
 
-export function createBackendStorageRuntime(storage: StorageResolver): BackendStorageRuntime {
+function pausingLifecycle(pause: () => () => void, checkpoint: () => void | Promise<void> = () => {}): ManagedGroupLifecycle {
+  let resume: (() => void) | undefined
+  return {
+    quiesce() { resume ??= pause() },
+    checkpoint,
+    close() {},
+    reopen() { resume?.(); resume = undefined },
+    dispose() { resume?.(); resume = undefined },
+  }
+}
+
+export interface BackendRuntimeOptions {
+  groupLifecycles?: Partial<Record<StorageGroupId, ManagedGroupLifecycle>>
+}
+
+export function createBackendStorageRuntime(storage: StorageResolver, options: BackendRuntimeOptions = {}): BackendStorageRuntime {
   const provider = configureSQLiteVecProvider(storage.resolve('knowledge', 'rag'))
   const cache = new EmbeddingCacheManager(storage.resolve('knowledge', 'rag', 'cache'))
+  const lifecycles = new Map<StorageGroupId, ManagedGroupLifecycle>()
+  const extensionLifecycle = options.groupLifecycles?.extensions ?? pausingLifecycle(pauseClaudeMarketplaceScheduler, checkpointClaudeMarketplaceScheduler)
+  const diagnosticsLifecycle = options.groupLifecycles?.diagnostics ?? pausingLifecycle(pauseLogScheduler)
+  lifecycles.set('extensions', extensionLifecycle)
+  lifecycles.set('diagnostics', diagnosticsLifecycle)
   const drivers = new Map<StorageGroupId, StorageGroupDriver>()
-  for (const id of STORAGE_GROUP_IDS) drivers.set(id, id === 'knowledge' ? createKnowledgeDriver(provider, cache) : createGroupDriver(id))
+  for (const id of STORAGE_GROUP_IDS) {
+    drivers.set(id, id === 'knowledge' ? createKnowledgeDriver(provider, cache) : createGroupDriver(id, [], lifecycles.get(id)))
+  }
   let quiesced = false
   let closed = false
   return {
     resolve: storage.resolve.bind(storage), drivers,
-    async quiesce() { quiesced = true; await Promise.all([...drivers.values()].map((driver) => driver.quiesce())) },
-    async checkpoint() { await Promise.all([...drivers.values()].map((driver) => driver.checkpoint())) },
+    async quiesce() {
+      quiesced = true
+      const results = await Promise.allSettled([...drivers.values()].map((driver) => driver.quiesce()))
+      const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map((result) => result.reason)
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1) throw new AggregateError(errors, 'Backend storage quiesce failed')
+    },
+    async checkpoint() {
+      const results = await Promise.allSettled([...drivers.values()].map((driver) => driver.checkpoint()))
+      const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map((result) => result.reason)
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1) throw new AggregateError(errors, 'Backend storage checkpoint failed')
+    },
     async close() {
       if (closed) return
       closed = true
-      await Promise.all([...drivers.values()].map((driver) => driver.close()))
-      await resetSQLiteVecProvider()
+      const results = await Promise.allSettled([
+        ...[...drivers.values()].map((driver) => driver.close()),
+        ...[...lifecycles.values()].map((lifecycle) => lifecycle.dispose()),
+      ])
+      let resetError: unknown
+      try { await resetSQLiteVecProvider() } catch (error) { resetError = error }
+      const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map((result) => result.reason)
+      if (resetError) errors.push(resetError)
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1) throw new AggregateError(errors, 'Backend storage shutdown failed')
     },
     async healthCheck() {
       if (closed) return { ok: false, error: 'closed' }
@@ -36,4 +79,17 @@ export function createBackendStorageRuntime(storage: StorageResolver): BackendSt
       return provider.integrityCheck()
     },
   }
+}
+
+export async function createBackendStorageComposition(bootstrap: BootstrapStore) {
+  let runtime: BackendStorageRuntime | undefined
+  const hub = await createStorageHub({
+    bootstrap,
+    createDrivers(storage) {
+      runtime = createBackendStorageRuntime(storage)
+      return runtime.drivers
+    },
+  })
+  if (!runtime || !hub.migrations) throw new Error('Failed to compose Backend storage migration drivers')
+  return { hub, runtime }
 }

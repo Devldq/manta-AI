@@ -592,7 +592,36 @@ export const useLogSystem = () => {
   }
 }
 
-/** Stop process-wide reporting timers during managed server shutdown. */
-export function stopLogSchedulers(): void {
-  defaultLogCollector.stopAutoReport()
+let schedulerOwners = 0
+let schedulerPauses = 0
+
+function reconcileLogScheduler(): void {
+  if (schedulerOwners > 0 && schedulerPauses === 0) defaultLogCollector.startAutoReport()
+  else defaultLogCollector.stopAutoReport()
+}
+
+export function acquireLogScheduler(): () => void {
+  schedulerOwners += 1
+  reconcileLogScheduler()
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    schedulerOwners -= 1
+    reconcileLogScheduler()
+  }
+}
+
+export function pauseLogScheduler(): () => void {
+  schedulerPauses += 1
+  const resumeWriter = logFileWriter.pause()
+  reconcileLogScheduler()
+  let resumed = false
+  return () => {
+    if (resumed) return
+    resumed = true
+    schedulerPauses -= 1
+    resumeWriter()
+    reconcileLogScheduler()
+  }
 }

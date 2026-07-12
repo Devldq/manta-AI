@@ -9,6 +9,7 @@ export class LogFileWriter {
   private fs: typeof import('fs') | null = null
   private path: typeof import('path') | null = null
   private os: typeof import('os') | null = null
+  private pauseCount = 0
 
   private constructor() {
     // 动态导入 Node.js 模块，避免客户端打包
@@ -59,7 +60,7 @@ export class LogFileWriter {
 
   /** 将日志追加写入文件 */
   appendToFile(entry: { id: string; timestamp: string; [key: string]: unknown }): void {
-    if (!this.isAvailable()) return
+    if (!this.isAvailable() || this.pauseCount > 0) return
 
     try {
       // 1. 写入全局日志文件
@@ -87,6 +88,16 @@ export class LogFileWriter {
       }
     } catch {
       // 写入失败不影响内存日志
+    }
+  }
+
+  pause(): () => void {
+    this.pauseCount += 1
+    let resumed = false
+    return () => {
+      if (resumed) return
+      resumed = true
+      this.pauseCount -= 1
     }
   }
 }

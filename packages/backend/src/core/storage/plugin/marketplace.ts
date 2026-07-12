@@ -54,6 +54,8 @@ interface CommandOutput {
 
 let refreshTimer: NodeJS.Timeout | null = null
 let inFlightRefresh: Promise<PluginMarketplaceCache> | null = null
+let schedulerPauses = 0
+const schedulerLogs = new Map<symbol, { info: (message: string) => void; warn: (message: string) => void } | undefined>()
 
 function getMarketplaceDataDir(): string {
   const root = process.env.MANTA_WORKSPACE_ROOT || process.cwd()
@@ -365,23 +367,52 @@ export function isClaudePluginInstallSource(source: string): boolean {
     /^[a-zA-Z0-9._-]+@claude-plugins-official$/.test(trimmed)
 }
 
-export function startClaudeMarketplaceScheduler(log?: { info: (message: string) => void; warn: (message: string) => void }): void {
-  if (refreshTimer) return
-
-  refreshClaudeMarketplace()
+function runScheduledRefresh(log = [...schedulerLogs.values()].at(-1)): void {
+  void refreshClaudeMarketplace()
     .then((cache) => log?.info(`[Plugin Marketplace] Claude 市场刷新完成: ${cache.items.length} 个插件`))
     .catch((err) => log?.warn(`[Plugin Marketplace] Claude 市场刷新失败: ${err instanceof Error ? err.message : String(err)}`))
+}
+
+function reconcileScheduler(): void {
+  if (schedulerLogs.size === 0 || schedulerPauses > 0) {
+    if (refreshTimer) clearInterval(refreshTimer)
+    refreshTimer = null
+    return
+  }
+  if (refreshTimer) return
+  runScheduledRefresh()
 
   refreshTimer = setInterval(() => {
-    refreshClaudeMarketplace()
-      .then((cache) => log?.info(`[Plugin Marketplace] Claude 市场定时刷新完成: ${cache.items.length} 个插件`))
-      .catch((err) => log?.warn(`[Plugin Marketplace] Claude 市场定时刷新失败: ${err instanceof Error ? err.message : String(err)}`))
+    runScheduledRefresh()
   }, MARKETPLACE_REFRESH_INTERVAL_MS)
   refreshTimer.unref()
 }
 
-export function stopClaudeMarketplaceScheduler(): void {
-  if (!refreshTimer) return
-  clearInterval(refreshTimer)
-  refreshTimer = null
+export function acquireClaudeMarketplaceScheduler(log?: { info: (message: string) => void; warn: (message: string) => void }): () => void {
+  const owner = Symbol('marketplace-scheduler-owner')
+  schedulerLogs.set(owner, log)
+  reconcileScheduler()
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    schedulerLogs.delete(owner)
+    reconcileScheduler()
+  }
+}
+
+export function pauseClaudeMarketplaceScheduler(): () => void {
+  schedulerPauses += 1
+  reconcileScheduler()
+  let resumed = false
+  return () => {
+    if (resumed) return
+    resumed = true
+    schedulerPauses -= 1
+    reconcileScheduler()
+  }
+}
+
+export async function checkpointClaudeMarketplaceScheduler(): Promise<void> {
+  await inFlightRefresh
 }

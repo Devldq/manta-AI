@@ -11,12 +11,20 @@ export interface ManagedResource {
   reopen(root: string): void | Promise<void>
 }
 
-export function createGroupDriver(id: StorageGroupId, resources: ManagedResource[] = []): StorageGroupDriver {
+export interface ManagedGroupLifecycle {
+  quiesce(): void | Promise<void>
+  checkpoint(): void | Promise<void>
+  close(): void | Promise<void>
+  reopen(): void | Promise<void>
+  dispose(): void | Promise<void>
+}
+
+export function createGroupDriver(id: StorageGroupId, resources: ManagedResource[] = [], lifecycle?: ManagedGroupLifecycle): StorageGroupDriver {
   return {
     id,
-    async quiesce() {},
-    async checkpoint() { await Promise.all(resources.map((resource) => resource.checkpoint())) },
-    async close() { await Promise.all(resources.map((resource) => resource.close())) },
+    async quiesce() { await lifecycle?.quiesce() },
+    async checkpoint() { await lifecycle?.checkpoint(); await Promise.all(resources.map((resource) => resource.checkpoint())) },
+    async close() { await lifecycle?.close(); await Promise.all(resources.map((resource) => resource.close())) },
     async validate(root) {
       for (const resource of resources) {
         const result = await resource.integrityCheck()
@@ -24,7 +32,7 @@ export function createGroupDriver(id: StorageGroupId, resources: ManagedResource
       }
       try { await inventoryTree(root); return { ok: true } } catch (error) { return { ok: false, error: String(error) } }
     },
-    async reopen(root) { await Promise.all(resources.map((resource) => resource.reopen(root))) },
+    async reopen(root) { await Promise.all(resources.map((resource) => resource.reopen(root))); await lifecycle?.reopen() },
     inventory: inventoryTree,
   }
 }

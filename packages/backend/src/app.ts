@@ -1,11 +1,11 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
-import type { BackendStorageRuntime } from './storage/runtime'
+import type { StorageResolver } from './storage/runtime'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export interface BuildAppOptions { storage: BackendStorageRuntime; isDev?: boolean; registerRoutes?: boolean }
+export interface BuildAppOptions { storage: StorageResolver; isDev?: boolean; registerRoutes?: boolean }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const isDev = options.isDev ?? process.env.NODE_ENV !== 'production'
@@ -14,7 +14,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.decorate('quiesceWrites', () => { acceptingWrites = false })
   app.addHook('onRequest', async (request, reply) => {
     if (!acceptingWrites && !['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
-      return reply.status(503).send({ success: false, error: { code: 'QUIESCED', message: 'Storage is quiesced' } })
+      return reply.status(503).send({ success: false, error: { code: 'STORAGE_MIGRATION_IN_PROGRESS', message: 'Storage migration is in progress' } })
     }
   })
   await app.register(cors, {
