@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('mantaOnboarding', {
+  state: () => ipcRenderer.invoke('onboarding:state'),
   selectParent: () => ipcRenderer.invoke('onboarding:select-parent'),
   suggestedLocations: () => ipcRenderer.invoke('onboarding:suggested-locations'),
   preview: (selectionId: string) => ipcRenderer.invoke('onboarding:preview', { selectionId }),

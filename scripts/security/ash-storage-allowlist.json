@@ -249,7 +249,7 @@
     { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 37, "column": 54, "operation": "rm", "reason": "Reviewed operation-catalog lock cleanup below Electron userData in the lock holder finally path." },
     { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 54, "column": 64, "operation": "rm", "reason": "Reviewed deletion of the single application-owned relaunch intent record after verified restart recovery." },
     { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 56, "column": 88, "operation": "rename", "reason": "Reviewed quarantine of only the application-owned relaunch intent record when it cannot be parsed." },
-    { "file": "packages/desktop/src/desktop-runtime.ts", "line": 83, "column": 598, "operation": "rm", "reason": "Reviewed explicit user-requested backup deletion constrained by a Bootstrap-derived validated backup ID." },
+    { "file": "packages/desktop/src/desktop-runtime.ts", "line": 84, "column": 598, "operation": "rm", "reason": "Reviewed explicit user-requested backup deletion constrained by a Bootstrap-derived validated backup ID." },
     { "file": "packages/desktop/scripts/build-win.cjs", "line": 8, "column": 16, "operation": "spawnSync", "reason": "Reviewed official electron-builder directory packaging process boundary, limited to its production artifact output." },
     {
       "file": "packages/desktop/scripts/copy-assets.cjs", "line": 5, "column": 1, "operation": "mkdirSync",
@@ -260,8 +260,8 @@
       "reason": "Reviewed repository build helper copying one read-only onboarding HTML asset into the Desktop distribution during an explicit build."
     },
     {
-      "file": "packages/desktop/scripts/clean.cjs", "line": 4, "column": 1, "operation": "rmSync",
-      "reason": "Reviewed repository build helper removing only the Desktop distribution artifact directory before an explicit clean build."
+      "file": "packages/desktop/scripts/clean.cjs", "line": 9, "column": 7, "operation": "rmSync",
+      "reason": "Reviewed repository build helper removing Desktop dist, package staging, and release artifacts only during an explicit build clean."
     },
     {
       "file": "packages/rag/src/embedding-cache.ts",
