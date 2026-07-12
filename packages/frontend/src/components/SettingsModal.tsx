@@ -14,6 +14,7 @@ import {
   saveThemeToStorage,
 } from '@/lib/theme-presets'
 import { setColorModeClass } from '@/components/ThemeInitializer'
+import { StorageSettingsPanel } from '@/features/storage/StorageSettingsPanel'
 
 /* AI start: 类型定义 */
 interface RunnerStatus {
@@ -41,7 +42,7 @@ interface PluginManifest {
 }
 /* AI end: 类型定义 */
 
-type TabType = 'theme' | 'settings' | 'llm'
+type TabType = 'theme' | 'settings' | 'llm' | 'storage'
 type FilterMode = 'all' | 'light' | 'dark'
 
 interface SettingsModalProps {
@@ -125,6 +126,7 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
               { key: 'theme', label: '◐ 主题' },
               { key: 'settings', label: '◌ 设置' },
               { key: 'llm', label: '⬡ AI 模型' },
+              { key: 'storage', label: 'Storage' },
             ] as { key: TabType; label: string }[]).map(({ key, label }) => (
               <button
                 key={key}
@@ -227,6 +229,7 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
           )}
           {activeTab === 'settings' && <SettingsTab />}
           {activeTab === 'llm' && <LLMTab />}
+          {activeTab === 'storage' && <StorageSettingsPanel />}
         </div>
       </div>
     </div>,

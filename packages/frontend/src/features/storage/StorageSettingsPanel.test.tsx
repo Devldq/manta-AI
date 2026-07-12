@@ -1,0 +1,20 @@
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it } from 'vitest'
+import { StorageOverview } from './StorageOverview'
+import { StorageGroupRow } from './StorageGroupRow'
+
+describe('storage settings presentation', () => {
+  it('renders all seven ASH storage groups with their user-facing descriptions and health', () => {
+    const html = renderToStaticMarkup(<StorageOverview overview={{ volumes: [], groups: [] }} />)
+    for (const group of ['Extensions', 'Knowledge', 'Work data', 'Configuration', 'Secrets', 'Diagnostics', 'Cache']) expect(html).toContain(group)
+    expect(html).toContain('Not assigned')
+  })
+
+  it('renders group inventory and a move control instead of exposing filesystem controls', () => {
+    const html = renderToStaticMarkup(<StorageGroupRow group={{ id: 'knowledge', volumeId: 'volume-1', path: '/private/.manta-ai/knowledge', bytes: 1024, files: 2, health: 'healthy' }} volumes={[{ id: 'volume-1', name: 'Private', parentPath: '/private', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }]} onMove={() => {}} disabled={false} />)
+    expect(html).toContain('Knowledge')
+    expect(html).toContain('1 KB')
+    expect(html).toContain('Move group')
+    expect(html).not.toContain('input type="file"')
+  })
+})

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import React from 'react'
 import { Link } from 'react-router-dom'
 import { SkeletonList } from '@/components/skeleton'
+import { StorageSettingsPanel } from '@/features/storage/StorageSettingsPanel'
 
 interface RunnerStatus {
   id: string
@@ -40,6 +41,7 @@ const TOC = [
   { id: 'section-plugins', label: '插件管理' },
   { id: 'section-sysinfo', label: '系统信息' },
   { id: 'section-data-manage', label: '数据管理' },
+  { id: 'section-storage', label: 'Storage' },
 ]
 
 export default function SettingsPage() {
@@ -856,6 +858,10 @@ export default function SettingsPage() {
               ⚠ 重置将删除所有会话、配置、记忆等数据，操作不可撤销。重置后需重启应用。
             </p>
           </div>
+        </section>
+
+        <section id="section-storage" className="mb-10 scroll-mt-8">
+          <StorageSettingsPanel />
         </section>
       </div>
     </div>
