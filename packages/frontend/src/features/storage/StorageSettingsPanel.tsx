@@ -1,26 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { StorageVolumeRecord } from '@manta/shared'
+import type { StorageGroupId } from '@manta/shared'
 import { invokeStorage } from './desktop-storage-bridge'
 import { StorageOperationDialog } from './StorageOperationDialog'
 import { StorageOverview } from './StorageOverview'
 import { StorageVolumeCard } from './StorageVolumeCard'
-import { storageApi, type StorageBackup, type StorageOverview as Overview } from './storage-api'
+import { storageApi, type StorageBackup, type StorageOverview as Overview, type StorageVolumeDetails } from './storage-api'
 import { useStorageOperation } from './useStorageOperation'
 
-type VolumeDetails = StorageVolumeRecord & { groups?: string[]; inventory?: { bytes: number; files: number } }
 const EMPTY: Overview = { volumes: [], groups: [] }
-
-function toOverview(volumes: VolumeDetails[], summary: any): Overview {
-  return {
-    volumes,
-    logicalBytes: summary?.totalBytes,
-    groups: volumes.flatMap((volume) => (volume.groups ?? []).map((id) => ({ id, volumeId: volume.id, path: `${volume.parentPath}/.manta-ai/${id}`, bytes: 0, files: 0, health: 'healthy' }))),
-  }
-}
 
 export function StorageSettingsPanel() {
   const [overview, setOverview] = useState<Overview>(EMPTY)
-  const [volumes, setVolumes] = useState<VolumeDetails[]>([])
+  const [volumes, setVolumes] = useState<StorageVolumeDetails[]>([])
   const [backups, setBackups] = useState<StorageBackup[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error>()
@@ -30,15 +21,17 @@ export function StorageSettingsPanel() {
     setLoading(true); setError(undefined)
     try {
       const [summary, nextVolumes, nextBackups] = await Promise.all([storageApi.overview(), storageApi.volumes(), storageApi.backups()])
-      setVolumes(nextVolumes as VolumeDetails[]); setOverview(toOverview(nextVolumes as VolumeDetails[], summary)); setBackups(nextBackups)
+      setVolumes(nextVolumes); setOverview(summary); setBackups(nextBackups); operation.resume(summary.operation)
     } catch (reason) { setError(reason as Error) } finally { setLoading(false) }
+  // `resume` only captures stable React setters/ref; this keeps refresh stable.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => { void refresh() }, [refresh])
   const busy = operation.busy
   const run = useCallback(async (request: Parameters<typeof invokeStorage>[0]) => { const id = await invokeStorage(request); if (id) operation.begin(id); await refresh() }, [operation, refresh])
   const createVolume = () => setDialog({ title: 'Create storage volume', body: 'Choose a parent folder. ASH will create a .manta-ai directory inside it.', action: async () => { const selectionId = await invokeStorage({ channel: 'storage:select-parent', purpose: 'createVolume' }); if (selectionId) await run({ channel: 'storage:create-volume', selectionId, name: `Volume ${volumes.length + 1}` }) } })
-  const migrateVolume = (volume: VolumeDetails) => setDialog({ title: `Migrate ${volume.name}`, body: 'A verified backup remains at the current location. The app relaunches only after the new volume is committed and healthy.', action: async () => { const selectionId = await invokeStorage({ channel: 'storage:select-parent', purpose: 'migrateVolume' }); if (selectionId) await run({ channel: 'storage:relocate-volume', volumeId: volume.id, selectionId }) } })
-  const moveGroup = (groupId: string, targetVolumeId: string) => setDialog({ title: 'Move storage group', body: 'The group is copied, validated, and then committed atomically. Its source remains an automatic backup.', action: () => run({ channel: 'storage:move-group', groupId: groupId as any, targetVolumeId }) })
+  const migrateVolume = (volume: StorageVolumeDetails) => setDialog({ title: `Migrate ${volume.name}`, body: 'A verified backup remains at the current location. The app relaunches only after the new volume is committed and healthy.', action: async () => { const selectionId = await invokeStorage({ channel: 'storage:select-parent', purpose: 'migrateVolume' }); if (selectionId) await run({ channel: 'storage:relocate-volume', volumeId: volume.id, selectionId }) } })
+  const moveGroup = (groupId: StorageGroupId, targetVolumeId: string) => setDialog({ title: 'Move storage group', body: 'The group is copied, validated, and then committed atomically. Its source remains an automatic backup.', action: () => run({ channel: 'storage:move-group', groupId, targetVolumeId }) })
   const content = useMemo(() => {
     if (loading) return <p role="status">Loading storage status…</p>
     if (error) return <div role="alert">{error.message} <button onClick={() => void refresh()}>Retry</button></div>

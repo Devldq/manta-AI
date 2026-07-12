@@ -1,7 +1,8 @@
 import type { StorageOverview as Overview } from './storage-api'
+import type { StorageGroupId } from '@manta/shared'
 import { STORAGE_GROUPS, StorageGroupRow } from './StorageGroupRow'
 
-export function StorageOverview({ overview, onMove = () => {}, disabled = false }: { overview: Overview; onMove?: (groupId: string, volumeId: string) => void; disabled?: boolean }) {
+export function StorageOverview({ overview, onMove = () => {}, disabled = false }: { overview: Overview; onMove?: (groupId: StorageGroupId, volumeId: string) => void; disabled?: boolean }) {
   const groups = STORAGE_GROUPS.map(([id]) => overview.groups.find((group) => group.id === id) ?? { id, volumeId: '', path: '', bytes: 0, files: 0, health: 'Not assigned', description: undefined })
   return <section aria-label="Storage overview">
     <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', color: 'var(--color-text-secondary)', fontSize: 13 }}>

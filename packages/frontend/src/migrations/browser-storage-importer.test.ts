@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createBrowserStorageImporter,
+  openLegacyLocalStorageImportDatabase,
   type BrowserStorageDatabase,
 } from './browser-storage-importer'
 
@@ -50,5 +51,14 @@ describe('browser storage importer', () => {
 
     expect(writes).toBe(1)
     expect(db.snapshot()).toEqual({})
+  })
+
+  it('limits the legacy local-storage adapter to known keys and removes only requested keys', async () => {
+    const values = new Map<string, string>([['manta:theme', '{"themeId":"x"}'], ['unrelated', 'keep']])
+    const storage = { get length() { return values.size }, key: (index: number) => [...values.keys()][index] ?? null, getItem: (key: string) => values.get(key) ?? null, removeItem: (key: string) => values.delete(key), clear: () => values.clear(), setItem: (key: string, value: string) => values.set(key, value) } as Storage
+    const legacy = openLegacyLocalStorageImportDatabase(storage)
+    expect(await legacy.list()).toEqual([{ key: 'manta:theme', value: '{"themeId":"x"}' }])
+    await legacy.remove(['manta:theme'])
+    expect([...values.keys()]).toEqual(['unrelated'])
   })
 })

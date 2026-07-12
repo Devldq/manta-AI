@@ -1,4 +1,4 @@
-import type { StorageVolumeRecord } from '@manta/shared'
+import type { StorageGroupId, StorageVolumeRecord } from '@manta/shared'
 import type { StorageOverview } from './storage-api'
 
 export const STORAGE_GROUPS = [
@@ -14,7 +14,7 @@ export const STORAGE_GROUPS = [
 type Group = StorageOverview['groups'][number]
 function formatBytes(bytes: number) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`; return `${(bytes / 1024 ** 2).toFixed(1)} MB` }
 
-export function StorageGroupRow({ group, volumes, onMove, disabled }: { group: Group; volumes: StorageVolumeRecord[]; onMove: (groupId: string, volumeId: string) => void; disabled: boolean }) {
+export function StorageGroupRow({ group, volumes, onMove, disabled }: { group: Group; volumes: StorageVolumeRecord[]; onMove: (groupId: StorageGroupId, volumeId: string) => void; disabled: boolean }) {
   const label = STORAGE_GROUPS.find(([id]) => id === group.id)?.[1] ?? group.id
   const description = group.description ?? STORAGE_GROUPS.find(([id]) => id === group.id)?.[2]
   return <article aria-label={`${label} storage group`} style={{ borderTop: '1px solid var(--color-border-subtle)', padding: '12px 0' }}>

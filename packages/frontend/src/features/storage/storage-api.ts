@@ -1,11 +1,14 @@
-import type { StorageOperationProgress, StorageVolumeRecord } from '@manta/shared'
+import type { StorageGroupId, StorageOperationProgress, StorageVolumeRecord } from '@manta/shared'
+
+export interface StorageVolumeDetails extends StorageVolumeRecord { groups: StorageGroupId[]; inventory: { bytes: number; files: number } }
 
 export interface StorageOverview {
   volumes: StorageVolumeRecord[]
-  groups: Array<{ id: string; volumeId: string; path: string; bytes: number; files: number; health: string; description?: string }>
+  groups: Array<{ id: StorageGroupId; volumeId: string; path: string; bytes: number; files: number; health: string; description?: string }>
   logicalBytes?: number
   actualBytes?: number
   savingsBytes?: number
+  operation?: StorageOperation
 }
 
 export interface StorageBackup { id: string; volumeId: string; path: string; bytes?: number; createdAt?: string }
@@ -23,8 +26,8 @@ function errorFrom(body: any, status: number): StorageApiError {
 
 export function createStorageApi(fetchImpl: Fetch = fetch): {
   overview(): Promise<StorageOverview>
-  volumes(): Promise<StorageVolumeRecord[]>
-  volume(id: string): Promise<StorageVolumeRecord>
+  volumes(): Promise<StorageVolumeDetails[]>
+  volume(id: string): Promise<StorageVolumeDetails>
   operation(id: string): Promise<StorageOperation>
   backups(): Promise<StorageBackup[]>
 } {
@@ -36,8 +39,8 @@ export function createStorageApi(fetchImpl: Fetch = fetch): {
   }
   return {
     overview: () => read<StorageOverview>('/api/storage/overview'),
-    volumes: async () => (await read<{ volumes: StorageVolumeRecord[] }>('/api/storage/volumes')).volumes,
-    volume: async (id) => (await read<{ volume: StorageVolumeRecord }>(`/api/storage/volumes/${encodeURIComponent(id)}`)).volume,
+    volumes: async () => (await read<{ volumes: StorageVolumeDetails[] }>('/api/storage/volumes')).volumes,
+    volume: async (id) => (await read<{ volume: StorageVolumeDetails }>(`/api/storage/volumes/${encodeURIComponent(id)}`)).volume,
     operation: async (id) => (await read<{ operation: StorageOperation }>(`/api/storage/operations/${encodeURIComponent(id)}`)).operation,
     backups: async () => (await read<{ backups: StorageBackup[] }>('/api/storage/backups')).backups,
   }

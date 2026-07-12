@@ -10,7 +10,7 @@ import { SidebarNavItems } from '@/components/sidebar/SidebarNavItems'
 import { ConversationList } from '@/components/sidebar/ConversationList'
 import { WorkspaceList } from '@/components/sidebar/WorkspaceList'
 import { SidebarBottomBar } from '@/components/sidebar/SidebarBottomBar'
-import { useSidebarStore } from '@/stores/sidebar-store'
+import { hydrateSidebarStore, useSidebarStore } from '@/stores/sidebar-store'
 import { useConversationStore } from '@/stores/conversation-store'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 
@@ -23,6 +23,7 @@ export function SidebarNav() {
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
+    void hydrateSidebarStore()
     const stored = loadThemeFromStorage()?.mode
     setColorMode(stored ?? getSystemColorMode())
   }, [])

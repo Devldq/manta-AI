@@ -1,4 +1,4 @@
-import type { StorageIpcRequest, StorageIpcResponse, StorageOperationProgress } from '@manta/shared'
+import type { StorageGroupId, StorageIpcRequest, StorageIpcResponse, StorageOperationProgress } from '@manta/shared'
 import { StorageIpcRequestSchema, StorageIpcResponseSchema } from '@manta/storage-hub'
 
 interface IpcMainLike { handle(channel: string, listener: (event: any, request: unknown) => unknown): void; removeHandler(channel: string): void }
@@ -7,7 +7,7 @@ export interface StorageIpcServices {
   selectParent(purpose: 'createVolume' | 'migrateVolume', event: any): Promise<string | undefined>
   createVolume(name: string, selectionId: string, event: any): Promise<string>
   relocateVolume(volumeId: string, selectionId: string, event: any): Promise<string>
-  moveGroup(groupId: StorageIpcRequest & any, targetVolumeId: string): Promise<string>
+  moveGroup(groupId: StorageGroupId, targetVolumeId: string): Promise<string>
   openVolume(volumeId: string): Promise<void>
   deleteBackup(backupId: string): Promise<void>
   configureGit?(volumeId: string, remoteUrl: string, authRef?: string): Promise<string>

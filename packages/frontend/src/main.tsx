@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import './index.css'
+import { migrateBrowserStorageToAsh } from './migrations/start-browser-storage-migration'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -13,6 +14,10 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+// This importer owns the only legacy-browser persistence access. Normal app
+// paths use the ASH-backed client-state API exclusively.
+void migrateBrowserStorageToAsh()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

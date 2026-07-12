@@ -16,5 +16,15 @@ export function useStorageOperation() {
     const interval = window.setInterval(() => { const id = operationId.current; if (id) storageApi.operation(id).then(setOperation).catch(setError) }, 1_000)
     return () => window.clearInterval(interval)
   }, [operation?.phase])
-  return { operation, error, busy: !!operation && !['completed', 'failed'].includes(operation.phase), begin(id: string) { operationId.current = id; setOperation({ id, phase: 'planned' }); setError(undefined) } }
+  return {
+    operation, error,
+    busy: !!operation && !['completed', 'failed'].includes(operation.phase),
+    begin(id: string) { operationId.current = id; setOperation({ id, phase: 'planned' }); setError(undefined) },
+    resume(next: StorageOperation | undefined) {
+      if (!next?.id) return
+      operationId.current = next.id
+      setOperation(next)
+      setError(undefined)
+    },
+  }
 }

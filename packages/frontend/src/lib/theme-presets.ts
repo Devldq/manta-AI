@@ -1,6 +1,7 @@
 /* AI start: Manta 主题预设库 — 从 design/theme-presets.json 读取并归一化 */
 
 import rawThemes from '@design/theme-presets.json'
+import { clientState } from './client-state'
 
 export interface SidebarConfig {
   background: string
@@ -283,10 +284,20 @@ export function applyTheme(config: ThemeConfig): void {
 }
 
 /** 保存主题配置到 localStorage */
-let themeCache: { themeId: string; mode: 'light' | 'dark'; config: ThemeConfig } | null = null
-export function saveThemeToStorage(themeId: string, config: ThemeConfig, mode: 'light' | 'dark'): void { themeCache = { themeId, mode, config } }
+export interface StoredTheme { themeId: string; mode: 'light' | 'dark'; config: ThemeConfig }
+let themeCache: StoredTheme | null = null
+export function saveThemeToStorage(themeId: string, config: ThemeConfig, mode: 'light' | 'dark'): void {
+  themeCache = { themeId, mode, config }
+  void clientState.set('theme', themeCache)
+}
 
 /** 从 localStorage 恢复主题配置 */
-export function loadThemeFromStorage(): { themeId: string; mode: 'light' | 'dark'; config: ThemeConfig } | null { return themeCache }
+export async function loadThemeFromAsh(): Promise<StoredTheme | null> {
+  const candidate = await clientState.load<StoredTheme>('theme')
+  if (!candidate || typeof candidate.themeId !== 'string' || (candidate.mode !== 'light' && candidate.mode !== 'dark') || !candidate.config) return themeCache
+  themeCache = candidate
+  return themeCache
+}
+export function loadThemeFromStorage(): StoredTheme | null { return themeCache }
 
 /* AI end: Manta 主题预设库 */

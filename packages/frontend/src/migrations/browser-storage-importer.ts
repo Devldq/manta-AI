@@ -88,3 +88,25 @@ export async function openBrowserStorageImportDatabaseWithFallback(name?: string
     return { database: { list: async () => [...values.entries()].map(([key, value]) => ({ key, value })), remove: async (keys) => { for (const key of keys) values.delete(key) } }, persistent: false }
   }
 }
+
+/**
+ * Legacy browser storage is read exactly once by the migration boundary. It is
+ * never consulted by normal renderer code and records are removed only after
+ * `createBrowserStorageImporter` confirms the ASH write.
+ */
+export function openLegacyLocalStorageImportDatabase(storage: Storage | undefined = typeof window === 'undefined' ? undefined : window.localStorage): BrowserStorageDatabase {
+  return {
+    async list() {
+      if (!storage) return []
+      const records: Array<{ key: string; value: unknown }> = []
+      for (let index = 0; index < storage.length; index++) {
+        const key = storage.key(index)
+        if (!key || !['manta:theme', 'manta:sidebar', 'manta:webhook'].includes(key)) continue
+        const raw = storage.getItem(key)
+        if (raw !== null) records.push({ key, value: raw })
+      }
+      return records
+    },
+    async remove(keys) { for (const key of keys) storage?.removeItem(key) },
+  }
+}

@@ -7,6 +7,7 @@ import {
   ThemeConfig,
   applyTheme,
   loadThemeFromStorage,
+  loadThemeFromAsh,
   getThemeById,
   getThemeConfig,
   saveThemeToStorage,
@@ -24,7 +25,7 @@ export default function ThemesPage() {
   const [customTheme, setCustomTheme] = useState<ThemeConfig | null>(null)
 
   useEffect(() => {
-    const saved = loadThemeFromStorage()
+    void loadThemeFromAsh().then((saved) => {
     if (saved) {
       setActiveThemeId(saved.themeId)
       setColorMode(saved.mode)
@@ -33,6 +34,7 @@ export default function ThemesPage() {
       setColorMode('dark')
       setActiveThemeId('cli-pixel')
     }
+    })
   }, [])
 
   // AI: 应用主题

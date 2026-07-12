@@ -1,9 +1,11 @@
 import type { AshBootstrap } from '@manta/shared'
+import { STORAGE_GROUP_IDS, type StorageGroupId } from '@manta/shared'
 import type { FastifyInstance } from 'fastify'
 
 export interface StorageApiContext {
   readBootstrap(): Promise<AshBootstrap | undefined>
   inventory(scope?: { volumeId?: string; groupId?: any }): Promise<{ files: number; bytes: number; entries: unknown[] }>
+  health?(): Promise<{ ok: boolean; status: string }>
   getOperation?(id: string): Promise<unknown | undefined>
   listBackups(): Promise<Array<{ id: string; operationId?: string; kind?: string; groupId?: string; volumeId?: string; createdAt: string; bytes: number }>>
 }
@@ -11,8 +13,20 @@ export interface StorageApiContext {
 export async function storageRoutes(app: FastifyInstance, options: StorageApiContext): Promise<void> {
   app.get('/api/storage/overview', async (_request, reply) => {
     const bootstrap = await options.readBootstrap(); if (!bootstrap) return reply.status(503).send({ success: false, error: { code: 'STORAGE_NOT_INITIALIZED', message: 'Storage is not initialized' } })
-    const inventories = await Promise.all(bootstrap.volumes.map((volume) => options.inventory({ volumeId: volume.id })))
-    return { success: true, data: { generation: bootstrap.generation, volumeCount: bootstrap.volumes.length, groupCount: Object.keys(bootstrap.groupAssignments).length, totalBytes: inventories.reduce((sum, item) => sum + item.bytes, 0), totalFiles: inventories.reduce((sum, item) => sum + item.files, 0), operation: bootstrap.pendingMigration } }
+    const health = await options.health?.() ?? { ok: true, status: 'healthy' }
+    const groups = await Promise.all(STORAGE_GROUP_IDS.map(async (id) => {
+      const volumeId = bootstrap.groupAssignments[id]
+      const volume = bootstrap.volumes.find((candidate) => candidate.id === volumeId)
+      try {
+        const inventory = await options.inventory({ groupId: id })
+        return { id, volumeId, path: volume ? `${volume.parentPath}/.manta-ai/${id}` : '', bytes: inventory.bytes, files: inventory.files, health: health.ok ? health.status : 'unhealthy' }
+      } catch { return { id, volumeId, path: volume ? `${volume.parentPath}/.manta-ai/${id}` : '', bytes: 0, files: 0, health: 'unhealthy' } }
+    }))
+    const logicalBytes = groups.reduce((sum, item) => sum + item.bytes, 0)
+    const volumeInventories = await Promise.all(bootstrap.volumes.map((volume) => options.inventory({ volumeId: volume.id })))
+    const totalBytes = volumeInventories.reduce((sum, item) => sum + item.bytes, 0)
+    const totalFiles = volumeInventories.reduce((sum, item) => sum + item.files, 0)
+    return { success: true, data: { generation: bootstrap.generation, volumes: bootstrap.volumes, groups, logicalBytes, totalBytes, totalFiles, operation: bootstrap.pendingMigration } }
   })
   app.get('/api/storage/volumes', async (_request, reply) => {
     const bootstrap = await options.readBootstrap(); if (!bootstrap) return reply.status(503).send({ success: false, error: { code: 'STORAGE_NOT_INITIALIZED', message: 'Storage is not initialized' } })
