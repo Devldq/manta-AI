@@ -338,4 +338,54 @@ describe('backend lifecycle', () => {
       releaseThird(); first.dispose(); second.dispose(); third.dispose()
     } finally { vi.useRealTimers() }
   })
+
+  it('waits for a gated marketplace refresh before startup failure cleanup completes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-gated-startup-'))
+    let releaseRefresh!: () => void
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => { markStarted = resolve })
+    const gate = new Promise<void>((resolve) => { releaseRefresh = resolve })
+    const { createBackendStorageRuntime } = await import('./runtime')
+    const { startServer } = await import('../server')
+    const runtime = createBackendStorageRuntime(fakeStorage(root), { marketplaceRefresh: async () => {
+      markStarted(); await gate
+      logFileWriter.appendToFile({ id: 'refresh-finished', timestamp: new Date().toISOString() })
+      return { sourceUrl: 'test', refreshedAt: new Date().toISOString(), items: [] } as any
+    } })
+    let settled = false
+    const startup = startServer({
+      storage: runtime, port: 0, registerRoutes: false,
+      startup: { cleanupStaleRag() { throw new Error('startup rejected') }, initializeSkills() {} },
+    }).finally(() => { settled = true })
+    await started; await Promise.resolve()
+    expect(settled).toBe(false)
+    releaseRefresh()
+    await expect(startup).rejects.toThrow(/startup rejected/)
+    expect(settled).toBe(true)
+    const file = join(root, 'diagnostics', 'system.log')
+    const content = readFileSync(file, 'utf8')
+    await Promise.resolve()
+    expect(readFileSync(file, 'utf8')).toBe(content)
+    expect(() => runtime.marketplaceScheduler.acquire()).toThrow(/disposed/i)
+    await expect(runtime.marketplaceScheduler.reopen(join(root, 'other'))).rejects.toThrow(/disposed/i)
+    await runtime.marketplaceScheduler.dispose(); await runtime.marketplaceScheduler.dispose()
+  })
+
+  it('keeps marketplace success and failure logging inside the exact owner context', async () => {
+    const roots = ['success', 'failure'].map((name) => mkdtempSync(join(tmpdir(), `manta-owner-log-${name}-`)))
+    const writers = roots.map((root) => new RuntimeDiagnosticsWriter(root))
+    const logFor = (index: number) => ({
+      info: (message: string) => logFileWriter.appendToFile({ id: `info-${index}`, timestamp: new Date().toISOString(), message }),
+      warn: (message: string) => logFileWriter.appendToFile({ id: `warn-${index}`, timestamp: new Date().toISOString(), message }),
+    })
+    const success = createClaudeMarketplaceRuntimeOwner('success-cache', async () => ({ sourceUrl: 'test', refreshedAt: new Date().toISOString(), items: [] }) as any, (op) => runWithDiagnosticsOwner(writers[0], op))
+    const failure = createClaudeMarketplaceRuntimeOwner('failure-cache', async () => { throw new Error('expected refresh failure') }, (op) => runWithDiagnosticsOwner(writers[1], op))
+    const releaseSuccess = success.acquire(logFor(0)); const resumeFailure = failure.pause(); const releaseFailure = failure.acquire(logFor(1))
+    await success.checkpoint(); resumeFailure(); await failure.checkpoint()
+    const successLog = readFileSync(join(roots[0], 'system.log'), 'utf8')
+    const failureLog = readFileSync(join(roots[1], 'system.log'), 'utf8')
+    expect(successLog).toContain('info-0'); expect(successLog).not.toContain('warn-1')
+    expect(failureLog).toContain('warn-1'); expect(failureLog).toContain('expected refresh failure'); expect(failureLog).not.toContain('info-0')
+    releaseSuccess(); releaseFailure(); await success.dispose(); await failure.dispose()
+  })
 })

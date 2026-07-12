@@ -57,10 +57,7 @@ let refreshTimer: NodeJS.Timeout | null = null
 const inFlightRefresh = new Map<string, Promise<PluginMarketplaceCache>>()
 interface MarketplaceSchedulerState {
   paused: boolean
-  dataDir: string
-  refresh: (dataDir: string) => Promise<PluginMarketplaceCache>
-  runInContext: <T>(operation: () => T) => T
-  log?: { info: (message: string) => void; warn: (message: string) => void }
+  execute(): Promise<void>
 }
 const schedulerOwners = new Map<symbol, MarketplaceSchedulerState>()
 
@@ -379,9 +376,7 @@ export function isClaudePluginInstallSource(source: string): boolean {
 function runScheduledRefresh(): void {
   for (const owner of schedulerOwners.values()) {
     if (owner.paused) continue
-    void owner.runInContext(() => owner.refresh(owner.dataDir))
-      .then((cache) => owner.log?.info(`[Plugin Marketplace] Claude 市场刷新完成: ${cache.items.length} 个插件`))
-      .catch((err) => owner.log?.warn(`[Plugin Marketplace] Claude 市场刷新失败: ${err instanceof Error ? err.message : String(err)}`))
+    void owner.execute()
   }
 }
 
@@ -400,10 +395,10 @@ function reconcileScheduler(): void {
   refreshTimer.unref()
 }
 
-export function acquireClaudeMarketplaceScheduler(log?: { info: (message: string) => void; warn: (message: string) => void }): () => void {
+export function acquireClaudeMarketplaceScheduler(log?: { info: (message: string) => void; warn: (message: string) => void }): () => Promise<void> {
   const owner = createClaudeMarketplaceRuntimeOwner()
   const release = owner.acquire(log)
-  return () => { release(); owner.dispose() }
+  return async () => { release(); await owner.dispose() }
 }
 
 export interface ClaudeMarketplaceRuntimeOwner {
@@ -411,7 +406,7 @@ export interface ClaudeMarketplaceRuntimeOwner {
   pause(): () => void
   checkpoint(): Promise<void>
   reopen(dataDir: string): Promise<void>
-  dispose(): void
+  dispose(): Promise<void>
 }
 
 export function createClaudeMarketplaceRuntimeOwner(
@@ -423,43 +418,71 @@ export function createClaudeMarketplaceRuntimeOwner(
   let dataDir = initialDataDir
   let paused = false
   let acquired = false
-  let ownerInFlight: Promise<PluginMarketplaceCache> | undefined
-  const ownedRefresh = (target: string) => {
-    const running = refresh(target)
-    ownerInFlight = running
-    void running.finally(() => { if (ownerInFlight === running) ownerInFlight = undefined }).catch(() => {})
-    return running
+  let closing = false
+  let disposed = false
+  let disposePromise: Promise<void> | undefined
+  const inFlight = new Set<Promise<void>>()
+  let ownerLog: { info: (message: string) => void; warn: (message: string) => void } | undefined
+  const execute = (): Promise<void> => {
+    if (closing || disposed || paused) return Promise.resolve()
+    let task!: Promise<void>
+    task = Promise.resolve()
+      .then(() => runInContext(async () => {
+        try {
+          const cache = await refresh(dataDir)
+          ownerLog?.info(`[Plugin Marketplace] Claude 市场刷新完成: ${cache.items.length} 个插件`)
+        } catch (error) {
+          ownerLog?.warn(`[Plugin Marketplace] Claude 市场刷新失败: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }))
+      .catch(() => undefined)
+      .finally(() => { inFlight.delete(task) })
+    inFlight.add(task)
+    return task
   }
   return {
     acquire(log) {
+      if (closing || disposed) throw new Error('Marketplace scheduler owner is disposed')
       if (acquired) throw new Error('Marketplace scheduler owner is already acquired')
       acquired = true
-      schedulerOwners.set(id, { paused, dataDir, refresh: ownedRefresh, runInContext, log }); reconcileScheduler()
+      ownerLog = log
+      schedulerOwners.set(id, { paused, execute }); reconcileScheduler()
       let released = false
       return () => { if (!released) { released = true; acquired = false; schedulerOwners.delete(id); reconcileScheduler() } }
     },
     pause() {
+      if (closing || disposed) throw new Error('Marketplace scheduler owner is disposed')
       paused = true
       const state = schedulerOwners.get(id); if (state) state.paused = true
       reconcileScheduler()
       let resumed = false
       return () => {
         if (resumed) return
+        if (closing || disposed) { resumed = true; return }
         resumed = true; paused = false
         const current = schedulerOwners.get(id)
-        if (current) current.runInContext(() => { void current.refresh(current.dataDir).catch((error) => current.log?.warn(String(error))) })
+        if (current) { current.paused = false; void current.execute() }
         reconcileScheduler()
       }
     },
-    async checkpoint() { await ownerInFlight; await inFlightRefresh.get(dataDir) },
+    async checkpoint() { await Promise.allSettled([...inFlight]); await inFlightRefresh.get(dataDir) },
     async reopen(nextDataDir) {
-      await ownerInFlight
+      if (closing || disposed) throw new Error('Marketplace scheduler owner is disposed')
+      await Promise.allSettled([...inFlight])
       await inFlightRefresh.get(dataDir)
       dataDir = nextDataDir
-      const current = schedulerOwners.get(id)
-      if (current) current.dataDir = nextDataDir
     },
-    dispose() { schedulerOwners.delete(id); acquired = false; reconcileScheduler() },
+    dispose() {
+      disposePromise ??= (async () => {
+        closing = true
+        schedulerOwners.delete(id); acquired = false; reconcileScheduler()
+        await Promise.allSettled([...inFlight])
+        const globalRefresh = inFlightRefresh.get(dataDir)
+        if (globalRefresh) await globalRefresh.catch(() => undefined)
+        disposed = true
+      })()
+      return disposePromise
+    },
   }
 }
 

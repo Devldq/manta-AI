@@ -40,7 +40,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
     checkpoint: () => marketplaceScheduler.checkpoint(),
     close() {},
     async reopen(root) { await marketplaceScheduler.reopen(join(root, 'plugin-marketplace')); resumeMarketplace?.(); resumeMarketplace = undefined },
-    dispose() { resumeMarketplace?.(); resumeMarketplace = undefined; marketplaceScheduler.dispose() },
+    async dispose() { resumeMarketplace?.(); resumeMarketplace = undefined; await marketplaceScheduler.dispose() },
   }
   const diagnosticsLifecycle = options.groupLifecycles?.diagnostics ?? {
     quiesce: () => diagnosticsWriter.quiesce(), checkpoint: () => diagnosticsWriter.checkpoint(), close: () => diagnosticsWriter.close(),

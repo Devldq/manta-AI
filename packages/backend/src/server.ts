@@ -22,7 +22,7 @@ export interface StartServerOptions {
   registerRoutes?: boolean
   startup?: false | ServerStartupHooks
   appFactory?: (options: BuildAppOptions) => Promise<FastifyInstance>
-  schedulerAcquirers?: Array<(log: FastifyInstance['log']) => () => void>
+  schedulerAcquirers?: Array<(log: FastifyInstance['log']) => () => void | Promise<void>>
 }
 
 export interface MantaServerHandle {
@@ -34,7 +34,7 @@ export interface MantaServerHandle {
 
 export async function startServer(options: StartServerOptions): Promise<MantaServerHandle> {
   let app: FastifyInstance | undefined
-  const schedulerDisposers: Array<() => void> = []
+  const schedulerDisposers: Array<() => void | Promise<void>> = []
   const startup = options.startup === false ? undefined : options.startup ?? defaultStartupHooks()
   const runInStorageContext = <T>(operation: () => T): T => options.storage.runInStorageContext
     ? options.storage.runInStorageContext(operation)
@@ -55,7 +55,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
     }
   } catch (error) {
     const cleanupErrors: unknown[] = []
-    for (const dispose of schedulerDisposers.splice(0)) { try { dispose() } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
+    for (const dispose of schedulerDisposers.splice(0)) { try { await dispose() } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
     if (app) { try { await runInStorageContext(() => app!.close()) } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
     try { await runInStorageContext(() => options.storage.close()) } catch (cleanupError) { cleanupErrors.push(cleanupError) }
     if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], 'Server startup failed and cleanup was incomplete')
