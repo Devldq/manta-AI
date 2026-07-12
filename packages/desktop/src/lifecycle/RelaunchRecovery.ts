@@ -23,14 +23,51 @@ export async function trustedBackupRefs(operation:StorageOperationRecord,active:
     if(active.generation===context.previous.generation&&stored.kind==='volume'&&samePath(stored.backupPath,expected.targetPath))return[{...expected,backupPath:expected.targetPath}]
     return[]
   })
-  const activeRoots=active.volumes.map((volume)=>volumeRoot(volume.parentPath));return(await Promise.all(refs.map(async(ref)=>(await intersectsActive(ref.backupPath,activeRoots))?undefined:ref))).filter((value):value is BackupRef=>Boolean(value))
+  const activeRoots=active.volumes.map((volume)=>volumeRoot(volume.parentPath))
+  return (await Promise.all(refs.map(async(ref)=>{
+    // A group migration intentionally leaves its recovery backup under the
+    // old volume.  The volume can remain active for the other groups, so the
+    // blanket active-root rule used for volume backups would make it
+    // impossible to list or remove this exact, operation-scoped backup.
+    if(ref.kind==='group') {
+      const old=context.previous.volumes.find((volume)=>volume.id===context.previous.groupAssignments[ref.groupId])
+      const expectedRoot=old&&join(volumeRoot(old.parentPath),'.ash-backups',operation.id,ref.groupId)
+      if(!expectedRoot||!samePath(ref.backupPath,expectedRoot)) return undefined
+      // If an attacker turns the scoped backup into an alias of a live group,
+      // canonical containment catches it before it reaches destructive I/O.
+      const activeGroupRoots=Object.entries(active.groupAssignments).map(([group,id])=>{const volume=active.volumes.find((item)=>item.id===id);return volume?join(volumeRoot(volume.parentPath),group):undefined}).filter((value):value is string=>Boolean(value))
+      return (await intersectsActive(ref.backupPath,activeGroupRoots))?undefined:ref
+    }
+    return (await intersectsActive(ref.backupPath,activeRoots))?undefined:ref
+  }))).filter((value):value is BackupRef=>Boolean(value))
 }
 
-export async function assertDeletableBackup(ref:BackupRef,active:AshBootstrap):Promise<void>{
-  const safe=await trustedBackupRefs({id:ref.operationId,kind:ref.kind,status:'succeeded',phase:'completed',startedAt:new Date(0).toISOString(),updatedAt:new Date(0).toISOString(),backupRefs:[ref],rollbackContext:undefined},active).catch(()=>[])
-  // The caller always obtains ref from trustedBackupRefs. This second check independently rejects active roots and aliases.
-  if(await intersectsActive(ref.backupPath,active.volumes.map((volume)=>volumeRoot(volume.parentPath))))throw new Error('Refusing to delete an active storage root')
-  if(safe.length>1) throw new Error('Invalid backup reference')
+const identical=(left:unknown,right:unknown)=>JSON.stringify(left)===JSON.stringify(right)
+
+/**
+ * A relaunch intent is only a request to recover.  It never grants path
+ * authority: every snapshot and backup reference must be proved again by the
+ * durable operation catalog and the currently committed Bootstrap.
+ */
+export async function validateRelaunchIntent(intent:RelaunchIntent,active:AshBootstrap,controls:StorageControlStore):Promise<RelaunchIntent>{
+  const operation=await controls.getOperation(intent.operationId)
+  if(!operation?.rollbackContext || !identical(operation.rollbackContext.previous,intent.previous) || !identical(operation.rollbackContext.current,intent.current) || !identical(active,intent.current)) throw new Error('Relaunch intent is not trusted by the current Bootstrap and operation catalog')
+  const expected=operation.backupRefs.flatMap((ref)=>{
+    const value=ref.kind==='group'?ref.groupId:ref.volumeId
+    try{return buildBackupRefs(operation.id,ref.kind,operation.rollbackContext!.previous,operation.rollbackContext!.current,value)}catch{return[]}
+  })
+  if(operation.status!=='succeeded'||!identical(operation.backupRefs,expected)||!identical(intent.backupRefs,expected)) throw new Error('Relaunch intent is not trusted by the canonical operation backup references')
+  return intent
+}
+
+export async function assertDeletableBackup(ref:BackupRef,operation:StorageOperationRecord,active:AshBootstrap):Promise<void>{
+  const safe=await trustedBackupRefs(operation,active)
+  if(!safe.some((value)=>identical(value,ref))) throw new Error('Refusing to delete an untrusted or active backup')
+  if(ref.kind==='volume' && await intersectsActive(ref.backupPath,active.volumes.map((volume)=>volumeRoot(volume.parentPath)))) throw new Error('Refusing to delete an active storage root')
+  if(ref.kind==='group') {
+    const liveGroups=Object.entries(active.groupAssignments).map(([group,id])=>{const volume=active.volumes.find((item)=>item.id===id);return volume&&join(volumeRoot(volume.parentPath),group)}).filter((value):value is string=>Boolean(value))
+    if(await intersectsActive(ref.backupPath,liveGroups)) throw new Error('Refusing to delete an active storage group')
+  }
 }
 
 export async function restoreRelaunchIntent(intent:RelaunchIntent,bootstrapPath:string,controls:StorageControlStore):Promise<void>{

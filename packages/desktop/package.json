@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "pnpm build && electron dist/main.js",
     "build": "node scripts/clean.cjs && tsc && node scripts/copy-assets.cjs",
-    "package:dir": "pnpm build && node scripts/package-smoke.cjs",
+    "prepare-packaged-runtime": "node scripts/prepare-packaged-runtime.cjs",
+    "package:dir": "pnpm build && pnpm prepare-packaged-runtime && node scripts/package-smoke.cjs --prepared",
     "build:mac": "pnpm build && electron-builder --mac",
-    "build:win": "pnpm build && electron-builder --win",
+    "build:win": "pnpm build && pnpm prepare-packaged-runtime && node scripts/build-win.cjs && node scripts/package-smoke.cjs --prepared",
     "build:linux": "pnpm build && electron-builder --linux",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --coverage --coverage.reporter=text-summary --coverage.reporter=json --coverage.exclude=**/*.test.ts"
@@ -26,7 +27,7 @@
     "@types/node": "^22",
     "@vitest/coverage-v8": "^2.1.9",
     "electron": "^41.0.4",
-    "electron-builder": "^26.15.3",
+    "electron-builder": "^26.8.1",
     "esbuild": "0.27.4",
     "typescript": "^5",
     "vitest": "^2.0.0"

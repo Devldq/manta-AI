@@ -11,7 +11,7 @@ import { createMainWindow } from './windows/createMainWindow'
 import { createOnboardingWindow } from './windows/createOnboardingWindow'
 import { StorageControlStore, type RelaunchIntent } from './lifecycle/StorageControlStore'
 import type { StorageOperationProgress } from '@manta/shared'
-import { buildBackupRefs, pathExists, restoreRelaunchIntent, trustedBackupRefs } from './lifecycle/RelaunchRecovery'
+import { assertDeletableBackup, buildBackupRefs, pathExists, restoreRelaunchIntent, trustedBackupRefs, validateRelaunchIntent } from './lifecycle/RelaunchRecovery'
 
 interface BackendModule {
   createBackendStorageComposition(store: BootstrapStore, options?: { onProgress?: (progress: unknown) => void }): Promise<any>
@@ -80,7 +80,7 @@ function installMainStorageIpc(origin: string): void {
     relocateVolume: (id, selectionId, event) => controller.migrateAndRelaunch(() => trackedMigration('volume',id,()=>migrations.relocateVolume(id, selections.consume(selectionId, selectionBinding(event, 'migrateVolume'))))),
     moveGroup: (group, target) => controller.migrateAndRelaunch(() => trackedMigration('group',group,()=>migrations.moveGroup(group,target))),
     async openVolume(id) { const bootstrap = await new BootstrapStore(bootstrapPath()).read(); const volume = bootstrap?.volumes.find((item) => item.id === id); if (!volume) throw new Error('Unknown volume'); await shell.openPath(volumeRoot(volume.parentPath)) },
-    async deleteBackup(id) { const active=await new BootstrapStore(bootstrapPath()).read(); if(!active) throw new Error('Storage is not initialized'); const refs=(await Promise.all((await controlStore().listOperations()).map((operation)=>trustedBackupRefs(operation,active)))).flat().filter((ref)=>`${ref.operationId}--${ref.kind==='group'?ref.groupId:ref.volumeId}`===id); if (refs.length!==1) throw new Error('Unknown or active backup'); await rm(refs[0].backupPath,{recursive:true,force:true}) },
+    async deleteBackup(id) { const active=await new BootstrapStore(bootstrapPath()).read(); if(!active) throw new Error('Storage is not initialized'); const operations=await controlStore().listOperations(); const matches=(await Promise.all(operations.map(async(operation)=>(await trustedBackupRefs(operation,active)).map((ref)=>({operation,ref}))))).flat().filter(({ref})=>`${ref.operationId}--${ref.kind==='group'?ref.groupId:ref.volumeId}`===id); if (matches.length!==1) throw new Error('Unknown or active backup'); await assertDeletableBackup(matches[0].ref,matches[0].operation,active); await rm(matches[0].ref.backupPath,{recursive:true,force:true}) },
   } })
 }
 
@@ -92,7 +92,7 @@ const controller = new DesktopLifecycleController({
   async startServer({ storage, bundledSeedRoot }) { const backend = await importEsm('@manta/backend') as BackendModule; return backend.startServer({ storage, port: 0, host: '127.0.0.1', bundledSeedRoot, frontendDist: app.isPackaged ? join(process.resourcesPath, 'frontend', 'dist') : join(__dirname, '../../frontend/dist'), isDev: false, storageApi: { readBootstrap: () => new BootstrapStore(bootstrapPath()).read(), inventory: composition.hub.inventory, getOperation:(id:string)=>controlStore().getOperation(id), listBackups } }) },
   async openOnboarding() { disposeOnboarding?.(); disposeOnboarding = registerOnboardingIpc(); onboardingWindow = createOnboardingWindow(); const senderId = onboardingWindow.webContents.id; onboardingWindow.on('closed', () => { selections.clearSender(senderId); onboardingWindow = undefined; if (!quitting) app.quit() }) },
   async openMain(url) { activeWindow = createMainWindow(url); installMainStorageIpc(url); disposeLegacyIpc?.(); disposeLegacyIpc = registerLegacyIpc(); const senderId = activeWindow.webContents.id; activeWindow.on('closed', () => { selections.clearSender(senderId); activeWindow = undefined }) },
-  readRelaunchIntent: () => controlStore().readIntent(),
+  async readRelaunchIntent() { const intent=await controlStore().readIntent(); if(!intent)return undefined; const active=await new BootstrapStore(bootstrapPath()).read(); try { if(!active) throw new Error('Bootstrap is missing'); return await validateRelaunchIntent(intent,active,controlStore()) } catch(error) { await controlStore().quarantineIntent(); throw Object.assign(error as Error,{code:'RELAUNCH_INTENT_INVALID'}) } },
   async prepareRelaunch(operationId) { const intent=pendingIntents.get(operationId); if (!intent) throw new Error(`Missing durable relaunch intent for ${operationId}`); try { await controlStore().writeIntent(intent) } catch(error) { await restoreRelaunchIntent(intent,bootstrapPath(),controlStore()).catch((rollbackError)=>{ throw new AggregateError([error,rollbackError],'Migration committed but relaunch intent could not be persisted') }); throw error } finally { pendingIntents.delete(operationId) } },
   rollbackRelaunchIntent: (intent) => restoreRelaunchIntent(intent,bootstrapPath(),controlStore()),
   clearRelaunchIntent: () => controlStore().clearIntent(),

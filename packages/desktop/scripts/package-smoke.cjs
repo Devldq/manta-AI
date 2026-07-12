@@ -6,7 +6,7 @@
  * launch the resulting executable.  The fallback is useful in CI as well as
  * locally; release installers continue to use electron-builder.yml.
  */
-const { access, cp, mkdtemp, mkdir, readFile, rename, rm, writeFile } = require('node:fs/promises')
+const { access, copyFile, cp, mkdtemp, mkdir, readFile, rename, rm, writeFile } = require('node:fs/promises')
 const { dirname, join, relative, resolve } = require('node:path')
 const { tmpdir } = require('node:os')
 const { spawn } = require('node:child_process')
@@ -19,6 +19,9 @@ const resources = join(releaseDir, 'resources')
 const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const required = ['app.asar', join('frontend', 'dist'), join('backend', 'dist'), join('storage-hub', 'dist'), join('rag', 'dist'), '.manta', join('app.asar.unpacked', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')]
 const providerPackages = ['@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core']
+const nativePackages = ['better-sqlite3']
+const nodeAbiBackup = join(projectDir, '.package-staging-node-abi-backup.node')
+const nativeBinary = join(dirname(require.resolve('better-sqlite3')), '..', 'build', 'Release', 'better_sqlite3.node')
 
 function run(file, args, options = {}) {
   const { timeoutMs = 180_000, ...spawnOptions } = options
@@ -34,7 +37,11 @@ function run(file, args, options = {}) {
 }
 
 async function restoreNodeAbi() {
-  await run(command, ['--filter', '@manta/rag', 'rebuild', 'better-sqlite3'])
+  // Builder rebuilds a pnpm-linked native package in place. Preserve the
+  // caller's Node ABI before packaging so cleanup never depends on network or
+  // a local C++ toolchain.
+  try { await copyFile(nodeAbiBackup, nativeBinary); await rm(nodeAbiBackup, { force: true }); return } catch (error) { if (error.code !== 'ENOENT') throw error }
+  await run(command, ['--filter', '@manta/rag', 'rebuild', 'better-sqlite3'], { env: { ...process.env, npm_config_runtime: 'node', npm_config_target: process.versions.node, npm_config_disturl: 'https://nodejs.org/dist' } })
   await run(process.execPath, ['-e', "const Database=require('better-sqlite3');const db=new Database(':memory:');db.prepare('select 1').get();db.close()"])
 }
 
@@ -46,9 +53,14 @@ function collectDependencies(node, result = new Map()) {
 }
 
 async function copyProductionDependencies(appDir) {
-  const graph = JSON.parse(await run(command, ['--filter', '@manta/desktop', 'list', '--prod', '--depth', 'Infinity', '--json']))[0]
   const dependencies = new Map()
-  collectDependencies(graph, dependencies)
+  // pnpm's workspace graph does not always expand a workspace dependency's
+  // peer/optional provider closure when queried from the desktop root. Merge
+  // the production graphs of every runtime package before flattening.
+  for (const filter of ['@manta/desktop', '@manta/backend', '@manta/rag', '@manta/storage-hub']) {
+    const graph = JSON.parse(await run(command, ['--filter', filter, 'list', '--prod', '--depth', 'Infinity', '--json']))[0]
+    collectDependencies(graph, dependencies)
+  }
   const destinationRoot = join(appDir, 'node_modules')
   for (const [name, source] of dependencies) {
     const destination = join(destinationRoot, ...name.split('/'))
@@ -67,6 +79,24 @@ async function copyProductionDependencies(appDir) {
       // graph, while only the host package exists on disk.
       if (error.code !== 'ENOENT') throw error
     }
+  }
+  // Keep the dynamically imported providers explicit. They are intentionally
+  // not statically reachable from the backend entry, and pnpm can elide them
+  // from a workspace-root JSON tree despite them being production deps.
+  for (const name of providerPackages) {
+    const source = join(repositoryDir, 'packages', 'backend', 'node_modules', ...name.split('/'))
+    const destination = join(destinationRoot, ...name.split('/'))
+    await mkdir(dirname(destination), { recursive: true })
+    // These are workspace symlinks; filtering their dereferenced target would
+    // reject the target's own `node_modules` path before the package root is
+    // copied. Keep the provider closure intact here.
+    await cp(source, destination, { recursive: true, dereference: true })
+  }
+  for (const name of nativePackages) {
+    const source = join(repositoryDir, 'packages', 'rag', 'node_modules', ...name.split('/'))
+    const destination = join(destinationRoot, ...name.split('/'))
+    await mkdir(dirname(destination), { recursive: true })
+    await cp(source, destination, { recursive: true, dereference: true })
   }
 }
 
@@ -128,6 +158,7 @@ async function bundleBackendForElectron(appDir) {
 async function packageDirectory() {
   if (process.platform !== 'win32') throw new Error('package:dir currently creates the Windows artifact declared in electron-builder.yml')
   await rm(join(projectDir, 'release'), { recursive: true, force: true })
+  await copyFile(nativeBinary, nodeAbiBackup)
   await rebuildForElectron()
   const appDir = join(projectDir, '.package-staging', 'app')
   await rm(join(projectDir, '.package-staging'), { recursive: true, force: true })
@@ -161,10 +192,15 @@ async function packageDirectory() {
 async function main() {
   let primary; let markerRoot
   try {
-    await packageDirectory()
+    // build:win/package:dir may already have staged the authoritative tree.
+    // Reuse it so the smoke checks precisely the closure electron-builder sees.
+    const prepared = process.argv.includes('--prepared')
+    if (!prepared) await packageDirectory()
     markerRoot = await mkdtemp(join(tmpdir(), 'manta-package-smoke-'))
     const marker = join(markerRoot, 'main.marker')
-    const executable = join(releaseDir, 'Manta.exe')
+    // electron-builder's directory target can retain electron.exe when
+    // executable editing is disabled for unsigned local/CI builds.
+    const executable = await access(join(releaseDir, 'Manta.exe')).then(() => join(releaseDir, 'Manta.exe')).catch(() => join(releaseDir, 'electron.exe'))
     const output = await run(executable, [], { env: { ...process.env, MANTA_PACKAGE_SMOKE: '1', MANTA_PACKAGE_SMOKE_FILE: marker } })
     const rawMarker = await readFile(marker, 'utf8').catch(() => undefined)
     let mainMarker
@@ -174,10 +210,12 @@ async function main() {
     console.log(`Verified ${required.length} packaged runtime resources, ${providerPackages.length} provider packages, and actual packaged dist/main.js`)
   } catch (error) { primary = error } finally {
     if (markerRoot) await rm(markerRoot, { recursive: true, force: true }).catch(() => {})
-    await rm(join(projectDir, '.package-staging'), { recursive: true, force: true }).catch(() => {})
+    if (!process.argv.includes('--prepared')) await rm(join(projectDir, '.package-staging'), { recursive: true, force: true }).catch(() => {})
     try { await restoreNodeAbi() } catch (restoreError) { if (primary) throw new AggregateError([primary, restoreError], 'Package smoke and Node ABI restoration both failed'); throw restoreError }
   }
   if (primary) throw primary
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1 })
+module.exports = { packageDirectory, required, providerPackages }
+
+if (require.main === module) main().catch((error) => { console.error(error); process.exitCode = 1 })

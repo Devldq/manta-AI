@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { AshBootstrapSchema, StorageGroupIdSchema, StorageOperationProgressSchema, type AshBootstrap, type StorageGroupId, type StorageOperationProgress } from '@manta/shared'
@@ -52,4 +52,6 @@ export class StorageControlStore {
   async writeIntent(intent:RelaunchIntent):Promise<void>{ const valid=RelaunchIntentSchema.parse(intent); await this.serialized(()=>writeJsonAtomic(this.intentPath,valid)) }
   async readIntent():Promise<RelaunchIntent|undefined>{ return this.serialized(async()=>{try{return RelaunchIntentSchema.parse(JSON.parse(await readFile(this.intentPath,'utf8')))}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw new Error(`Invalid relaunch intent: ${(error as Error).message}`)}}) }
   async clearIntent():Promise<void>{ await this.serialized(()=>rm(this.intentPath,{force:true})) }
+  /** Preserve invalid bytes for diagnosis, but never let them drive recovery. */
+  async quarantineIntent():Promise<void>{ await this.serialized(async()=>{ try { await rename(this.intentPath,`${this.intentPath}.invalid-${Date.now()}`) } catch(error) { if((error as NodeJS.ErrnoException).code!=='ENOENT') throw error } }) }
 }
