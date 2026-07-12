@@ -1,13 +1,13 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
-import type { StorageResolver } from './storage/runtime'
+import type { StorageHealthResult, StorageResolver } from './storage/runtime'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runWithDiagnosticsOwner, type RuntimeDiagnosticsWriter } from './storage/runtime-diagnostics'
 import { runWithStorageResolver } from './storage/path-routing'
 
-export interface BuildAppOptions { storage: StorageResolver & { diagnosticsWriter?: RuntimeDiagnosticsWriter }; isDev?: boolean; registerRoutes?: boolean }
+export interface BuildAppOptions { storage: StorageResolver & { diagnosticsWriter?: RuntimeDiagnosticsWriter; healthCheck?: () => Promise<StorageHealthResult> }; isDev?: boolean; registerRoutes?: boolean }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const isDev = options.isDev ?? process.env.NODE_ENV !== 'production'
@@ -28,6 +28,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     credentials: true,
   })
   app.get('/api/health', async () => ({ success: true, data: { status: 'ok', version: '2.0.0', timestamp: new Date().toISOString(), dataDir: options.storage.resolve('config') } }))
+  app.get('/api/health/storage', async () => ({ success: true, data: options.storage.healthCheck ? await options.storage.healthCheck() : { ok: true, status: 'healthy', warnings: [] } }))
   if (!isDev) {
     const frontendDist = resolve(dirname(fileURLToPath(import.meta.url)), '../../frontend/dist')
     if (existsSync(frontendDist)) {

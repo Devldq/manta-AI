@@ -13,6 +13,7 @@ import { createCrossGroupBundleResources, migrateLegacyAtomicJournals, type Lega
 import { createRagUploadResources } from './rag-upload-storage'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
+export interface StorageHealthResult { ok: boolean; status: 'healthy' | 'degraded' | 'unhealthy'; warnings: LegacyRecoveryWarning[]; error?: string }
 export interface BackendStorageRuntime extends StorageResolver {
   readonly drivers: Map<StorageGroupId, StorageGroupDriver>
   readonly diagnosticsWriter: RuntimeDiagnosticsWriter
@@ -23,7 +24,7 @@ export interface BackendStorageRuntime extends StorageResolver {
   quiesce(): Promise<void>
   checkpoint(): Promise<void>
   close(): Promise<void>
-  healthCheck(): Promise<{ ok: boolean; error?: string }>
+  healthCheck(): Promise<StorageHealthResult>
 }
 
 export interface BackendRuntimeOptions {
@@ -105,9 +106,10 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
       if (errors.length > 1) throw new AggregateError(errors, 'Backend storage shutdown failed')
     },
     async healthCheck() {
-      if (closed) return { ok: false, error: 'closed' }
-      if (quiesced) return { ok: false, error: 'quiesced' }
-      const health = await provider.integrityCheck(); return legacyRecoveryWarnings.length ? { ok: false, error: `degraded: ${legacyRecoveryWarnings.length} legacy journal(s) quarantined` } : health
+      if (closed) return { ok: false, status: 'unhealthy', warnings: [], error: 'closed' }
+      if (quiesced) return { ok: false, status: 'unhealthy', warnings: [], error: 'quiesced' }
+      const health = await provider.integrityCheck(); if (!health.ok) return { ok: false, status: 'unhealthy', warnings: legacyRecoveryWarnings, error: health.error }
+      return { ok: true, status: legacyRecoveryWarnings.length ? 'degraded' : 'healthy', warnings: legacyRecoveryWarnings }
     },
   }
 }

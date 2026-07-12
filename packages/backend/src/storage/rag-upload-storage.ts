@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { constants, createWriteStream, existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
-import { copyFile, unlink } from 'node:fs/promises'
+import { createWriteStream, existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { unlink } from 'node:fs/promises'
 import { basename, dirname, join, posix } from 'node:path'
 import { Transform, type Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { durableAtomicWrite, durableMkdir } from './durable-atomic'
+import { durableAtomicWrite, durableCopy, durableMkdir, durableRemove } from './durable-atomic'
 
 export interface RagUploadStorageOptions {
   cacheUploadsRoot: string
@@ -58,12 +58,12 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
         const transactionId = basename(stagedPath, '.upload'); const orphanRoot = join(dirname(options.documentsRoot), '.orphans', sha256); durableMkdir(orphanRoot); const orphanPath = join(orphanRoot, `${transactionId}.json`)
         durableAtomicWrite(orphanPath, JSON.stringify({ version: 1, hash: sha256, transactionId, createdAt: new Date().toISOString(), status: 'pending-pipeline' }))
         if (!existsSync(absolutePath)) {
-          try { await copyFile(stagedPath, absolutePath, constants.COPYFILE_EXCL) }
-          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') { await unlink(orphanPath).catch(() => undefined); throw error } }
+          try { durableCopy(stagedPath, absolutePath, { exclusive: true, expectedHash: sha256 }) }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') { if (!existsSync(absolutePath)) await unlink(orphanPath).catch(() => undefined); throw error } }
         }
         const result = await processStaged(stagedPath, document)
         await unlink(orphanPath).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error })
-        try { if (!readdirSync(orphanRoot).length) rmSync(orphanRoot, { recursive: true }) } catch { /* another owner is changing */ }
+        try { if (!readdirSync(orphanRoot).length) durableRemove(orphanRoot) } catch { /* another owner is changing */ }
         return { result, ...document }
       } finally {
         await unlink(stagedPath).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error })

@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { acquireStorageFileLock } from './file-lock'
-import { durableAtomicWrite } from './durable-atomic'
+import { durableAtomicWrite, durableCopy, durableRemove, durableRename } from './durable-atomic'
 
 export interface CrossGroupParticipant { name: string; root: string }
 export type CrossGroupFaultPhase = 'after-first-prepare' | 'after-prepare' | 'after-first-apply' | 'after-apply' | 'after-first-commit'
@@ -156,10 +156,10 @@ export function migrateLegacyAtomicJournals(legacyDirectory: string, currentRoot
     }
     for (const item of journal.writes) { if (typeof item.content !== 'string') throw new Error('Invalid legacy atomic journal write'); atomicWrite(resolveLegacy(item.path), item.content) }
     for (const target of journal.deletes) rmSync(resolveLegacy(target), { recursive: true, force: true })
-    unlinkSync(file)
+    durableRemove(file)
     } catch (error) {
       const quarantineRoot = join(dirname(legacyDirectory), '.transactions-quarantine'); mkdirSync(quarantineRoot, { recursive: true }); const journalId = createHash('sha256').update(name).digest('hex').slice(0, 16); const target = join(quarantineRoot, journalId)
-      try { renameSync(file, target) } catch (renameError) { if ((renameError as NodeJS.ErrnoException).code !== 'EXDEV') throw renameError; cpSync(file, target); unlinkSync(file) }
+      try { durableRename(file, target) } catch (renameError) { if ((renameError as NodeJS.ErrnoException).code !== 'EXDEV') throw renameError; durableCopy(file, target, { expectedHash: createHash('sha256').update(readFileSync(file)).digest('hex') }); durableRemove(file) }
       const warning: LegacyRecoveryWarning = { time: new Date().toISOString(), code: 'LEGACY_JOURNAL_QUARANTINED', journalId, reasonHash: createHash('sha256').update(String(error)).digest('hex') }; warnings.push(warning)
       try { durableAtomicWrite(join(diagnosticsRoot, `${warning.time.replace(/[:.]/g, '-')}-${journalId}.json`), JSON.stringify(warning)) } catch { /* diagnostics must never block startup */ }
     }

@@ -24,8 +24,10 @@ describe('storage file lock protocol', () => {
     expect(() => acquireStorageFileLock(path, { timeoutMs: 20, backoffMs: 5, inspectProcess: () => ({ alive: true, identity: 'self' }) })).toThrow(/unknown owner/i)
   })
 
-  it('waits for a competing process and then succeeds', async () => {
+  it('serializes two contenders after observing a stale lock', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-lock-wait-')); const path = join(root, 'lock')
+    writeFileSync(path, JSON.stringify({ version: 1, token: 'dead', pid: 42, processIdentity: 'old', createdAt: new Date().toISOString() }))
+    const clearStale = acquireStorageFileLock(path, { inspectProcess: (pid) => pid === process.pid ? { alive: true, identity: 'self' } : { alive: false } }); clearStale()
     const child = spawn(process.execPath, ['-e', `const fs=require('fs');const p=${JSON.stringify(path)};fs.writeFileSync(p,JSON.stringify({version:1,token:'child',pid:process.pid,processIdentity:'child',createdAt:new Date().toISOString()}));setTimeout(()=>fs.unlinkSync(p),200)`], { stdio: 'ignore' })
     const until = Date.now() + 1000; while (!existsSync(path) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 5))
     const release = acquireStorageFileLock(path, { timeoutMs: 1000, inspectProcess: (pid) => pid === process.pid ? { alive: true, identity: 'self' } : { alive: true, identity: 'child' } }); release()

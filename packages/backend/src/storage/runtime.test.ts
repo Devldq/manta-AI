@@ -18,7 +18,7 @@ function fakeStorage(root: string, events: string[] = []) {
   return {
     resolve(group: StorageGroupId, ...segments: string[]) { return join(root, group, ...segments) },
     async quiesce() { events.push('quiesce') }, async checkpoint() { events.push('checkpoint') },
-    async close() { events.push('close') }, async healthCheck() { return { ok: true as const } },
+    async close() { events.push('close') }, async healthCheck() { return { ok: true as const, status: 'healthy' as const, warnings: [] } },
   }
 }
 
@@ -90,13 +90,15 @@ describe('backend lifecycle', () => {
       async quiesce() { quiesced = true; events.push('quiesce') },
       async checkpoint() { events.push('checkpoint') },
       async close() { events.push('close') },
-      async healthCheck() { return { ok: true as const } },
+      async healthCheck() { return { ok: true as const, status: 'healthy' as const, warnings: [] } },
     }
     const { startServer } = await import('../server')
     const handle = await startServer({ storage, port: 0, startSchedulers: false, registerRoutes: false, startup: false })
     handles.push(handle)
     expect(handle.port).toBeGreaterThan(0)
     expect((await handle.healthCheck()).ok).toBe(true)
+    const storageHealth = await fetch(`http://127.0.0.1:${handle.port}/api/health/storage`).then((response) => response.json()) as any
+    expect(storageHealth.data).toEqual({ ok: true, status: 'healthy', warnings: [] })
     await handle.quiesce()
     expect(quiesced).toBe(true)
     const response = await fetch(`http://127.0.0.1:${handle.port}/api/not-a-route`, { method: 'POST' })
@@ -115,7 +117,7 @@ describe('backend lifecycle', () => {
       async quiesce() { events.push('quiesce'); throw new Error('quiesce failed') },
       async checkpoint() { events.push('checkpoint'); throw new Error('checkpoint failed') },
       async close() { events.push('close') },
-      async healthCheck() { return { ok: true as const } },
+      async healthCheck() { return { ok: true as const, status: 'healthy' as const, warnings: [] } },
     }
     const { startServer } = await import('../server')
     const handle = await startServer({ storage, port: 0, startSchedulers: false, registerRoutes: false, startup: false })

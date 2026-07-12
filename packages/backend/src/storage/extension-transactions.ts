@@ -2,7 +2,7 @@ import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSyn
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { acquireStorageFileLock } from './file-lock'
-import { durableAtomicWrite } from './durable-atomic'
+import { durableAtomicWrite, durableMkdir, durableRemove, durableRename } from './durable-atomic'
 
 interface ExtensionTransactionOptions { extensionsRoot: string; destination: string; fault?: (phase: string) => void }
 interface InstallOptions extends ExtensionTransactionOptions { source: string; validate?: (stagedPath: string) => void; registryWrites?: Map<string, string> }
@@ -69,7 +69,7 @@ function readJournal(root: string, file: string): ExtensionJournal {
 }
 
 function acquire(root: string): () => void {
-  const path = lockPath(root); mkdirSync(dirname(path), { recursive: true })
+  const path = lockPath(root); durableMkdir(dirname(path))
   return acquireStorageFileLock(path)
 }
 
@@ -95,32 +95,37 @@ function rejectLinks(path: string): void {
 function applyRegistry(root: string, journal: ExtensionJournal): void {
   for (const item of journal.registryWrites) {
     if (existsSync(item.path)) {
-      const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, item.path)); if (!existsSync(backup)) { mkdirSync(dirname(backup), { recursive: true }); cpSync(item.path, backup) }
+      const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, item.path)); if (!existsSync(backup)) { durableMkdir(dirname(backup)); cpSync(item.path, backup) }
     }
     atomicWrite(item.path, item.content)
   }
   for (const path of journal.registryDeletes) {
     if (!existsSync(path)) continue
-    const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, path)); mkdirSync(dirname(backup), { recursive: true }); if (!existsSync(backup)) renameSync(path, backup); else rmSync(path, { force: true })
+    const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, path)); durableMkdir(dirname(backup)); if (!existsSync(backup)) durableRename(path, backup); else durableRemove(path)
   }
 }
 
 function finish(root: string, journal: ExtensionJournal, fault?: (phase: string) => void): void {
+  if (journal.phase === 'package-committed' && journal.kind === 'install' && !existsSync(journal.destination)) {
+    if (journal.stagingPath && existsSync(journal.stagingPath)) durableRename(journal.stagingPath, journal.destination)
+    else if (journal.backupPath && existsSync(journal.backupPath)) { durableRename(journal.backupPath, journal.destination); journal.phase = 'completed'; persist(root, journal) }
+    else throw new Error('Extension committed package and recovery payload are both missing')
+  }
   if (journal.phase === 'staged') {
-    if (existsSync(journal.destination)) { if (!journal.backupPath) throw new Error('Missing extension backup path'); mkdirSync(dirname(journal.backupPath), { recursive: true }); if (!existsSync(journal.backupPath)) renameSync(journal.destination, journal.backupPath) }
+    if (existsSync(journal.destination)) { if (!journal.backupPath) throw new Error('Missing extension backup path'); durableMkdir(dirname(journal.backupPath)); if (!existsSync(journal.backupPath)) durableRename(journal.destination, journal.backupPath) }
     journal.phase = 'backed-up'; persist(root, journal); fault?.('after-backup')
   }
   if (journal.phase === 'backed-up') {
     if (journal.kind === 'install') {
       if (!journal.stagingPath || !existsSync(journal.stagingPath)) throw new Error('Extension staging payload is unavailable during recovery')
-      mkdirSync(dirname(journal.destination), { recursive: true }); if (!existsSync(journal.destination)) renameSync(journal.stagingPath, journal.destination)
+      durableMkdir(dirname(journal.destination)); if (!existsSync(journal.destination)) durableRename(journal.stagingPath, journal.destination)
     } else if (journal.kind === 'file') {
       atomicWrite(journal.destination, journal.content ?? '')
     }
     journal.phase = 'package-committed'; persist(root, journal); fault?.('after-package-commit')
   }
   if (journal.phase === 'package-committed') { applyRegistry(root, journal); journal.phase = 'completed'; persist(root, journal); fault?.('after-registry-commit') }
-  if (journal.phase === 'completed') { if (journal.stagingPath) rmSync(dirname(journal.stagingPath), { recursive: true, force: true }); unlinkSync(journalPath(root, journal.id)) }
+  if (journal.phase === 'completed') { if (journal.stagingPath) durableRemove(dirname(journal.stagingPath)); durableRemove(journalPath(root, journal.id)) }
 }
 
 function recoverUnlocked(root: string): void {
@@ -133,7 +138,7 @@ export function transactionalInstallDirectory(options: InstallOptions): { transa
   assertDestination(options); rejectLinks(options.source); const release = acquire(options.extensionsRoot)
   try {
     options.fault?.('locked'); recoverUnlocked(options.extensionsRoot); const id = randomUUID(); const stagingPath = join(options.extensionsRoot, '.ash-staging', id, 'payload')
-    mkdirSync(dirname(stagingPath), { recursive: true }); cpSync(options.source, stagingPath, { recursive: true, dereference: false, filter: (source) => !['node_modules', '.git'].includes(basename(source)) }); options.validate?.(stagingPath)
+    durableMkdir(dirname(stagingPath)); cpSync(options.source, stagingPath, { recursive: true, dereference: false, filter: (source) => !['node_modules', '.git'].includes(basename(source)) }); options.validate?.(stagingPath)
     const backupPath = existsSync(options.destination) ? join(options.extensionsRoot, '.ash-backups', id, relative(options.extensionsRoot, options.destination)) : undefined
     const journal: ExtensionJournal = { version: 1, id, kind: 'install', phase: 'staged', destination: options.destination, stagingPath, backupPath, registryWrites: [...(options.registryWrites ?? new Map())].map(([path, content]) => ({ path, content })), registryDeletes: [] }
     persist(options.extensionsRoot, journal); options.fault?.('journaled'); finish(options.extensionsRoot, journal, options.fault); return { transactionId: id, stagingPath, backupPath }

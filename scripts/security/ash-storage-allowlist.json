@@ -547,93 +547,121 @@
       "reason": "Reviewed boundary helper whose caller supplies an explicit user path or an ASH-rooted path assembled from validated storage segments."
     },
     {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 98,
-      "column": 128,
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 36,
+      "column": 32,
       "operation": "mkdirSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 49,
+      "column": 24,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 67,
+      "column": 120,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 158,
+      "column": 43,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 161,
+      "column": 90,
+      "operation": "mkdirSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 167,
+      "column": 80,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 168,
+      "column": 45,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 17,
+      "column": 3,
+      "operation": "mkdirSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 19,
+      "column": 112,
+      "operation": "renameSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 20,
+      "column": 88,
+      "operation": "rmSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 22,
+      "column": 39,
+      "operation": "copyFileSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 22,
+      "column": 134,
+      "operation": "openSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 29,
+      "column": 123,
+      "operation": "openSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 30,
+      "column": 9,
+      "operation": "writeFileSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 32,
+      "column": 11,
+      "operation": "renameSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
     },
     {
       "file": "packages/backend/src/storage/extension-transactions.ts",
       "line": 98,
-      "column": 177,
+      "column": 159,
       "operation": "cpSync",
       "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
     },
     {
       "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 104,
-      "column": 94,
-      "operation": "mkdirSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 104,
-      "column": 168,
-      "operation": "renameSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 104,
-      "column": 199,
-      "operation": "rmSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 110,
-      "column": 119,
-      "operation": "mkdirSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 110,
-      "column": 217,
-      "operation": "renameSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 116,
-      "column": 7,
-      "operation": "mkdirSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 116,
-      "column": 107,
-      "operation": "renameSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 123,
-      "column": 65,
-      "operation": "rmSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 123,
-      "column": 137,
-      "operation": "unlinkSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 136,
-      "column": 5,
-      "operation": "mkdirSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 136,
-      "column": 59,
+      "line": 141,
+      "column": 41,
       "operation": "cpSync",
       "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
     },
@@ -660,143 +688,38 @@
     },
     {
       "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 24,
+      "line": 28,
       "column": 48,
       "operation": "renameSync",
       "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
     },
     {
       "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 25,
+      "line": 29,
       "column": 3,
       "operation": "unlinkSync",
       "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
     },
     {
       "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 33,
+      "line": 37,
       "column": 16,
       "operation": "openSync",
       "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
     },
     {
       "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 44,
+      "line": 48,
       "column": 11,
       "operation": "writeFileSync",
       "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
     },
     {
       "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 44,
+      "line": 48,
       "column": 106,
       "operation": "unlinkSync",
       "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 72,
-      "column": 32,
-      "operation": "mkdirSync",
-      "reason": "Reviewed creation of the contained extension lock directory before acquiring the shared audited lock."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 158,
-      "column": 43,
-      "operation": "rmSync",
-      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 159,
-      "column": 5,
-      "operation": "unlinkSync",
-      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 161,
-      "column": 90,
-      "operation": "mkdirSync",
-      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 162,
-      "column": 13,
-      "operation": "renameSync",
-      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 162,
-      "column": 142,
-      "operation": "cpSync",
-      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 162,
-      "column": 164,
-      "operation": "unlinkSync",
-      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 167,
-      "column": 80,
-      "operation": "rmSync",
-      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 168,
-      "column": 45,
-      "operation": "rmSync",
-      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 16,
-      "column": 3,
-      "operation": "mkdirSync",
-      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 18,
-      "column": 112,
-      "operation": "renameSync",
-      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 19,
-      "column": 88,
-      "operation": "rmSync",
-      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 21,
-      "column": 123,
-      "operation": "openSync",
-      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 22,
-      "column": 9,
-      "operation": "writeFileSync",
-      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 24,
-      "column": 11,
-      "operation": "renameSync",
-      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
@@ -807,15 +730,8 @@
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 61,
-      "column": 23,
-      "operation": "copyFile",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
       "line": 62,
-      "column": 91,
+      "column": 122,
       "operation": "unlink",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
@@ -824,13 +740,6 @@
       "line": 65,
       "column": 15,
       "operation": "unlink",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 66,
-      "column": 52,
-      "operation": "rmSync",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
@@ -881,27 +790,6 @@
       "column": 152,
       "operation": "rmSync",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 36,
-      "column": 32,
-      "operation": "mkdirSync",
-      "reason": "Reviewed contained 2PC lock/state recovery primitive."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 49,
-      "column": 24,
-      "operation": "rmSync",
-      "reason": "Reviewed contained 2PC lock/state recovery primitive."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 67,
-      "column": 120,
-      "operation": "rmSync",
-      "reason": "Reviewed contained 2PC lock/state recovery primitive."
     }
   ],
   "literals": [

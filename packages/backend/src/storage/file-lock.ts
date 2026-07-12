@@ -20,7 +20,11 @@ selfIdentity = inspect(process.pid).identity
 function ownerAt(path: string): Owner | undefined { try { return parse(readFileSync(path, 'utf8')) } catch { return undefined } }
 function removeOwned(path: string, token: string, required: boolean): boolean {
   const owner = ownerAt(path); if (!owner) { if (required) throw new Error('Storage file lock has unknown owner'); return false } if (owner.token !== token) return false
-  const claim = `${path}.claim-${token}`; try { renameSync(path, claim) } catch (error) { if (!required && (error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error }
+  const claim = `${path}.claim-${token}`; try { renameSync(path, claim) } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (['ENOENT', 'ESTALE', 'EPERM', 'EACCES'].includes(code ?? '')) return false
+    throw error
+  }
   if (ownerAt(claim)?.token !== token) { try { renameSync(claim, path) } catch { /* fail closed */ } if (required) throw new Error('Storage file lock ownership changed'); return false }
   unlinkSync(claim); return true
 }

@@ -2,7 +2,7 @@ import type { AddressInfo } from 'node:net'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { buildApp, type BuildAppOptions } from './app'
-import type { BackendStorageRuntime } from './storage/runtime'
+import type { BackendStorageRuntime, StorageHealthResult } from './storage/runtime'
 import { acquireClaudeMarketplaceScheduler } from './core/storage/plugin/marketplace'
 import { acquireLogScheduler } from './core/observability/log/index'
 import type { FastifyInstance } from 'fastify'
@@ -30,7 +30,7 @@ export interface MantaServerHandle {
   readonly port: number
   quiesce(): Promise<void>
   close(): Promise<void>
-  healthCheck(): Promise<{ ok: boolean; error?: string }>
+  healthCheck(): Promise<StorageHealthResult>
 }
 
 export async function startServer(options: StartServerOptions): Promise<MantaServerHandle> {
@@ -93,7 +93,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
       return closePromise
     },
     async healthCheck() {
-      if (closed) return { ok: false, error: 'closed' }
+      if (closed) return { ok: false, status: 'unhealthy', warnings: [], error: 'closed' }
       return options.storage.healthCheck()
     },
   }
