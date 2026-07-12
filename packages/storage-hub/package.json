@@ -20,7 +20,7 @@
   },
   "scripts": {
     "test": "pnpm build && vitest run --coverage --coverage.reporter=json --coverage.reporter=text-summary",
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup src/index.ts --format esm,cjs --dts",
     "typecheck": "tsc --noEmit && tsc -p test/fixtures/tsconfig.json"
   },
   "dependencies": {

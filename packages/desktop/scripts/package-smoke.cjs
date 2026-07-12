@@ -9,6 +9,7 @@
 const { access, copyFile, cp, mkdtemp, mkdir, readFile, rename, rm, writeFile } = require('node:fs/promises')
 const { dirname, join, relative, resolve } = require('node:path')
 const { tmpdir } = require('node:os')
+const { randomUUID } = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { build: bundle } = require('esbuild')
 
@@ -20,7 +21,6 @@ const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const required = ['app.asar', join('frontend', 'dist'), join('backend', 'dist'), join('storage-hub', 'dist'), join('rag', 'dist'), '.manta', join('app.asar.unpacked', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')]
 const providerPackages = ['@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core']
 const nativePackages = ['better-sqlite3']
-const nodeAbiBackup = join(projectDir, '.package-staging-node-abi-backup.node')
 const nativeBinary = join(dirname(require.resolve('better-sqlite3')), '..', 'build', 'Release', 'better_sqlite3.node')
 
 function run(file, args, options = {}) {
@@ -36,13 +36,18 @@ function run(file, args, options = {}) {
   })
 }
 
-async function restoreNodeAbi() {
+async function snapshotNodeAbi() {
+  const backup = join(projectDir, `.package-staging-node-abi-backup-${process.pid}-${randomUUID()}.node`)
+  await copyFile(nativeBinary, backup)
+  return backup
+}
+
+async function restoreNodeAbi(backup) {
   // Builder rebuilds a pnpm-linked native package in place. Preserve the
   // caller's Node ABI before packaging so cleanup never depends on network or
   // a local C++ toolchain.
-  try { await copyFile(nodeAbiBackup, nativeBinary); await rm(nodeAbiBackup, { force: true }); return } catch (error) { if (error.code !== 'ENOENT') throw error }
-  await run(command, ['--filter', '@manta/rag', 'rebuild', 'better-sqlite3'], { env: { ...process.env, npm_config_runtime: 'node', npm_config_target: process.versions.node, npm_config_disturl: 'https://nodejs.org/dist' } })
-  await run(process.execPath, ['-e', "const Database=require('better-sqlite3');const db=new Database(':memory:');db.prepare('select 1').get();db.close()"])
+  await copyFile(backup, nativeBinary)
+  await rm(backup, { force: true })
 }
 
 function collectDependencies(node, result = new Map()) {
@@ -157,36 +162,45 @@ async function bundleBackendForElectron(appDir) {
 
 async function packageDirectory() {
   if (process.platform !== 'win32') throw new Error('package:dir currently creates the Windows artifact declared in electron-builder.yml')
-  await rm(join(projectDir, 'release'), { recursive: true, force: true })
-  await copyFile(nativeBinary, nodeAbiBackup)
-  await rebuildForElectron()
-  const appDir = join(projectDir, '.package-staging', 'app')
-  await rm(join(projectDir, '.package-staging'), { recursive: true, force: true })
-  await mkdir(appDir, { recursive: true })
-  await Promise.all([
-    cp(join(projectDir, 'dist'), join(appDir, 'dist'), { recursive: true, dereference: true }),
-    cp(join(projectDir, 'package.json'), join(appDir, 'package.json'), { dereference: true }),
-  ])
-  await copyProductionDependencies(appDir)
-  await bundleBackendForElectron(appDir)
-  // Provider imports are dynamic in the backend, so an archive can look
-  // healthy even when pnpm's flattened production graph omitted them.  Check
-  // the staging tree explicitly before it is sealed into app.asar.
-  await Promise.all(providerPackages.map((name) => access(join(appDir, 'node_modules', ...name.split('/'), 'package.json'))))
-  await stageElectronRuntime()
-  await mkdir(resources, { recursive: true })
-  await Promise.all([
-    cp(join(repositoryDir, 'packages', 'frontend', 'dist'), join(resources, 'frontend', 'dist'), { recursive: true, dereference: true }),
-    cp(join(repositoryDir, 'packages', 'backend', 'dist'), join(resources, 'backend', 'dist'), { recursive: true, dereference: true }),
-    cp(join(repositoryDir, 'packages', 'storage-hub', 'dist'), join(resources, 'storage-hub', 'dist'), { recursive: true, dereference: true }),
-    cp(join(repositoryDir, 'packages', 'rag', 'dist'), join(resources, 'rag', 'dist'), { recursive: true, dereference: true }),
-    cp(join(repositoryDir, '.manta'), join(resources, '.manta'), { recursive: true, dereference: true }),
-  ])
-  // The returned stream is only resolved after its finish event by the public
-  // @electron/asar API; this is the completion boundary we verify below.
-  const asar = await import('@electron/asar')
-  await asar.createPackageWithOptions(appDir, join(resources, 'app.asar'), { unpackDir: 'node_modules/better-sqlite3' })
-  await Promise.all(required.map((entry) => access(join(resources, entry))))
+  const backup = await snapshotNodeAbi()
+  let primary
+  try {
+    await rm(join(projectDir, 'release'), { recursive: true, force: true })
+    await rebuildForElectron()
+    const appDir = join(projectDir, '.package-staging', 'app')
+    await rm(join(projectDir, '.package-staging'), { recursive: true, force: true })
+    await mkdir(appDir, { recursive: true })
+    await Promise.all([
+      cp(join(projectDir, 'dist'), join(appDir, 'dist'), { recursive: true, dereference: true }),
+      cp(join(projectDir, 'package.json'), join(appDir, 'package.json'), { dereference: true }),
+    ])
+    await copyProductionDependencies(appDir)
+    await bundleBackendForElectron(appDir)
+    // Provider imports are dynamic in the backend, so an archive can look
+    // healthy even when pnpm's flattened production graph omitted them.  Check
+    // the staging tree explicitly before it is sealed into app.asar.
+    await Promise.all(providerPackages.map((name) => access(join(appDir, 'node_modules', ...name.split('/'), 'package.json'))))
+    await stageElectronRuntime()
+    await mkdir(resources, { recursive: true })
+    await Promise.all([
+      cp(join(repositoryDir, 'packages', 'frontend', 'dist'), join(resources, 'frontend', 'dist'), { recursive: true, dereference: true }),
+      cp(join(repositoryDir, 'packages', 'backend', 'dist'), join(resources, 'backend', 'dist'), { recursive: true, dereference: true }),
+      cp(join(repositoryDir, 'packages', 'storage-hub', 'dist'), join(resources, 'storage-hub', 'dist'), { recursive: true, dereference: true }),
+      cp(join(repositoryDir, 'packages', 'rag', 'dist'), join(resources, 'rag', 'dist'), { recursive: true, dereference: true }),
+      cp(join(repositoryDir, '.manta'), join(resources, '.manta'), { recursive: true, dereference: true }),
+    ])
+    // The returned stream is only resolved after its finish event by the public
+    // @electron/asar API; this is the completion boundary we verify below.
+    const asar = await import('@electron/asar')
+    await asar.createPackageWithOptions(appDir, join(resources, 'app.asar'), { unpackDir: 'node_modules/better-sqlite3' })
+    await Promise.all(required.map((entry) => access(join(resources, entry))))
+  } catch (error) { primary = error } finally {
+    try { await restoreNodeAbi(backup) } catch (restoreError) {
+      if (primary) throw new AggregateError([primary, restoreError], 'Package directory creation and Node ABI restoration both failed')
+      throw restoreError
+    }
+  }
+  if (primary) throw primary
 }
 
 async function main() {
@@ -211,7 +225,6 @@ async function main() {
   } catch (error) { primary = error } finally {
     if (markerRoot) await rm(markerRoot, { recursive: true, force: true }).catch(() => {})
     if (!process.argv.includes('--prepared')) await rm(join(projectDir, '.package-staging'), { recursive: true, force: true }).catch(() => {})
-    try { await restoreNodeAbi() } catch (restoreError) { if (primary) throw new AggregateError([primary, restoreError], 'Package smoke and Node ABI restoration both failed'); throw restoreError }
   }
   if (primary) throw primary
 }
