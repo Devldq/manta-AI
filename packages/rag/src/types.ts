@@ -13,6 +13,9 @@ export interface DocumentMetadata {
   chunkCount?: number
   status: 'pending' | 'processing' | 'ready' | 'error'
   error?: string
+  /** Path relative to the knowledge group root for the persisted original. */
+  sourcePath?: string
+  sourceSha256?: string
 }
 
 /** 文档块 */

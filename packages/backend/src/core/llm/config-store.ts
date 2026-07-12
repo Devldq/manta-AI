@@ -5,11 +5,13 @@ import { resolveStoragePath } from '../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import type { LLMConfig, ModelProfile, LLMProfilesConfig } from './types'
 import { getDefaultLLMConfig, profileToLLMConfig } from './types'
+import { recoverAtomicBundle, writeAtomicBundle } from '../../storage/atomic-record-bundle'
 
 // 配置文件路径
 const profilesFile = () => resolveStoragePath('config', 'llm-profiles.json')
 const legacyFile = () => resolveStoragePath('config', 'llm-config.json')
 const profileSecretsFile = () => resolveStoragePath('secrets', 'llm-profile-api-keys.json')
+const bundleCoordinator = () => resolveStoragePath('secrets', '.transactions', 'llm-profiles')
 
 /** 安全写文件（先写 tmp 再 rename） */
 function safeWrite(filePath: string, data: unknown): void {
@@ -20,6 +22,7 @@ function safeWrite(filePath: string, data: unknown): void {
 }
 
 function readProfileSecrets(): Record<string, string> {
+  recoverAtomicBundle(bundleCoordinator())
   try { return JSON.parse(fs.readFileSync(profileSecretsFile(), 'utf8')) as Record<string, string> } catch { return {} }
 }
 
@@ -28,14 +31,17 @@ function persistProfiles(config: LLMProfilesConfig): void {
   const activeIds = new Set(config.profiles.map(({ id }) => id))
   const secrets: Record<string, string> = {}
   const profiles = config.profiles.map((profile) => {
-    const apiKey = profile.apiKey ?? existing[profile.id]
+    const clearApiKey = (profile as ModelProfile & { clearApiKey?: boolean }).clearApiKey === true
+    const apiKey = clearApiKey ? undefined : profile.apiKey ?? existing[profile.id]
     if (apiKey) secrets[profile.id] = apiKey
-    const { apiKey: _, ...metadata } = profile
+    const { apiKey: _, clearApiKey: __, ...metadata } = profile as ModelProfile & { clearApiKey?: boolean }
     return apiKey ? { ...metadata, apiKeyRef: `llm-profile:${profile.id}` } : metadata
   })
   for (const id of Object.keys(existing)) if (!activeIds.has(id)) delete existing[id]
-  safeWrite(profileSecretsFile(), secrets)
-  safeWrite(profilesFile(), { ...config, profiles })
+  writeAtomicBundle({ coordinatorPath: bundleCoordinator(), writes: new Map([
+    [profileSecretsFile(), JSON.stringify(secrets, null, 2)],
+    [profilesFile(), JSON.stringify({ ...config, profiles }, null, 2)],
+  ]) })
 }
 
 function hydrateProfiles(config: LLMProfilesConfig): LLMProfilesConfig {
@@ -107,6 +113,7 @@ let migrationDone = false
 
 /** 读取多模型配置列表 */
 export function getLLMProfiles(): LLMProfilesConfig {
+  recoverAtomicBundle(bundleCoordinator())
   // 1. 尝试自动迁移旧格式（仅执行一次）
   if (!migrationDone) {
     tryMigrateLegacy()

@@ -1,5 +1,6 @@
 import type { AddressInfo } from 'node:net'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { dirname, resolve } from 'node:path'
 import { buildApp, type BuildAppOptions } from './app'
 import type { BackendStorageRuntime } from './storage/runtime'
 import { acquireClaudeMarketplaceScheduler } from './core/storage/plugin/marketplace'
@@ -11,7 +12,7 @@ export interface ServerStartupHooks {
   initializeSkills(): void | Promise<void>
 }
 
-export type ManagedBackendStorage = Omit<BackendStorageRuntime, 'drivers' | 'diagnosticsWriter' | 'marketplaceScheduler' | 'runInStorageContext'> &
+export type ManagedBackendStorage = Omit<BackendStorageRuntime, 'drivers' | 'diagnosticsWriter' | 'marketplaceScheduler' | 'processRegistry' | 'runInStorageContext'> &
   Partial<Pick<BackendStorageRuntime, 'diagnosticsWriter' | 'marketplaceScheduler' | 'runInStorageContext'>>
 
 export interface StartServerOptions {
@@ -108,6 +109,14 @@ function defaultStartupHooks(): ServerStartupHooks {
       await provider.cleanupStaleDocuments()
     },
     async initializeSkills() {
+      const { seedBundledExtensions } = await import('./storage/extension-seeds.js')
+      const { resolveStoragePath } = await import('./storage/path-routing.js')
+      const seedRoot = process.env.MANTA_BUNDLED_ASSETS_DIR ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
+      seedBundledExtensions({ extensionsRoot: resolveStoragePath('extensions'), seedRoot, version: process.env.MANTA_BUNDLED_ASSETS_VERSION ?? '2.0.0' })
+      const [{ scanPluginFiles }, { registerPlugin }] = await Promise.all([
+        import('./core/storage/plugin/scanner.js'), import('./core/storage/plugin/store.js'),
+      ])
+      for (const scanned of scanPluginFiles()) registerPlugin(scanned.manifest, scanned.dirPath)
       const { initializeSkills } = await import('./core/storage/skill/store.js')
       initializeSkills()
     },

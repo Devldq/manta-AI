@@ -24,6 +24,8 @@ interface DocRow {
   uploaded_at: string
   processed_at: string | null
   error: string | null
+  source_path: string | null
+  source_sha256: string | null
 }
 
 interface ChunkRow {
@@ -85,9 +87,14 @@ export class SQLiteVecProvider implements RAGProvider {
           uploaded_at TEXT NOT NULL,
           processed_at TEXT,
           error TEXT,
+          source_path TEXT,
+          source_sha256 TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
       `)
+      const documentColumns = this.db.pragma('table_info(documents)') as Array<{ name: string }>
+      if (!documentColumns.some((column) => column.name === 'source_path')) this.db.exec('ALTER TABLE documents ADD COLUMN source_path TEXT')
+      if (!documentColumns.some((column) => column.name === 'source_sha256')) this.db.exec('ALTER TABLE documents ADD COLUMN source_sha256 TEXT')
 
       // 创建分块表（embedding 以 JSON 文本存储）
       this.db.exec(`
@@ -149,8 +156,8 @@ export class SQLiteVecProvider implements RAGProvider {
     const now = new Date().toISOString()
 
     const insertDoc = this.db.prepare(`
-      INSERT OR REPLACE INTO documents (id, kb_id, name, mime_type, size, status, chunk_count, uploaded_at, processed_at, error)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO documents (id, kb_id, name, mime_type, size, status, chunk_count, uploaded_at, processed_at, error, source_path, source_sha256)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     const insertChunk = this.db.prepare(`
@@ -174,7 +181,9 @@ export class SQLiteVecProvider implements RAGProvider {
         chunks.length,
         document.uploadedAt,
         now,
-        null
+        null,
+        document.sourcePath ?? null,
+        document.sourceSha256 ?? null
       )
 
       // 批量插入 chunks
@@ -217,15 +226,17 @@ export class SQLiteVecProvider implements RAGProvider {
     await this.ensureInitialized()
 
     this.db.prepare(`
-      INSERT OR REPLACE INTO documents (id, kb_id, name, mime_type, size, status, chunk_count, uploaded_at, processed_at, error)
-      VALUES (?, ?, ?, ?, ?, 'processing', 0, ?, NULL, NULL)
+      INSERT OR REPLACE INTO documents (id, kb_id, name, mime_type, size, status, chunk_count, uploaded_at, processed_at, error, source_path, source_sha256)
+      VALUES (?, ?, ?, ?, ?, 'processing', 0, ?, NULL, NULL, ?, ?)
     `).run(
       document.id,
       knowledgeBaseId,
       document.name,
       document.type,
       document.size,
-      document.uploadedAt
+      document.uploadedAt,
+      document.sourcePath ?? null,
+      document.sourceSha256 ?? null
     )
   }
 
@@ -443,6 +454,8 @@ export class SQLiteVecProvider implements RAGProvider {
       chunkCount: row.chunk_count,
       status: row.status as DocumentMetadata['status'],
       error: row.error || undefined,
+      sourcePath: row.source_path || undefined,
+      sourceSha256: row.source_sha256 || undefined,
     }))
   }
 
@@ -466,6 +479,8 @@ export class SQLiteVecProvider implements RAGProvider {
       chunkCount: row.chunk_count,
       status: row.status as DocumentMetadata['status'],
       error: row.error || undefined,
+      sourcePath: row.source_path || undefined,
+      sourceSha256: row.source_sha256 || undefined,
     }
   }
 

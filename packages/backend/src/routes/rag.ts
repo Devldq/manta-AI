@@ -30,6 +30,9 @@ import { getEmbeddingConfig, saveEmbeddingConfig } from '../core/engine/rag/embe
 import { getLLMConfig, getLLMProfiles } from '../core/llm/config-store'
 import { profileToLLMConfig } from '../core/llm/types'
 import { createAISDKModel } from '../core/llm/ai-sdk-provider'
+import { createRagUploadStorage } from '../storage/rag-upload-storage'
+import { resolveStoragePath } from '../storage/path-routing'
+import { readFile } from 'node:fs/promises'
 
 // ─── Embedding Service 工厂 ─────────────────────────────────────
 // 从 KB 配置或环境变量构建 embedding 服务，传入 rag 包
@@ -284,14 +287,10 @@ export async function ragRoutes(app: FastifyInstance) {
       const data = await request.file()
       if (!data) throw Errors.VALIDATION_ERROR('file', '未上传文件')
 
-      const buffer = await data.toBuffer()
       const fileName = data.filename || 'unknown'
       const mimeType = data.mimetype && data.mimetype !== 'application/octet-stream'
         ? data.mimetype
         : inferMimeType(fileName)
-
-      if (buffer.length === 0) throw Errors.VALIDATION_ERROR('file', '上传的文件为空')
-      if (buffer.length > 50 * 1024 * 1024) throw Errors.VALIDATION_ERROR('file', '文件大小超过 50MB 限制')
 
       // 从表单字段读取分块配置，优先使用请求参数，其次 KB 配置，最后默认值
       const fields = data.fields as Record<string, { value?: string; buffer?: Buffer } | undefined>
@@ -302,23 +301,6 @@ export async function ragRoutes(app: FastifyInstance) {
       const chunkStrategy = reqChunkStrategy || kb.config.chunkingConfig?.strategy || 'recursive'
       const chunkSize = reqChunkSize || kb.config.chunkingConfig?.chunkSize || 512
       const chunkOverlap = reqChunkOverlap || kb.config.chunkingConfig?.overlap || 50
-
-      const docId = uuidv4()
-      const now = new Date().toISOString()
-      const metadata: DocumentMetadata = {
-        id: docId,
-        name: fileName,
-        type: mimeType,
-        size: buffer.length,
-        uploadedAt: now,
-        status: 'processing',
-      }
-
-      // ── 先写入 processing 记录，刷新页面后也能看到正在处理的文档 ──
-      const sqliteProvider = getSQLiteVecProvider()
-      await sqliteProvider.insertPendingDocument(kbId, metadata)
-      pendingDocId = docId
-      pendingKbId = kbId
 
       const embeddingService = buildEmbeddingService(kb.config)
       const ragProvider = getSQLiteVecProvider()
@@ -342,19 +324,41 @@ export async function ragRoutes(app: FastifyInstance) {
         })
       }
 
-      const pipeline = createDocumentPipeline({
-        embeddingService,
-        ragProvider,
-        chunkStrategy,
-        chunkSize,
-        chunkOverlap,
-        onProgress: (stage, progress, message) => {
-          console.log(`[RAG Pipeline] ${stage}: ${progress}% - ${message}`)
-          sendEvent({ type: 'progress', stage, progress, message })
-        },
+      const uploadStorage = createRagUploadStorage({
+        cacheUploadsRoot: resolveStoragePath('cache', 'uploads'),
+        documentsRoot: resolveStoragePath('knowledge', 'documents'),
       })
-
-      const result = await pipeline.process(buffer, metadata, kbId)
+      const stored = await uploadStorage.ingest(data.file, fileName, async (stagedPath, document) => {
+        const buffer = await readFile(stagedPath)
+        const docId = uuidv4()
+        const metadata: DocumentMetadata = {
+          id: docId,
+          name: fileName,
+          type: mimeType,
+          size: document.size,
+          uploadedAt: new Date().toISOString(),
+          status: 'processing',
+          sourcePath: document.relativePath,
+          sourceSha256: document.sha256,
+        }
+        const sqliteProvider = getSQLiteVecProvider()
+        await sqliteProvider.insertPendingDocument(kbId, metadata)
+        pendingDocId = docId
+        pendingKbId = kbId
+        const pipeline = createDocumentPipeline({
+          embeddingService,
+          ragProvider,
+          chunkStrategy,
+          chunkSize,
+          chunkOverlap,
+          onProgress: (stage, progress, message) => {
+            console.log(`[RAG Pipeline] ${stage}: ${progress}% - ${message}`)
+            sendEvent({ type: 'progress', stage, progress, message })
+          },
+        })
+        return pipeline.process(buffer, metadata, kbId)
+      })
+      const result = stored.result
 
       const provider = getSQLiteVecProvider()
       const stats = await provider.getStats(kbId)
@@ -928,6 +932,7 @@ export async function ragRoutes(app: FastifyInstance) {
         model,
         baseUrl: typeof body.baseUrl === 'string' && body.baseUrl.trim() ? body.baseUrl.trim() : undefined,
         apiKey: typeof body.apiKey === 'string' && body.apiKey.trim() ? body.apiKey.trim() : undefined,
+        clearApiKey: body.clearApiKey === true,
         dimensions: typeof body.dimensions === 'number' ? body.dimensions : undefined,
       }
       saveEmbeddingConfig(payload)

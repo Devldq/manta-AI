@@ -151,6 +151,12 @@ export function installPlugin(input: InstallPluginInput): PluginDefinition {
  * 注册已安装的 Plugin（从 plugin.yaml 扫描结果注册）
  */
 export function registerPlugin(manifest: PluginManifest, installPath?: string): PluginDefinition {
+  const prepared = preparePluginRegistration(manifest, installPath)
+  atomicWrite(prepared.filePath, JSON.stringify(prepared.definition, null, 2))
+  return prepared.definition
+}
+
+export function preparePluginRegistration(manifest: PluginManifest, installPath?: string): { definition: PluginDefinition; filePath: string } {
   ensureDir(getDataDir())
 
   // 检查是否已存在
@@ -172,8 +178,7 @@ export function registerPlugin(manifest: PluginManifest, installPath?: string): 
         installPath: installPath || existingDef.installPath,
         updatedAt: now,
       }
-      atomicWrite(pluginFilePath(existing.id), JSON.stringify(updated, null, 2))
-      return updated
+      return { definition: updated, filePath: pluginFilePath(existing.id) }
     }
   }
 
@@ -191,9 +196,10 @@ export function registerPlugin(manifest: PluginManifest, installPath?: string): 
     updatedAt: now,
   }
 
-  atomicWrite(pluginFilePath(id), JSON.stringify(def, null, 2))
-  return def
+  return { definition: def, filePath: pluginFilePath(id) }
 }
+
+export function getPluginRegistryFilePath(id: string): string { return pluginFilePath(id) }
 
 /**
  * 更新 Plugin

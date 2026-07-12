@@ -1,31 +1,832 @@
 {
-  "writerFiles": {
-    "packages/backend/src/core/engine/runner/index.ts": "Agent task outputDir is explicitly selected by the task and must remain outside ASH.",
-    "packages/backend/src/core/storage/shared/fs-utils.ts": "Path-agnostic atomic writer; every internal caller supplies an ASH-resolved path.",
-    "packages/backend/src/core/tools/builtin/file-ops.ts": "User file tool writes the exact workspace/output path selected by the user or Agent task.",
-    "packages/backend/src/storage/runtime-diagnostics.ts": "Diagnostics root is injected by BackendStorageRuntime from the ASH diagnostics group.",
-    "packages/backend/src/storage/extension-transactions.ts": "Extension root is mandatory input resolved by the caller from the ASH extensions group.",
-    "packages/rag/src/fs-utils.ts": "Path-agnostic atomic writer; RAG factories require an injected ASH knowledge root.",
-    "packages/rag/src/embedding-cache.ts": "Database path is constructor-injected from the ASH knowledge group.",
-    "packages/rag/src/sqlite-vec-provider.ts": "Database root is constructor-injected from the ASH knowledge group.",
-    "packages/agent-sandbox/src/audit/AuditLogger.ts": "Audit path is mandatory composition-time injection; the module has no fallback."
+  "calls": [
+{
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 18,
+    "column": 3,
+    "operation": "mkdirSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
   },
-  "homeAndCwdFiles": {
-    "packages/backend/src/core/tools/builtin/file-ops.ts": "Expands an explicit user path beginning with tilde and preserves workspace output semantics.",
-    "packages/backend/src/core/tools/builtin/bash.ts": "Expands explicit command paths and chooses the task security context workspace.",
-    "packages/backend/src/core/tools/builtin/utils.ts": "Resolves explicit user tool paths relative to the task security context workspace.",
-    "packages/backend/src/core/engine/stream-handler.ts": "Discovers an explicitly named user workspace folder; it does not choose an internal persistence root.",
-    "packages/backend/src/core/storage/config/workspace-store.ts": "Uses the home/cwd only as the user's default workspace choice; its config file is ASH-routed.",
-    "packages/backend/src/core/security-context.ts": "Creates task filesystem boundaries, not application persistence paths.",
-    "packages/backend/src/core/security/fs-access.ts": "Initial allow-root is the current user workspace; persisted grants are ASH-routed.",
-    "packages/backend/src/core/context/prompt-builder.ts": "Reports the task working directory to the model; it performs no persistence.",
-    "packages/backend/src/routes/plugins.ts": "Discovers external Claude plugin sources for an explicit import before copying into ASH.",
-    "packages/backend/src/core/storage/plugin/marketplace.ts": "Discovers the external Claude executable and its plugin source before transactionally importing into ASH.",
-    "packages/backend/src/routes/readme.ts": "Reads the packaged project README and performs no writes.",
-    "packages/agent-sandbox/src/context/SecurityContext.ts": "Creates task sandbox boundaries and performs no application persistence."
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 18,
+    "column": 105,
+    "operation": "openSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
   },
-  "literalFiles": {
-    "scripts/release/release-github.sh": "Historical release-note text documents the removed legacy directory; this script does not construct a runtime path.",
-    "scripts/security/ash-storage-audit.ts": "The audit definitions must name forbidden legacy roots in order to detect them."
-  }
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 20,
+    "column": 3,
+    "operation": "renameSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 25,
+    "column": 32,
+    "operation": "mkdirSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 29,
+    "column": 16,
+    "operation": "unlinkSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 32,
+    "column": 14,
+    "operation": "openSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 34,
+    "column": 142,
+    "operation": "unlinkSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 58,
+    "column": 128,
+    "operation": "mkdirSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 58,
+    "column": 177,
+    "operation": "cpSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 64,
+    "column": 94,
+    "operation": "mkdirSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 64,
+    "column": 168,
+    "operation": "renameSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 64,
+    "column": 199,
+    "operation": "rmSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 83,
+    "column": 137,
+    "operation": "unlinkSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 96,
+    "column": 5,
+    "operation": "mkdirSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+  {
+    "file": "packages/backend/src/storage/extension-transactions.ts",
+    "line": 96,
+    "column": 59,
+    "operation": "cpSync",
+    "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
+  },
+    {
+      "file": "packages/backend/src/core/storage/plugin/marketplace.ts",
+      "line": 384,
+      "column": 5,
+      "operation": "rmSync",
+      "reason": "Reviewed cleanup of an isolated external Claude CLI import directory created solely for this explicit user-requested plugin installation."
+    },
+    {
+      "file": "packages/backend/src/core/storage/plugin/marketplace.ts",
+      "line": 403,
+      "column": 15,
+      "operation": "rmSync",
+      "reason": "Reviewed cleanup of an isolated external Claude CLI import directory created solely for this explicit user-requested plugin installation."
+    },
+    {
+      "file": "packages/agent-sandbox/src/audit/AuditLogger.ts",
+      "line": 34,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/agent-sandbox/src/audit/AuditLogger.ts",
+      "line": 48,
+      "column": 3,
+      "operation": "appendFileSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/agent-sandbox/src/audit/AuditLogger.ts",
+      "line": 115,
+      "column": 5,
+      "operation": "unlinkSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/index.ts",
+      "line": 24,
+      "column": 18,
+      "operation": "spawn",
+      "reason": "Reviewed external tool or Agent task process boundary whose workspace or output is explicitly selected by the user or task."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/index.ts",
+      "line": 37,
+      "column": 15,
+      "operation": "appendFileSync",
+      "reason": "Reviewed user or Agent-selected workspace output call that must intentionally remain outside application persistence routing."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/index.ts",
+      "line": 44,
+      "column": 15,
+      "operation": "appendFileSync",
+      "reason": "Reviewed user or Agent-selected workspace output call that must intentionally remain outside application persistence routing."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/process-registry.ts",
+      "line": 86,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/process-registry.ts",
+      "line": 88,
+      "column": 5,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/process-registry.ts",
+      "line": 89,
+      "column": 5,
+      "operation": "renameSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/llm/config-store.ts",
+      "line": 18,
+      "column": 3,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/llm/config-store.ts",
+      "line": 20,
+      "column": 3,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/llm/config-store.ts",
+      "line": 21,
+      "column": 3,
+      "operation": "renameSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/memory/store.ts",
+      "line": 73,
+      "column": 7,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/memory/store.ts",
+      "line": 76,
+      "column": 7,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/memory/store.ts",
+      "line": 233,
+      "column": 7,
+      "operation": "unlinkSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/memory/store.ts",
+      "line": 261,
+      "column": 13,
+      "operation": "unlinkSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/memory/store.ts",
+      "line": 264,
+      "column": 9,
+      "operation": "rmdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/plugin/registry.ts",
+      "line": 212,
+      "column": 22,
+      "operation": "execSync",
+      "reason": "Reviewed external tool or Agent task process boundary whose workspace or output is explicitly selected by the user or task."
+    },
+    {
+      "file": "packages/backend/src/core/storage/plugin/scanner.ts",
+      "line": 259,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed external extension import or Agent workspace output call; the destination is validated before entering ASH or remains user-selected."
+    },
+    {
+      "file": "packages/backend/src/core/storage/plugin/scanner.ts",
+      "line": 271,
+      "column": 7,
+      "operation": "copyFileSync",
+      "reason": "Reviewed external extension import or Agent workspace output call; the destination is validated before entering ASH or remains user-selected."
+    },
+    {
+      "file": "packages/backend/src/core/storage/shared/fs-utils.ts",
+      "line": 9,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/shared/fs-utils.ts",
+      "line": 16,
+      "column": 3,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/shared/fs-utils.ts",
+      "line": 17,
+      "column": 3,
+      "operation": "renameSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/shared/fs-utils.ts",
+      "line": 54,
+      "column": 7,
+      "operation": "rmSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/skill/scanner.ts",
+      "line": 334,
+      "column": 7,
+      "operation": "mkdirSync",
+      "reason": "Reviewed external extension import or Agent workspace output call; the destination is validated before entering ASH or remains user-selected."
+    },
+    {
+      "file": "packages/backend/src/core/storage/skill/scanner.ts",
+      "line": 336,
+      "column": 18,
+      "operation": "writeFileSync",
+      "reason": "Reviewed external extension import or Agent workspace output call; the destination is validated before entering ASH or remains user-selected."
+    },
+    {
+      "file": "packages/backend/src/core/tools/builtin/bash.ts",
+      "line": 303,
+      "column": 24,
+      "operation": "exec",
+      "reason": "Reviewed external tool or Agent task process boundary whose workspace or output is explicitly selected by the user or task."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 10,
+      "column": 3,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 12,
+      "column": 14,
+      "operation": "openSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 13,
+      "column": 9,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 14,
+      "column": 3,
+      "operation": "renameSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 22,
+      "column": 3,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 30,
+      "column": 16,
+      "operation": "unlinkSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 33,
+      "column": 14,
+      "operation": "openSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 35,
+      "column": 3,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 40,
+      "column": 114,
+      "operation": "unlinkSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 50,
+      "column": 39,
+      "operation": "rmSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 58,
+      "column": 3,
+      "operation": "unlinkSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/atomic-record-bundle.ts",
+      "line": 76,
+      "column": 5,
+      "operation": "unlinkSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 19,
+      "column": 9,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 33,
+      "column": 31,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 70,
+      "column": 119,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 70,
+      "column": 217,
+      "operation": "renameSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 76,
+      "column": 7,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 76,
+      "column": 107,
+      "operation": "renameSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 83,
+      "column": 65,
+      "operation": "rmSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 32,
+      "column": 7,
+      "operation": "mkdirSync",
+      "reason": "Reviewed RAG upload lifecycle call whose mandatory knowledge root is injected from the ASH storage runtime."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 45,
+      "column": 39,
+      "operation": "createWriteStream",
+      "reason": "Reviewed RAG upload lifecycle call whose mandatory knowledge root is injected from the ASH storage runtime."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 49,
+      "column": 9,
+      "operation": "mkdirSync",
+      "reason": "Reviewed RAG upload lifecycle call whose mandatory knowledge root is injected from the ASH storage runtime."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 57,
+      "column": 23,
+      "operation": "copyFile",
+      "reason": "Reviewed RAG upload lifecycle call whose mandatory knowledge root is injected from the ASH storage runtime."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 62,
+      "column": 15,
+      "operation": "unlink",
+      "reason": "Reviewed RAG upload lifecycle call whose mandatory knowledge root is injected from the ASH storage runtime."
+    },
+    {
+      "file": "packages/backend/src/storage/runtime-diagnostics.ts",
+      "line": 63,
+      "column": 29,
+      "operation": "unlinkSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/backend/src/storage/runtime-diagnostics.ts",
+      "line": 95,
+      "column": 7,
+      "operation": "mkdirSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/backend/src/storage/runtime-diagnostics.ts",
+      "line": 96,
+      "column": 7,
+      "operation": "appendFileSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/backend/src/storage/runtime-diagnostics.ts",
+      "line": 109,
+      "column": 9,
+      "operation": "mkdirSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/backend/src/storage/runtime-diagnostics.ts",
+      "line": 110,
+      "column": 9,
+      "operation": "appendFileSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/desktop/src/main.ts",
+      "line": 139,
+      "column": 65,
+      "operation": "rmSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/rag/src/embedding-cache.ts",
+      "line": 52,
+      "column": 15,
+      "operation": "Database",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 9,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 16,
+      "column": 3,
+      "operation": "writeFileSync",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 17,
+      "column": 3,
+      "operation": "renameSync",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 23,
+      "column": 9,
+      "operation": "writeFile",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 24,
+      "column": 9,
+      "operation": "rename",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 52,
+      "column": 7,
+      "operation": "rmSync",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/sqlite-vec-provider.ts",
+      "line": 70,
+      "column": 17,
+      "operation": "Database",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/storage-hub/src/bootstrap/atomic-json.ts",
+      "line": 6,
+      "column": 9,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/bootstrap/atomic-json.ts",
+      "line": 8,
+      "column": 24,
+      "operation": "open",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/bootstrap/atomic-json.ts",
+      "line": 14,
+      "column": 11,
+      "operation": "rm",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/bootstrap/atomic-json.ts",
+      "line": 19,
+      "column": 11,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/bootstrap/atomic-json.ts",
+      "line": 21,
+      "column": 11,
+      "operation": "rm",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/copy-tree.ts",
+      "line": 14,
+      "column": 9,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/copy-tree.ts",
+      "line": 17,
+      "column": 89,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/copy-tree.ts",
+      "line": 18,
+      "column": 45,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/copy-tree.ts",
+      "line": 19,
+      "column": 202,
+      "operation": "copyFile",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 37,
+      "column": 15,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 58,
+      "column": 177,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 58,
+      "column": 232,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 60,
+      "column": 119,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 60,
+      "column": 170,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 77,
+      "column": 47,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 104,
+      "column": 142,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 104,
+      "column": 269,
+      "operation": "rm",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 105,
+      "column": 94,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 106,
+      "column": 132,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-lock.ts",
+      "line": 29,
+      "column": 15,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-lock.ts",
+      "line": 31,
+      "column": 39,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-lock.ts",
+      "line": 32,
+      "column": 9,
+      "operation": "unlink",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-lock.ts",
+      "line": 44,
+      "column": 24,
+      "operation": "open",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-lock.ts",
+      "line": 46,
+      "column": 153,
+      "operation": "unlink",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "scripts/build/clean-build.js",
+      "line": 78,
+      "column": 9,
+      "operation": "rmSync",
+      "reason": "Reviewed repository build or release maintenance call operating only on explicitly selected repository artifacts."
+    },
+    {
+      "file": "scripts/build/clean-build.js",
+      "line": 80,
+      "column": 9,
+      "operation": "unlinkSync",
+      "reason": "Reviewed repository build or release maintenance call operating only on explicitly selected repository artifacts."
+    },
+    {
+      "file": "scripts/release/update-version.ts",
+      "line": 129,
+      "column": 5,
+      "operation": "writeFileSync",
+      "reason": "Reviewed repository build or release maintenance call operating only on explicitly selected repository artifacts."
+    },
+    {
+      "file": "scripts/security/sensitive-check.ts",
+      "line": 192,
+      "column": 18,
+      "operation": "execSync",
+      "reason": "Reviewed security audit implementation call or detector literal required to inspect repository sources; it is not application persistence."
+    },
+    {
+      "file": "scripts/start-dev.js",
+      "line": 38,
+      "column": 18,
+      "operation": "spawn",
+      "reason": "Reviewed development-tool process launch rooted in the explicitly selected repository workspace; it is not application persistence."
+    },
+    {
+      "file": "scripts/start-dev.js",
+      "line": 45,
+      "column": 19,
+      "operation": "spawn",
+      "reason": "Reviewed development-tool process launch rooted in the explicitly selected repository workspace; it is not application persistence."
+    },
+    {
+      "file": "scripts/start-dev.js",
+      "line": 55,
+      "column": 22,
+      "operation": "spawn",
+      "reason": "Reviewed development-tool process launch rooted in the explicitly selected repository workspace; it is not application persistence."
+    }
+  ],
+  "literals": [
+    {
+      "file": "packages/backend/src/storage/extension-seeds.ts",
+      "line": 30,
+      "column": 38,
+      "operation": "repository runtime root",
+      "reason": "Reviewed read-only bundled extension seed import from the repository's historical .manta source tree into the ASH extensions group."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-seeds.ts",
+      "line": 31,
+      "column": 38,
+      "operation": "repository runtime root",
+      "reason": "Reviewed read-only bundled extension seed import from the repository's historical .manta source tree into the ASH extensions group."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-seeds.ts",
+      "line": 32,
+      "column": 38,
+      "operation": "repository runtime root",
+      "reason": "Reviewed read-only bundled extension seed import from the repository's historical .manta source tree into the ASH extensions group."
+    },
+    {
+      "file": "scripts/security/ash-storage-audit.ts",
+      "line": 51,
+      "column": 26,
+      "operation": "legacy data root",
+      "reason": "Reviewed security audit implementation call or detector literal required to inspect repository sources; it is not application persistence."
+    },
+    {
+      "file": "scripts/security/ash-storage-audit.ts",
+      "line": 53,
+      "column": 28,
+      "operation": "cwd MCP token root",
+      "reason": "Reviewed security audit implementation call or detector literal required to inspect repository sources; it is not application persistence."
+    }
+  ]
 }

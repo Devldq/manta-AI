@@ -37,7 +37,7 @@ export async function chatConfigRoutes(app: FastifyInstance) {
       }
       const existing = getLLMProfiles()
       incoming.profiles = incoming.profiles.map((p) => {
-        if (!p.apiKey?.trim()) {
+        if (!(p as ModelProfile & { clearApiKey?: boolean }).clearApiKey && !p.apiKey?.trim()) {
           const existingProfile = existing.profiles.find((ep) => ep.id === p.id)
           if (existingProfile) return { ...p, apiKey: existingProfile.apiKey }
         }

@@ -7,10 +7,10 @@ import * as fs from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { ensureDir, readJsonFile } from '../shared/fs-utils'
-import { registerPlugin } from './store'
+import { preparePluginRegistration, registerPlugin } from './store'
 import { runWithoutDiagnosticsOwner } from '../../../storage/runtime-diagnostics'
 import { resolveStoragePath } from '../../../storage/path-routing'
-import { transactionalWriteExtensionFile } from '../../../storage/extension-transactions'
+import { transactionalInstallDirectory, transactionalWriteExtensionFile } from '../../../storage/extension-transactions'
 
 const execFileAsync = promisify(execFile)
 
@@ -54,6 +54,13 @@ interface CommandOutput {
   stdout: string
   stderr: string
 }
+interface ClaudeExecutionOptions { cwd: string; timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv }
+export interface ClaudePluginInstallOptions {
+  claudeBin?: string
+  marketplaceCache?: PluginMarketplaceCache | null
+  execute?: (bin: string, args: string[], options: ClaudeExecutionOptions) => Promise<CommandOutput>
+}
+interface ClaudeIsolation { root: string; configDir: string; env: NodeJS.ProcessEnv }
 
 let refreshTimer: NodeJS.Timeout | null = null
 const inFlightRefresh = new Map<string, Promise<PluginMarketplaceCache>>()
@@ -112,25 +119,20 @@ function normalizeClaudePluginSpec(source: string): string {
 async function runClaude(
   claudeBin: string,
   args: string[],
+  isolation: ClaudeIsolation,
+  execute: NonNullable<ClaudePluginInstallOptions['execute']> = async (bin, commandArgs, options) => {
+    const result = await execFileAsync(bin, commandArgs, options)
+    return { stdout: result.stdout, stderr: result.stderr }
+  },
 ): Promise<CommandOutput> {
-  const commandCwd = getMarketplaceDataDir()
-  ensureDir(commandCwd)
-  const { stdout, stderr } = await execFileAsync(
-    claudeBin,
-    args,
-    {
-      cwd: commandCwd,
-      timeout: INSTALL_TIMEOUT_MS,
-      maxBuffer: 1024 * 1024,
-    },
-  )
+  const { stdout, stderr } = await execute(claudeBin, args, { cwd: isolation.root, timeout: INSTALL_TIMEOUT_MS, maxBuffer: 1024 * 1024, env: isolation.env })
   return { stdout: stdout.trim(), stderr: stderr.trim() }
 }
 
-async function ensureOfficialClaudeMarketplace(claudeBin: string): Promise<CommandOutput[]> {
+async function ensureOfficialClaudeMarketplace(claudeBin: string, isolation: ClaudeIsolation, execute?: ClaudePluginInstallOptions['execute']): Promise<CommandOutput[]> {
   const outputs: CommandOutput[] = []
   try {
-    const list = await runClaude(claudeBin, ['plugin', 'marketplace', 'list', '--json'])
+    const list = await runClaude(claudeBin, ['plugin', 'marketplace', 'list', '--json'], isolation, execute)
     outputs.push(list)
     const marketplaces = JSON.parse(list.stdout || '[]') as Array<{ name?: string; repo?: string }>
     const hasOfficial = marketplaces.some((marketplace) =>
@@ -147,7 +149,7 @@ async function ensureOfficialClaudeMarketplace(claudeBin: string): Promise<Comma
     'marketplace',
     'add',
     'anthropics/claude-plugins-official',
-  ]))
+  ], isolation, execute))
   return outputs
 }
 
@@ -334,40 +336,71 @@ function manifestFromClaudePlugin(
   }
 }
 
+function findInstalledClaudePackage(root: string, slug: string): string | undefined {
+  const candidates: string[] = []
+  const visit = (directory: string) => {
+    let entries: fs.Dirent[]
+    try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return }
+    const names = new Set(entries.map((entry) => entry.name))
+    if (names.has('plugin.yaml') || names.has('plugin.json') || fs.existsSync(path.join(directory, '.claude-plugin', 'plugin.json'))) candidates.push(directory)
+    for (const entry of entries) if (entry.isDirectory() && !entry.isSymbolicLink()) visit(path.join(directory, entry.name))
+  }
+  visit(root)
+  return candidates.find((candidate) => path.basename(candidate) === slug) ?? candidates[0]
+}
+
+function createClaudeIsolation(extensionsRoot: string): ClaudeIsolation {
+  const parent = path.join(extensionsRoot, '.ash-cli-staging'); ensureDir(parent)
+  const root = fs.mkdtempSync(path.join(parent, 'claude-'))
+  const configDir = path.join(root, 'claude-config'); ensureDir(configDir)
+  return { root, configDir, env: { ...process.env, HOME: root, USERPROFILE: root, CLAUDE_CONFIG_DIR: configDir } }
+}
+
 export async function installClaudePlugin(
   source: string,
+  options: ClaudePluginInstallOptions = {},
 ): Promise<ClaudePluginInstallResult> {
   const spec = normalizeClaudePluginSpec(source)
-  const cache = await getClaudeMarketplace().catch(() => null)
+  const cache = Object.prototype.hasOwnProperty.call(options, 'marketplaceCache') ? options.marketplaceCache ?? null : await getClaudeMarketplace().catch(() => null)
   const item = cache?.items.find((entry) => entry.pluginId === spec || entry.slug === spec.split('@')[0])
   const commandText = item ? await getInstallCommandFromDetailPage(item) : `claude plugin install ${spec}`
   const commandSpec = normalizeClaudePluginSpec(commandText)
 
-  const claudeBin = resolveClaudeBinary()
-  const setupOutputs = await ensureOfficialClaudeMarketplace(claudeBin)
-
+  const claudeBin = options.claudeBin ?? resolveClaudeBinary()
+  const extensionsRoot = resolveStoragePath('extensions')
+  const isolation = createClaudeIsolation(extensionsRoot)
+  let setupOutputs: CommandOutput[]
   let installOutput: CommandOutput
   try {
-    installOutput = await runClaude(claudeBin, ['plugin', 'install', commandSpec])
+    setupOutputs = await ensureOfficialClaudeMarketplace(claudeBin, isolation, options.execute)
+    try {
+      installOutput = await runClaude(claudeBin, ['plugin', 'install', commandSpec], isolation, options.execute)
+    } catch (error) {
+      if (!shouldRefreshMarketplaceAfterInstallError(error)) throw error
+      setupOutputs.push(await runClaude(claudeBin, ['plugin', 'marketplace', 'update', CLAUDE_OFFICIAL_MARKETPLACE], isolation, options.execute))
+      installOutput = await runClaude(claudeBin, ['plugin', 'install', commandSpec], isolation, options.execute)
+    }
   } catch (error) {
-    if (!shouldRefreshMarketplaceAfterInstallError(error)) throw error
-    setupOutputs.push(await runClaude(claudeBin, [
-      'plugin',
-      'marketplace',
-      'update',
-      CLAUDE_OFFICIAL_MARKETPLACE,
-    ]))
-    installOutput = await runClaude(claudeBin, ['plugin', 'install', commandSpec])
+    fs.rmSync(isolation.root, { recursive: true, force: true })
+    throw error
   }
-
-  const plugin = registerPlugin(manifestFromClaudePlugin(commandSpec, item))
-  return {
-    plugin,
-    marketplaceItem: item,
-    command: [claudeBin, 'plugin', 'install', commandSpec],
-    stdout: [...setupOutputs.map((output) => output.stdout), installOutput.stdout].filter(Boolean).join('\n'),
-    stderr: [...setupOutputs.map((output) => output.stderr), installOutput.stderr].filter(Boolean).join('\n'),
-  }
+  try {
+    const slug = commandSpec.split('@')[0]
+    const installedSource = findInstalledClaudePackage(isolation.configDir, slug) ?? findInstalledClaudePackage(isolation.root, slug)
+    if (!installedSource) throw new Error('Claude CLI completed without producing an installed plugin package in its isolated configuration directory')
+    const manifest = manifestFromClaudePlugin(commandSpec, item)
+    const destination = resolveStoragePath('extensions', 'plugins', manifest.id)
+    const prepared = preparePluginRegistration(manifest, destination)
+    transactionalInstallDirectory({
+      extensionsRoot, source: installedSource, destination,
+      registryWrites: new Map([[prepared.filePath, JSON.stringify(prepared.definition, null, 2)]]),
+    })
+    return {
+      plugin: prepared.definition, marketplaceItem: item, command: [claudeBin, 'plugin', 'install', commandSpec],
+      stdout: [...setupOutputs.map((output) => output.stdout), installOutput.stdout].filter(Boolean).join('\n'),
+      stderr: [...setupOutputs.map((output) => output.stderr), installOutput.stderr].filter(Boolean).join('\n'),
+    }
+  } finally { fs.rmSync(isolation.root, { recursive: true, force: true }) }
 }
 
 export function isClaudePluginInstallSource(source: string): boolean {

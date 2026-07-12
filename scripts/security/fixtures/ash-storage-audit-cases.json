@@ -1,0 +1,104 @@
+[
+  {
+    "name": "does not exempt a file merely because it mentions the resolver",
+    "file": "packages/backend/src/leak.ts",
+    "source": "const note = 'resolveStoragePath'; require('node:fs').writeFileSync('/tmp/leak', 'x')",
+    "violations": ["writeFileSync", "unrouted"]
+  },
+  {
+    "name": "does not trust a storage-looking variable name",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import fs from 'node:fs'; const configRoot = '/tmp/leak'; fs.writeFileSync(configRoot, 'x')",
+    "violations": ["writeFileSync", "unrouted"]
+  },
+  {
+    "name": "rejects the legacy repository runtime folder literal",
+    "file": "packages/sample/src/leak.ts",
+    "source": "export const legacyRuntimeRoot = '.manta'",
+    "violations": ["repository runtime root"]
+  },
+  {
+    "name": "does not reject the canonical manta-ai folder literal",
+    "file": "packages/sample/src/legal.ts",
+    "source": "export const canonicalRuntimeRoot = '.manta-ai'",
+    "violations": []
+  },
+  {
+    "name": "scans storage-hub JavaScript production sources",
+    "file": "packages/storage-hub/src/leak.mjs",
+    "source": "import fs from 'node:fs'; fs.rmSync('/tmp/leak', { recursive: true })",
+    "violations": ["rmSync", "unrouted"]
+  },
+  {
+    "name": "detects promise and sync destructive filesystem calls",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import fs from 'node:fs'; import fsp from 'node:fs/promises'; fs.unlinkSync('/tmp/a'); fsp.rmdir('/tmp/b')",
+    "violations": ["unlinkSync", "rmdir"]
+  },
+  {
+    "name": "tracks an aliased fs promises namespace",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import fs from 'node:fs'; const fsp = fs.promises; fsp.rm('/tmp/a', { recursive: true })",
+    "violations": ["rm", "unrouted"]
+  },
+  {
+    "name": "detects open and write streams",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import { openSync, createWriteStream } from 'node:fs'; openSync('/tmp/a', 'w'); createWriteStream('/tmp/b')",
+    "violations": ["openSync", "createWriteStream"]
+  },
+  {
+    "name": "does not treat a read-only file open as persistence",
+    "file": "packages/sample/src/legal.ts",
+    "source": "import { openSync } from 'node:fs'; const fd = openSync('/tmp/a', 'r'); void fd",
+    "violations": []
+  },
+  {
+    "name": "detects database paths",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import Database from 'better-sqlite3'; new Database('/tmp/db.sqlite')",
+    "violations": ["Database", "unrouted"]
+  },
+  {
+    "name": "detects namespace database constructors",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import sqlite3 from 'sqlite3'; new sqlite3.Database('/tmp/db.sqlite')",
+    "violations": ["Database", "unrouted"]
+  },
+  {
+    "name": "detects database factory filenames",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import { open } from 'sqlite'; open({ filename: '/tmp/db.sqlite' })",
+    "violations": ["open", "unrouted database"]
+  },
+  {
+    "name": "detects child processes with write capability",
+    "file": "scripts/leak.cjs",
+    "source": "const { execFileSync } = require('node:child_process'); execFileSync('git', ['clone', 'x', '/tmp/repo'])",
+    "violations": ["execFileSync", "child-process write"]
+  },
+  {
+    "name": "detects inline child process requires",
+    "file": "scripts/leak.cjs",
+    "source": "require('node:child_process').execSync('git clone x /tmp/repo')",
+    "violations": ["execSync", "child-process write"]
+  },
+  {
+    "name": "tracks ASH resolver values through variables and path joins",
+    "file": "packages/sample/src/legal.ts",
+    "source": "import fs from 'node:fs'; import path from 'node:path'; import { resolveStoragePath } from './routing'; const root = resolveStoragePath('work'); const file = path.join(root, 'a.json'); fs.writeFileSync(file, 'x')",
+    "violations": []
+  },
+  {
+    "name": "tracks an explicit HTTP user output boundary",
+    "file": "packages/sample/src/legal.ts",
+    "source": "import fs from 'node:fs'; export function save(request: { body: { outputPath: string } }) { const selected = request.body.outputPath; fs.writeFileSync(selected, 'x') }",
+    "violations": []
+  },
+  {
+    "name": "does not mistake Claude CLI discovery for an application persistence root",
+    "file": "packages/backend/src/claude.ts",
+    "source": "import { execFileSync } from 'node:child_process'; export function inspectClaude() { return execFileSync('claude', ['plugin', 'list'], { encoding: 'utf8' }) }",
+    "violations": []
+  }
+]

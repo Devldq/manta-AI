@@ -45,6 +45,24 @@ describe('managed SQLite lifecycle', () => {
     cache.close()
   })
 
+  it('persists the original document reference with document metadata', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-source-'))
+    const provider = new SQLiteVecProvider(root)
+    await provider.createKnowledgeBase('kb', 'Knowledge')
+    await provider.addDocument('kb', {
+      id: 'doc', name: 'source.txt', type: 'text/plain', size: 4,
+      uploadedAt: new Date().toISOString(), status: 'processing',
+      sourcePath: 'documents/abc-source.txt', sourceSha256: 'abc',
+    }, [])
+    await provider.close()
+
+    const reopened = new SQLiteVecProvider(root)
+    expect(await reopened.getDocument('doc')).toEqual(expect.objectContaining({
+      sourcePath: 'documents/abc-source.txt', sourceSha256: 'abc',
+    }))
+    await reopened.close()
+  })
+
   it('resets the compatibility provider before it can be reconfigured', async () => {
     const first = mkdtempSync(join(tmpdir(), 'manta-rag-global-'))
     const second = mkdtempSync(join(tmpdir(), 'manta-rag-global-'))

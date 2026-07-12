@@ -13,6 +13,7 @@ import * as path from 'node:path';
 import { resolveStoragePath } from '../../../storage/path-routing';
 
 import type { MCPServerEntry, MCPToolVisibility } from '../registry/types';
+import { recoverAtomicBundle, writeAtomicBundle } from '../../../storage/atomic-record-bundle';
 
 // ── 存储路径 ────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ function getVisibilityStorePath(): string {
 function getSecretsStorePath(): string {
   return resolveStoragePath('secrets', 'mcp', 'server-secrets.json');
 }
+function getBundleCoordinator(): string { return resolveStoragePath('secrets', '.transactions', 'mcp-servers'); }
 
 // ── 通用存储工具 ────────────────────────────────────────────────────────────
 
@@ -106,6 +108,7 @@ function sanitizeServer(entry: MCPServerEntry, previous: MCPServerSecrets | unde
 }
 
 function readServersStore(): MCPStoreData {
+  recoverAtomicBundle(getBundleCoordinator());
   const data = readJSON<MCPStoreData>(getServersStorePath(), { servers: [] });
   const secrets = loadServerSecrets();
   return { servers: data.servers.map((entry) => hydrateServer(entry, secrets[entry.name])) };
@@ -119,8 +122,10 @@ function writeServersStore(data: MCPStoreData): void {
     if (sanitized.secret) secrets[entry.name] = sanitized.secret;
     return sanitized.entry;
   });
-  writeJSON(getSecretsStorePath(), secrets);
-  writeJSON(getServersStorePath(), { servers });
+  writeAtomicBundle({ coordinatorPath: getBundleCoordinator(), writes: new Map([
+    [getSecretsStorePath(), JSON.stringify(secrets, null, 2)],
+    [getServersStorePath(), JSON.stringify({ servers }, null, 2)],
+  ]) });
 }
 
 // ── Server 配置对外 API ─────────────────────────────────────────────────────
@@ -153,7 +158,19 @@ export function saveUserServer(entry: MCPServerEntry): void {
   const idx = data.servers.findIndex((s) => s.name === entry.name);
 
   if (idx >= 0) {
-    data.servers[idx] = entry;
+    const existing = data.servers[idx];
+    const clear = (entry as MCPServerEntry & { clearSecrets?: { environment?: string[]; headers?: string[]; clientSecret?: boolean } }).clearSecrets;
+    const config = { ...existing.config, ...entry.config } as MCPServerEntry['config'];
+    if (config.type === 'local' && existing.config.type === 'local' && entry.config.type === 'local') {
+      config.environment = entry.config.environment === undefined ? existing.config.environment : { ...existing.config.environment, ...entry.config.environment };
+      for (const key of clear?.environment ?? []) delete config.environment?.[key];
+    }
+    if (config.type === 'remote' && existing.config.type === 'remote' && entry.config.type === 'remote') {
+      config.headers = entry.config.headers === undefined ? existing.config.headers : { ...existing.config.headers, ...entry.config.headers };
+      for (const key of clear?.headers ?? []) delete config.headers?.[key];
+    }
+    if (clear?.clientSecret && config.oauth) config.oauth = { ...config.oauth, clientSecret: undefined };
+    data.servers[idx] = { ...existing, ...entry, config };
   } else {
     data.servers.push(entry);
   }

@@ -7,12 +7,14 @@ import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } 
 import { runWithDiagnosticsOwner, RuntimeDiagnosticsWriter } from './runtime-diagnostics'
 import { join } from 'node:path'
 import { runWithStorageResolver } from './path-routing'
+import { createProcessRegistry, type ProcessRegistry } from '../core/engine/runner/process-registry'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
 export interface BackendStorageRuntime extends StorageResolver {
   readonly drivers: Map<StorageGroupId, StorageGroupDriver>
   readonly diagnosticsWriter: RuntimeDiagnosticsWriter
   readonly marketplaceScheduler: ClaudeMarketplaceRuntimeOwner
+  readonly processRegistry: ProcessRegistry
   runInStorageContext<T>(operation: () => T): T
   quiesce(): Promise<void>
   checkpoint(): Promise<void>
@@ -34,6 +36,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
     options.marketplaceRefresh,
     (operation) => runWithDiagnosticsOwner(diagnosticsWriter, operation),
   )
+  const processRegistry = createProcessRegistry(storage.resolve('work'))
   const lifecycles = new Map<StorageGroupId, ManagedGroupLifecycle>()
   let resumeMarketplace: (() => void) | undefined
   const extensionLifecycle = options.groupLifecycles?.extensions ?? {
@@ -51,12 +54,14 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   lifecycles.set('diagnostics', diagnosticsLifecycle)
   const drivers = new Map<StorageGroupId, StorageGroupDriver>()
   for (const id of STORAGE_GROUP_IDS) {
-    drivers.set(id, id === 'knowledge' ? createKnowledgeDriver(provider, cache) : createGroupDriver(id, [], lifecycles.get(id)))
+    drivers.set(id, id === 'knowledge'
+      ? createKnowledgeDriver(provider, cache)
+      : createGroupDriver(id, id === 'work' ? [processRegistry] : [], lifecycles.get(id)))
   }
   let quiesced = false
   let closed = false
   return {
-    resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler,
+    resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler, processRegistry,
     runInStorageContext: (operation) => runWithStorageResolver(storage, () => runWithDiagnosticsOwner(diagnosticsWriter, operation)),
     async quiesce() {
       quiesced = true

@@ -16,7 +16,8 @@
     "typecheck": "pnpm exec turbo run typecheck --filter=@manta/shared --filter=@manta/storage-hub --filter=@manta/rag --filter=@manta/agent-sandbox --filter=@manta/backend --filter=@manta/frontend --filter=@manta/desktop",
     "test": "pnpm exec turbo run test",
     "lint": "pnpm exec turbo run lint",
-    "storage:audit": "node scripts/security/ash-storage-audit.ts",
+    "storage:audit": "pnpm storage:audit:test && node scripts/security/ash-storage-audit.ts",
+    "storage:audit:test": "node scripts/security/ash-storage-audit.test.cjs",
     "clean": "pnpm exec turbo run clean"
   },
   "devDependencies": {

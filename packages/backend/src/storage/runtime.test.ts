@@ -50,6 +50,21 @@ describe('backend lifecycle', () => {
     expect((await runtime.healthCheck()).ok).toBe(false)
   })
 
+  it('registers the process registry with the work migration driver', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-process-runtime-'))
+    const nextWork = mkdtempSync(join(tmpdir(), 'manta-process-runtime-next-'))
+    const { createBackendStorageRuntime } = await import('./runtime')
+    const runtime = createBackendStorageRuntime({ resolve: (group, ...segments) => join(root, group, ...segments) })
+    runtime.processRegistry.register('before', 42, 'agent')
+    const driver = runtime.drivers.get('work')!
+    await driver.checkpoint(); await driver.close(); await driver.reopen(nextWork)
+    expect(runtime.processRegistry.getAllProcesses()).toEqual([])
+    runtime.processRegistry.register('after', 43, 'agent')
+    await driver.checkpoint()
+    expect(readFileSync(join(nextWork, 'processes', 'process-registry.json'), 'utf8')).toContain('after')
+    await runtime.close()
+  })
+
   it('does not listen merely by importing the server module', async () => {
     const before = { sigint: process.listenerCount('SIGINT'), sigterm: process.listenerCount('SIGTERM') }
     await import('../server')

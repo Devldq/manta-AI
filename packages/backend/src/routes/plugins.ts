@@ -23,13 +23,13 @@ import * as path from 'path'
 import {
   listPlugins,
   getPlugin,
-  installPlugin,
-  deletePlugin,
   updatePlugin,
   enablePlugin as storeEnable,
   disablePlugin as storeDisable,
   getPluginsSourceDir,
   findPluginByManifestId,
+  preparePluginRegistration,
+  getPluginRegistryFilePath,
 } from '../core/storage/plugin/store'
 import {
   scanPluginFiles,
@@ -204,11 +204,8 @@ export async function pluginRoutes(app: FastifyInstance) {
       await pluginRegistry.onPreUninstall(id)
 
       // 删除插件目录
-      const pluginDir = path.join(getPluginsSourceDir(), plugin.manifest.id)
-      transactionalUninstallDirectory({ extensionsRoot: resolveStoragePath('extensions'), destination: pluginDir })
-
-      const deleted = deletePlugin(id)
-      if (!deleted) throw Errors.NOT_FOUND('Plugin', id)
+      const pluginDir = plugin.installPath ?? path.join(getPluginsSourceDir(), plugin.manifest.id)
+      transactionalUninstallDirectory({ extensionsRoot: resolveStoragePath('extensions'), destination: pluginDir, registryDeletes: [getPluginRegistryFilePath(id)] })
 
       return reply.send(apiSuccess({ success: true }))
     } catch (err) {
@@ -295,15 +292,16 @@ export async function pluginRoutes(app: FastifyInstance) {
 
       // 复制到 plugins/ 目录
       const destDir = path.join(getPluginsSourceDir(), manifest.id)
+      const prepared = preparePluginRegistration(manifest, destDir)
       transactionalInstallDirectory({
         extensionsRoot: resolveStoragePath('extensions'), source: resolvedSource, destination: destDir,
         validate: (staged) => { if (!fs.existsSync(path.join(staged, 'plugin.yaml'))) throw new Error('Staged plugin manifest is missing') },
+        registryWrites: new Map([[prepared.filePath, JSON.stringify(prepared.definition, null, 2)]]),
       })
 
       // 注册到存储
       const installed = await (async () => {
-        const { registerPlugin } = await import('../core/storage/plugin/store')
-        return registerPlugin(manifest, destDir)
+        return prepared.definition
       })()
 
       // 执行安装后钩子
@@ -609,13 +607,14 @@ async function pluginRoutesInstallFile(
   }
 
   const destDir = path.join(getPluginsSourceDir(), manifest.id)
+  const prepared = preparePluginRegistration(manifest, destDir)
   transactionalInstallDirectory({
     extensionsRoot: resolveStoragePath('extensions'), source: resolvedSource, destination: destDir,
     validate: (staged) => { if (!fs.existsSync(path.join(staged, 'plugin.yaml'))) throw new Error('Staged plugin manifest is missing') },
+    registryWrites: new Map([[prepared.filePath, JSON.stringify(prepared.definition, null, 2)]]),
   })
 
-  const { registerPlugin } = await import('../core/storage/plugin/store')
-  const installed = registerPlugin(manifest, destDir)
+  const installed = prepared.definition
   await pluginRegistry.onPostInstall(installed.id)
 
   return reply.status(201).send(

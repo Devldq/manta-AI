@@ -1,8 +1,8 @@
 /* Global embedding preferences persist under the ASH config group. */
 import * as fs from 'fs'
-import * as path from 'path'
 import { resolveStoragePath } from '../../../storage/path-routing'
 import type { KnowledgeBaseConfig } from '../../storage/knowledge-base/store'
+import { recoverAtomicBundle, writeAtomicBundle } from '../../../storage/atomic-record-bundle'
 
 type EmbeddingProvider = 'openai' | 'local'
 
@@ -16,15 +16,10 @@ export interface EmbeddingConfig {
 
 const configFile = () => resolveStoragePath('config', 'embedding-config.json')
 const secretFile = () => resolveStoragePath('secrets', 'embedding-api-key.json')
-
-function safeWrite(filePath: string, data: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true })
-  const tmp = `${filePath}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
-  fs.renameSync(tmp, filePath)
-}
+const bundleCoordinator = () => resolveStoragePath('secrets', '.transactions', 'embedding-config')
 
 function readApiKey(): string | undefined {
+  recoverAtomicBundle(bundleCoordinator())
   try { return (JSON.parse(fs.readFileSync(secretFile(), 'utf8')) as { apiKey?: string }).apiKey } catch { return undefined }
 }
 
@@ -40,6 +35,7 @@ function fromEnv(): EmbeddingConfig {
 }
 
 export function getEmbeddingConfig(): EmbeddingConfig {
+  recoverAtomicBundle(bundleCoordinator())
   try {
     if (fs.existsSync(configFile())) {
       const raw = fs.readFileSync(configFile(), 'utf-8')
@@ -54,10 +50,14 @@ export function getEmbeddingConfig(): EmbeddingConfig {
   return fromEnv()
 }
 
-export function saveEmbeddingConfig(config: EmbeddingConfig): void {
-  const { apiKey, ...preferences } = config
-  safeWrite(configFile(), apiKey ? { ...preferences, apiKeyRef: 'embedding:default' } : preferences)
-  safeWrite(secretFile(), { apiKey })
+export function saveEmbeddingConfig(config: EmbeddingConfig & { clearApiKey?: boolean }): void {
+  const currentApiKey = readApiKey()
+  const { apiKey, clearApiKey, ...preferences } = config
+  const nextApiKey = clearApiKey ? undefined : apiKey ?? currentApiKey
+  writeAtomicBundle({ coordinatorPath: bundleCoordinator(), writes: new Map([
+    [configFile(), JSON.stringify(nextApiKey ? { ...preferences, apiKeyRef: 'embedding:default' } : preferences, null, 2)],
+    [secretFile(), JSON.stringify(nextApiKey ? { apiKey: nextApiKey } : {}, null, 2)],
+  ]) })
 }
 
 export function applyToKnowledgeBase(kbConfig: KnowledgeBaseConfig): KnowledgeBaseConfig {
