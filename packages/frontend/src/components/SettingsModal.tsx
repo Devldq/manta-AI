@@ -578,10 +578,6 @@ function SettingsTab() {
     setIsElectron(typeof api?.selectDirectory === 'function')
     probeRunners()
     loadPlugins()
-    const saved = localStorage.getItem('manta:webhook')
-    if (saved) {
-      try { setWebhook(JSON.parse(saved)) } catch {}
-    }
     fetch('/api/readme')
       .then((r) => r.json())
       .then((d) => setReadme(d.content ?? ''))
@@ -645,7 +641,6 @@ function SettingsTab() {
 
   function saveWebhook() {
     setWebhookSaving(true)
-    localStorage.setItem('manta:webhook', JSON.stringify(webhook))
     setTimeout(() => {
       setWebhookSaving(false)
       setWebhookSaved(true)

@@ -283,26 +283,10 @@ export function applyTheme(config: ThemeConfig): void {
 }
 
 /** 保存主题配置到 localStorage */
-export function saveThemeToStorage(themeId: string, config: ThemeConfig, mode: 'light' | 'dark'): void {
-  localStorage.setItem('manta:theme', JSON.stringify({ themeId, mode, config }))
-  localStorage.setItem('manta:color-mode', mode)
-}
+let themeCache: { themeId: string; mode: 'light' | 'dark'; config: ThemeConfig } | null = null
+export function saveThemeToStorage(themeId: string, config: ThemeConfig, mode: 'light' | 'dark'): void { themeCache = { themeId, mode, config } }
 
 /** 从 localStorage 恢复主题配置 */
-export function loadThemeFromStorage(): { themeId: string; mode: 'light' | 'dark'; config: ThemeConfig } | null {
-  try {
-    const saved = localStorage.getItem('manta:theme')
-    if (!saved) return null
-    const parsed = JSON.parse(saved)
-    if (!parsed.config) return null
-    return {
-      themeId: parsed.themeId ?? parsed.presetId ?? 'cli-pixel',
-      mode: parsed.mode ?? (localStorage.getItem('manta:color-mode') as 'light' | 'dark') ?? 'dark',
-      config: parsed.config,
-    }
-  } catch {
-    return null
-  }
-}
+export function loadThemeFromStorage(): { themeId: string; mode: 'light' | 'dark'; config: ThemeConfig } | null { return themeCache }
 
 /* AI end: Manta 主题预设库 */

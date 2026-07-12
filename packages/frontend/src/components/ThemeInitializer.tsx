@@ -31,8 +31,8 @@ export function ThemeInitializer() {
     // AI: 监听系统颜色模式变化（当存储模式为 system 时响应）
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     function handleSystemModeChange() {
-      const storedMode = localStorage.getItem('manta:color-mode')
-      if (storedMode === 'system' || !storedMode) {
+      const storedMode = loadThemeFromStorage()?.mode
+      if (!storedMode) {
         // AI: 重新加载当前主题，用新的系统模式
         const saved = loadThemeFromStorage()
         const newMode = mediaQuery.matches ? 'dark' : 'light'

@@ -213,14 +213,7 @@ function ChatView({
     }
   }, [editingTitle])
 
-  const SIDEBAR_OPEN_KEY = 'manta:session-sidebar-open'
-  const [sidebarOpen, setSidebarOpen] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(SIDEBAR_OPEN_KEY)
-      return saved === 'true'
-    }
-    return false
-  })
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const pendingMsgKey = `manta:pending-msg:${convId}`
 
   const { messages, setMessages, sendMessage, stop, status, error } = useChat({
@@ -308,11 +301,6 @@ function ChatView({
         .catch(() => {})
     }
   }, [reconnect.finished, convId, setMessages, reconnect, buildConvUrl])
-
-  // 持久化 sidebarOpen 到 localStorage
-  useEffect(() => {
-    localStorage.setItem(SIDEBAR_OPEN_KEY, String(sidebarOpen))
-  }, [sidebarOpen])
 
   // 流结束后从服务端重新加载消息
   const prevStatusRef = useRef(status)

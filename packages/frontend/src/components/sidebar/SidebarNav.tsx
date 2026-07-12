@@ -23,8 +23,8 @@ export function SidebarNav() {
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
-    const stored = localStorage.getItem('manta:color-mode') as 'light' | 'dark' | null
-    setColorMode(stored === 'light' || stored === 'dark' ? stored : getSystemColorMode())
+    const stored = loadThemeFromStorage()?.mode
+    setColorMode(stored ?? getSystemColorMode())
   }, [])
 
   // 预触发数据加载（在组件树最顶层开始加载，而非等待子组件挂载后各自触发）
@@ -53,7 +53,6 @@ export function SidebarNav() {
   function handleColorModeChange(newMode: 'light' | 'dark') {
     setColorMode(newMode)
     setColorModeClass(newMode)
-    localStorage.setItem('manta:color-mode', newMode)
     const saved = loadThemeFromStorage()
     const themeId = saved?.themeId ?? 'cli-pixel'
     const theme = getThemeById(themeId) ?? DESIGN_THEMES[0]

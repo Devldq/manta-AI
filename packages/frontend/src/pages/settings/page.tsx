@@ -77,10 +77,6 @@ export default function SettingsPage() {
     // 并行执行数据获取
     Promise.allSettled([probeRunners(), loadPlugins()])
     
-    const saved = localStorage.getItem('manta:webhook')
-    if (saved) {
-      try { setWebhook(JSON.parse(saved)) } catch {}
-    }
     // AI: 加载 README
     fetch('/api/readme')
       .then((r) => r.json())
@@ -216,7 +212,6 @@ export default function SettingsPage() {
 
   function saveWebhook() {
     setWebhookSaving(true)
-    localStorage.setItem('manta:webhook', JSON.stringify(webhook))
     setTimeout(() => {
       setWebhookSaving(false)
       setWebhookSaved(true)
