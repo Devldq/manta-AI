@@ -18,7 +18,7 @@ function harness(bootstrapPath: string) {
     selections: new SelectionStore(),
     bootstrapPath,
     initializeStorage: vi.fn(),
-    previewStorageParent: vi.fn(),
+    onboardingUrl: 'file:///onboarding/index.html',
   })
   const trustedEvent = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
   return { handlers, window, dispose, trustedEvent }
@@ -41,5 +41,26 @@ describe('registerOnboardingIpc', () => {
 
     await expect(handlers.get('onboarding:state')!({ ...trustedEvent, sender: { id: 42 } })).rejects.toThrow('Untrusted IPC sender')
     await expect(handlers.get('onboarding:state')!({ ...trustedEvent, senderFrame: { routingId: 10, url: 'file:///onboarding/index.html' } })).rejects.toThrow('Untrusted IPC sender')
+  })
+
+  it.each(['file:///attacker/index.html', 'https://attacker.example/onboarding/index.html'])('rejects privileged calls after the original main frame navigates to %s', async (attackerUrl) => {
+    const directory = await mkdtemp(join(tmpdir(), 'ash-onboarding-origin-'))
+    const { handlers, window, trustedEvent } = harness(join(directory, 'ash-bootstrap.json'))
+    window.webContents.mainFrame.url = attackerUrl
+
+    await expect(handlers.get('onboarding:select-parent')!(trustedEvent)).rejects.toThrow('Untrusted IPC sender')
+    await expect(handlers.get('onboarding:initialize')!(trustedEvent, { selectionId: 'forged' })).rejects.toThrow('Untrusted IPC sender')
+  })
+
+  it('registers exactly the four onboarding IPC methods', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ash-onboarding-surface-'))
+    const { handlers } = harness(join(directory, 'ash-bootstrap.json'))
+
+    expect([...handlers.keys()].sort()).toEqual([
+      'onboarding:initialize',
+      'onboarding:quit',
+      'onboarding:select-parent',
+      'onboarding:state',
+    ])
   })
 })
