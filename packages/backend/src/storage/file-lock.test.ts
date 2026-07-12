@@ -25,6 +25,16 @@ describe('storage file lock protocol', () => {
     expect(() => acquireStorageFileLock(path, { timeoutMs: 20, backoffMs: 5, inspectProcess: () => ({ alive: true, identity: 'self' }) })).toThrow(/unknown owner/i)
   })
 
+  it('times out fail-closed on an unknown cleanup claim owner', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-lock-claim-unknown-')); const path = join(root, 'lock'); writeFileSync(path, JSON.stringify({ version: 1, token: 'dead', pid: 42, processIdentity: 'old', createdAt: new Date().toISOString() })); writeFileSync(`${path}.claim-dead`, '{}')
+    expect(() => acquireStorageFileLock(path, { timeoutMs: 30, backoffMs: 5, inspectProcess: (pid) => pid === process.pid ? { alive: true, identity: 'self' } : { alive: false } })).toThrow(/cleanup claim has unknown owner/i)
+  })
+
+  it('recovers a dead cleanup claim lease before removing its stale target', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-lock-claim-dead-')); const path = join(root, 'lock'); writeFileSync(path, JSON.stringify({ version: 1, token: 'dead', pid: 42, processIdentity: 'old', createdAt: new Date().toISOString() })); writeFileSync(`${path}.claim-dead`, JSON.stringify({ version: 1, token: 'claim', pid: 43, processIdentity: 'dead-claim', createdAt: new Date().toISOString(), targetStaleToken: 'dead' }))
+    const release = acquireStorageFileLock(path, { timeoutMs: 200, backoffMs: 5, inspectProcess: (pid) => pid === process.pid ? { alive: true, identity: 'self' } : { alive: false } }); release(); expect(existsSync(path)).toBe(false); expect(existsSync(`${path}.claim-dead`)).toBe(false)
+  })
+
   it('serializes two contenders after observing a stale lock', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-lock-wait-')); const path = join(root, 'lock')
     writeFileSync(path, JSON.stringify({ version: 1, token: 'dead', pid: 42, processIdentity: 'old', createdAt: new Date().toISOString() }))

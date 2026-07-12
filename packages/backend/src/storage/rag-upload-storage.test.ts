@@ -80,4 +80,12 @@ describe('RAG original document storage', () => {
     expect(await cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 1000), isReferenced: async () => true })).toEqual([])
     expect(existsSync(join(knowledge, 'documents', hash))).toBe(true)
   })
+
+  it('serializes GC with ingest and never deletes a newly-created hash owner', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-gc-race-')); const knowledge = join(root, 'knowledge'); const storage = createRagUploadStorage({ cacheUploadsRoot: join(root, 'cache'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('same'), 'old.txt', async () => { throw new Error('old fail') })).rejects.toThrow('old fail')
+    const hash = readdirSync(join(knowledge, 'documents'))[0]; const ownerDir = join(knowledge, '.orphans', hash)
+    const gc = cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 1000), isReferenced: async () => { writeFileSync(join(ownerDir, 'new-owner.json'), JSON.stringify({ version: 1, hash, transactionId: 'new-owner', createdAt: new Date().toISOString(), status: 'pending-pipeline' })); return false } })
+    expect(await gc).toEqual([]); expect(existsSync(join(knowledge, 'documents', hash))).toBe(true); expect(readdirSync(ownerDir)).toEqual(['new-owner.json'])
+  })
 })

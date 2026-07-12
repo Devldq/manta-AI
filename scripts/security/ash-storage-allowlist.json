@@ -624,48 +624,6 @@
       "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
     },
     {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 27,
-      "column": 14,
-      "operation": "openSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 30,
-      "column": 11,
-      "operation": "unlinkSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 34,
-      "column": 48,
-      "operation": "unlinkSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 43,
-      "column": 16,
-      "operation": "openSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 56,
-      "column": 11,
-      "operation": "writeFileSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 56,
-      "column": 106,
-      "operation": "unlinkSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
       "file": "packages/backend/src/storage/durable-atomic.ts",
       "line": 17,
       "column": 3,
@@ -702,6 +660,69 @@
     },
     {
       "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 28,
+      "column": 16,
+      "operation": "openSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 28,
+      "column": 39,
+      "operation": "writeFileSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 33,
+      "column": 146,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 40,
+      "column": 11,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 44,
+      "column": 74,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 53,
+      "column": 16,
+      "operation": "openSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 66,
+      "column": 11,
+      "operation": "writeFileSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 66,
+      "column": 106,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 49,
+      "column": 39,
+      "operation": "createWriteStream",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
       "line": 14,
       "column": 55,
       "operation": "execFileSync",
@@ -713,13 +734,6 @@
       "column": 19,
       "operation": "execFileSync",
       "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 48,
-      "column": 39,
-      "operation": "createWriteStream",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     }
   ],
   "literals": [

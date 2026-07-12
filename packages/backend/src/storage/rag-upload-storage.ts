@@ -20,6 +20,7 @@ export interface StoredRagDocument {
   safeName: string
 }
 const activeUploads = new Map<string, number>()
+const ragHashLockPath = (knowledgeRoot: string, hash: string) => join(knowledgeRoot, '.locks', `${hash}.lock`)
 
 function safeUploadName(input: string): string {
   const leaf = basename(input.replaceAll('\\', '/')).replace(/[^\p{L}\p{N}._-]+/gu, '_')
@@ -58,7 +59,7 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
         const transactionId = basename(stagedPath, '.upload'); const orphanRoot = join(dirname(options.documentsRoot), '.orphans', sha256); durableMkdir(orphanRoot); const orphanPath = join(orphanRoot, `${transactionId}.json`)
         durableAtomicWrite(orphanPath, JSON.stringify({ version: 1, hash: sha256, transactionId, createdAt: new Date().toISOString(), status: 'pending-pipeline' }))
         durableFsyncFile(stagedPath, sha256)
-        const lock = join(dirname(options.documentsRoot), '.locks', `${sha256}.lock`); durableMkdir(dirname(lock)); const release = acquireStorageFileLock(lock)
+        const lock = ragHashLockPath(dirname(options.documentsRoot), sha256); durableMkdir(dirname(lock)); const release = acquireStorageFileLock(lock)
         try {
           if (!existsSync(absolutePath)) { try { durableCopy(stagedPath, absolutePath, { exclusive: true, expectedHash: sha256 }) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error } }
           durableFsyncFile(absolutePath, sha256)
@@ -107,11 +108,17 @@ export function inspectRagOrphans(knowledgeRoot: string): RagOrphanRecord[] {
 }
 export async function cleanupRagOrphans(knowledgeRoot: string, options: { olderThan: Date; isReferenced(hash: string): Promise<boolean> }): Promise<string[]> {
   const removed: string[] = []
-  for (const record of inspectRagOrphans(knowledgeRoot)) {
-    if (new Date(record.createdAt) >= options.olderThan || await options.isReferenced(record.hash)) continue
-    const ownerDir = join(knowledgeRoot, '.orphans', record.hash); durableRemove(join(ownerDir, `${record.transactionId}.json`))
-    if (readdirSync(ownerDir).length) continue
-    durableRemove(join(knowledgeRoot, 'documents', record.hash)); durableRemove(ownerDir); removed.push(record.hash)
+  for (const hash of [...new Set(inspectRagOrphans(knowledgeRoot).map((record) => record.hash))]) {
+    const lock = ragHashLockPath(knowledgeRoot, hash); durableMkdir(dirname(lock)); const release = acquireStorageFileLock(lock)
+    try {
+      const records = inspectRagOrphans(knowledgeRoot).filter((record) => record.hash === hash)
+      const referenced = await options.isReferenced(hash)
+      if (referenced) continue
+      const ownerDir = join(knowledgeRoot, '.orphans', hash)
+      for (const record of records) if (new Date(record.createdAt) < options.olderThan) durableRemove(join(ownerDir, `${record.transactionId}.json`))
+      if (existsSync(ownerDir) && readdirSync(ownerDir).length) continue
+      durableRemove(join(knowledgeRoot, 'documents', hash)); durableRemove(ownerDir); removed.push(hash)
+    } finally { release() }
   }
   return removed
 }
