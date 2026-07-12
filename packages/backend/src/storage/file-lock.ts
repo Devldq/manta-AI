@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { closeSync, existsSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, fsyncSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync, fsyncSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 
@@ -11,22 +11,28 @@ function parse(text: string): Owner | undefined { try { const value = JSON.parse
 function inspect(pid: number): { alive: boolean; identity?: string } {
   try { process.kill(pid, 0) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return { alive: false }; return { alive: true } }
   try {
-    if (process.platform === 'win32') { const value = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString()`], { encoding: 'utf8', windowsHide: true, env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH, TEMP: tmpdir(), TMP: tmpdir() } }).trim(); return { alive: true, identity: value ? `win32:${value}` : undefined } }
+    if (process.platform === 'win32') { const value = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$p=Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if($p){$p.StartTime.ToUniversalTime().Ticks.ToString()}`], { encoding: 'utf8', windowsHide: true, env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH, TEMP: tmpdir(), TMP: tmpdir() } }).trim(); if (!value) { try { process.kill(pid, 0) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return { alive: false } } }; return { alive: true, identity: value ? `win32:${value}` : undefined } }
     if (process.platform === 'linux') { const text = readFileSync(`/proc/${pid}/stat`, 'utf8'); const fields = text.slice(text.lastIndexOf(') ') + 2).split(' '); return { alive: true, identity: fields[19] ? `linux:${fields[19]}` : undefined } }
     const value = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' }).trim(); return { alive: true, identity: value ? `${process.platform}:${value}` : undefined }
-  } catch { return { alive: true } }
+  } catch {
+    try { process.kill(pid, 0) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return { alive: false } }
+    return { alive: true }
+  }
 }
 selfIdentity = inspect(process.pid).identity
 function ownerAt(path: string): Owner | undefined { try { return parse(readFileSync(path, 'utf8')) } catch { return undefined } }
 function removeOwned(path: string, token: string, required: boolean): boolean {
-  const owner = ownerAt(path); if (!owner) { if (required) throw new Error('Storage file lock has unknown owner'); return false } if (owner.token !== token) return false
-  const claim = `${path}.claim-${token}`; try { renameSync(path, claim) } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (['ENOENT', 'ESTALE', 'EPERM', 'EACCES'].includes(code ?? '')) return false
-    throw error
+  const owner = ownerAt(path); if (!owner) { if (required && existsSync(path)) throw new Error('Storage file lock has unknown owner'); return false } if (owner.token !== token) return false
+  const claim = `${path}.claim-${token}`; let fd: number
+  try { fd = openSync(claim, 'wx') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false; throw error }
+  try {
+    if (ownerAt(path)?.token !== token) return false
+    try { unlinkSync(path) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error }
+    return true
+  } finally {
+    closeSync(fd)
+    for (let attempt = 0; ; attempt++) { try { unlinkSync(claim); break } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') break; if (process.platform !== 'win32' || !['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '') || attempt >= 20) throw error; pause(10) } }
   }
-  if (ownerAt(claim)?.token !== token) { try { renameSync(claim, path) } catch { /* fail closed */ } if (required) throw new Error('Storage file lock ownership changed'); return false }
-  unlinkSync(claim); return true
 }
 export function acquireStorageFileLock(path: string, options: FileLockOptions = {}): () => void {
   const timeoutMs = options.timeoutMs ?? 500; const backoffMs = options.backoffMs ?? 20; const inspectProcess = options.inspectProcess ?? inspect; const deadline = Date.now() + timeoutMs
@@ -35,7 +41,9 @@ export function acquireStorageFileLock(path: string, options: FileLockOptions = 
   while (true) {
     let fd: number | undefined
     try { fd = openSync(path, 'wx') } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      const openCode = (error as NodeJS.ErrnoException).code
+      if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes(openCode ?? '')) { if (Date.now() >= deadline) throw new Error('Storage file lock acquisition timed out'); pause(backoffMs); continue }
+      if (openCode !== 'EEXIST') throw error
       const owner = ownerAt(path)
       if (!owner) { if (Date.now() >= deadline) throw new Error('Storage file lock has unknown owner'); pause(backoffMs); continue }
       const state = inspectProcess(owner.pid)

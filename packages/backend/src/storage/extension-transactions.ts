@@ -2,7 +2,7 @@ import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSyn
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { acquireStorageFileLock } from './file-lock'
-import { durableAtomicWrite, durableMkdir, durableRemove, durableRename } from './durable-atomic'
+import { durableAtomicWrite, durableMkdir, durableRecursiveCopy, durableRemove, durableRename } from './durable-atomic'
 
 interface ExtensionTransactionOptions { extensionsRoot: string; destination: string; fault?: (phase: string) => void }
 interface InstallOptions extends ExtensionTransactionOptions { source: string; validate?: (stagedPath: string) => void; registryWrites?: Map<string, string> }
@@ -95,7 +95,7 @@ function rejectLinks(path: string): void {
 function applyRegistry(root: string, journal: ExtensionJournal): void {
   for (const item of journal.registryWrites) {
     if (existsSync(item.path)) {
-      const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, item.path)); if (!existsSync(backup)) { durableMkdir(dirname(backup)); cpSync(item.path, backup) }
+      const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, item.path)); if (!existsSync(backup)) durableRecursiveCopy(item.path, backup)
     }
     atomicWrite(item.path, item.content)
   }
@@ -138,7 +138,8 @@ export function transactionalInstallDirectory(options: InstallOptions): { transa
   assertDestination(options); rejectLinks(options.source); const release = acquire(options.extensionsRoot)
   try {
     options.fault?.('locked'); recoverUnlocked(options.extensionsRoot); const id = randomUUID(); const stagingPath = join(options.extensionsRoot, '.ash-staging', id, 'payload')
-    durableMkdir(dirname(stagingPath)); cpSync(options.source, stagingPath, { recursive: true, dereference: false, filter: (source) => !['node_modules', '.git'].includes(basename(source)) }); options.validate?.(stagingPath)
+    try { durableRecursiveCopy(options.source, stagingPath, { filter: (source) => !['node_modules', '.git'].includes(basename(source)), afterCopy: () => options.fault?.('copy-entry') }); options.validate?.(stagingPath) }
+    catch (error) { durableRemove(dirname(stagingPath)); throw error }
     const backupPath = existsSync(options.destination) ? join(options.extensionsRoot, '.ash-backups', id, relative(options.extensionsRoot, options.destination)) : undefined
     const journal: ExtensionJournal = { version: 1, id, kind: 'install', phase: 'staged', destination: options.destination, stagingPath, backupPath, registryWrites: [...(options.registryWrites ?? new Map())].map(([path, content]) => ({ path, content })), registryDeletes: [] }
     persist(options.extensionsRoot, journal); options.fault?.('journaled'); finish(options.extensionsRoot, journal, options.fault); return { transactionId: id, stagingPath, backupPath }

@@ -39,6 +39,13 @@ describe('extension storage transactions', () => {
     transactionalInstallDirectory({ extensionsRoot, source, destination, fault: (phase) => { if (phase === 'locked') expect(() => transactionalInstallDirectory({ extensionsRoot, source, destination })).toThrow(/lock/i) } })
   })
 
+  it('removes an interrupted recursive staging tree and succeeds after restart', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-copy-fault-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); mkdirSync(join(source, 'nested'), { recursive: true }); writeFileSync(join(source, 'a'), 'a'); writeFileSync(join(source, 'nested', 'b'), 'b')
+    let copied = 0; expect(() => transactionalInstallDirectory({ extensionsRoot, source, destination, fault: (phase) => { if (phase === 'copy-entry' && ++copied === 2) throw new Error('copy crash') } })).toThrow('copy crash')
+    expect(existsSync(destination)).toBe(false); expect(readdirSync(join(extensionsRoot, '.ash-staging'))).toEqual([])
+    recoverExtensionTransactions(extensionsRoot); transactionalInstallDirectory({ extensionsRoot, source, destination }); expect(readFileSync(join(destination, 'nested', 'b'), 'utf8')).toBe('b')
+  })
+
   it('rejects package symlinks instead of preserving links outside the volume', () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-extension-link-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); const outside = join(root, 'outside'); mkdirSync(source); mkdirSync(outside); writeFileSync(join(outside, 'secret'), 'outside')
     try { symlinkSync(outside, join(source, 'escape'), 'junction') } catch { return }

@@ -597,6 +597,76 @@
     },
     {
       "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 30,
+      "column": 14,
+      "operation": "openSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 45,
+      "column": 123,
+      "operation": "openSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 46,
+      "column": 9,
+      "operation": "writeFileSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 48,
+      "column": 11,
+      "operation": "renameSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 27,
+      "column": 14,
+      "operation": "openSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 30,
+      "column": 11,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 34,
+      "column": 48,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 43,
+      "column": 16,
+      "operation": "openSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 56,
+      "column": 11,
+      "operation": "writeFileSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 56,
+      "column": 106,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
       "line": 17,
       "column": 3,
       "operation": "mkdirSync",
@@ -631,41 +701,6 @@
       "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
     },
     {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 29,
-      "column": 123,
-      "operation": "openSync",
-      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 30,
-      "column": 9,
-      "operation": "writeFileSync",
-      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 32,
-      "column": 11,
-      "operation": "renameSync",
-      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 98,
-      "column": 159,
-      "operation": "cpSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 141,
-      "column": 41,
-      "operation": "cpSync",
-      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
-    },
-    {
       "file": "packages/backend/src/storage/file-lock.ts",
       "line": 14,
       "column": 55,
@@ -680,115 +715,10 @@
       "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
     },
     {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 23,
-      "column": 49,
-      "operation": "renameSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 28,
-      "column": 48,
-      "operation": "renameSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 29,
-      "column": 3,
-      "operation": "unlinkSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 37,
-      "column": 16,
-      "operation": "openSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 48,
-      "column": 11,
-      "operation": "writeFileSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
-      "file": "packages/backend/src/storage/file-lock.ts",
-      "line": 48,
-      "column": 106,
-      "operation": "unlinkSync",
-      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
-    },
-    {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
       "line": 48,
       "column": 39,
       "operation": "createWriteStream",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 62,
-      "column": 122,
-      "operation": "unlink",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 65,
-      "column": 15,
-      "operation": "unlink",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 69,
-      "column": 15,
-      "operation": "unlink",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 98,
-      "column": 42,
-      "operation": "rmSync",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 100,
-      "column": 151,
-      "operation": "rmSync",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 104,
-      "column": 61,
-      "operation": "rmSync",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 110,
-      "column": 74,
-      "operation": "unlink",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 112,
-      "column": 11,
-      "operation": "unlink",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 112,
-      "column": 152,
-      "operation": "rmSync",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     }
   ],

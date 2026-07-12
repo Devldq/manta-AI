@@ -1,4 +1,4 @@
-import { closeSync, constants, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, constants, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join, basename } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createHash } from 'node:crypto'
@@ -24,6 +24,22 @@ export function durableCopy(source: string, destination: string, options: { excl
   if (statSync(source).size !== statSync(destination).size) throw new Error('Durable copy size mismatch')
   if (options.expectedHash) { const actual = createHash('sha256').update(readFileSync(destination)).digest('hex'); if (actual !== options.expectedHash) throw new Error('Durable copy hash mismatch') }
   fsyncParentDirectory(destination)
+}
+export function durableFsyncFile(file: string, expectedHash?: string): void {
+  if (expectedHash) { const actual = createHash('sha256').update(readFileSync(file)).digest('hex'); if (actual !== expectedHash) throw new Error(`Durable file hash mismatch: expected ${expectedHash}, got ${actual}`) }
+  const fd = openSync(file, 'r+'); try { fsyncSync(fd) } finally { closeSync(fd) }; fsyncParentDirectory(file)
+}
+export function durableRecursiveCopy(source: string, destination: string, options: { filter?: (source: string) => boolean; afterCopy?: (source: string) => void } = {}): void {
+  const stat = lstatSync(source)
+  if (stat.isSymbolicLink()) throw new Error(`Durable recursive copy refuses symbolic links or reparse points: ${source}`)
+  if (stat.isDirectory()) {
+    durableMkdir(destination)
+    for (const name of readdirSync(source)) { const child = join(source, name); if (options.filter?.(child) === false) continue; durableRecursiveCopy(child, join(destination, name), options) }
+    chmodSync(destination, stat.mode); utimesSync(destination, stat.atime, stat.mtime); fsyncParentDirectory(join(destination, '.entry'))
+    return
+  }
+  if (!stat.isFile()) throw new Error(`Durable recursive copy refuses non-file entry: ${source}`)
+  durableCopy(source, destination); chmodSync(destination, stat.mode); utimesSync(destination, stat.atime, stat.mtime); fsyncParentDirectory(destination); options.afterCopy?.(source)
 }
 export function durableAtomicWrite(file: string, content: string): void {
   durableMkdir(dirname(file)); const temporary = join(dirname(file), `${basename(file)}.${randomUUID()}.tmp`); const fd = openSync(temporary, 'wx')

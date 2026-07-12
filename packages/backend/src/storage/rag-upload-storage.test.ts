@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -49,6 +50,14 @@ describe('RAG original document storage', () => {
     let processed = false
     await expect(storage.ingest(Readable.from('hello'), 'a.txt', async () => { processed = true })).rejects.toThrow()
     expect(processed).toBe(false)
+  })
+
+  it('rejects a corrupt pre-existing content-addressed blob and preserves its owner warning', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-corrupt-')); const knowledge = join(root, 'knowledge'); const documents = join(knowledge, 'documents'); mkdirSync(documents, { recursive: true })
+    const content = 'expected'; const hash = createHash('sha256').update(content).digest('hex'); writeFileSync(join(documents, hash), 'truncated')
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(root, 'cache'), documentsRoot: documents }); let processed = false
+    await expect(storage.ingest(Readable.from(content), 'a.txt', async () => { processed = true })).rejects.toThrow(/hash mismatch/)
+    expect(processed).toBe(false); expect(readdirSync(join(knowledge, '.orphans', hash))).toHaveLength(1); expect(readFileSync(join(documents, hash), 'utf8')).toBe('truncated')
   })
 
   it('cleans only expired, unreferenced owned orphans', async () => {
