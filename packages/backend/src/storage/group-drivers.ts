@@ -95,12 +95,13 @@ export function createKnowledgeDriver(
     provider: (root) => new Provider(root),
     cache: (root) => new Cache(root),
   },
+  resources: ManagedResource[] = [],
 ): StorageGroupDriver {
   return {
     id: 'knowledge',
     async quiesce() {},
-    async checkpoint() { await allSettledOrThrow('Knowledge checkpoint failed', [() => provider.checkpoint(), () => cache.checkpoint()]) },
-    async close() { await allSettledOrThrow('Knowledge close failed', [() => provider.close(), () => cache.close()]) },
+    async checkpoint() { await allSettledOrThrow('Knowledge checkpoint failed', [() => provider.checkpoint(), () => cache.checkpoint(), ...resources.map((resource) => () => resource.checkpoint())]) },
+    async close() { await allSettledOrThrow('Knowledge close failed', [() => provider.close(), () => cache.close(), ...resources.map((resource) => () => resource.close())]) },
     async validate(root) {
       const candidateProvider = candidates.provider(join(root, 'rag'))
       const candidateCache = candidates.cache(join(root, 'rag', 'cache'))
@@ -117,7 +118,7 @@ export function createKnowledgeDriver(
       }
       return errors.length ? { ok: false, error: `Knowledge validation failed: ${errors.map(String).join('; ')}` } : { ok: true }
     },
-    async reopen(root) { await allSettledOrThrow('Knowledge reopen failed', [() => provider.reopen(join(root, 'rag')), () => cache.reopen(join(root, 'rag', 'cache'))]) },
+    async reopen(root) { await allSettledOrThrow('Knowledge reopen failed', [() => provider.reopen(join(root, 'rag')), () => cache.reopen(join(root, 'rag', 'cache')), ...resources.map((resource) => () => resource.reopen(root))]) },
     inventory: inventoryTree,
   }
 }

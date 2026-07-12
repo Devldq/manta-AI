@@ -214,6 +214,10 @@ function boundOperation(expression, namespaces, bindings, inlineModules) {
 function classify(expression, facts, seen = new Set()) {
   if (!expression || seen.has(expression) || seen.size > 40) return 'unknown'
   seen.add(expression)
+  if (ts.isStringLiteralLike(expression)) {
+    const value = expression.text
+    return value && !path.isAbsolute(value) && !value.split(/[\\/]+/).includes('..') ? 'segment' : 'unknown'
+  }
   if (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression) || ts.isNonNullExpression(expression)) return classify(expression.expression, facts, seen)
   if (ts.isIdentifier(expression)) {
     if (facts.userIdentifiers.has(expression.text)) return 'user'
@@ -259,22 +263,26 @@ function classify(expression, facts, seen = new Set()) {
   if (ts.isBinaryExpression(expression) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.PlusToken].includes(expression.operatorToken.kind)) {
     const left = classify(expression.left, facts, new Set(seen))
     const right = classify(expression.right, facts, new Set(seen))
-    if (left === 'ash' || right === 'ash') return 'ash'
-    if (left === 'user' || right === 'user') return 'user'
+    if (expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      if (['ash', 'user'].includes(left) && right === 'segment') return left
+      if (left === 'segment' && ['ash', 'user'].includes(right)) return right
+    } else if (left === right) return left
     return 'unknown'
   }
   if (ts.isTemplateExpression(expression)) {
-    const kinds = expression.templateSpans.map((span) => classify(span.expression, facts, new Set(seen)))
-    return kinds.includes('ash') ? 'ash' : kinds.includes('user') ? 'user' : 'unknown'
+    return 'unknown'
   }
   if (ts.isCallExpression(expression)) {
     const name = calleeName(expression.expression)
+    if (name === 'safeStorageSegment') return 'segment'
     if (name === 'resolveStoragePath') return 'ash'
     if (name === 'resolve' && ts.isPropertyAccessExpression(expression.expression)
       && /(?:storage|resolver)/i.test(expression.expression.expression.getText())) return 'ash'
     if (['join', 'resolve', 'normalize', 'dirname'].includes(name)) {
       const kinds = expression.arguments.map((argument) => classify(argument, facts, new Set(seen)))
-      return kinds.includes('ash') ? 'ash' : kinds.includes('user') ? 'user' : 'unknown'
+      if (name === 'dirname' || name === 'normalize') return kinds.length === 1 && ['ash', 'user'].includes(kinds[0]) ? kinds[0] : 'unknown'
+      if (!kinds.length || !['ash', 'user'].includes(kinds[0])) return 'unknown'
+      return kinds.slice(1).every((kind) => kind === 'segment') ? kinds[0] : 'unknown'
     }
     if (/^(?:resolve|normalize|expand)(?:User)?Path$/i.test(name)) {
       const kinds = expression.arguments.map((argument) => classify(argument, facts, new Set(seen)))

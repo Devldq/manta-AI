@@ -18,6 +18,7 @@ export interface StoredRagDocument {
   size: number
   safeName: string
 }
+const activeUploads = new Map<string, number>()
 
 function safeUploadName(input: string): string {
   const leaf = basename(input.replaceAll('\\', '/')).replace(/[^\p{L}\p{N}._-]+/gu, '_')
@@ -29,6 +30,7 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
   const maxBytes = options.maxBytes ?? 50 * 1024 * 1024
   return {
     async ingest<T>(source: Readable, originalName: string, processStaged: (stagedPath: string, document: StoredRagDocument) => Promise<T>): Promise<StoredRagDocument & { result: T }> {
+      activeUploads.set(options.cacheUploadsRoot, (activeUploads.get(options.cacheUploadsRoot) ?? 0) + 1)
       mkdirSync(options.cacheUploadsRoot, { recursive: true })
       const stagedPath = join(options.cacheUploadsRoot, `${randomUUID()}.upload`)
       const hash = createHash('sha256')
@@ -52,15 +54,28 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
         const storedName = sha256
         const absolutePath = join(options.documentsRoot, storedName)
         const document = { absolutePath, relativePath: posix.join('documents', storedName), sha256, size, safeName }
-        const result = await processStaged(stagedPath, document)
         if (!existsSync(absolutePath)) {
           try { await copyFile(stagedPath, absolutePath, constants.COPYFILE_EXCL) }
           catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
         }
+        const result = await processStaged(stagedPath, document)
         return { result, ...document }
       } finally {
         await unlink(stagedPath).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error })
+        const remaining = (activeUploads.get(options.cacheUploadsRoot) ?? 1) - 1
+        if (remaining) activeUploads.set(options.cacheUploadsRoot, remaining); else activeUploads.delete(options.cacheUploadsRoot)
       }
     },
+  }
+}
+
+export function createRagUploadResource(initialCacheRoot: string) {
+  let cacheRoot = initialCacheRoot
+  const idle = () => activeUploads.get(cacheRoot) ? { ok: false, error: 'RAG uploads are still active' } : { ok: true }
+  return {
+    checkpoint() { const status = idle(); if (!status.ok) throw new Error(status.error) },
+    close() { const status = idle(); if (!status.ok) throw new Error(status.error) },
+    integrityCheck: idle,
+    reopen(nextCacheRoot: string) { const status = idle(); if (!status.ok) throw new Error(status.error); cacheRoot = join(nextCacheRoot, 'uploads') },
   }
 }

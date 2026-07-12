@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { resolveStoragePath } from '../../../storage/path-routing'
+import { resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import type { WorkflowDef } from '@core/types'
 import { ensureDir, atomicWrite, shortId, readJsonFile } from '../shared/fs-utils'
@@ -8,7 +8,7 @@ import { ensureDir, atomicWrite, shortId, readJsonFile } from '../shared/fs-util
 function dataDir(): string { return resolveStoragePath('work', 'workflows') }
 
 function workflowDir(workflowId: string): string {
-  return path.join(dataDir(), workflowId)
+  return path.join(dataDir(), safeStorageSegment(workflowId))
 }
 
 function workflowFilePath(workflowId: string): string {

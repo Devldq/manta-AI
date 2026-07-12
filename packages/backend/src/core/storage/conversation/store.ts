@@ -1,7 +1,7 @@
 /* 会话存储层 — 文件夹实现（每个会话一个文件夹，内含 session.json + log.ndjson 等） */
 import * as fs from 'fs'
 import * as path from 'path'
-import { resolveStoragePath } from '../../../storage/path-routing'
+import { resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import type { Conversation, ConversationMessage, ToolCallRecord, StepUsageRecord } from '@core/types'
 
@@ -14,7 +14,7 @@ function ensureDir(): void {
 
 /** 会话文件夹路径 */
 function convDirPath(id: string): string {
-  return path.join(dataDir(), id)
+  return path.join(dataDir(), safeStorageSegment(id))
 }
 
 /** 会话 JSON 文件路径 */
@@ -40,7 +40,7 @@ function readConv(id: string): Conversation | null {
     try { return JSON.parse(fs.readFileSync(newFp, 'utf-8')) as Conversation } catch { return null }
   }
   // 兼容旧格式（直接的 .json 文件）
-  const oldFp = path.join(dataDir(), `${id}.json`)
+  const oldFp = path.join(dataDir(), safeStorageSegment(`${id}.json`))
   if (fs.existsSync(oldFp)) {
     try { return JSON.parse(fs.readFileSync(oldFp, 'utf-8')) as Conversation } catch { return null }
   }
@@ -58,7 +58,7 @@ function writeConv(conv: Conversation): void {
 
 /** 迁移旧的 .json 文件到文件夹格式 */
 function migrateOldFormat(id: string): boolean {
-  const oldFp = path.join(dataDir(), `${id}.json`)
+  const oldFp = path.join(dataDir(), safeStorageSegment(`${id}.json`))
   if (!fs.existsSync(oldFp)) return false
   try {
     const conv = JSON.parse(fs.readFileSync(oldFp, 'utf-8')) as Conversation
@@ -203,7 +203,7 @@ export function deleteConversation(id: string): boolean {
     try { removeDir(dir); return true } catch { return false }
   }
   // 旧格式兼容：删除 .json 文件
-  const oldFp = path.join(dataDir(), `${id}.json`)
+  const oldFp = path.join(dataDir(), safeStorageSegment(`${id}.json`))
   if (fs.existsSync(oldFp)) {
     try { fs.unlinkSync(oldFp); return true } catch { return false }
   }

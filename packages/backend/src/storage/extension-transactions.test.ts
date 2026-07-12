@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -43,5 +43,16 @@ describe('extension storage transactions', () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-extension-link-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); const outside = join(root, 'outside'); mkdirSync(source); mkdirSync(outside); writeFileSync(join(outside, 'secret'), 'outside')
     try { symlinkSync(outside, join(source, 'escape'), 'junction') } catch { return }
     expect(() => transactionalInstallDirectory({ extensionsRoot, source, destination: join(extensionsRoot, 'plugins', 'demo') })).toThrow(/symbolic link/i)
+  })
+
+  it('stores only root-relative versioned journal paths and rejects tampered recovery', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-tamper-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); mkdirSync(source); writeFileSync(join(source, 'plugin.yaml'), 'new')
+    expect(() => transactionalInstallDirectory({ extensionsRoot, source, destination: join(extensionsRoot, 'plugins', 'demo'), fault: (phase) => { if (phase === 'journaled') throw new Error('crash') } })).toThrow('crash')
+    const journalFile = join(extensionsRoot, '.ash-transactions', readdirSync(join(extensionsRoot, '.ash-transactions'))[0])
+    const journal = JSON.parse(readFileSync(journalFile, 'utf8'))
+    expect(journal.version).toBe(1); expect(JSON.stringify(journal)).not.toContain(extensionsRoot)
+    journal.destination = '../outside'; writeFileSync(journalFile, JSON.stringify(journal))
+    expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/journal|outside|child/i)
+    expect(existsSync(join(root, 'outside'))).toBe(false)
   })
 })

@@ -353,7 +353,16 @@ function createClaudeIsolation(extensionsRoot: string): ClaudeIsolation {
   const parent = path.join(extensionsRoot, '.ash-cli-staging'); ensureDir(parent)
   const root = fs.mkdtempSync(path.join(parent, 'claude-'))
   const configDir = path.join(root, 'claude-config'); ensureDir(configDir)
-  return { root, configDir, env: { ...process.env, HOME: root, USERPROFILE: root, CLAUDE_CONFIG_DIR: configDir } }
+  const directoryVariables = ['APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'TEMP', 'TMP', 'TMPDIR'] as const
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SYSTEMROOT', 'COMSPEC', 'WINDIR', 'LANG', 'LC_ALL']) {
+    if (process.env[key] !== undefined) env[key] = process.env[key]
+  }
+  for (const key of directoryVariables) {
+    const directory = path.join(root, key.toLowerCase()); ensureDir(directory); env[key] = directory
+  }
+  Object.assign(env, { HOME: root, USERPROFILE: root, CLAUDE_CONFIG_DIR: configDir })
+  return { root, configDir, env }
 }
 
 export async function installClaudePlugin(

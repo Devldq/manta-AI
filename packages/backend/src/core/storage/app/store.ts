@@ -2,7 +2,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { resolveStoragePath } from '../../../storage/path-routing'
+import { resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
 import { type AppConfig, type CreateAppInput, type UpdateAppInput } from '@core/types'
 import { ensureDir, atomicWrite, shortId, removeDir, readJsonFile } from '../shared/fs-utils'
 
@@ -11,7 +11,7 @@ function appDataDir(): string {
 }
 
 function appDir(appId: string): string {
-  return path.join(appDataDir(), appId)
+  return path.join(appDataDir(), safeStorageSegment(appId))
 }
 
 function appFilePath(appId: string): string {

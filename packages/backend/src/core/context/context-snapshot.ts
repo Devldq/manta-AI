@@ -14,7 +14,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { resolveStoragePath } from '../../storage/path-routing'
+import { resolveStoragePath, safeStorageSegment } from '../../storage/path-routing'
 import type { ModelMessage } from 'ai'
 import { estimateTokensFromChars, getMessageCharCount } from './token/estimator'
 
@@ -257,14 +257,14 @@ function formatMessageContent(msg: ModelMessage): string {
  * 获取会话的快照文件路径
  */
 export function getSnapshotPath(conversationId: string): string {
-  return path.join(dataDir(), conversationId, 'context-snapshots.ndjson')
+  return path.join(dataDir(), safeStorageSegment(conversationId), 'context-snapshots.ndjson')
 }
 
 /**
  * 清空会话的快照文件（在新 loop 启动时调用）
  */
 export function clearSnapshots(conversationId: string): void {
-  const dir = path.join(dataDir(), conversationId)
+  const dir = path.join(dataDir(), safeStorageSegment(conversationId))
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
   }
@@ -284,7 +284,7 @@ export function recordContextSnapshot(
   stepIndex: number,
   messages: ModelMessage[],
 ): void {
-  const dir = path.join(dataDir(), conversationId)
+  const dir = path.join(dataDir(), safeStorageSegment(conversationId))
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
   }

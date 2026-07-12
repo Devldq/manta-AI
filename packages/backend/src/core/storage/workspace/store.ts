@@ -2,7 +2,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { resolveStoragePath } from '../../../storage/path-routing'
+import { resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import { type WorkspaceConfig, type CreateWorkspaceInput, type UpdateWorkspaceInput, type Conversation, type ConversationMessage, type ToolCallRecord, type StepUsageRecord } from '@core/types'
 import { ensureDir, atomicWrite, shortId, removeDir, readJsonFile } from '../shared/fs-utils'
@@ -12,7 +12,7 @@ function workspaceDataDir(): string {
 }
 
 function workspaceDir(id: string): string {
-  return path.join(workspaceDataDir(), id)
+  return path.join(workspaceDataDir(), safeStorageSegment(id))
 }
 
 function workspaceFilePath(id: string): string {
@@ -26,7 +26,7 @@ function workspaceConversationsDir(workspaceId: string): string {
 
 /** 工作空间会话文件夹路径 */
 function workspaceConvDir(workspaceId: string, conversationId: string): string {
-  return path.join(workspaceConversationsDir(workspaceId), conversationId)
+  return path.join(workspaceConversationsDir(workspaceId), safeStorageSegment(conversationId))
 }
 
 /** 工作空间会话 JSON 文件路径 */

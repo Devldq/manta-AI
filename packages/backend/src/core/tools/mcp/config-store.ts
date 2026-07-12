@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import { resolveStoragePath } from '../../../storage/path-routing';
 
 import type { MCPServerEntry, MCPToolVisibility } from '../registry/types';
-import { recoverAtomicBundle, writeAtomicBundle } from '../../../storage/atomic-record-bundle';
+import { withAtomicBundle } from '../../../storage/atomic-record-bundle';
 
 // ── 存储路径 ────────────────────────────────────────────────────────────────
 
@@ -29,6 +29,8 @@ function getSecretsStorePath(): string {
   return resolveStoragePath('secrets', 'mcp', 'server-secrets.json');
 }
 function getBundleCoordinator(): string { return resolveStoragePath('secrets', '.transactions', 'mcp-servers'); }
+const secretsRoot = () => resolveStoragePath('secrets');
+const sealedPath = 'mcp/sealed-servers.json';
 
 // ── 通用存储工具 ────────────────────────────────────────────────────────────
 
@@ -108,24 +110,36 @@ function sanitizeServer(entry: MCPServerEntry, previous: MCPServerSecrets | unde
 }
 
 function readServersStore(): MCPStoreData {
-  recoverAtomicBundle(getBundleCoordinator());
-  const data = readJSON<MCPStoreData>(getServersStorePath(), { servers: [] });
-  const secrets = loadServerSecrets();
-  return { servers: data.servers.map((entry) => hydrateServer(entry, secrets[entry.name])) };
+  return withAtomicBundle(secretsRoot(), 'mcp-servers', (bundle) => {
+    const sealed = bundle.read(sealedPath);
+    const state = sealed ? JSON.parse(sealed) as { data: MCPStoreData; secrets: Record<string, MCPServerSecrets> } : { data: readJSON<MCPStoreData>(getServersStorePath(), { servers: [] }), secrets: loadServerSecrets() };
+    return { servers: state.data.servers.map((entry) => hydrateServer(entry, state.secrets[entry.name])) };
+  });
 }
 
-function writeServersStore(data: MCPStoreData): void {
-  const previous = loadServerSecrets();
+function encodeServers(data: MCPStoreData, previous: Record<string, MCPServerSecrets>) {
   const secrets: Record<string, MCPServerSecrets> = {};
   const servers = data.servers.map((entry) => {
     const sanitized = sanitizeServer(entry, previous[entry.name]);
     if (sanitized.secret) secrets[entry.name] = sanitized.secret;
     return sanitized.entry;
   });
-  writeAtomicBundle({ coordinatorPath: getBundleCoordinator(), writes: new Map([
-    [getSecretsStorePath(), JSON.stringify(secrets, null, 2)],
-    [getServersStorePath(), JSON.stringify({ servers }, null, 2)],
-  ]) });
+  return { data: { servers }, secrets };
+}
+
+function mutateServersStore(mutator: (data: MCPStoreData) => boolean | void): boolean {
+  let changed = true; let mirror: MCPStoreData = { servers: [] }; let secretMirror: Record<string, MCPServerSecrets> = {};
+  withAtomicBundle(secretsRoot(), 'mcp-servers', (bundle) => {
+    const raw = bundle.read(sealedPath);
+    const current = raw ? JSON.parse(raw) as { data: MCPStoreData; secrets: Record<string, MCPServerSecrets> } : { data: readJSON<MCPStoreData>(getServersStorePath(), { servers: [] }), secrets: loadServerSecrets() };
+    const hydrated = { servers: current.data.servers.map((entry) => hydrateServer(entry, current.secrets[entry.name])) };
+    changed = mutator(hydrated) !== false;
+    if (!changed) return;
+    const encoded = encodeServers(hydrated, current.secrets); mirror = encoded.data; secretMirror = encoded.secrets;
+    bundle.write(sealedPath, JSON.stringify(encoded, null, 2));
+  });
+  if (changed) { writeJSON(getServersStorePath(), mirror); writeJSON(getSecretsStorePath(), secretMirror) }
+  return changed;
 }
 
 // ── Server 配置对外 API ─────────────────────────────────────────────────────
@@ -154,7 +168,7 @@ export function getUserServer(name: string): MCPServerEntry | undefined {
  * @param entry MCP Server 配置项
  */
 export function saveUserServer(entry: MCPServerEntry): void {
-  const data = readServersStore();
+  mutateServersStore((data) => {
   const idx = data.servers.findIndex((s) => s.name === entry.name);
 
   if (idx >= 0) {
@@ -175,7 +189,7 @@ export function saveUserServer(entry: MCPServerEntry): void {
     data.servers.push(entry);
   }
 
-  writeServersStore(data);
+  });
 }
 
 /**
@@ -185,14 +199,14 @@ export function saveUserServer(entry: MCPServerEntry): void {
  * @returns true 如果成功删除，false 如果未找到
  */
 export function deleteUserServer(name: string): boolean {
-  const data = readServersStore();
+  return mutateServersStore((data) => {
   const idx = data.servers.findIndex((s) => s.name === name);
 
   if (idx < 0) return false;
 
   data.servers.splice(idx, 1);
-  writeServersStore(data);
   return true;
+  });
 }
 
 // ── 工具可见性配置存储 ──────────────────────────────────────────────────────

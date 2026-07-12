@@ -10,7 +10,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { resolveStoragePath } from '../../../storage/path-routing'
 import { shortId, readJsonFile, removeDir } from '@manta/rag'
-import { recoverAtomicBundle, writeAtomicBundle } from '../../../storage/atomic-record-bundle'
+import { recoverAtomicBundle, writeAtomicBundle, withAtomicBundle } from '../../../storage/atomic-record-bundle'
 
 // ─── 类型定义 ─────────────────────────────────────────────────
 
@@ -89,8 +89,12 @@ function getSecretPath(id: string): string {
   return resolveStoragePath('secrets', 'knowledge-base-api-keys', `${id}.json`)
 }
 function getBundleCoordinator(id: string): string { return resolveStoragePath('secrets', '.transactions', `knowledge-base-${id}`) }
+const secretsRoot = () => resolveStoragePath('secrets')
+const sealedPath = (id: string) => `knowledge-bases/${id}.sealed.json`
 
 function readKnowledgeBase(id: string): KnowledgeBase | null {
+  const sealed = withAtomicBundle(secretsRoot(), `knowledge-base-${id}`, (bundle) => bundle.read(sealedPath(id)))
+  if (sealed) return JSON.parse(sealed) as KnowledgeBase
   recoverAtomicBundle(getBundleCoordinator(id))
   const kb = readJsonFile<KnowledgeBase>(getFilePath(id))
   if (!kb?.config.embeddingConfig) return kb
@@ -101,19 +105,24 @@ function readKnowledgeBase(id: string): KnowledgeBase | null {
 function persistKnowledgeBase(kb: KnowledgeBase, clearApiKey = false): void {
   const embedding = kb.config.embeddingConfig
   if (!embedding) {
+    withAtomicBundle(secretsRoot(), `knowledge-base-${kb.id}`, (bundle) => bundle.write(sealedPath(kb.id), JSON.stringify(kb, null, 2)))
     writeAtomicBundle({ coordinatorPath: getBundleCoordinator(kb.id), writes: new Map([[getFilePath(kb.id), JSON.stringify(kb, null, 2)]]) })
     return
   }
-  const previousSecret = readJsonFile<{ apiKey?: string }>(getSecretPath(kb.id))?.apiKey
+  let sanitized: KnowledgeBase & { config: KnowledgeBaseConfig & { embeddingConfig?: KnowledgeBaseConfig['embeddingConfig'] & { apiKeyRef?: string } } }; let nextApiKey: string | undefined
+  withAtomicBundle(secretsRoot(), `knowledge-base-${kb.id}`, (bundle) => {
+  const existing = bundle.read(sealedPath(kb.id)); const previousSecret = existing ? (JSON.parse(existing) as KnowledgeBase).config.embeddingConfig?.apiKey : readJsonFile<{ apiKey?: string }>(getSecretPath(kb.id))?.apiKey
   const { apiKey, ...preferences } = embedding
-  const nextApiKey = clearApiKey ? undefined : apiKey ?? previousSecret
-  const sanitized = {
+  nextApiKey = clearApiKey ? undefined : apiKey ?? previousSecret
+  sanitized = {
     ...kb,
     config: { ...kb.config, embeddingConfig: nextApiKey ? { ...preferences, apiKeyRef: `knowledge-base:${kb.id}` } : preferences },
   }
+  bundle.write(sealedPath(kb.id), JSON.stringify({ ...sanitized, config: { ...sanitized.config, embeddingConfig: { ...sanitized.config.embeddingConfig, apiKey: nextApiKey } } }, null, 2))
+  })
   writeAtomicBundle({ coordinatorPath: getBundleCoordinator(kb.id), writes: new Map([
     [getSecretPath(kb.id), JSON.stringify(nextApiKey ? { apiKey: nextApiKey } : {}, null, 2)],
-    [getFilePath(kb.id), JSON.stringify(sanitized, null, 2)],
+    [getFilePath(kb.id), JSON.stringify(sanitized!, null, 2)],
   ]) })
 }
 
@@ -217,6 +226,7 @@ export function deleteKnowledgeBase(id: string): boolean {
   removeDir(kbDir)
 
   try {
+    withAtomicBundle(secretsRoot(), `knowledge-base-${id}`, (bundle) => bundle.delete(sealedPath(id)))
     writeAtomicBundle({ coordinatorPath: getBundleCoordinator(id), writes: new Map(), deletes: [filePath, getSecretPath(id)] })
     return true
   } catch {

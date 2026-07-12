@@ -9,6 +9,7 @@ import { RuntimeDiagnosticsWriter } from './runtime-diagnostics'
 import { createClaudeMarketplaceRuntimeOwner } from '../core/storage/plugin/marketplace'
 import { logFileWriter } from '../core/observability/log/file-writer'
 import { runWithDiagnosticsOwner } from './runtime-diagnostics'
+import { transactionalInstallDirectory } from './extension-transactions'
 
 const handles: Array<{ close(): Promise<void> }> = []
 afterEach(async () => { await Promise.all(handles.splice(0).map((handle) => handle.close())) })
@@ -22,6 +23,14 @@ function fakeStorage(root: string, events: string[] = []) {
 }
 
 describe('backend lifecycle', () => {
+  it('automatically recovers extension transactions at startup', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-runtime-extension-recover-')); const source = join(root, 'source'); const extensions = join(root, 'extensions'); const destination = join(extensions, 'plugins', 'demo')
+    mkdirSync(source); writeFileSync(join(source, 'plugin.yaml'), 'new')
+    expect(() => transactionalInstallDirectory({ extensionsRoot: extensions, source, destination, fault: (phase) => { if (phase === 'after-backup') throw new Error('crash') } })).toThrow('crash')
+    const { createBackendStorageRuntime } = await import('./runtime')
+    const runtime = createBackendStorageRuntime({ resolve: (group, ...segments) => join(root, group, ...segments) }); handles.push(runtime)
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('new')
+  })
   it('shares one driver graph between the hub migrations and backend runtime', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-composition-'))
     const bootstrap = new BootstrapStore(join(root, 'bootstrap.json'))

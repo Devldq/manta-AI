@@ -19,6 +19,14 @@ export function resolveStoragePath(group: StorageGroupId, ...segments: string[])
   return resolver.resolve(group, ...segments)
 }
 
+/** Validate one caller-controlled identifier before using it as a path segment. */
+export function safeStorageSegment(value: string): string {
+  if (!value || value === '.' || value === '..' || value.includes('/') || value.includes('\\') || value.includes('\0')) {
+    throw new Error('Unsafe storage path segment')
+  }
+  return value
+}
+
 export function getStorageResolver(): StoragePathResolver {
   const resolver = storageContext.getStore()
   if (!resolver) throw new Error('ASH storage resolver is not available in the current operation')

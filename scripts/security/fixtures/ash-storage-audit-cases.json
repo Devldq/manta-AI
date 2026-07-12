@@ -90,6 +90,30 @@
     "violations": []
   },
   {
+    "name": "rejects parent traversal appended to an ASH root",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import fs from 'node:fs'; import path from 'node:path'; import { resolveStoragePath } from './routing'; fs.writeFileSync(path.join(resolveStoragePath('work'), '..', 'escape'), 'x')",
+    "violations": ["writeFileSync", "unrouted"]
+  },
+  {
+    "name": "rejects an absolute segment that resets an ASH resolve",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import fs from 'node:fs'; import path from 'node:path'; import { resolveStoragePath } from './routing'; fs.writeFileSync(path.resolve(resolveStoragePath('work'), '/escape'), 'x')",
+    "violations": ["writeFileSync", "unrouted"]
+  },
+  {
+    "name": "rejects unknown user segments appended to an ASH root",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import fs from 'node:fs'; import path from 'node:path'; import { resolveStoragePath } from './routing'; export function save(name: string) { fs.writeFileSync(path.join(resolveStoragePath('work'), name), 'x') }",
+    "violations": ["writeFileSync", "unrouted"]
+  },
+  {
+    "name": "rejects template interpolation mixed with an ASH root",
+    "file": "packages/sample/src/leak.ts",
+    "source": "import fs from 'node:fs'; import { resolveStoragePath } from './routing'; export function save(name: string) { fs.writeFileSync(`${resolveStoragePath('work')}/${name}`, 'x') }",
+    "violations": ["writeFileSync", "unrouted"]
+  },
+  {
     "name": "tracks an explicit HTTP user output boundary",
     "file": "packages/sample/src/legal.ts",
     "source": "import fs from 'node:fs'; export function save(request: { body: { outputPath: string } }) { const selected = request.body.outputPath; fs.writeFileSync(selected, 'x') }",

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -28,7 +28,7 @@ describe('RAG original document storage', () => {
     expect(observed).toHaveLength(1)
   })
 
-  it('removes staged and persistent files when processing fails', async () => {
+  it('removes staged but retains the content-addressed orphan when processing fails', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-rag-upload-fail-'))
     const storage = createRagUploadStorage({
       cacheUploadsRoot: join(root, 'cache', 'uploads'),
@@ -38,6 +38,15 @@ describe('RAG original document storage', () => {
       throw new Error('pipeline failed')
     })).rejects.toThrow(/pipeline failed/)
     expect(readdirSync(join(root, 'cache', 'uploads'))).toEqual([])
-    expect(existsSync(join(root, 'knowledge', 'documents')) ? readdirSync(join(root, 'knowledge', 'documents')) : []).toEqual([])
+    expect(readdirSync(join(root, 'knowledge', 'documents'))).toHaveLength(1)
+  })
+
+  it('does not invoke processing when durable copy fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-copy-fail-'))
+    const blocked = join(root, 'blocked'); writeFileSync(blocked, 'file')
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(root, 'cache'), documentsRoot: join(blocked, 'documents') })
+    let processed = false
+    await expect(storage.ingest(Readable.from('hello'), 'a.txt', async () => { processed = true })).rejects.toThrow()
+    expect(processed).toBe(false)
   })
 })
