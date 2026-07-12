@@ -53,4 +53,9 @@ describe('storage initialization', () => {
     await mkdir(staging); await writeFile(join(staging,'.ash-initialization.json'),JSON.stringify({schemaVersion:1,transactionId:tx,finalRoot,createdAt:now})); const groups=['extensions','knowledge','work','config','secrets','diagnostics','cache']; for(const group of groups) await mkdir(join(staging,group)); await mkdir(join(staging,'.ash-backups')); await writeFile(join(staging,'ash-volume.json'),JSON.stringify({schemaVersion:1,volumeId:'crashed-volume',name:'Recovered',state:'active',groups,generation:1,createdAt:now,updatedAt:now}))
     const result=await initializeStorage({parentPath:parent,bootstrapPath:join(parent,'bootstrap.json'),minimumFreeBytes:1}); expect(result.volume.id).toBe('crashed-volume'); expect((await readdir(parent)).includes(`.manta-ai.initializing-${tx}`)).toBe(false)
   })
+
+  it('rejects a complete backup or archived volume as a new active initialization root', async () => {
+    const parent=await mkdtemp(join(tmpdir(),'ash-backup-root-')); const root=join(parent,'.manta-ai'); const groups=['extensions','knowledge','work','config','secrets','diagnostics','cache']; await mkdir(root); for(const group of groups)await mkdir(join(root,group)); await writeFile(join(root,'ash-volume.json'),JSON.stringify({schemaVersion:1,volumeId:'backup',name:'Backup',state:'backup',groups,generation:2,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}))
+    await expect(initializeStorage({parentPath:parent,bootstrapPath:join(parent,'bootstrap.json'),minimumFreeBytes:1})).rejects.toMatchObject({code:'TARGET_EXISTS'})
+  })
 })

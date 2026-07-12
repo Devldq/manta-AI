@@ -11,7 +11,7 @@ import { createMainWindow } from './windows/createMainWindow'
 import { createOnboardingWindow } from './windows/createOnboardingWindow'
 import { StorageControlStore, type RelaunchIntent } from './lifecycle/StorageControlStore'
 import type { StorageOperationProgress } from '@manta/shared'
-import { buildBackupRefs, pathExists, restoreRelaunchIntent } from './lifecycle/RelaunchRecovery'
+import { buildBackupRefs, pathExists, restoreRelaunchIntent, trustedBackupRefs } from './lifecycle/RelaunchRecovery'
 
 interface BackendModule {
   createBackendStorageComposition(store: BootstrapStore, options?: { onProgress?: (progress: unknown) => void }): Promise<any>
@@ -27,16 +27,18 @@ let disposeLegacyIpc: (() => void) | undefined
 let quitting = false
 const selections = new SelectionStore()
 const bootstrapPath = () => join(app.getPath('userData'), 'ash-bootstrap.json')
-const controlStore = () => new StorageControlStore(app.getPath('userData'))
+let sharedControlStore: StorageControlStore | undefined
+const controlStore = () => sharedControlStore ??= new StorageControlStore(app.getPath('userData'))
 const pendingIntents = new Map<string, RelaunchIntent>()
 let activeOperationId: string | undefined
+let progressTail: Promise<void> = Promise.resolve()
 
 function structuredError(error: unknown) { return { ok: false, error: { code: (error as any).code ?? 'OPERATION_FAILED', message: (error as Error).message } } }
 function trusted(event: Electron.IpcMainInvokeEvent, expected: BrowserWindow | undefined): void { if (!expected || event.sender.id !== expected.webContents.id || event.senderFrame !== expected.webContents.mainFrame) throw new Error('Untrusted IPC sender') }
 function selectionBinding(event: Electron.IpcMainInvokeEvent, purpose: SelectionPurpose) { const frame = event.senderFrame; if (!frame) throw new Error('Missing IPC sender frame'); return { senderId: event.sender.id, frameId: (frame as any).routingId ?? event.sender.id, origin: new URL(frame.url).origin, purpose } }
 async function trackedMigration(kind: 'volume'|'group', value: string, operation: () => Promise<string>): Promise<string> {
   const store=new BootstrapStore(bootstrapPath()); const before=await store.read(); if (!before) throw new Error('Bootstrap does not exist')
-  try { const id=await operation(); await controlStore().startOperation(id,kind); const after=await store.read(); if (!after) throw new Error('Committed Bootstrap is missing'); const refs=buildBackupRefs(id,kind,before,after,value); await controlStore().completeOperation(id,refs); pendingIntents.set(id,{ schemaVersion:1, operationId:id, phase:'awaiting-new-process-health', attempt:0, previous:before, current:after, backupRefs:refs }); return id }
+  try { const id=await operation(); await progressTail; await controlStore().startOperation(id,kind); const after=await store.read(); if (!after) throw new Error('Committed Bootstrap is missing'); const refs=buildBackupRefs(id,kind,before,after,value); await controlStore().completeOperation(id,refs,{previous:before,current:after}); pendingIntents.set(id,{ schemaVersion:1, operationId:id, phase:'awaiting-new-process-health', attempt:0, previous:before, current:after, backupRefs:refs }); return id }
   catch(error) { if (activeOperationId) await controlStore().failOperation(activeOperationId,error).catch(()=>{}); throw error } finally { activeOperationId=undefined }
 }
 
@@ -64,7 +66,8 @@ function registerLegacyIpc(): () => void {
 
 async function listBackups() {
   const result: Array<{id:string;operationId:string;kind:string;groupId?:string;volumeId?:string;createdAt:string;bytes:number}> = []
-  for (const operation of await controlStore().listOperations()) for (const ref of operation.backupRefs) { if (!await pathExists(ref.backupPath)) continue; const inventory=await inventoryTree(ref.backupPath); result.push({ id:`${ref.operationId}--${ref.kind==='group'?ref.groupId:ref.volumeId}`, operationId:ref.operationId, kind:ref.kind, groupId:ref.kind==='group'?ref.groupId:undefined, volumeId:ref.kind==='volume'?ref.volumeId:undefined, createdAt:operation.updatedAt, bytes:inventory.bytes }) }
+  const active=await new BootstrapStore(bootstrapPath()).read(); if(!active) return result
+  for (const operation of await controlStore().listOperations()) for (const ref of await trustedBackupRefs(operation,active)) { if (!await pathExists(ref.backupPath)) continue; const inventory=await inventoryTree(ref.backupPath); result.push({ id:`${ref.operationId}--${ref.kind==='group'?ref.groupId:ref.volumeId}`, operationId:ref.operationId, kind:ref.kind, groupId:ref.kind==='group'?ref.groupId:undefined, volumeId:ref.kind==='volume'?ref.volumeId:undefined, createdAt:operation.updatedAt, bytes:inventory.bytes }) }
   return result
 }
 
@@ -76,20 +79,20 @@ function installMainStorageIpc(origin: string): void {
     relocateVolume: (id, selectionId, event) => controller.migrateAndRelaunch(() => trackedMigration('volume',id,()=>migrations.relocateVolume(id, selections.consume(selectionId, selectionBinding(event, 'migrateVolume'))))),
     moveGroup: (group, target) => controller.migrateAndRelaunch(() => trackedMigration('group',group,()=>migrations.moveGroup(group,target))),
     async openVolume(id) { const bootstrap = await new BootstrapStore(bootstrapPath()).read(); const volume = bootstrap?.volumes.find((item) => item.id === id); if (!volume) throw new Error('Unknown volume'); await shell.openPath(volumeRoot(volume.parentPath)) },
-    async deleteBackup(id) { const refs=(await controlStore().listOperations()).flatMap((operation)=>operation.backupRefs).filter((ref)=>`${ref.operationId}--${ref.kind==='group'?ref.groupId:ref.volumeId}`===id); if (refs.length!==1) throw new Error('Unknown backup'); await rm(refs[0].backupPath,{recursive:true,force:true}) },
+    async deleteBackup(id) { const active=await new BootstrapStore(bootstrapPath()).read(); if(!active) throw new Error('Storage is not initialized'); const refs=(await Promise.all((await controlStore().listOperations()).map((operation)=>trustedBackupRefs(operation,active)))).flat().filter((ref)=>`${ref.operationId}--${ref.kind==='group'?ref.groupId:ref.volumeId}`===id); if (refs.length!==1) throw new Error('Unknown or active backup'); await rm(refs[0].backupPath,{recursive:true,force:true}) },
   } })
 }
 
 let disposeOnboarding: (() => void) | undefined
 const controller = new DesktopLifecycleController({
   async readBootstrap() { return new BootstrapStore(bootstrapPath()).read() },
-  async recover() { const bootstrapStore=new BootstrapStore(bootstrapPath()); const before=await bootstrapStore.read(); const journal=before?.pendingMigration; const backend = await importEsm('@manta/backend'); composition = await (backend as BackendModule).createBackendStorageComposition(bootstrapStore, { onProgress: (raw: unknown) => { const progress=raw as StorageOperationProgress; activeOperationId=progress.operationId; void controlStore().recordProgress(progress); activeWindow?.webContents.send('storage:progress',progress) } }); try { await composition.hub.migrations?.recoverPending(); if (journal) { await controlStore().startOperation(journal.id,journal.kind); const after=await bootstrapStore.read(); if (['planned','quiescing','copying','validating'].includes(journal.phase) || !before?.previous || !after) await controlStore().failOperation(journal.id,new Error('Migration rolled back during startup recovery')); else { const previous={schemaVersion:1 as const,...before.previous}; const value=journal.kind==='volume'?journal.sourceVolumeId:journal.groups[0]; await controlStore().completeOperation(journal.id,buildBackupRefs(journal.id,journal.kind,previous,after,value)) } } } catch(error) { if (journal) { await controlStore().startOperation(journal.id,journal.kind); await controlStore().failOperation(journal.id,error) } throw error } },
+  async recover() { const bootstrapStore=new BootstrapStore(bootstrapPath()); const before=await bootstrapStore.read(); const journal=before?.pendingMigration; const backend = await importEsm('@manta/backend'); composition = await (backend as BackendModule).createBackendStorageComposition(bootstrapStore, { onProgress: (raw: unknown) => { const progress=raw as StorageOperationProgress; activeOperationId=progress.operationId; progressTail=progressTail.then(()=>controlStore().recordProgress(progress)).catch(()=>{}); activeWindow?.webContents.send('storage:progress',progress) } }); try { await composition.hub.migrations?.recoverPending(); if (journal) { await controlStore().startOperation(journal.id,journal.kind); const after=await bootstrapStore.read(); if (['planned','quiescing','copying','validating'].includes(journal.phase) || !before?.previous || !after) await controlStore().failOperation(journal.id,new Error('Migration rolled back during startup recovery')); else { const previous={schemaVersion:1 as const,...before.previous}; const value=journal.kind==='volume'?journal.sourceVolumeId:journal.groups[0]; await controlStore().completeOperation(journal.id,buildBackupRefs(journal.id,journal.kind,previous,after,value),{previous,current:after}) } } } catch(error) { if (journal) { await controlStore().startOperation(journal.id,journal.kind); await controlStore().failOperation(journal.id,error) } throw error } },
   async composeStorage() { return composition },
   async startServer({ storage, bundledSeedRoot }) { const backend = await importEsm('@manta/backend') as BackendModule; return backend.startServer({ storage, port: 0, host: '127.0.0.1', bundledSeedRoot, frontendDist: app.isPackaged ? join(process.resourcesPath, 'frontend', 'dist') : join(__dirname, '../../frontend/dist'), isDev: false, storageApi: { readBootstrap: () => new BootstrapStore(bootstrapPath()).read(), inventory: composition.hub.inventory, getOperation:(id:string)=>controlStore().getOperation(id), listBackups } }) },
   async openOnboarding() { disposeOnboarding?.(); disposeOnboarding = registerOnboardingIpc(); onboardingWindow = createOnboardingWindow(); const senderId = onboardingWindow.webContents.id; onboardingWindow.on('closed', () => { selections.clearSender(senderId); onboardingWindow = undefined; if (!quitting) app.quit() }) },
   async openMain(url) { activeWindow = createMainWindow(url); installMainStorageIpc(url); disposeLegacyIpc?.(); disposeLegacyIpc = registerLegacyIpc(); const senderId = activeWindow.webContents.id; activeWindow.on('closed', () => { selections.clearSender(senderId); activeWindow = undefined }) },
   readRelaunchIntent: () => controlStore().readIntent(),
-  async prepareRelaunch(operationId) { const intent=pendingIntents.get(operationId); if (!intent) throw new Error(`Missing durable relaunch intent for ${operationId}`); await controlStore().writeIntent(intent); pendingIntents.delete(operationId) },
+  async prepareRelaunch(operationId) { const intent=pendingIntents.get(operationId); if (!intent) throw new Error(`Missing durable relaunch intent for ${operationId}`); try { await controlStore().writeIntent(intent) } catch(error) { await restoreRelaunchIntent(intent,bootstrapPath(),controlStore()).catch((rollbackError)=>{ throw new AggregateError([error,rollbackError],'Migration committed but relaunch intent could not be persisted') }); throw error } finally { pendingIntents.delete(operationId) } },
   rollbackRelaunchIntent: (intent) => restoreRelaunchIntent(intent,bootstrapPath(),controlStore()),
   clearRelaunchIntent: () => controlStore().clearIntent(),
   async resetComposition() { const current=composition; composition=undefined; if (current?.runtime) await current.runtime.close().catch(()=>{}) },
@@ -106,4 +109,6 @@ export async function runDesktop(): Promise<void> {
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 }
 
-if (require.main === module) void runDesktop()
+if (require.main === module) {
+  void runDesktop()
+}

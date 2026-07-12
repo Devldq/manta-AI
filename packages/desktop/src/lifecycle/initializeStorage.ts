@@ -7,7 +7,7 @@ import { BootstrapStore, STORAGE_GROUP_IDS, volumeRoot, writeJsonAtomic } from '
 const STAGING_PREFIX = '.manta-ai.initializing-'
 const MARKER = '.ash-initialization.json'
 interface InitializationMarker { schemaVersion: 1; transactionId: string; finalRoot: string; createdAt: string }
-interface VolumeManifest { schemaVersion: 1; volumeId: string; name: string; groups: string[]; generation: number; createdAt: string; updatedAt: string }
+interface VolumeManifest { schemaVersion: 1; volumeId: string; name: string; state: 'active' | 'backup' | 'archived'; groups: string[]; generation: number; createdAt: string; updatedAt: string }
 
 export class StorageInitializationError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = 'StorageInitializationError' }
@@ -43,7 +43,7 @@ function bootstrapFor(parentPath: string, manifest: VolumeManifest): { bootstrap
 }
 async function readCompleteManifest(root: string): Promise<VolumeManifest> {
   const value = JSON.parse(await readFile(join(root, 'ash-volume.json'), 'utf8')) as VolumeManifest
-  if (value.schemaVersion !== 1 || !value.volumeId || !STORAGE_GROUP_IDS.every((group) => value.groups.includes(group))) throw new Error('manifest does not describe a complete default volume')
+  if (value.schemaVersion !== 1 || value.state !== 'active' || !value.volumeId || !STORAGE_GROUP_IDS.every((group) => value.groups.includes(group))) throw new Error('manifest does not describe a complete active default volume')
   for (const group of STORAGE_GROUP_IDS) if (!(await stat(join(root, group))).isDirectory()) throw new Error(`missing group ${group}`)
   return value
 }
