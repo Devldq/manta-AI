@@ -6,9 +6,11 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { ensureDir, readJsonFile, writeJsonFile } from '../shared/fs-utils'
+import { ensureDir, readJsonFile } from '../shared/fs-utils'
 import { registerPlugin } from './store'
 import { runWithoutDiagnosticsOwner } from '../../../storage/runtime-diagnostics'
+import { resolveStoragePath } from '../../../storage/path-routing'
+import { transactionalWriteExtensionFile } from '../../../storage/extension-transactions'
 
 const execFileAsync = promisify(execFile)
 
@@ -62,8 +64,7 @@ interface MarketplaceSchedulerState {
 const schedulerOwners = new Map<symbol, MarketplaceSchedulerState>()
 
 function getMarketplaceDataDir(): string {
-  const root = process.env.MANTA_WORKSPACE_ROOT || process.cwd()
-  return path.join(root, '.manta', 'plugin-marketplace')
+  return resolveStoragePath('extensions', 'plugin-marketplace')
 }
 
 function getCachePath(dataDir = getMarketplaceDataDir()): string {
@@ -112,11 +113,13 @@ async function runClaude(
   claudeBin: string,
   args: string[],
 ): Promise<CommandOutput> {
+  const commandCwd = getMarketplaceDataDir()
+  ensureDir(commandCwd)
   const { stdout, stderr } = await execFileAsync(
     claudeBin,
     args,
     {
-      cwd: process.env.MANTA_WORKSPACE_ROOT || process.cwd(),
+      cwd: commandCwd,
       timeout: INSTALL_TIMEOUT_MS,
       maxBuffer: 1024 * 1024,
     },
@@ -261,7 +264,7 @@ export async function refreshClaudeMarketplace(dataDir = getMarketplaceDataDir()
       items,
     }
     ensureDir(dataDir)
-    writeJsonFile(getCachePath(dataDir), cache)
+    transactionalWriteExtensionFile({ extensionsRoot: path.dirname(dataDir), destination: getCachePath(dataDir), content: JSON.stringify(cache, null, 2) })
     return cache
   })()
   inFlightRefresh.set(dataDir, refresh)

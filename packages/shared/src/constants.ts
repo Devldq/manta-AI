@@ -22,7 +22,7 @@ export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse
 // ─── 数据目录 ───────────────────────────────────────────────
 
 /** 默认数据根目录名 */
-export const DEFAULT_DATA_DIR_NAME = '.manta-data'
+export const DEFAULT_DATA_DIR_NAME = '.manta-ai'
 
 /** ASH always creates a volume below the user-selected parent directory. */
 export const ASH_VOLUME_DIR_NAME = '.manta-ai'

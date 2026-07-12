@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { AsyncLocalStorage } from 'node:async_hooks'
 
@@ -33,11 +33,38 @@ export class RuntimeDiagnosticsWriter {
     return this.appendNow(entry)
   }
 
+  appendAudit(entry: Record<string, unknown>): boolean {
+    if (this.disposed || !this.accepting) return false
+    const normalized: DiagnosticEntry = {
+      id: typeof entry.id === 'string' ? entry.id : `audit-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : new Date().toISOString(),
+      ...entry,
+    }
+    if (this.paused) { this.buffered.push({ ...normalized, __audit: true }); return true }
+    return this.appendAuditNow(normalized)
+  }
+
   getLogFilePath(): string { return join(this.root, 'system.log') }
   getSessionLogFilePath(conversationId: string): string {
     return SAFE_CONVERSATION_ID.test(conversationId) && conversationId !== '.' && conversationId !== '..'
       ? join(this.root, 'conversations', conversationId, 'log.ndjson')
       : ''
+  }
+  readAuditEntries<T extends Record<string, unknown>>(): T[] {
+    const target = join(this.root, 'audit.log')
+    if (!existsSync(target)) return []
+    return readFileSync(target, 'utf8').split('\n').filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as T] } catch { return [] }
+    })
+  }
+  clearAudit(): void {
+    if (!this.accepting || this.disposed) throw new Error('Diagnostics writer is not accepting mutations')
+    const target = join(this.root, 'audit.log')
+    if (existsSync(target)) unlinkSync(target)
+  }
+  auditSize(): number {
+    const target = join(this.root, 'audit.log')
+    return existsSync(target) ? statSync(target).size : 0
   }
 
   quiesce(): void { if (!this.disposed) this.paused = true }
@@ -55,7 +82,20 @@ export class RuntimeDiagnosticsWriter {
   }
 
   private flush(): void {
-    for (const entry of this.buffered.splice(0)) this.appendNow(entry)
+    for (const entry of this.buffered.splice(0)) {
+      if (entry.__audit === true) this.appendAuditNow(entry)
+      else this.appendNow(entry)
+    }
+  }
+
+  private appendAuditNow(entry: DiagnosticEntry): boolean {
+    const { __audit: _, ...persisted } = entry
+    try {
+      const target = join(this.root, 'audit.log')
+      mkdirSync(dirname(target), { recursive: true })
+      appendFileSync(target, `${JSON.stringify(persisted)}\n`, 'utf8')
+      return true
+    } catch { return false }
   }
 
   private appendNow(entry: DiagnosticEntry): boolean {

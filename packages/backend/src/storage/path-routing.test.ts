@@ -1,0 +1,65 @@
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+import { resolveStoragePath, runWithStorageResolver } from './path-routing'
+
+describe('ASH persistence routing', () => {
+  it('requires an injected resolver instead of silently falling back', () => {
+    expect(() => resolveStoragePath('work', 'sessions')).toThrow(/storage resolver/i)
+  })
+
+  it('routes each internal group below the injected ASH root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-ash-routing-'))
+    const resolver = { resolve: (group: string, ...segments: string[]) => join(root, group, ...segments) }
+    runWithStorageResolver(resolver, () => {
+      expect(resolveStoragePath('extensions', 'plugins')).toBe(join(root, 'extensions', 'plugins'))
+      expect(resolveStoragePath('knowledge', 'rag')).toBe(join(root, 'knowledge', 'rag'))
+      expect(resolveStoragePath('work', 'conversations')).toBe(join(root, 'work', 'conversations'))
+      expect(resolveStoragePath('config', 'llm-profiles.json')).toBe(join(root, 'config', 'llm-profiles.json'))
+      expect(resolveStoragePath('secrets', 'mcp-oauth')).toBe(join(root, 'secrets', 'mcp-oauth'))
+      expect(resolveStoragePath('diagnostics', 'audit.log')).toBe(join(root, 'diagnostics', 'audit.log'))
+      expect(resolveStoragePath('cache', 'uploads')).toBe(join(root, 'cache', 'uploads'))
+    })
+  })
+
+  it('keeps an explicit user output path unchanged', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-ash-internal-'))
+    const workspace = mkdtempSync(join(tmpdir(), 'manta-user-output-'))
+    const output = join(workspace, 'chosen.txt')
+    await runWithStorageResolver({ resolve: (group, ...segments) => join(root, group, ...segments) }, async () => {
+      writeFileSync(output, 'user-owned')
+    })
+    expect(existsSync(output)).toBe(true)
+    expect(readFileSync(output, 'utf8')).toBe('user-owned')
+  })
+
+  it('stores API keys only in the secrets group', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-ash-secrets-'))
+    const resolver = { resolve: (group: string, ...segments: string[]) => join(root, group, ...segments) }
+    const { saveLLMProfiles } = await import('../core/llm/config-store')
+    const { saveEmbeddingConfig } = await import('../core/engine/rag/embedding-config-store')
+    const { saveUserServer } = await import('../core/tools/mcp/config-store')
+    runWithStorageResolver(resolver, () => {
+      saveLLMProfiles({ activeProfileId: 'p1', profiles: [{ id: 'p1', name: 'test', provider: 'openai-compatible', model: 'm', apiKey: 'llm-secret' }] })
+      saveEmbeddingConfig({ provider: 'openai', model: 'embed', apiKey: 'embedding-secret' })
+      saveUserServer({ name: 'private-api', description: 'test', config: { type: 'remote', url: 'https://example.test/mcp', headers: { Authorization: 'Bearer mcp-secret' } } })
+    })
+    expect(readFileSync(join(root, 'config', 'llm-profiles.json'), 'utf8')).not.toContain('llm-secret')
+    expect(readFileSync(join(root, 'config', 'embedding-config.json'), 'utf8')).not.toContain('embedding-secret')
+    expect(readFileSync(join(root, 'secrets', 'llm-profile-api-keys.json'), 'utf8')).toContain('llm-secret')
+    expect(readFileSync(join(root, 'secrets', 'embedding-api-key.json'), 'utf8')).toContain('embedding-secret')
+    expect(readFileSync(join(root, 'config', 'mcp', 'servers.json'), 'utf8')).not.toContain('mcp-secret')
+    expect(readFileSync(join(root, 'secrets', 'mcp', 'server-secrets.json'), 'utf8')).toContain('mcp-secret')
+  })
+
+  it('does not let generated Skill files escape the extensions group', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-ash-skill-path-'))
+    const { writeSkillSubFile } = await import('../core/storage/skill/scanner')
+    const result = runWithStorageResolver({ resolve: (group, ...segments) => join(root, group, ...segments) }, () =>
+      writeSkillSubFile('safe', '../safe-escape/payload.txt', 'escape'),
+    )
+    expect(result).toBeNull()
+    expect(existsSync(join(root, 'extensions', 'skills', 'safe-escape', 'payload.txt'))).toBe(false)
+  })
+})

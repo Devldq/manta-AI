@@ -2,13 +2,13 @@
  * Skill 技能存储层 — 持久化 Skill 定义
  *
  * 存储结构：
- *   {workspace}/.manta/skills/
+ *   ASH extensions/skill-registry/
  *     └── {id}.json   — 每个 Skill 一个 JSON 文件
  */
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { ensureDir, atomicWrite, shortId, readJsonFile } from '../shared/fs-utils'
+import { ensureDir, shortId, readJsonFile } from '../shared/fs-utils'
 import {
   scanSkillFiles,
   getSkillsBaseDir,
@@ -23,13 +23,16 @@ import type {
   CreateSkillInput,
   UpdateSkillInput,
 } from '@manta/shared'
+import { resolveStoragePath } from '../../../storage/path-routing'
+import { transactionalUninstallDirectory, transactionalWriteExtensionFile } from '../../../storage/extension-transactions'
+
+const atomicWrite = (filePath: string, content: string) => transactionalWriteExtensionFile({ extensionsRoot: resolveStoragePath('extensions'), destination: filePath, content })
 
 // ─── 存储路径 ─────────────────────────────────────────────────
 
-/** 获取 Skill JSON 存储目录（项目内 .manta/skills/） */
+/** Return the ASH Skill registry directory. */
 function getDataDir(): string {
-  const root = process.env.MANTA_WORKSPACE_ROOT || process.cwd()
-  return path.join(root, '.manta', 'skills')
+  return resolveStoragePath('extensions', 'skill-registry')
 }
 
 function skillFilePath(skillId: string): string {
@@ -175,7 +178,7 @@ export function deleteSkill(id: string): boolean {
   const fp = skillFilePath(id)
   try {
     if (fs.existsSync(fp)) {
-      fs.unlinkSync(fp)
+      transactionalUninstallDirectory({ extensionsRoot: resolveStoragePath('extensions'), destination: fp })
       return true
     }
     return false
@@ -397,7 +400,7 @@ export function createAndImportSkill(input: CreateAndImportInput): CreateAndImpo
       input.content,
     ].join('\n')
 
-    fs.writeFileSync(mdPath, frontmatter, 'utf-8')
+    transactionalWriteExtensionFile({ extensionsRoot: resolveStoragePath('extensions'), destination: mdPath, content: frontmatter })
 
     // 检查是否已存在同名 skill
     const existing = findSkillByName(safeName)

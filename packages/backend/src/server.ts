@@ -40,7 +40,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
     ? options.storage.runInStorageContext(operation)
     : operation()
   try {
-    app = await (options.appFactory ?? buildApp)({ storage: options.storage, registerRoutes: options.registerRoutes })
+    app = await runInStorageContext(() => (options.appFactory ?? buildApp)({ storage: options.storage, registerRoutes: options.registerRoutes }))
     await app.listen({ port: options.port ?? 0, host: options.host ?? '127.0.0.1' })
     if (options.startSchedulers !== false) {
       const acquirers = options.schedulerAcquirers ?? [

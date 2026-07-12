@@ -2,7 +2,7 @@
  * Plugin 插件存储层 — 持久化 Plugin 定义
  *
  * 存储结构：
- *   {workspace}/.manta/plugins/
+ *   ASH extensions/plugin-registry/
  *     └── {id}.json   — 每个 Plugin 一个 JSON 文件
  *
  * 插件源文件：
@@ -12,7 +12,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { ensureDir, atomicWrite, shortId, readJsonFile } from '../shared/fs-utils'
+import { ensureDir, shortId, readJsonFile } from '../shared/fs-utils'
 import type {
   PluginManifest,
   PluginDefinition,
@@ -23,13 +23,16 @@ import type {
   UpdatePluginInput,
   InstallPluginInput,
 } from '@manta/shared'
+import { resolveStoragePath } from '../../../storage/path-routing'
+import { transactionalUninstallDirectory, transactionalWriteExtensionFile } from '../../../storage/extension-transactions'
+
+const atomicWrite = (filePath: string, content: string) => transactionalWriteExtensionFile({ extensionsRoot: resolveStoragePath('extensions'), destination: filePath, content })
 
 // ─── 存储路径 ─────────────────────────────────────────────────
 
 /** 获取 Plugin JSON 存储目录 */
 function getDataDir(): string {
-  const root = process.env.MANTA_WORKSPACE_ROOT || process.cwd()
-  return path.join(root, '.manta', 'plugins')
+  return resolveStoragePath('extensions', 'plugin-registry')
 }
 
 function pluginFilePath(pluginId: string): string {
@@ -38,8 +41,7 @@ function pluginFilePath(pluginId: string): string {
 
 /** 获取插件源文件目录（项目 plugins/ 目录） */
 export function getPluginsSourceDir(): string {
-  const root = process.env.MANTA_WORKSPACE_ROOT || process.cwd()
-  return path.join(root, 'plugins')
+  return resolveStoragePath('extensions', 'plugins')
 }
 
 // ─── 内部索引 ─────────────────────────────────────────────────
@@ -223,7 +225,7 @@ export function deletePlugin(id: string): boolean {
   const fp = pluginFilePath(id)
   try {
     if (fs.existsSync(fp)) {
-      fs.unlinkSync(fp)
+      transactionalUninstallDirectory({ extensionsRoot: resolveStoragePath('extensions'), destination: fp })
       return true
     }
     return false

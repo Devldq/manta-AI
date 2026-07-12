@@ -1,7 +1,7 @@
-/* 全局 Embedding 配置持久化 — ~/.manta-data/embedding-config.json */
+/* Global embedding preferences persist under the ASH config group. */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
+import { resolveStoragePath } from '../../../storage/path-routing'
 import type { KnowledgeBaseConfig } from '../../storage/knowledge-base/store'
 
 type EmbeddingProvider = 'openai' | 'local'
@@ -14,20 +14,18 @@ export interface EmbeddingConfig {
   dimensions?: number
 }
 
-const DATA_DIR = path.join(os.homedir(), '.manta-data')
-const CONFIG_FILE = path.join(DATA_DIR, 'embedding-config.json')
+const configFile = () => resolveStoragePath('config', 'embedding-config.json')
+const secretFile = () => resolveStoragePath('secrets', 'embedding-api-key.json')
 
-function ensureDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
-  }
+function safeWrite(filePath: string, data: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  const tmp = `${filePath}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
+  fs.renameSync(tmp, filePath)
 }
 
-function safeWrite(data: unknown): void {
-  ensureDir()
-  const tmp = `${CONFIG_FILE}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
-  fs.renameSync(tmp, CONFIG_FILE)
+function readApiKey(): string | undefined {
+  try { return (JSON.parse(fs.readFileSync(secretFile(), 'utf8')) as { apiKey?: string }).apiKey } catch { return undefined }
 }
 
 function fromEnv(): EmbeddingConfig {
@@ -43,11 +41,11 @@ function fromEnv(): EmbeddingConfig {
 
 export function getEmbeddingConfig(): EmbeddingConfig {
   try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const raw = fs.readFileSync(CONFIG_FILE, 'utf-8')
+    if (fs.existsSync(configFile())) {
+      const raw = fs.readFileSync(configFile(), 'utf-8')
       const parsed = JSON.parse(raw) as Partial<EmbeddingConfig>
       if (parsed && typeof parsed === 'object') {
-        return { ...fromEnv(), ...parsed } as EmbeddingConfig
+        return { ...fromEnv(), ...parsed, apiKey: readApiKey() ?? fromEnv().apiKey } as EmbeddingConfig
       }
     }
   } catch {
@@ -57,7 +55,9 @@ export function getEmbeddingConfig(): EmbeddingConfig {
 }
 
 export function saveEmbeddingConfig(config: EmbeddingConfig): void {
-  safeWrite(config)
+  const { apiKey, ...preferences } = config
+  safeWrite(configFile(), apiKey ? { ...preferences, apiKeyRef: 'embedding:default' } : preferences)
+  safeWrite(secretFile(), { apiKey })
 }
 
 export function applyToKnowledgeBase(kbConfig: KnowledgeBaseConfig): KnowledgeBaseConfig {

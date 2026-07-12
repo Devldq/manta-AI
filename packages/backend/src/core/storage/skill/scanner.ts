@@ -8,6 +8,8 @@ import * as fs from 'fs'
 import * as path from 'path'
 import yaml from 'js-yaml'
 import type { SkillType } from '@manta/shared'
+import { resolveStoragePath } from '../../../storage/path-routing'
+import { transactionalWriteExtensionFile } from '../../../storage/extension-transactions'
 
 // ─── 解析结果类型 ────────────────────────────────────────────
 
@@ -161,8 +163,7 @@ function findSkillFiles(rootDir: string): Array<{ filePath: string; dirName: str
 /** Skill 目录基础路径（项目根目录 skills/） */
 export function getSkillsBaseDir(workspaceRoot?: string): string {
   // 通过环境变量或默认值获取 skills 目录
-  const root = workspaceRoot || process.env.MANTA_WORKSPACE_ROOT || process.cwd()
-  return path.join(root, 'skills')
+  return workspaceRoot ? path.join(workspaceRoot, 'skills') : resolveStoragePath('extensions', 'skills')
 }
 
 /**
@@ -298,7 +299,8 @@ export function readSkillSubFile(skillName: string, relativePath: string, baseDi
   // 安全检查：防止路径遍历
   const resolved = path.resolve(filePath)
   const skillDir = path.resolve(dir, skillName)
-  if (!resolved.startsWith(skillDir)) return null
+  const relativePathFromSkill = path.relative(skillDir, resolved)
+  if (relativePathFromSkill === '..' || relativePathFromSkill.startsWith(`..${path.sep}`) || path.isAbsolute(relativePathFromSkill)) return null
 
   try {
     return fs.readFileSync(filePath, 'utf-8')
@@ -323,14 +325,16 @@ export function writeSkillSubFile(
   // 安全检查：防止路径遍历
   const resolved = path.resolve(filePath)
   const skillDir = path.resolve(dir, skillName)
-  if (!resolved.startsWith(skillDir)) return null
+  const relativePathFromSkill = path.relative(skillDir, resolved)
+  if (relativePathFromSkill === '..' || relativePathFromSkill.startsWith(`..${path.sep}`) || path.isAbsolute(relativePathFromSkill)) return null
 
   try {
     const parentDir = path.dirname(filePath)
     if (!fs.existsSync(parentDir)) {
       fs.mkdirSync(parentDir, { recursive: true })
     }
-    fs.writeFileSync(filePath, content, 'utf-8')
+    if (baseDir) fs.writeFileSync(filePath, content, 'utf-8')
+    else transactionalWriteExtensionFile({ extensionsRoot: resolveStoragePath('extensions'), destination: filePath, content })
     return fs.statSync(filePath).size
   } catch {
     return null

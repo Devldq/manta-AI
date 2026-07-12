@@ -34,7 +34,7 @@ export interface Task {
   workDir?: string
 
   // 执行结果
-  outputDir?: string  // ~/.manta-data/tasks/{id}/
+  outputDir?: string  // Explicit user/Agent-selected output directory; ASH does not redirect it.
   error?: string
 
   // 时间戳

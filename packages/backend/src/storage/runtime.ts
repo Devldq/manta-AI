@@ -6,6 +6,7 @@ import { createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner
 import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } from './group-drivers'
 import { runWithDiagnosticsOwner, RuntimeDiagnosticsWriter } from './runtime-diagnostics'
 import { join } from 'node:path'
+import { runWithStorageResolver } from './path-routing'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
 export interface BackendStorageRuntime extends StorageResolver {
@@ -56,7 +57,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   let closed = false
   return {
     resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler,
-    runInStorageContext: (operation) => runWithDiagnosticsOwner(diagnosticsWriter, operation),
+    runInStorageContext: (operation) => runWithStorageResolver(storage, () => runWithDiagnosticsOwner(diagnosticsWriter, operation)),
     async quiesce() {
       quiesced = true
       const results = await Promise.allSettled([...drivers.values()].map((driver) => driver.quiesce()))

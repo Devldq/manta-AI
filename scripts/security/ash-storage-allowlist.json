@@ -1,0 +1,31 @@
+{
+  "writerFiles": {
+    "packages/backend/src/core/engine/runner/index.ts": "Agent task outputDir is explicitly selected by the task and must remain outside ASH.",
+    "packages/backend/src/core/storage/shared/fs-utils.ts": "Path-agnostic atomic writer; every internal caller supplies an ASH-resolved path.",
+    "packages/backend/src/core/tools/builtin/file-ops.ts": "User file tool writes the exact workspace/output path selected by the user or Agent task.",
+    "packages/backend/src/storage/runtime-diagnostics.ts": "Diagnostics root is injected by BackendStorageRuntime from the ASH diagnostics group.",
+    "packages/backend/src/storage/extension-transactions.ts": "Extension root is mandatory input resolved by the caller from the ASH extensions group.",
+    "packages/rag/src/fs-utils.ts": "Path-agnostic atomic writer; RAG factories require an injected ASH knowledge root.",
+    "packages/rag/src/embedding-cache.ts": "Database path is constructor-injected from the ASH knowledge group.",
+    "packages/rag/src/sqlite-vec-provider.ts": "Database root is constructor-injected from the ASH knowledge group.",
+    "packages/agent-sandbox/src/audit/AuditLogger.ts": "Audit path is mandatory composition-time injection; the module has no fallback."
+  },
+  "homeAndCwdFiles": {
+    "packages/backend/src/core/tools/builtin/file-ops.ts": "Expands an explicit user path beginning with tilde and preserves workspace output semantics.",
+    "packages/backend/src/core/tools/builtin/bash.ts": "Expands explicit command paths and chooses the task security context workspace.",
+    "packages/backend/src/core/tools/builtin/utils.ts": "Resolves explicit user tool paths relative to the task security context workspace.",
+    "packages/backend/src/core/engine/stream-handler.ts": "Discovers an explicitly named user workspace folder; it does not choose an internal persistence root.",
+    "packages/backend/src/core/storage/config/workspace-store.ts": "Uses the home/cwd only as the user's default workspace choice; its config file is ASH-routed.",
+    "packages/backend/src/core/security-context.ts": "Creates task filesystem boundaries, not application persistence paths.",
+    "packages/backend/src/core/security/fs-access.ts": "Initial allow-root is the current user workspace; persisted grants are ASH-routed.",
+    "packages/backend/src/core/context/prompt-builder.ts": "Reports the task working directory to the model; it performs no persistence.",
+    "packages/backend/src/routes/plugins.ts": "Discovers external Claude plugin sources for an explicit import before copying into ASH.",
+    "packages/backend/src/core/storage/plugin/marketplace.ts": "Discovers the external Claude executable and its plugin source before transactionally importing into ASH.",
+    "packages/backend/src/routes/readme.ts": "Reads the packaged project README and performs no writes.",
+    "packages/agent-sandbox/src/context/SecurityContext.ts": "Creates task sandbox boundaries and performs no application persistence."
+  },
+  "literalFiles": {
+    "scripts/release/release-github.sh": "Historical release-note text documents the removed legacy directory; this script does not construct a runtime path.",
+    "scripts/security/ash-storage-audit.ts": "The audit definitions must name forbidden legacy roots in order to detect them."
+  }
+}

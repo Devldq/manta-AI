@@ -5,12 +5,14 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runWithDiagnosticsOwner, type RuntimeDiagnosticsWriter } from './storage/runtime-diagnostics'
+import { runWithStorageResolver } from './storage/path-routing'
 
 export interface BuildAppOptions { storage: StorageResolver & { diagnosticsWriter?: RuntimeDiagnosticsWriter }; isDev?: boolean; registerRoutes?: boolean }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const isDev = options.isDev ?? process.env.NODE_ENV !== 'production'
   const app = Fastify({ logger: false })
+  app.addHook('onRequest', (_request, _reply, done) => runWithStorageResolver(options.storage, done))
   let acceptingWrites = true
   app.decorate('quiesceWrites', () => { acceptingWrites = false })
   if (options.storage.diagnosticsWriter) {

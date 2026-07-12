@@ -1,14 +1,14 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
+import { resolveStoragePath } from '../../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import type { WorkflowDef } from '@core/types'
 import { ensureDir, atomicWrite, shortId, readJsonFile } from '../shared/fs-utils'
 
-const DATA_DIR = path.join(os.homedir(), '.manta-data', 'workflows')
+function dataDir(): string { return resolveStoragePath('work', 'workflows') }
 
 function workflowDir(workflowId: string): string {
-  return path.join(DATA_DIR, workflowId)
+  return path.join(dataDir(), workflowId)
 }
 
 function workflowFilePath(workflowId: string): string {
@@ -19,11 +19,11 @@ function workflowFilePath(workflowId: string): string {
  * 获取所有工作流列表
  */
 export function listWorkflows(): WorkflowDef[] {
-  ensureDir(DATA_DIR)
+  ensureDir(dataDir())
   const workflows: WorkflowDef[] = []
 
   try {
-    const entries = fs.readdirSync(DATA_DIR, { withFileTypes: true })
+    const entries = fs.readdirSync(dataDir(), { withFileTypes: true })
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
 
@@ -71,7 +71,7 @@ export function createWorkflow(input: {
   description?: string
   steps?: WorkflowDef['steps']
 }): WorkflowDef {
-  ensureDir(DATA_DIR)
+  ensureDir(dataDir())
 
   const id = shortId()
   const now = new Date().toISOString()

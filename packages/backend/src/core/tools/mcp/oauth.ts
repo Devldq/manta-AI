@@ -7,13 +7,13 @@
  * 3. Electron shell.openExternal 打开系统浏览器授权
  * 4. 浏览器回调 http://127.0.0.1:{port}/callback → Loopback Server 接收 code
  * 5. POST /token 交换 code → access_token + refresh_token
- * 6. Token 持久化到 .mcp-tokens/{serverName}.json
+ * 6. Tokens persist under ASH secrets/mcp-oauth.
  */
 import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import * as net from 'node:net';
-import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { resolveStoragePath } from '../../../storage/path-routing';
 
 import type { OAuthServerConfig, PKCEParams, StoredTokens, OAuthAuthState } from '../registry/types';
 
@@ -30,11 +30,11 @@ let loopbackPort: number | null = null;
 
 function getTokenDir(): string {
   // 与项目根目录同级，不污染源码目录
-  return path.join(process.cwd(), '.mcp-tokens');
+  return resolveStoragePath('secrets', 'mcp-oauth');
 }
 
 function getTokenPath(serverName: string): string {
-  return path.join(getTokenDir(), `${serverName}.json`);
+  return resolveStoragePath('secrets', 'mcp-oauth', `${serverName}.json`);
 }
 
 // ── PKCE 工具 ──────────────────────────────────────────────────────────────

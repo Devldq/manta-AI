@@ -1,12 +1,22 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
-import * as os from 'os'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
 let mainWindow: BrowserWindow | null = null
 let backendPort: number | null = null
+
+function configuredVolumeRoots(): string[] {
+  const bootstrapPath = process.env.MANTA_BOOTSTRAP_PATH
+  if (!bootstrapPath) throw new Error('MANTA_BOOTSTRAP_PATH is required')
+  const snapshot = JSON.parse(fs.readFileSync(bootstrapPath, 'utf8')) as { volumes?: Array<{ parentPath?: string }> }
+  if (!Array.isArray(snapshot.volumes) || snapshot.volumes.length === 0) throw new Error('ASH is not initialized')
+  return snapshot.volumes.map(({ parentPath }) => {
+    if (!parentPath || !path.isAbsolute(parentPath)) throw new Error('Invalid ASH volume parent')
+    return path.join(parentPath, '.manta-ai')
+  })
+}
 
 // ─── 懒加载 electron-updater ────────────────────────────────
 let _autoUpdater: any = null
@@ -107,15 +117,14 @@ ipcMain.handle('check-for-updates', async () => {
 
 // 打开数据目录
 ipcMain.handle('app:openDataDir', async () => {
-  const dataDir = path.join(os.homedir(), '.manta-data')
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
+  const [dataDir] = configuredVolumeRoots()
   await shell.openPath(dataDir)
   return { success: true }
 })
 
 // 重置系统
 ipcMain.handle('app:resetSystem', async () => {
-  const dataDir = path.join(os.homedir(), '.manta-data')
+  const dataDirs = configuredVolumeRoots()
   const result = await dialog.showMessageBox(mainWindow!, {
     type: 'warning',
     buttons: ['取消', '确认重置'],
@@ -123,11 +132,11 @@ ipcMain.handle('app:resetSystem', async () => {
     cancelId: 0,
     title: '重置系统',
     message: '确定要重置系统吗？',
-    detail: '这将删除所有本地数据（~/.manta-data），包括会话记录、LLM 配置、插件设置、记忆等。此操作不可撤销。',
+    detail: '这将删除所有已配置 ASH 卷中的本地数据。此操作不可撤销。',
   })
   if (result.response !== 1) return { success: false, canceled: true }
   try {
-    if (fs.existsSync(dataDir)) fs.rmSync(dataDir, { recursive: true, force: true })
+    for (const dataDir of dataDirs) if (fs.existsSync(dataDir)) fs.rmSync(dataDir, { recursive: true, force: true })
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err.message }

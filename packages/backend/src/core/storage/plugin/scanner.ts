@@ -14,6 +14,7 @@ import type {
   PluginDependency,
   PluginPermission,
 } from '@manta/shared'
+import { resolveStoragePath } from '../../../storage/path-routing'
 
 // ─── 解析结果类型 ────────────────────────────────────────────
 
@@ -156,8 +157,7 @@ function parsePermissions(raw: unknown): PluginPermission[] | undefined {
  * 获取插件源目录基础路径
  */
 export function getPluginsBaseDir(workspaceRoot?: string): string {
-  const root = workspaceRoot || process.env.MANTA_WORKSPACE_ROOT || process.cwd()
-  return path.join(root, 'plugins')
+  return workspaceRoot ? path.join(workspaceRoot, 'plugins') : resolveStoragePath('extensions', 'plugins')
 }
 
 /**

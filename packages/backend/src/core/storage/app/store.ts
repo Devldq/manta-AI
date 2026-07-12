@@ -1,13 +1,13 @@
-/*  App 存储层 — ~/.manta-data/apps/{id}/app.json 持久化 */
+/* App state persists under ASH work/apps. */
 
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
+import { resolveStoragePath } from '../../../storage/path-routing'
 import { type AppConfig, type CreateAppInput, type UpdateAppInput } from '@core/types'
 import { ensureDir, atomicWrite, shortId, removeDir, readJsonFile } from '../shared/fs-utils'
 
 function appDataDir(): string {
-  return path.join(os.homedir(), '.manta-data', 'apps')
+  return resolveStoragePath('work', 'apps')
 }
 
 function appDir(appId: string): string {

@@ -34,7 +34,6 @@ import {
 import {
   scanPluginFiles,
   readPluginYamlContent,
-  copyPluginDir,
   validatePluginManifest,
   getPluginsBaseDir,
 } from '../core/storage/plugin/scanner'
@@ -51,6 +50,8 @@ import type {
   InstallPluginInput,
   UpdatePluginInput,
 } from '@manta/shared'
+import { resolveStoragePath } from '../storage/path-routing'
+import { transactionalInstallDirectory, transactionalUninstallDirectory } from '../storage/extension-transactions'
 
 // 内置插件 ID（禁止卸载）
 const BUILTIN_PLUGIN_IDS = new Set<string>()
@@ -204,9 +205,7 @@ export async function pluginRoutes(app: FastifyInstance) {
 
       // 删除插件目录
       const pluginDir = path.join(getPluginsSourceDir(), plugin.manifest.id)
-      if (fs.existsSync(pluginDir)) {
-        fs.rmSync(pluginDir, { recursive: true, force: true })
-      }
+      transactionalUninstallDirectory({ extensionsRoot: resolveStoragePath('extensions'), destination: pluginDir })
 
       const deleted = deletePlugin(id)
       if (!deleted) throw Errors.NOT_FOUND('Plugin', id)
@@ -296,10 +295,10 @@ export async function pluginRoutes(app: FastifyInstance) {
 
       // 复制到 plugins/ 目录
       const destDir = path.join(getPluginsSourceDir(), manifest.id)
-      if (fs.existsSync(destDir)) {
-        fs.rmSync(destDir, { recursive: true, force: true })
-      }
-      copyPluginDir(resolvedSource, destDir)
+      transactionalInstallDirectory({
+        extensionsRoot: resolveStoragePath('extensions'), source: resolvedSource, destination: destDir,
+        validate: (staged) => { if (!fs.existsSync(path.join(staged, 'plugin.yaml'))) throw new Error('Staged plugin manifest is missing') },
+      })
 
       // 注册到存储
       const installed = await (async () => {
@@ -610,10 +609,10 @@ async function pluginRoutesInstallFile(
   }
 
   const destDir = path.join(getPluginsSourceDir(), manifest.id)
-  if (fs.existsSync(destDir)) {
-    fs.rmSync(destDir, { recursive: true, force: true })
-  }
-  copyPluginDir(resolvedSource, destDir)
+  transactionalInstallDirectory({
+    extensionsRoot: resolveStoragePath('extensions'), source: resolvedSource, destination: destDir,
+    validate: (staged) => { if (!fs.existsSync(path.join(staged, 'plugin.yaml'))) throw new Error('Staged plugin manifest is missing') },
+  })
 
   const { registerPlugin } = await import('../core/storage/plugin/store')
   const installed = registerPlugin(manifest, destDir)

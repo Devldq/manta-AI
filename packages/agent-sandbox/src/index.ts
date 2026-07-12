@@ -50,4 +50,5 @@ export {
   clearLogs as clearAuditLogs,
   getLogSize as getAuditLogSize,
   createAuditEntry,
+  configureAuditLogPath,
 } from './audit/AuditLogger'

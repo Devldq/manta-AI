@@ -4,25 +4,34 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
 import type { AuditEntry } from '../types'
 
 /**
  * 审计日志存储目录
  */
-const AUDIT_DIR = path.join(os.homedir(), '.manta-data')
+let auditLogFile: string | undefined
+
+export function configureAuditLogPath(filePath: string): void {
+  if (!path.isAbsolute(filePath)) throw new Error('Audit log path must be absolute')
+  auditLogFile = filePath
+}
+
+function getAuditLogFile(): string {
+  if (!auditLogFile) throw new Error('Audit log path has not been injected')
+  return auditLogFile
+}
 
 /**
  * 审计日志文件路径
  */
-const AUDIT_LOG_FILE = path.join(AUDIT_DIR, 'audit.log')
 
 /**
  * 确保审计日志目录存在
  */
 function ensureAuditDir(): void {
-  if (!fs.existsSync(AUDIT_DIR)) {
-    fs.mkdirSync(AUDIT_DIR, { recursive: true })
+  const dir = path.dirname(getAuditLogFile())
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
   }
 }
 
@@ -36,7 +45,7 @@ export function log(entry: AuditEntry): void {
   // 使用 JSON Lines 格式（每行一个 JSON 对象）
   const line = JSON.stringify(entry) + '\n'
   
-  fs.appendFileSync(AUDIT_LOG_FILE, line, 'utf-8')
+  fs.appendFileSync(getAuditLogFile(), line, 'utf-8')
 }
 
 /**
@@ -52,11 +61,11 @@ export function readLogs(options?: {
   endTime?: string
   limit?: number
 }): AuditEntry[] {
-  if (!fs.existsSync(AUDIT_LOG_FILE)) {
+  if (!fs.existsSync(getAuditLogFile())) {
     return []
   }
   
-  const content = fs.readFileSync(AUDIT_LOG_FILE, 'utf-8')
+  const content = fs.readFileSync(getAuditLogFile(), 'utf-8')
   const lines = content.trim().split('\n').filter(Boolean)
   
   let entries: AuditEntry[] = lines
@@ -102,8 +111,8 @@ export function readLogs(options?: {
  * 清除审计日志
  */
 export function clearLogs(): void {
-  if (fs.existsSync(AUDIT_LOG_FILE)) {
-    fs.unlinkSync(AUDIT_LOG_FILE)
+  if (fs.existsSync(getAuditLogFile())) {
+    fs.unlinkSync(getAuditLogFile())
   }
 }
 
@@ -112,11 +121,11 @@ export function clearLogs(): void {
  * @returns 文件大小（字节）
  */
 export function getLogSize(): number {
-  if (!fs.existsSync(AUDIT_LOG_FILE)) {
+  if (!fs.existsSync(getAuditLogFile())) {
     return 0
   }
   
-  const stats = fs.statSync(AUDIT_LOG_FILE)
+  const stats = fs.statSync(getAuditLogFile())
   return stats.size
 }
 

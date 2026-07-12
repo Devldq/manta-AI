@@ -2,13 +2,13 @@
  * 知识库存储层 — 持久化 RAG 知识库配置
  *
  * 存储结构：
- *   ~/.manta-data/knowledge-bases/
+ *   ASH knowledge/knowledge-bases/
  *     └── {id}.json   — 每个知识库一个 JSON 文件
  */
 
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
+import { resolveStoragePath } from '../../../storage/path-routing'
 import { shortId, readJsonFile, writeJsonFile, removeDir } from '@manta/rag'
 
 // ─── 类型定义 ─────────────────────────────────────────────────
@@ -76,11 +76,35 @@ export interface UpdateKnowledgeBaseInput {
 // ─── 路径计算 ─────────────────────────────────────────────────
 
 function getStorageDir(): string {
-  return path.join(os.homedir(), '.manta-data', 'knowledge-bases')
+  return resolveStoragePath('knowledge', 'knowledge-bases')
 }
 
 function getFilePath(id: string): string {
   return path.join(getStorageDir(), `${id}.json`)
+}
+
+function getSecretPath(id: string): string {
+  return resolveStoragePath('secrets', 'knowledge-base-api-keys', `${id}.json`)
+}
+
+function readKnowledgeBase(id: string): KnowledgeBase | null {
+  const kb = readJsonFile<KnowledgeBase>(getFilePath(id))
+  if (!kb?.config.embeddingConfig) return kb
+  const secret = readJsonFile<{ apiKey?: string }>(getSecretPath(id))
+  return { ...kb, config: { ...kb.config, embeddingConfig: { ...kb.config.embeddingConfig, apiKey: secret?.apiKey } } }
+}
+
+function persistKnowledgeBase(kb: KnowledgeBase): void {
+  const embedding = kb.config.embeddingConfig
+  if (!embedding) { writeJsonFile(getFilePath(kb.id), kb); return }
+  const previousSecret = readJsonFile<{ apiKey?: string }>(getSecretPath(kb.id))?.apiKey
+  const { apiKey, ...preferences } = embedding
+  if (apiKey ?? previousSecret) writeJsonFile(getSecretPath(kb.id), { apiKey: apiKey ?? previousSecret })
+  const sanitized = {
+    ...kb,
+    config: { ...kb.config, embeddingConfig: (apiKey ?? previousSecret) ? { ...preferences, apiKeyRef: `knowledge-base:${kb.id}` } : preferences },
+  }
+  writeJsonFile(getFilePath(kb.id), sanitized)
 }
 
 // ─── 默认配置 ─────────────────────────────────────────────────
@@ -112,7 +136,7 @@ export function listKnowledgeBases(search?: string): KnowledgeBase[] {
   const kbs: KnowledgeBase[] = []
 
   for (const file of files) {
-    const data = readJsonFile<KnowledgeBase>(path.join(dir, file))
+    const data = readKnowledgeBase(path.basename(file, '.json'))
     if (data) {
       if (search) {
         const q = search.toLowerCase()
@@ -128,7 +152,7 @@ export function listKnowledgeBases(search?: string): KnowledgeBase[] {
 }
 
 export function getKnowledgeBase(id: string): KnowledgeBase | null {
-  return readJsonFile<KnowledgeBase>(getFilePath(id))
+  return readKnowledgeBase(id)
 }
 
 export function createKnowledgeBase(input: CreateKnowledgeBaseInput): KnowledgeBase {
@@ -152,12 +176,12 @@ export function createKnowledgeBase(input: CreateKnowledgeBaseInput): KnowledgeB
     updatedAt: timestamp,
   }
 
-  writeJsonFile(getFilePath(id), kb)
+  persistKnowledgeBase(kb)
   return kb
 }
 
 export function updateKnowledgeBase(id: string, patch: UpdateKnowledgeBaseInput): KnowledgeBase | null {
-  const kb = readJsonFile<KnowledgeBase>(getFilePath(id))
+  const kb = readKnowledgeBase(id)
   if (!kb) return null
 
   if (patch.name !== undefined) kb.name = patch.name
@@ -171,7 +195,7 @@ export function updateKnowledgeBase(id: string, patch: UpdateKnowledgeBaseInput)
   }
 
   kb.updatedAt = now()
-  writeJsonFile(getFilePath(id), kb)
+  persistKnowledgeBase(kb)
   return kb
 }
 
@@ -179,11 +203,12 @@ export function deleteKnowledgeBase(id: string): boolean {
   const filePath = getFilePath(id)
   if (!fs.existsSync(filePath)) return false
 
-  const kbDir = path.join(os.homedir(), '.manta-data', 'rag', id)
+  const kbDir = resolveStoragePath('knowledge', 'rag', id)
   removeDir(kbDir)
 
   try {
     fs.unlinkSync(filePath)
+    try { fs.unlinkSync(getSecretPath(id)) } catch { /* secret may not exist */ }
     return true
   } catch {
     return false

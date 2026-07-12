@@ -2,8 +2,8 @@
  * 用 JSON 文件存储，确保 Next.js 多模块实例、多进程间共享同一份状态 */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
 import { randomUUID } from 'crypto'
+import { resolveStoragePath } from '../../storage/path-routing'
 
 export interface AccessRequest {
   id: string
@@ -17,18 +17,18 @@ interface StoreData {
   pendingRequests: AccessRequest[]
 }
 
-const DATA_DIR = path.join(os.homedir(), '.manta-data')
-const STORE_FILE = path.join(DATA_DIR, 'fs-access.json')
+const dataDir = () => resolveStoragePath('config', 'security')
+const storeFile = () => resolveStoragePath('config', 'security', 'fs-access.json')
 
 function ensureDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
+  if (!fs.existsSync(dataDir())) fs.mkdirSync(dataDir(), { recursive: true })
 }
 
 function readStore(): StoreData {
   ensureDir()
   try {
-    if (fs.existsSync(STORE_FILE)) {
-      return JSON.parse(fs.readFileSync(STORE_FILE, 'utf-8')) as StoreData
+    if (fs.existsSync(storeFile())) {
+      return JSON.parse(fs.readFileSync(storeFile(), 'utf-8')) as StoreData
     }
   } catch { /* 读取失败时返回默认值 */ }
   return { approvedPaths: [path.resolve(process.cwd())], pendingRequests: [] }
@@ -36,9 +36,9 @@ function readStore(): StoreData {
 
 function writeStore(data: StoreData) {
   ensureDir()
-  const tmp = `${STORE_FILE}.tmp`
+  const tmp = `${storeFile()}.tmp`
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
-  fs.renameSync(tmp, STORE_FILE)
+  fs.renameSync(tmp, storeFile())
 }
 
 /** 检查路径是否已授权（精确路径或父目录已授权均可）

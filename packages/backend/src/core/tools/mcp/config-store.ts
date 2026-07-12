@@ -3,39 +3,32 @@
  *
  * 用户自定义的 MCP Server 配置持久化到磁盘，与内建配置分离：
  * - 内建配置: 代码中硬编码（mcp-config.ts 的 KNOWN_MCP_SERVERS）
- * - 用户配置: ~/.manta-data/mcp-servers.json
- * - 工具可见性: ~/.manta-data/mcp-visibility.json
+ * - User configuration: ASH config/mcp/servers.json
+ * - Tool visibility: ASH config/mcp/visibility.json
  *
  * 合并规则: 同名 server 用户配置覆盖内建配置
  */
-import * as path from 'node:path';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
+import * as path from 'node:path';
+import { resolveStoragePath } from '../../../storage/path-routing';
 
 import type { MCPServerEntry, MCPToolVisibility } from '../registry/types';
 
 // ── 存储路径 ────────────────────────────────────────────────────────────────
 
-function getStoreDir(): string {
-  return path.join(os.homedir(), '.manta-data');
-}
-
 function getServersStorePath(): string {
-  return path.join(getStoreDir(), 'mcp-servers.json');
+  return resolveStoragePath('config', 'mcp', 'servers.json');
 }
 
 function getVisibilityStorePath(): string {
-  return path.join(getStoreDir(), 'mcp-visibility.json');
+  return resolveStoragePath('config', 'mcp', 'visibility.json');
+}
+
+function getSecretsStorePath(): string {
+  return resolveStoragePath('secrets', 'mcp', 'server-secrets.json');
 }
 
 // ── 通用存储工具 ────────────────────────────────────────────────────────────
-
-function ensureStoreDir(): void {
-  const dir = getStoreDir();
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
 
 function readJSON<T>(filePath: string, defaultVal: T): T {
   try {
@@ -48,7 +41,7 @@ function readJSON<T>(filePath: string, defaultVal: T): T {
 }
 
 function writeJSON(filePath: string, data: unknown): void {
-  ensureStoreDir();
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
@@ -59,12 +52,75 @@ interface MCPStoreData {
   servers: MCPServerEntry[];
 }
 
+interface MCPServerSecrets {
+  environment?: Record<string, string>;
+  headers?: Record<string, string>;
+  clientSecret?: string;
+}
+
+function loadServerSecrets(): Record<string, MCPServerSecrets> {
+  return readJSON<Record<string, MCPServerSecrets>>(getSecretsStorePath(), {});
+}
+
+function hydrateServer(entry: MCPServerEntry, secret: MCPServerSecrets | undefined): MCPServerEntry {
+  if (!secret) return entry;
+  const hydrateValues = (metadata: Record<string, string> | undefined, values: Record<string, string> | undefined) => Object.fromEntries(
+    Object.entries(metadata ?? {}).map(([key, value]) => [key, value.startsWith('{ash-secret:') ? values?.[key] ?? value : value]),
+  );
+  const config = entry.config.type === 'local'
+    ? { ...entry.config, environment: hydrateValues(entry.config.environment, secret.environment) }
+    : { ...entry.config, headers: hydrateValues(entry.config.headers, secret.headers) };
+  if (config.oauth?.clientSecret?.startsWith('{ash-secret:') && secret.clientSecret) config.oauth = { ...config.oauth, clientSecret: secret.clientSecret };
+  return { ...entry, config } as MCPServerEntry;
+}
+
+function sanitizeServer(entry: MCPServerEntry, previous: MCPServerSecrets | undefined): { entry: MCPServerEntry; secret?: MCPServerSecrets } {
+  const secret: MCPServerSecrets = {};
+  const config = { ...entry.config };
+  if (config.type === 'local') {
+    const environment: Record<string, string> = {};
+    const values: Record<string, string> = {};
+    for (const [key, value] of Object.entries(config.environment ?? {})) {
+      if (/^\{env:[^}]+\}$/.test(value)) environment[key] = value;
+      else if (value.startsWith('{ash-secret:')) { environment[key] = value; if (previous?.environment?.[key]) values[key] = previous.environment[key]; }
+      else { values[key] = value; environment[key] = `{ash-secret:${entry.name}:environment:${key}}`; }
+    }
+    config.environment = environment;
+    if (Object.keys(values).length) secret.environment = values;
+  } else {
+    const headers: Record<string, string> = {};
+    const values: Record<string, string> = {};
+    for (const [key, value] of Object.entries(config.headers ?? {})) {
+      if (/^\{env:[^}]+\}$/.test(value)) headers[key] = value;
+      else if (value.startsWith('{ash-secret:')) { headers[key] = value; if (previous?.headers?.[key]) values[key] = previous.headers[key]; }
+      else { values[key] = value; headers[key] = `{ash-secret:${entry.name}:header:${key}}`; }
+    }
+    config.headers = headers;
+    if (Object.keys(values).length) secret.headers = values;
+  }
+  if (config.oauth?.clientSecret && !/^\{env:[^}]+\}$/.test(config.oauth.clientSecret)) {
+    secret.clientSecret = config.oauth.clientSecret.startsWith('{ash-secret:') ? previous?.clientSecret : config.oauth.clientSecret;
+    config.oauth = { ...config.oauth, clientSecret: `{ash-secret:${entry.name}:oauth:clientSecret}` };
+  }
+  return { entry: { ...entry, config } as MCPServerEntry, secret: Object.keys(secret).length ? secret : undefined };
+}
+
 function readServersStore(): MCPStoreData {
-  return readJSON<MCPStoreData>(getServersStorePath(), { servers: [] });
+  const data = readJSON<MCPStoreData>(getServersStorePath(), { servers: [] });
+  const secrets = loadServerSecrets();
+  return { servers: data.servers.map((entry) => hydrateServer(entry, secrets[entry.name])) };
 }
 
 function writeServersStore(data: MCPStoreData): void {
-  writeJSON(getServersStorePath(), data);
+  const previous = loadServerSecrets();
+  const secrets: Record<string, MCPServerSecrets> = {};
+  const servers = data.servers.map((entry) => {
+    const sanitized = sanitizeServer(entry, previous[entry.name]);
+    if (sanitized.secret) secrets[entry.name] = sanitized.secret;
+    return sanitized.entry;
+  });
+  writeJSON(getSecretsStorePath(), secrets);
+  writeJSON(getServersStorePath(), { servers });
 }
 
 // ── Server 配置对外 API ─────────────────────────────────────────────────────

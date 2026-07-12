@@ -3,17 +3,19 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as yaml from 'js-yaml'
 import type { AgentEntry, PluginManifest } from '../core/types'
+import { resolveStoragePath } from '../storage/path-routing'
+import { transactionalWriteExtensionFile } from '../storage/extension-transactions'
 
 // 插件根目录（项目内的 plugins/ 文件夹）
-const PLUGINS_DIR = path.join(process.cwd(), 'plugins')
+const pluginsDir = () => resolveStoragePath('extensions', 'plugins')
 // 插件禁用状态持久化文件
-const DISABLED_FILE = path.join(PLUGINS_DIR, '_disabled.json')
+const disabledFile = () => resolveStoragePath('extensions', 'plugins', '_disabled.json')
 
 // 读取禁用列表
 export function readDisabledSet(): Set<string> {
   try {
-    if (!fs.existsSync(DISABLED_FILE)) return new Set()
-    const raw = fs.readFileSync(DISABLED_FILE, 'utf-8')
+    if (!fs.existsSync(disabledFile())) return new Set()
+    const raw = fs.readFileSync(disabledFile(), 'utf-8')
     const list = JSON.parse(raw)
     return new Set(Array.isArray(list) ? list : [])
   } catch {
@@ -23,7 +25,7 @@ export function readDisabledSet(): Set<string> {
 
 // 写入禁用列表
 export function writeDisabledSet(ids: Set<string>): void {
-  fs.writeFileSync(DISABLED_FILE, JSON.stringify([...ids], null, 2))
+  transactionalWriteExtensionFile({ extensionsRoot: resolveStoragePath('extensions'), destination: disabledFile(), content: JSON.stringify([...ids], null, 2) })
 }
 
 // 读取 plugin.yaml
@@ -43,14 +45,14 @@ function readPluginManifest(pluginDir: string): PluginManifest | null {
 
 // 扫描所有插件目录，返回所有 plugin-native agents
 export function loadAllPluginAgents(): AgentEntry[] {
-  if (!fs.existsSync(PLUGINS_DIR)) return []
+  if (!fs.existsSync(pluginsDir())) return []
 
   const disabledSet = readDisabledSet()
   const pluginDirs: string[] = []
   try {
-    for (const entry of fs.readdirSync(PLUGINS_DIR, { withFileTypes: true })) {
+    for (const entry of fs.readdirSync(pluginsDir(), { withFileTypes: true })) {
       if (entry.isDirectory() && entry.name !== '_npm_packages') {
-        pluginDirs.push(path.join(PLUGINS_DIR, entry.name))
+        pluginDirs.push(path.join(pluginsDir(), entry.name))
       }
     }
   } catch {
@@ -71,15 +73,15 @@ export function loadAllPluginAgents(): AgentEntry[] {
 
 // 列出所有已安装插件的 manifest
 export function listPlugins(): PluginManifest[] {
-  if (!fs.existsSync(PLUGINS_DIR)) return []
+  if (!fs.existsSync(pluginsDir())) return []
 
   const disabledSet = readDisabledSet()
   const manifests: PluginManifest[] = []
   try {
-    for (const entry of fs.readdirSync(PLUGINS_DIR, { withFileTypes: true })) {
+    for (const entry of fs.readdirSync(pluginsDir(), { withFileTypes: true })) {
       if (entry.name === '_npm_packages') continue
       if (entry.isDirectory() || entry.isSymbolicLink()) {
-        const manifest = readPluginManifest(path.join(PLUGINS_DIR, entry.name))
+        const manifest = readPluginManifest(path.join(pluginsDir(), entry.name))
         if (manifest) {
           manifest.disabled = disabledSet.has(manifest.id)
           manifests.push(manifest)

@@ -7,14 +7,14 @@
  * - 诊断"模型看不到什么信息"的问题
  *
  * 存储格式：NDJSON（每行一条 JSON），写入会话专属文件
- * 路径：~/.manta-data/conversations/<id>/context-snapshots.ndjson
+ * Path: ASH work/conversations/<id>/context-snapshots.ndjson
  *
  * 注意：此文件可能较大（完整消息内容），每次新 loop 启动时截断重写
  */
 
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
+import { resolveStoragePath } from '../../storage/path-routing'
 import type { ModelMessage } from 'ai'
 import { estimateTokensFromChars, getMessageCharCount } from './token/estimator'
 
@@ -62,7 +62,7 @@ interface SerializableMessage {
 // ─── 配置常量 ────────────────────────────────────────────────────────────────
 
 /** 快照文件目录基础路径 */
-const DATA_DIR = path.join(os.homedir(), '.manta-data', 'conversations')
+const dataDir = () => resolveStoragePath('work', 'conversations')
 
 /** 每条消息内容的最大字符数（防止快照文件过大） */
 const MAX_MESSAGE_CONTENT_LENGTH = 2000
@@ -257,14 +257,14 @@ function formatMessageContent(msg: ModelMessage): string {
  * 获取会话的快照文件路径
  */
 export function getSnapshotPath(conversationId: string): string {
-  return path.join(DATA_DIR, conversationId, 'context-snapshots.ndjson')
+  return path.join(dataDir(), conversationId, 'context-snapshots.ndjson')
 }
 
 /**
  * 清空会话的快照文件（在新 loop 启动时调用）
  */
 export function clearSnapshots(conversationId: string): void {
-  const dir = path.join(DATA_DIR, conversationId)
+  const dir = path.join(dataDir(), conversationId)
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
   }
@@ -284,7 +284,7 @@ export function recordContextSnapshot(
   stepIndex: number,
   messages: ModelMessage[],
 ): void {
-  const dir = path.join(DATA_DIR, conversationId)
+  const dir = path.join(dataDir(), conversationId)
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
   }

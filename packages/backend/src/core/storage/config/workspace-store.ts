@@ -1,18 +1,19 @@
-/* Workspace 配置持久化存储 — ~/.manta-data/workspace.json
+/* Workspace preferences persist under ASH config/workspace.json.
  * 用于指定 Agent 执行文件操作时的默认工作目录
  */
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { getSecurityContext } from '../../security-context'
+import { resolveStoragePath } from '../../../storage/path-routing'
 
 // 配置文件路径
-const DATA_DIR = path.join(os.homedir(), '.manta-data')
-const WORKSPACE_FILE = path.join(DATA_DIR, 'workspace.json')
+function dataDir(): string { return resolveStoragePath('config') }
+function workspaceFile(): string { return resolveStoragePath('config', 'workspace.json') }
 
 function ensureDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
+  if (!fs.existsSync(dataDir())) {
+    fs.mkdirSync(dataDir(), { recursive: true })
   }
 }
 
@@ -45,8 +46,8 @@ const DEFAULT_WORKSPACE_CONFIG: WorkspaceConfig = {
 /** 读取 workspace 配置 */
 export function getWorkspaceConfig(): WorkspaceConfig {
   try {
-    if (fs.existsSync(WORKSPACE_FILE)) {
-      const raw = fs.readFileSync(WORKSPACE_FILE, 'utf-8')
+    if (fs.existsSync(workspaceFile())) {
+      const raw = fs.readFileSync(workspaceFile(), 'utf-8')
       const parsed = JSON.parse(raw) as Partial<WorkspaceConfig>
       return {
         ...DEFAULT_WORKSPACE_CONFIG,
@@ -65,7 +66,7 @@ export function saveWorkspaceConfig(config: WorkspaceConfig): void {
     ...config,
     updatedAt: new Date().toISOString(),
   }
-  safeWrite(WORKSPACE_FILE, updated)
+  safeWrite(workspaceFile(), updated)
 }
 
 /**
@@ -86,7 +87,7 @@ export function getDefaultWorkDir(): string {
   }
 
   // 2. 配置文件（只有存在且包含有效 defaultDir 时才使用）
-  if (fs.existsSync(WORKSPACE_FILE)) {
+  if (fs.existsSync(workspaceFile())) {
     const config = getWorkspaceConfig()
     if (config.defaultDir && fs.existsSync(config.defaultDir) && fs.statSync(config.defaultDir).isDirectory()) {
       return path.resolve(config.defaultDir)

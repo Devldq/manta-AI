@@ -1,11 +1,10 @@
 /*  start: ProcessRegistry — Agent 进程追踪与管理 */
 import * as fs from 'fs'
-import * as path from 'path'
-import * as os from 'os'
+import { resolveStoragePath } from '../../../storage/path-routing'
 
 // AI: 进程注册表文件路径
-const DATA_DIR = path.join(os.homedir(), '.manta-data')
-const REGISTRY_FILE = path.join(DATA_DIR, 'process-registry.json')
+const dataDir = () => resolveStoragePath('work', 'processes')
+const registryFile = () => resolveStoragePath('work', 'processes', 'process-registry.json')
 
 interface ProcessRecord {
   taskId: string
@@ -31,9 +30,10 @@ export class ProcessRegistry {
 
   // AI: 从文件加载注册表
   private load(): void {
+    const file = registryFile()
     try {
-      if (fs.existsSync(REGISTRY_FILE)) {
-        const raw = fs.readFileSync(REGISTRY_FILE, 'utf-8')
+      if (fs.existsSync(file)) {
+        const raw = fs.readFileSync(file, 'utf-8')
         this.records = JSON.parse(raw) as ProcessRecord[]
       }
     } catch (err) {
@@ -44,13 +44,15 @@ export class ProcessRegistry {
 
   // AI: 保存注册表到文件
   private save(): void {
+    const directory = dataDir()
+    const file = registryFile()
     try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true })
+      if (!fs.existsSync(directory)) {
+        fs.mkdirSync(directory, { recursive: true })
       }
-      const tmp = `${REGISTRY_FILE}.tmp`
+      const tmp = `${file}.tmp`
       fs.writeFileSync(tmp, JSON.stringify(this.records, null, 2), 'utf-8')
-      fs.renameSync(tmp, REGISTRY_FILE)
+      fs.renameSync(tmp, file)
     } catch (err) {
       console.error('[ProcessRegistry] 保存失败:', err)
     }
