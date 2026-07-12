@@ -1,11 +1,11 @@
 /* LLM profile metadata persists in ASH config; API keys persist in ASH secrets. */
 import * as fs from 'fs'
-import * as path from 'path'
 import { resolveStoragePath } from '../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import type { LLMConfig, ModelProfile, LLMProfilesConfig } from './types'
 import { getDefaultLLMConfig, profileToLLMConfig } from './types'
 import { readCrossGroupBundle, transactCrossGroupBundle } from '../../storage/cross-group-bundle'
+import { durableAtomicWrite } from '../../storage/durable-atomic'
 
 // 配置文件路径
 const profilesFile = () => resolveStoragePath('config', 'llm-profiles.json')
@@ -15,10 +15,7 @@ const participants = () => [{ name: 'metadata', root: resolveStoragePath('config
 
 /** 安全写文件（先写 tmp 再 rename） */
 function safeWrite(filePath: string, data: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true })
-  const tmp = `${filePath}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
-  fs.renameSync(tmp, filePath)
+  durableAtomicWrite(filePath, JSON.stringify(data, null, 2))
 }
 
 function readProfileSecrets(): Record<string, string> {

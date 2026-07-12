@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { constants, createWriteStream, existsSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, writeFileSync, renameSync } from 'node:fs'
+import { constants, createWriteStream, existsSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, rmSync, writeFileSync, renameSync } from 'node:fs'
 import { copyFile, unlink } from 'node:fs/promises'
 import { basename, dirname, join, posix } from 'node:path'
 import { Transform, type Readable } from 'node:stream'
@@ -54,14 +54,15 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
         const storedName = sha256
         const absolutePath = join(options.documentsRoot, storedName)
         const document = { absolutePath, relativePath: posix.join('documents', storedName), sha256, size, safeName }
-        const orphanRoot = join(dirname(options.documentsRoot), '.orphans'); mkdirSync(orphanRoot, { recursive: true }); const orphanPath = join(orphanRoot, `${sha256}.json`)
-        const orphanTemp = `${orphanPath}.${randomUUID()}.tmp`; const orphanFd = openSync(orphanTemp, 'wx'); try { writeFileSync(orphanFd, JSON.stringify({ version: 1, hash: sha256, transactionId: basename(stagedPath, '.upload'), createdAt: new Date().toISOString(), status: 'pending-pipeline' }), 'utf8') } finally { closeSync(orphanFd) }; renameSync(orphanTemp, orphanPath)
+        const transactionId = basename(stagedPath, '.upload'); const orphanRoot = join(dirname(options.documentsRoot), '.orphans', sha256); mkdirSync(orphanRoot, { recursive: true }); const orphanPath = join(orphanRoot, `${transactionId}.json`)
+        const orphanTemp = `${orphanPath}.${randomUUID()}.tmp`; const orphanFd = openSync(orphanTemp, 'wx'); try { writeFileSync(orphanFd, JSON.stringify({ version: 1, hash: sha256, transactionId, createdAt: new Date().toISOString(), status: 'pending-pipeline' }), 'utf8') } finally { closeSync(orphanFd) }; renameSync(orphanTemp, orphanPath)
         if (!existsSync(absolutePath)) {
           try { await copyFile(stagedPath, absolutePath, constants.COPYFILE_EXCL) }
           catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') { await unlink(orphanPath).catch(() => undefined); throw error } }
         }
         const result = await processStaged(stagedPath, document)
         await unlink(orphanPath).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error })
+        try { if (!readdirSync(orphanRoot).length) rmSync(orphanRoot, { recursive: true }) } catch { /* another owner is changing */ }
         return { result, ...document }
       } finally {
         await unlink(stagedPath).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error })
@@ -72,14 +73,14 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
   }
 }
 
-export function createRagUploadResources(initialCacheRoot: string, initialKnowledgeRoot: string) {
+export function createRagUploadResources(initialCacheRoot: string, initialKnowledgeRoot: string, isReferenced: (hash: string) => Promise<boolean>) {
   let cacheRoot = initialCacheRoot; let knowledgeRoot = initialKnowledgeRoot
   const idle = () => {
     if (activeUploads.get(cacheRoot)) return { ok: false, error: 'RAG uploads are still active' }
     try { inspectRagOrphans(knowledgeRoot); return { ok: true } } catch (error) { return { ok: false, error: String(error) } }
   }
   const common = {
-    checkpoint() { const status = idle(); if (!status.ok) throw new Error(status.error) },
+    async checkpoint() { const status = idle(); if (!status.ok) throw new Error(status.error); await cleanupRagOrphans(knowledgeRoot, { olderThan: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), isReferenced }) },
     close() { const status = idle(); if (!status.ok) throw new Error(status.error) },
     integrityCheck: idle,
   }
@@ -92,18 +93,21 @@ export function createRagUploadResources(initialCacheRoot: string, initialKnowle
 export interface RagOrphanRecord { version: 1; hash: string; transactionId: string; createdAt: string; status: 'pending-pipeline' }
 export function inspectRagOrphans(knowledgeRoot: string): RagOrphanRecord[] {
   const root = join(knowledgeRoot, '.orphans'); if (!existsSync(root)) return []
-  return readdirSync(root).filter((name) => name.endsWith('.json')).map((name) => {
-    const record = JSON.parse(readFileSync(join(root, name), 'utf8')) as RagOrphanRecord
-    if (record.version !== 1 || !/^[a-f0-9]{64}$/.test(record.hash) || name !== `${record.hash}.json` || !record.transactionId || Number.isNaN(Date.parse(record.createdAt)) || record.status !== 'pending-pipeline') throw new Error(`Invalid RAG orphan record: ${name}`)
+  return readdirSync(root, { withFileTypes: true }).flatMap((hashDir) => {
+    if (!hashDir.isDirectory() || !/^[a-f0-9]{64}$/.test(hashDir.name)) throw new Error(`Invalid RAG orphan hash directory: ${hashDir.name}`)
+    return readdirSync(join(root, hashDir.name)).filter((name) => name.endsWith('.json')).map((name) => {
+    const record = JSON.parse(readFileSync(join(root, hashDir.name, name), 'utf8')) as RagOrphanRecord
+    if (record.version !== 1 || record.hash !== hashDir.name || name !== `${record.transactionId}.json` || !record.transactionId || Number.isNaN(Date.parse(record.createdAt)) || record.status !== 'pending-pipeline') throw new Error(`Invalid RAG orphan record: ${name}`)
     return record
-  })
+  }) })
 }
 export async function cleanupRagOrphans(knowledgeRoot: string, options: { olderThan: Date; isReferenced(hash: string): Promise<boolean> }): Promise<string[]> {
   const removed: string[] = []
   for (const record of inspectRagOrphans(knowledgeRoot)) {
     if (new Date(record.createdAt) >= options.olderThan || await options.isReferenced(record.hash)) continue
-    await unlink(join(knowledgeRoot, 'documents', record.hash)).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error })
-    await unlink(join(knowledgeRoot, '.orphans', `${record.hash}.json`)); removed.push(record.hash)
+    const ownerDir = join(knowledgeRoot, '.orphans', record.hash); await unlink(join(ownerDir, `${record.transactionId}.json`))
+    if (readdirSync(ownerDir).length) continue
+    await unlink(join(knowledgeRoot, 'documents', record.hash)).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error }); rmSync(ownerDir, { recursive: true }); removed.push(record.hash)
   }
   return removed
 }

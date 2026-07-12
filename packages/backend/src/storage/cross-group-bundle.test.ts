@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createCrossGroupBundleResources, readCrossGroupBundle, transactCrossGroupBundle, type CrossGroupParticipant } from './cross-group-bundle'
+import { createCrossGroupBundleResources, migrateLegacyAtomicJournals, readCrossGroupBundle, transactCrossGroupBundle, type CrossGroupParticipant } from './cross-group-bundle'
 
 function roots(base: string): [CrossGroupParticipant, CrossGroupParticipant] {
   return [{ name: 'metadata', root: join(base, 'config') }, { name: 'secret', root: join(base, 'secrets') }]
@@ -41,5 +41,23 @@ describe('cross-group versioned 2PC', () => {
     const next = join(base, 'new-config'); cpSync(participants[0].root, next, { recursive: true }); resources.metadata.close(); resources.metadata.reopen(next); participants[0].root = next
     transactCrossGroupBundle(participants, 'record', (tx) => tx.write('metadata', 'record.json', 'newer'))
     expect(readFileSync(join(next, 'record.json'), 'utf8')).toBe('newer'); expect(readFileSync(join(base, 'config', 'record.json'), 'utf8')).toBe('new')
+  })
+
+  it('rejects committed split brain and tombstone resurrection', () => {
+    const base = mkdtempSync(join(tmpdir(), 'manta-2pc-split-')); const participants = roots(base)
+    transactCrossGroupBundle(participants, 'record', (tx) => { tx.write('metadata', 'record.json', 'x'); tx.write('secret', 'record.json', 's') })
+    const secretState = join(participants[1].root, '.ash-2pc', 'record.json'); const state = JSON.parse(readFileSync(secretState, 'utf8')); state.txId = 'other'; writeFileSync(secretState, JSON.stringify(state))
+    expect(() => readCrossGroupBundle(participants, 'record', () => undefined)).toThrow(/reconcile/i)
+    state.txId = JSON.parse(readFileSync(join(participants[0].root, '.ash-2pc', 'record.json'), 'utf8')).txId; writeFileSync(secretState, JSON.stringify(state))
+    transactCrossGroupBundle(participants, 'record', (tx) => tx.delete('metadata', 'record.json'))
+    writeFileSync(join(participants[0].root, 'record.json'), 'resurrected')
+    expect(() => readCrossGroupBundle(participants, 'record', () => undefined)).toThrow(/tombstone/i)
+  })
+
+  it('quarantines an old absolute journal instead of writing its unknown root', () => {
+    const base = mkdtempSync(join(tmpdir(), 'manta-legacy-quarantine-')); const legacy = join(base, 'new-secrets', '.transactions'); const outside = join(base, 'old-secrets', 'key.json'); mkdirSync(legacy, { recursive: true }); mkdirSync(join(base, 'old-secrets')); writeFileSync(outside, 'old')
+    writeFileSync(join(legacy, 'record.journal.json'), JSON.stringify({ writes: [{ path: outside, content: 'unsafe' }], deletes: [] }))
+    const warnings = migrateLegacyAtomicJournals(legacy, [join(base, 'new-secrets')], join(base, 'diagnostics'))
+    expect(warnings).toHaveLength(1); expect(readFileSync(outside, 'utf8')).toBe('old'); expect(existsSync(legacy)).toBe(false); expect(existsSync(join(base, 'diagnostics'))).toBe(true)
   })
 })

@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { acquireStorageFileLock } from './file-lock'
+import { durableAtomicWrite } from './durable-atomic'
 
 export interface CrossGroupParticipant { name: string; root: string }
 export type CrossGroupFaultPhase = 'after-first-prepare' | 'after-prepare' | 'after-first-apply' | 'after-apply' | 'after-first-commit'
 interface Change { path: string; content?: string; delete?: true; hash?: string }
-interface CommittedState { version: 1; id: string; generation: number; phase: 'committed'; txId: string; hashes: Record<string, string> }
+interface CommittedState { version: 1; id: string; generation: number; phase: 'committed'; txId: string; targets: Record<string, { present: true; hash: string } | { absent: true }> }
 interface PreparedState { version: 1; id: string; generation: number; phase: 'prepared'; txId: string; changes: Change[]; previous?: CommittedState }
 type State = CommittedState | PreparedState
 
@@ -28,15 +30,10 @@ function contained(root: string, logical: string): string {
 }
 function atomicWrite(file: string, content: string): void {
   contained(dirname(file), `./${file.slice(dirname(file).length + 1)}`)
-  mkdirSync(dirname(file), { recursive: true }); const temp = `${file}.${randomUUID()}.tmp`; const fd = openSync(temp, 'wx')
-  try { writeFileSync(fd, content, 'utf8'); fsyncSync(fd) } finally { closeSync(fd) }
-  renameSync(temp, file)
+  durableAtomicWrite(file, content)
 }
 function acquire(root: string): () => void {
-  contained(root, '.ash-2pc'); mkdirSync(stateDir(root), { recursive: true }); contained(root, '.ash-2pc'); const file = join(stateDir(root), 'global.lock'); let fd: number
-  try { fd = openSync(file, 'wx') } catch (error) { throw new Error('Cross-group transaction lock is already held', { cause: error }) }
-  writeFileSync(fd, JSON.stringify({ pid: process.pid })); fsyncSync(fd)
-  return () => { closeSync(fd); unlinkSync(file) }
+  contained(root, '.ash-2pc'); mkdirSync(stateDir(root), { recursive: true }); contained(root, '.ash-2pc'); return acquireStorageFileLock(join(stateDir(root), 'global.lock'))
 }
 function load(root: string, id: string): State | undefined {
   const file = statePath(root, id); if (!existsSync(file)) return undefined
@@ -54,7 +51,7 @@ function apply(root: string, state: PreparedState): void {
   }
 }
 function committed(state: PreparedState): CommittedState {
-  return { version: 1, id: state.id, generation: state.generation, phase: 'committed', txId: state.txId, hashes: Object.fromEntries(state.changes.filter((item) => !item.delete).map((item) => [item.path, item.hash!])) }
+  return { version: 1, id: state.id, generation: state.generation, phase: 'committed', txId: state.txId, targets: Object.fromEntries(state.changes.map((item) => [item.path, item.delete ? { absent: true } : { present: true, hash: item.hash! }])) }
 }
 function recoverLocked(participants: CrossGroupParticipant[], id: string): State[] {
   const states = participants.map((participant) => load(participant.root, id))
@@ -62,6 +59,7 @@ function recoverLocked(participants: CrossGroupParticipant[], id: string): State
   if (prepared.length) {
     const txIds = new Set(prepared.map((item) => item.state.txId)); const generations = new Set(prepared.map((item) => item.state.generation))
     const matchingCommitted = states.filter((state): state is CommittedState => state?.phase === 'committed' && txIds.has(state.txId) && generations.has(state.generation))
+    if (txIds.size !== 1 || generations.size !== 1) throw new Error('Cross-group prepared transaction conflict')
     if (prepared.length === participants.length || matchingCommitted.length) {
       for (const item of prepared) apply(participants[item.index].root, item.state)
       for (const item of prepared) persist(participants[item.index].root, committed(item.state))
@@ -70,12 +68,13 @@ function recoverLocked(participants: CrossGroupParticipant[], id: string): State
     }
   }
   const recovered = participants.map((participant) => load(participant.root, id)).filter((state): state is State => Boolean(state))
-  if (recovered.length && (recovered.length !== participants.length || recovered.some((state) => state.phase !== 'committed' || state.generation !== recovered[0].generation))) throw new Error('Cross-group transaction generations cannot be reconciled')
+  if (recovered.length && (recovered.length !== participants.length || recovered.some((state) => state.phase !== 'committed' || state.generation !== recovered[0].generation || state.txId !== recovered[0].txId || state.id !== recovered[0].id))) throw new Error('Cross-group transaction generations cannot be reconciled')
   recovered.forEach((state, index) => {
     if (state.phase !== 'committed') return
-    for (const [logical, expected] of Object.entries(state.hashes)) {
+    for (const [logical, expected] of Object.entries(state.targets)) {
       const target = contained(participants[index].root, logical)
-      if (!existsSync(target) || hash(readFileSync(target, 'utf8')) !== expected) throw new Error('Cross-group committed payload hash mismatch')
+      if ('absent' in expected) { if (existsSync(target)) throw new Error('Cross-group committed tombstone conflict'); continue }
+      if (!existsSync(target) || hash(readFileSync(target, 'utf8')) !== expected.hash) throw new Error('Cross-group committed payload hash mismatch')
     }
   })
   return recovered
@@ -140,10 +139,12 @@ export function createCrossGroupBundleResources(initial: CrossGroupParticipant[]
 }
 
 /** One-time bridge for journals produced by the pre-2PC development build. */
-export function migrateLegacyAtomicJournals(legacyDirectory: string, currentRoots: string[]): void {
-  if (!existsSync(legacyDirectory)) return
+export function migrateLegacyAtomicJournals(legacyDirectory: string, currentRoots: string[], quarantineRoot: string): string[] {
+  const warnings: string[] = []
+  if (!existsSync(legacyDirectory)) return []
   for (const name of readdirSync(legacyDirectory).filter((entry) => entry.endsWith('.journal.json'))) {
     const file = join(legacyDirectory, name)
+    try {
     const journal = JSON.parse(readFileSync(file, 'utf8')) as { writes?: Array<{ path?: string; content?: string }>; deletes?: string[] }
     if (!Array.isArray(journal.writes) || !Array.isArray(journal.deletes)) throw new Error('Invalid legacy atomic journal')
     const resolveLegacy = (target: unknown) => {
@@ -155,7 +156,11 @@ export function migrateLegacyAtomicJournals(legacyDirectory: string, currentRoot
     for (const item of journal.writes) { if (typeof item.content !== 'string') throw new Error('Invalid legacy atomic journal write'); atomicWrite(resolveLegacy(item.path), item.content) }
     for (const target of journal.deletes) rmSync(resolveLegacy(target), { recursive: true, force: true })
     unlinkSync(file)
+    } catch (error) {
+      mkdirSync(quarantineRoot, { recursive: true }); const target = join(quarantineRoot, `${Date.now()}-${name}`); renameSync(file, target); const warning = `Quarantined legacy journal ${name}: ${String(error)}`; durableAtomicWrite(`${target}.reason.txt`, warning); warnings.push(warning)
+    }
   }
   for (const name of readdirSync(legacyDirectory)) if (name.endsWith('.lock')) rmSync(join(legacyDirectory, name), { force: true })
   if (!readdirSync(legacyDirectory).length) rmSync(legacyDirectory, { recursive: true, force: true })
+  return warnings
 }

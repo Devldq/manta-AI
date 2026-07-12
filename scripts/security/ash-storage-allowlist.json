@@ -1,111 +1,6 @@
 {
   "calls": [
     {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 19,
-      "column": 3,
-      "operation": "mkdirSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 19,
-      "column": 105,
-      "operation": "openSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 21,
-      "column": 3,
-      "operation": "renameSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 72,
-      "column": 32,
-      "operation": "mkdirSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 76,
-      "column": 16,
-      "operation": "unlinkSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 79,
-      "column": 14,
-      "operation": "openSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 81,
-      "column": 142,
-      "operation": "unlinkSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 106,
-      "column": 128,
-      "operation": "mkdirSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 106,
-      "column": 177,
-      "operation": "cpSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 112,
-      "column": 94,
-      "operation": "mkdirSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 112,
-      "column": 168,
-      "operation": "renameSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 112,
-      "column": 199,
-      "operation": "rmSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 131,
-      "column": 137,
-      "operation": "unlinkSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 144,
-      "column": 5,
-      "operation": "mkdirSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 144,
-      "column": 59,
-      "operation": "cpSync",
-      "reason": "Reviewed extension transaction primitive whose mandatory extensions root and destination are validated against the ASH extensions group boundary."
-    },
-    {
       "file": "packages/backend/src/core/storage/plugin/marketplace.ts",
       "line": 395,
       "column": 5,
@@ -179,20 +74,6 @@
       "file": "packages/backend/src/core/engine/runner/process-registry.ts",
       "line": 89,
       "column": 5,
-      "operation": "renameSync",
-      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
-    },
-    {
-      "file": "packages/backend/src/core/llm/config-store.ts",
-      "line": 20,
-      "column": 3,
-      "operation": "writeFileSync",
-      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
-    },
-    {
-      "file": "packages/backend/src/core/llm/config-store.ts",
-      "line": 21,
-      "column": 3,
       "operation": "renameSync",
       "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
     },
@@ -300,90 +181,6 @@
       "column": 24,
       "operation": "exec",
       "reason": "Reviewed external tool or Agent task process boundary whose workspace or output is explicitly selected by the user or task."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 20,
-      "column": 9,
-      "operation": "writeFileSync",
-      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 80,
-      "column": 31,
-      "operation": "writeFileSync",
-      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 118,
-      "column": 119,
-      "operation": "mkdirSync",
-      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 118,
-      "column": 217,
-      "operation": "renameSync",
-      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 124,
-      "column": 7,
-      "operation": "mkdirSync",
-      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 124,
-      "column": 107,
-      "operation": "renameSync",
-      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
-    },
-    {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 131,
-      "column": 65,
-      "operation": "rmSync",
-      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 34,
-      "column": 7,
-      "operation": "mkdirSync",
-      "reason": "Reviewed RAG upload lifecycle call whose mandatory knowledge root is injected from the ASH storage runtime."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 47,
-      "column": 39,
-      "operation": "createWriteStream",
-      "reason": "Reviewed RAG upload lifecycle call whose mandatory knowledge root is injected from the ASH storage runtime."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 51,
-      "column": 9,
-      "operation": "mkdirSync",
-      "reason": "Reviewed RAG upload lifecycle call whose mandatory knowledge root is injected from the ASH storage runtime."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 60,
-      "column": 23,
-      "operation": "copyFile",
-      "reason": "Reviewed RAG upload lifecycle call whose mandatory knowledge root is injected from the ASH storage runtime."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 64,
-      "column": 15,
-      "operation": "unlink",
-      "reason": "Reviewed RAG upload lifecycle call whose mandatory knowledge root is injected from the ASH storage runtime."
     },
     {
       "file": "packages/backend/src/storage/runtime-diagnostics.ts",
@@ -750,165 +547,354 @@
       "reason": "Reviewed boundary helper whose caller supplies an explicit user path or an ASH-rooted path assembled from validated storage segments."
     },
     {
-      "file": "packages/backend/src/core/llm/config-store.ts",
-      "line": 18,
-      "column": 3,
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 98,
+      "column": 128,
       "operation": "mkdirSync",
-      "reason": "Reviewed legacy config migration writer restricted to the current ASH config root."
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 98,
+      "column": 177,
+      "operation": "cpSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 104,
+      "column": 94,
+      "operation": "mkdirSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 104,
+      "column": 168,
+      "operation": "renameSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 104,
+      "column": 199,
+      "operation": "rmSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 110,
+      "column": 119,
+      "operation": "mkdirSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 110,
+      "column": 217,
+      "operation": "renameSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 116,
+      "column": 7,
+      "operation": "mkdirSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 116,
+      "column": 107,
+      "operation": "renameSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 123,
+      "column": 65,
+      "operation": "rmSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 123,
+      "column": 137,
+      "operation": "unlinkSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 136,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 136,
+      "column": 59,
+      "operation": "cpSync",
+      "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 31,
-      "column": 3,
-      "operation": "mkdirSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
+      "line": 49,
+      "column": 24,
+      "operation": "rmSync",
+      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 31,
-      "column": 105,
+      "line": 67,
+      "column": 120,
+      "operation": "rmSync",
+      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 157,
+      "column": 43,
+      "operation": "rmSync",
+      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 158,
+      "column": 5,
+      "operation": "unlinkSync",
+      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 160,
+      "column": 7,
+      "operation": "mkdirSync",
+      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 160,
+      "column": 117,
+      "operation": "renameSync",
+      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 163,
+      "column": 80,
+      "operation": "rmSync",
+      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 164,
+      "column": 45,
+      "operation": "rmSync",
+      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 14,
+      "column": 3,
+      "operation": "mkdirSync",
+      "reason": "Reviewed durable atomic primitive used only after caller-specific ASH containment validation; file and parent directory are fsynced."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 14,
+      "column": 141,
       "operation": "openSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
+      "reason": "Reviewed durable atomic primitive used only after caller-specific ASH containment validation; file and parent directory are fsynced."
     },
     {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 32,
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 15,
       "column": 9,
       "operation": "writeFileSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
+      "reason": "Reviewed durable atomic primitive used only after caller-specific ASH containment validation; file and parent directory are fsynced."
     },
     {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 33,
-      "column": 3,
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 17,
+      "column": 11,
       "operation": "renameSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
+      "reason": "Reviewed durable atomic primitive used only after caller-specific ASH containment validation; file and parent directory are fsynced."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 14,
+      "column": 55,
+      "operation": "execFileSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 16,
+      "column": 19,
+      "operation": "execFileSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 23,
+      "column": 49,
+      "operation": "renameSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 24,
+      "column": 48,
+      "operation": "renameSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 25,
+      "column": 3,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 33,
+      "column": 16,
+      "operation": "openSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 44,
+      "column": 11,
+      "operation": "writeFileSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 44,
+      "column": 106,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 57,
+      "column": 141,
+      "operation": "mkdirSync",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 58,
+      "column": 309,
+      "operation": "renameSync",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 65,
+      "column": 52,
+      "operation": "rmSync",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 68,
+      "column": 15,
+      "operation": "unlink",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 108,
+      "column": 74,
+      "operation": "unlink",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 110,
+      "column": 11,
+      "operation": "unlink",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 110,
+      "column": 152,
+      "operation": "rmSync",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
       "line": 36,
       "column": 32,
       "operation": "mkdirSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
+      "reason": "Reviewed creation of the contained 2PC state directory before acquiring the shared audited lock."
     },
     {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 37,
-      "column": 14,
-      "operation": "openSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 38,
-      "column": 3,
-      "operation": "writeFileSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 39,
-      "column": 33,
-      "operation": "unlinkSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 52,
-      "column": 24,
-      "operation": "rmSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 69,
-      "column": 120,
-      "operation": "rmSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 156,
-      "column": 43,
-      "operation": "rmSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 157,
-      "column": 5,
-      "operation": "unlinkSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 159,
-      "column": 80,
-      "operation": "rmSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 160,
-      "column": 45,
-      "operation": "rmSync",
-      "reason": "Reviewed cross-group 2PC primitive; every target is root-relative, lexically contained, and checked segment-by-segment for links/reparse points."
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 72,
+      "column": 32,
+      "operation": "mkdirSync",
+      "reason": "Reviewed creation of the contained extension lock directory before acquiring the shared audited lock."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 57,
-      "column": 78,
+      "line": 34,
+      "column": 7,
       "operation": "mkdirSync",
-      "reason": "Reviewed owned RAG original/orphan lifecycle under injected ASH cache and knowledge roots."
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 47,
+      "column": 39,
+      "operation": "createWriteStream",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 51,
+      "column": 9,
+      "operation": "mkdirSync",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
       "line": 58,
       "column": 82,
       "operation": "openSync",
-      "reason": "Reviewed owned RAG original/orphan lifecycle under injected ASH cache and knowledge roots."
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
       "line": 58,
       "column": 116,
       "operation": "writeFileSync",
-      "reason": "Reviewed owned RAG original/orphan lifecycle under injected ASH cache and knowledge roots."
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 58,
-      "column": 342,
-      "operation": "renameSync",
-      "reason": "Reviewed owned RAG original/orphan lifecycle under injected ASH cache and knowledge roots."
+      "line": 60,
+      "column": 23,
+      "operation": "copyFile",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
       "line": 61,
       "column": 91,
       "operation": "unlink",
-      "reason": "Reviewed owned RAG original/orphan lifecycle under injected ASH cache and knowledge roots."
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 67,
+      "line": 64,
       "column": 15,
       "operation": "unlink",
-      "reason": "Reviewed owned RAG original/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 105,
-      "column": 11,
-      "operation": "unlink",
-      "reason": "Reviewed owned RAG original/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 106,
-      "column": 11,
-      "operation": "unlink",
-      "reason": "Reviewed owned RAG original/orphan lifecycle under injected ASH cache and knowledge roots."
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     }
   ],
   "literals": [
@@ -935,14 +921,14 @@
     },
     {
       "file": "scripts/security/ash-storage-audit.ts",
-      "line": 51,
+      "line": 52,
       "column": 26,
       "operation": "legacy data root",
       "reason": "Reviewed security audit implementation call or detector literal required to inspect repository sources; it is not application persistence."
     },
     {
       "file": "scripts/security/ash-storage-audit.ts",
-      "line": 53,
+      "line": 54,
       "column": 28,
       "operation": "cwd MCP token root",
       "reason": "Reviewed security audit implementation call or detector literal required to inspect repository sources; it is not application persistence."

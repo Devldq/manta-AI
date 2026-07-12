@@ -12,7 +12,7 @@ export interface ServerStartupHooks {
   initializeSkills(): void | Promise<void>
 }
 
-export type ManagedBackendStorage = Omit<BackendStorageRuntime, 'drivers' | 'diagnosticsWriter' | 'marketplaceScheduler' | 'processRegistry' | 'runInStorageContext'> &
+export type ManagedBackendStorage = Omit<BackendStorageRuntime, 'drivers' | 'diagnosticsWriter' | 'marketplaceScheduler' | 'processRegistry' | 'runInStorageContext' | 'legacyRecoveryWarnings'> &
   Partial<Pick<BackendStorageRuntime, 'diagnosticsWriter' | 'marketplaceScheduler' | 'runInStorageContext'>>
 
 export interface StartServerOptions {

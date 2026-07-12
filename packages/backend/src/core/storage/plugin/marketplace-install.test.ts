@@ -6,6 +6,12 @@ import { runWithStorageResolver } from '../../../storage/path-routing'
 import { createClaudeInstallResource, installClaudePlugin } from './marketplace'
 
 describe('Claude plugin isolated import', () => {
+  it('does not leak an active lease when isolation directory creation fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-claude-isolation-fail-')); const extensions = join(root, 'extensions'); writeFileSync(extensions, 'not-a-directory')
+    const resource = createClaudeInstallResource(extensions)
+    await expect(runWithStorageResolver({ resolve: (group: string, ...segments: string[]) => join(root, group === 'extensions' ? 'extensions' : group, ...segments) }, () => installClaudePlugin('demo@claude-plugins-official', { marketplaceCache: null }))).rejects.toThrow()
+    expect(() => resource.checkpoint()).not.toThrow()
+  })
   it('isolates CLI state, imports the real package into ASH, and cleans temporary state', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-claude-import-')); const externalHome = join(root, 'external-home'); mkdirSync(externalHome)
     const external = Object.fromEntries(['APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'TEMP', 'TMP', 'TMPDIR'].map((key) => {

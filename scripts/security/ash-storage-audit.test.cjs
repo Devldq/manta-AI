@@ -14,9 +14,10 @@ function runFixture(testCase, allowlist = { calls: [], literals: [] }) {
     const file = path.join(root, ...testCase.file.split('/'))
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.writeFileSync(file, testCase.source)
+    const canonical = path.join(root, 'canonical', 'path-routing.ts'); fs.mkdirSync(path.dirname(canonical), { recursive: true }); fs.writeFileSync(canonical, 'export const resolveStoragePath = (...x: unknown[]) => x; export const safeStorageSegment = (x: string) => x')
     const allowlistPath = path.join(root, 'allowlist.json')
     fs.writeFileSync(allowlistPath, JSON.stringify(allowlist))
-    return spawnSync(process.execPath, [audit, '--root', root, '--allowlist', allowlistPath], {
+    return spawnSync(process.execPath, [audit, '--root', root, '--allowlist', allowlistPath, '--canonical-routing', canonical], {
       cwd: repositoryRoot,
       encoding: 'utf8',
     })

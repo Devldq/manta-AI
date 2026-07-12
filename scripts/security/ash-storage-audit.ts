@@ -11,6 +11,7 @@ function option(name, fallback) {
 const invocationRoot = process.cwd()
 const root = option('--root', invocationRoot)
 const allowlistPath = option('--allowlist', path.join(root, 'scripts/security/ash-storage-allowlist.json'))
+const canonicalRoutingPath = option('--canonical-routing', path.join(root, 'packages/backend/src/storage/path-routing.ts'))
 const typescriptPath = require.resolve('typescript', {
   paths: [invocationRoot, path.join(invocationRoot, 'packages/shared'), path.join(root, 'packages/shared')],
 })
@@ -112,7 +113,12 @@ function collectFacts(sourceFile) {
     if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
       const moduleName = node.moduleSpecifier.text
       const clause = node.importClause
-      if (/(?:^|\/)storage\/path-routing(?:\.[cm]?[jt]s)?$/.test(moduleName) || /(?:^|\/)path-routing(?:\.[cm]?[jt]s)?$/.test(moduleName)) {
+      const sourcePath = path.isAbsolute(sourceFile.fileName) ? sourceFile.fileName : path.resolve(root, sourceFile.fileName)
+      const resolvedRouting = ts.resolveModuleName(moduleName, sourcePath, { moduleResolution: ts.ModuleResolutionKind.NodeJs, allowJs: true }, ts.sys).resolvedModule?.resolvedFileName
+        ?? (moduleName.startsWith('.') ? ['.ts', '.tsx', '.js', ''].map((extension) => path.resolve(path.dirname(sourcePath), `${moduleName}${extension}`)).find(fs.existsSync) : undefined)
+      let canonicalImport = false
+      try { const resolvedReal = fs.realpathSync(resolvedRouting); const canonicalReal = fs.realpathSync(canonicalRoutingPath); canonicalImport = Boolean(resolvedRouting) && (process.platform === 'win32' ? resolvedReal.toLowerCase() === canonicalReal.toLowerCase() : resolvedReal === canonicalReal) } catch { canonicalImport = false }
+      if (canonicalImport) {
         if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) for (const element of clause.namedBindings.elements) {
           const imported = element.propertyName?.text || element.name.text
           if (['resolveStoragePath', 'safeStorageSegment'].includes(imported)) trustedStorageBindings.set(element.name.text, imported)

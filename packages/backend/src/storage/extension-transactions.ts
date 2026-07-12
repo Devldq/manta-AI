@@ -1,6 +1,8 @@
 import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { acquireStorageFileLock } from './file-lock'
+import { durableAtomicWrite } from './durable-atomic'
 
 interface ExtensionTransactionOptions { extensionsRoot: string; destination: string; fault?: (phase: string) => void }
 interface InstallOptions extends ExtensionTransactionOptions { source: string; validate?: (stagedPath: string) => void; registryWrites?: Map<string, string> }
@@ -16,9 +18,7 @@ const journalPath = (root: string, id: string) => join(transactionsDir(root), `$
 const lockPath = (root: string) => join(root, '.ash', 'extension-transactions.lock')
 
 function atomicWrite(path: string, content: string): void {
-  mkdirSync(dirname(path), { recursive: true }); const temp = `${path}.${randomUUID()}.tmp`; const fd = openSync(temp, 'wx')
-  try { writeFileSync(fd, content, 'utf8'); fsyncSync(fd) } finally { closeSync(fd) }
-  renameSync(temp, path)
+  durableAtomicWrite(path, content)
 }
 function toRelative(root: string, absolutePath: string): string {
   const value = relative(resolve(root), resolve(absolutePath))
@@ -70,15 +70,7 @@ function readJournal(root: string, file: string): ExtensionJournal {
 
 function acquire(root: string): () => void {
   const path = lockPath(root); mkdirSync(dirname(path), { recursive: true })
-  if (existsSync(path)) {
-    let stale = false
-    try { const owner = JSON.parse(readFileSync(path, 'utf8')) as { pid?: number }; if (Number.isInteger(owner.pid)) { try { process.kill(owner.pid!, 0) } catch { stale = true } } } catch { /* fail closed */ }
-    if (stale) unlinkSync(path)
-  }
-  let fd: number
-  try { fd = openSync(path, 'wx') } catch (error) { throw new Error('Extension transaction lock is already held', { cause: error }) }
-  const token = randomUUID(); writeFileSync(fd, JSON.stringify({ token, pid: process.pid })); fsyncSync(fd)
-  return () => { closeSync(fd); try { const owner = JSON.parse(readFileSync(path, 'utf8')) as { token?: string }; if (owner.token === token) unlinkSync(path) } catch { /* ownership changed */ } }
+  return acquireStorageFileLock(path)
 }
 
 function assertDestination(options: ExtensionTransactionOptions): void {

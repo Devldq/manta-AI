@@ -378,8 +378,8 @@ export async function installClaudePlugin(
 
   const claudeBin = options.claudeBin ?? resolveClaudeBinary()
   const extensionsRoot = resolveStoragePath('extensions')
-  activeClaudeInstalls.set(extensionsRoot, (activeClaudeInstalls.get(extensionsRoot) ?? 0) + 1)
   const isolation = createClaudeIsolation(extensionsRoot)
+  activeClaudeInstalls.set(extensionsRoot, (activeClaudeInstalls.get(extensionsRoot) ?? 0) + 1)
   let setupOutputs: CommandOutput[]
   let installOutput: CommandOutput
   try {

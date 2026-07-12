@@ -59,4 +59,16 @@ describe('RAG original document storage', () => {
     const removed = await cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 1000), isReferenced: async () => false })
     expect(removed).toHaveLength(1); expect(readdirSync(join(knowledge, '.orphans'))).toEqual([])
   })
+
+  it('keeps the failed owner when identical concurrent uploads split success and failure', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-owner-set-')); const knowledge = join(root, 'knowledge'); const storage = createRagUploadStorage({ cacheUploadsRoot: join(root, 'cache'), documentsRoot: join(knowledge, 'documents') })
+    const results = await Promise.allSettled([
+      storage.ingest(Readable.from('same'), 'ok.txt', async () => 'ok'),
+      storage.ingest(Readable.from('same'), 'fail.txt', async () => { throw new Error('pipeline failed') }),
+    ])
+    expect(results.map((item) => item.status).sort()).toEqual(['fulfilled', 'rejected'])
+    const hash = readdirSync(join(knowledge, 'documents'))[0]; expect(readdirSync(join(knowledge, '.orphans', hash))).toHaveLength(1)
+    expect(await cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 1000), isReferenced: async () => true })).toEqual([])
+    expect(existsSync(join(knowledge, 'documents', hash))).toBe(true)
+  })
 })

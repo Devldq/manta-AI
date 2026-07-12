@@ -18,6 +18,7 @@ export interface BackendStorageRuntime extends StorageResolver {
   readonly diagnosticsWriter: RuntimeDiagnosticsWriter
   readonly marketplaceScheduler: ClaudeMarketplaceRuntimeOwner
   readonly processRegistry: ProcessRegistry
+  readonly legacyRecoveryWarnings: string[]
   runInStorageContext<T>(operation: () => T): T
   quiesce(): Promise<void>
   checkpoint(): Promise<void>
@@ -32,7 +33,7 @@ export interface BackendRuntimeOptions {
 
 export function createBackendStorageRuntime(storage: StorageResolver, options: BackendRuntimeOptions = {}): BackendStorageRuntime {
   recoverExtensionTransactions(storage.resolve('extensions'))
-  migrateLegacyAtomicJournals(join(storage.resolve('secrets'), '.transactions'), STORAGE_GROUP_IDS.map((id) => storage.resolve(id)))
+  const legacyRecoveryWarnings = migrateLegacyAtomicJournals(join(storage.resolve('secrets'), '.transactions'), STORAGE_GROUP_IDS.map((id) => storage.resolve(id)), storage.resolve('diagnostics', 'legacy-recovery'))
   const provider = configureSQLiteVecProvider(storage.resolve('knowledge', 'rag'))
   const cache = new EmbeddingCacheManager(storage.resolve('knowledge', 'rag', 'cache'))
   const diagnosticsWriter = new RuntimeDiagnosticsWriter(storage.resolve('diagnostics'))
@@ -45,7 +46,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   const claudeInstallResource = createClaudeInstallResource(storage.resolve('extensions'))
   const configSecretResources = createCrossGroupBundleResources([{ name: 'metadata', root: storage.resolve('config') }, { name: 'secret', root: storage.resolve('secrets') }])
   const knowledgeSecretResources = createCrossGroupBundleResources([{ name: 'metadata', root: storage.resolve('knowledge') }, { name: 'secret', root: storage.resolve('secrets') }])
-  const ragUploadResources = createRagUploadResources(storage.resolve('cache', 'uploads'), storage.resolve('knowledge'))
+  const ragUploadResources = createRagUploadResources(storage.resolve('cache', 'uploads'), storage.resolve('knowledge'), (hash) => provider.hasSourceSha256(hash))
   const lifecycles = new Map<StorageGroupId, ManagedGroupLifecycle>()
   let resumeMarketplace: (() => void) | undefined
   const extensionLifecycle = options.groupLifecycles?.extensions ?? {
@@ -74,7 +75,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   let quiesced = false
   let closed = false
   return {
-    resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler, processRegistry,
+    resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler, processRegistry, legacyRecoveryWarnings,
     runInStorageContext: (operation) => runWithStorageResolver(storage, () => runWithDiagnosticsOwner(diagnosticsWriter, operation)),
     async quiesce() {
       quiesced = true

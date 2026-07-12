@@ -484,6 +484,11 @@ export class SQLiteVecProvider implements RAGProvider {
     }
   }
 
+  async hasSourceSha256(sha256: string): Promise<boolean> {
+    await this.ensureInitialized()
+    return Boolean(this.db.prepare('SELECT 1 FROM documents WHERE source_sha256 = ? LIMIT 1').get(sha256))
+  }
+
   /**
    * 获取文档的所有 chunks（用于预览）
    */
