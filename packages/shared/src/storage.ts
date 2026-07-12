@@ -132,8 +132,8 @@ export const StorageOperationProgressSchema = z.object({
 
 export const StorageIpcRequestSchema = z.discriminatedUnion('channel', [
   z.object({ channel: z.literal('storage:select-parent') }),
-  z.object({ channel: z.literal('storage:create-volume'), parentPath: z.string().min(1), name: z.string().min(1) }),
-  z.object({ channel: z.literal('storage:relocate-volume'), volumeId: z.string().min(1), parentPath: z.string().min(1) }),
+  z.object({ channel: z.literal('storage:create-volume'), selectionId: z.string().min(1), name: z.string().min(1) }),
+  z.object({ channel: z.literal('storage:relocate-volume'), volumeId: z.string().min(1), selectionId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:move-group'), groupId: StorageGroupIdSchema, targetVolumeId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:configure-git'), volumeId: z.string().min(1), remoteUrl: z.string().min(1), authRef: z.string().min(1).optional() }),
   z.object({ channel: z.literal('storage:sync-volume'), volumeId: z.string().min(1) }),
@@ -142,7 +142,7 @@ export const StorageIpcRequestSchema = z.discriminatedUnion('channel', [
 ])
 
 export const StorageIpcResponseSchema = z.discriminatedUnion('ok', [
-  z.object({ ok: z.literal(true), operationId: z.string().min(1).optional(), path: z.string().min(1).optional() }),
+  z.object({ ok: z.literal(true), operationId: z.string().min(1).optional(), selectionId: z.string().min(1).optional() }),
   z.object({ ok: z.literal(false), error: z.object({ code: z.string().min(1), message: z.string().min(1) }) }),
 ])
 

@@ -114,10 +114,11 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   }
 }
 
-export async function createBackendStorageComposition(bootstrap: BootstrapStore) {
+export async function createBackendStorageComposition(bootstrap: BootstrapStore, options: { onProgress?: (progress: import('@manta/shared').StorageOperationProgress) => void } = {}) {
   let runtime: BackendStorageRuntime | undefined
   const hub = await createStorageHub({
     bootstrap,
+    onProgress: options.onProgress,
     createDrivers(storage) {
       runtime = createBackendStorageRuntime(storage)
       return runtime.drivers

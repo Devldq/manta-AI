@@ -4,8 +4,8 @@
   "private": true,
   "main": "dist/main.js",
   "scripts": {
-    "dev": "tsc && electron dist/main.js",
-    "build": "tsc",
+    "dev": "pnpm build && electron dist/main.js",
+    "build": "node scripts/clean.cjs && tsc && node scripts/copy-assets.cjs",
     "build:mac": "pnpm build && electron-builder --mac",
     "build:win": "pnpm build && electron-builder --win",
     "build:linux": "pnpm build && electron-builder --linux",
@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@manta/backend": "workspace:*",
+    "@manta/shared": "workspace:*",
     "@manta/storage-hub": "workspace:*",
     "electron-updater": "^6.8.3"
   },

@@ -6,6 +6,9 @@ import type { BackendStorageRuntime, StorageHealthResult } from './storage/runti
 import { acquireClaudeMarketplaceScheduler } from './core/storage/plugin/marketplace'
 import { acquireLogScheduler } from './core/observability/log/index'
 import type { FastifyInstance } from 'fastify'
+import type { StorageApiContext } from './routes/storage'
+
+export { createBackendStorageComposition } from './storage/runtime'
 
 export interface ServerStartupHooks {
   cleanupStaleRag(): void | Promise<void>
@@ -24,6 +27,10 @@ export interface StartServerOptions {
   startup?: false | ServerStartupHooks
   appFactory?: (options: BuildAppOptions) => Promise<FastifyInstance>
   schedulerAcquirers?: Array<(log: FastifyInstance['log']) => () => void | Promise<void>>
+  bundledSeedRoot?: string
+  storageApi?: StorageApiContext
+  frontendDist?: string
+  isDev?: boolean
 }
 
 export interface MantaServerHandle {
@@ -36,12 +43,12 @@ export interface MantaServerHandle {
 export async function startServer(options: StartServerOptions): Promise<MantaServerHandle> {
   let app: FastifyInstance | undefined
   const schedulerDisposers: Array<() => void | Promise<void>> = []
-  const startup = options.startup === false ? undefined : options.startup ?? defaultStartupHooks()
+  const startup = options.startup === false ? undefined : options.startup ?? defaultStartupHooks(options.bundledSeedRoot)
   const runInStorageContext = <T>(operation: () => T): T => options.storage.runInStorageContext
     ? options.storage.runInStorageContext(operation)
     : operation()
   try {
-    app = await runInStorageContext(() => (options.appFactory ?? buildApp)({ storage: options.storage, registerRoutes: options.registerRoutes }))
+    app = await runInStorageContext(() => (options.appFactory ?? buildApp)({ storage: options.storage, registerRoutes: options.registerRoutes, storageApi: options.storageApi, frontendDist: options.frontendDist, isDev: options.isDev }))
     await app.listen({ port: options.port ?? 0, host: options.host ?? '127.0.0.1' })
     if (options.startSchedulers !== false) {
       const acquirers = options.schedulerAcquirers ?? [
@@ -100,7 +107,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
   return handle
 }
 
-function defaultStartupHooks(): ServerStartupHooks {
+function defaultStartupHooks(bundledSeedRoot?: string): ServerStartupHooks {
   return {
     async cleanupStaleRag() {
       const { getSQLiteVecProvider } = await import('@manta/rag')
@@ -111,7 +118,7 @@ function defaultStartupHooks(): ServerStartupHooks {
     async initializeSkills() {
       const { seedBundledExtensions } = await import('./storage/extension-seeds.js')
       const { resolveStoragePath } = await import('./storage/path-routing.js')
-      const seedRoot = process.env.MANTA_BUNDLED_ASSETS_DIR ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
+      const seedRoot = bundledSeedRoot ?? process.env.MANTA_BUNDLED_ASSETS_DIR ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
       seedBundledExtensions({ extensionsRoot: resolveStoragePath('extensions'), seedRoot, version: process.env.MANTA_BUNDLED_ASSETS_VERSION ?? '2.0.0' })
       const [{ scanPluginFiles }, { registerPlugin }] = await Promise.all([
         import('./core/storage/plugin/scanner.js'), import('./core/storage/plugin/store.js'),

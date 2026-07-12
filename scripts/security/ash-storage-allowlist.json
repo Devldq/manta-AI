@@ -218,11 +218,84 @@
       "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
     },
     {
-      "file": "packages/desktop/src/main.ts",
-      "line": 139,
-      "column": 65,
-      "operation": "rmSync",
-      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+      "file": "packages/desktop/src/lifecycle/createStorageVolume.ts", "line": 13, "column": 11, "operation": "mkdir",
+      "reason": "Reviewed Electron privileged storage-volume creation on an explicit user-selected directory after ASH path, capacity, permission, and nesting validation."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/createStorageVolume.ts", "line": 16, "column": 27, "operation": "rm",
+      "reason": "Reviewed Electron privileged rollback cleanup limited to the newly created ASH volume in an explicit user-selected directory."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 16, "column": 47, "operation": "mkdir",
+      "reason": "Reviewed Electron onboarding permission probe on the explicit user-selected storage parent before any application persistence exists."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 19, "column": 17, "operation": "writeFile",
+      "reason": "Reviewed Electron onboarding permission probe on the explicit user-selected storage parent before any application persistence exists."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 19, "column": 66, "operation": "rename",
+      "reason": "Reviewed Electron onboarding atomic-rename probe on the explicit user-selected storage parent before application initialization."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 21, "column": 21, "operation": "rm",
+      "reason": "Reviewed Electron onboarding cleanup limited to its random permission-probe file in the explicit user-selected parent."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 21, "column": 71, "operation": "rm",
+      "reason": "Reviewed Electron onboarding cleanup limited to its renamed random permission-probe file in the explicit user-selected parent."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 51, "column": 11, "operation": "mkdir",
+      "reason": "Reviewed Electron onboarding creation of a random staging directory below the validated explicit user-selected storage parent."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 51, "column": 94, "operation": "mkdir",
+      "reason": "Reviewed Electron onboarding creation of the seven fixed ASH group directories below its owned staging root."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 52, "column": 11, "operation": "mkdir",
+      "reason": "Reviewed Electron onboarding creation of the fixed ASH backup directory below its owned staging root."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 53, "column": 11, "operation": "rename",
+      "reason": "Reviewed Electron onboarding atomic commit from its owned staging root to the validated user-selected .manta-ai location."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 55, "column": 27, "operation": "rm",
+      "reason": "Reviewed Electron onboarding rollback cleanup limited to its random owned staging directory under the user-selected parent."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 55, "column": 96, "operation": "rm",
+      "reason": "Reviewed Electron onboarding rollback cleanup limited to the just-created ASH root after failed Bootstrap commit."
+    },
+    {
+      "file": "packages/desktop/src/main.ts", "line": 40, "column": 11, "operation": "rm",
+      "reason": "Reviewed Electron privileged migration rollback removing only the failed target group located from validated Bootstrap volume IDs."
+    },
+    {
+      "file": "packages/desktop/src/main.ts", "line": 40, "column": 99, "operation": "mkdir",
+      "reason": "Reviewed Electron privileged migration rollback recreating only a Bootstrap-owned ASH volume root before backup restoration."
+    },
+    {
+      "file": "packages/desktop/src/main.ts", "line": 40, "column": 164, "operation": "rename",
+      "reason": "Reviewed Electron privileged migration rollback restoring a validated group backup into its previous Bootstrap-owned ASH root."
+    },
+    {
+      "file": "packages/desktop/src/main.ts", "line": 86, "column": 239, "operation": "rm",
+      "reason": "Reviewed explicit user-requested backup deletion constrained by a validated backup ID below every Bootstrap-owned .ash-backups root."
+    },
+    {
+      "file": "packages/desktop/scripts/copy-assets.cjs", "line": 5, "column": 1, "operation": "mkdirSync",
+      "reason": "Reviewed repository build helper creating only the Desktop distribution onboarding artifact directory during an explicit build."
+    },
+    {
+      "file": "packages/desktop/scripts/copy-assets.cjs", "line": 6, "column": 1, "operation": "copyFileSync",
+      "reason": "Reviewed repository build helper copying one read-only onboarding HTML asset into the Desktop distribution during an explicit build."
+    },
+    {
+      "file": "packages/desktop/scripts/clean.cjs", "line": 4, "column": 1, "operation": "rmSync",
+      "reason": "Reviewed repository build helper removing only the Desktop distribution artifact directory before an explicit clean build."
     },
     {
       "file": "packages/rag/src/embedding-cache.ts",

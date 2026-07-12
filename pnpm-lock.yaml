@@ -118,6 +118,9 @@ importers:
       '@manta/backend':
         specifier: workspace:*
         version: link:../backend
+      '@manta/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@manta/storage-hub':
         specifier: workspace:*
         version: link:../storage-hub
