@@ -2,15 +2,15 @@ import type { StorageGroupId } from '@manta/shared'
 import { STORAGE_GROUP_IDS } from '@manta/shared'
 import { EmbeddingCacheManager, configureSQLiteVecProvider, resetSQLiteVecProvider } from '@manta/rag'
 import { BootstrapStore, createStorageHub, type StorageGroupDriver } from '@manta/storage-hub'
-import { createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner, type PluginMarketplaceCache } from '../core/storage/plugin/marketplace'
+import { createClaudeInstallResource, createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner, type PluginMarketplaceCache } from '../core/storage/plugin/marketplace'
 import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } from './group-drivers'
 import { runWithDiagnosticsOwner, RuntimeDiagnosticsWriter } from './runtime-diagnostics'
 import { join } from 'node:path'
 import { runWithStorageResolver } from './path-routing'
 import { createProcessRegistry, type ProcessRegistry } from '../core/engine/runner/process-registry'
 import { recoverExtensionTransactions } from './extension-transactions'
-import { createAtomicBundleResource } from './atomic-record-bundle'
-import { createRagUploadResource } from './rag-upload-storage'
+import { createCrossGroupBundleResources, migrateLegacyAtomicJournals } from './cross-group-bundle'
+import { createRagUploadResources } from './rag-upload-storage'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
 export interface BackendStorageRuntime extends StorageResolver {
@@ -32,6 +32,7 @@ export interface BackendRuntimeOptions {
 
 export function createBackendStorageRuntime(storage: StorageResolver, options: BackendRuntimeOptions = {}): BackendStorageRuntime {
   recoverExtensionTransactions(storage.resolve('extensions'))
+  migrateLegacyAtomicJournals(join(storage.resolve('secrets'), '.transactions'), STORAGE_GROUP_IDS.map((id) => storage.resolve(id)))
   const provider = configureSQLiteVecProvider(storage.resolve('knowledge', 'rag'))
   const cache = new EmbeddingCacheManager(storage.resolve('knowledge', 'rag', 'cache'))
   const diagnosticsWriter = new RuntimeDiagnosticsWriter(storage.resolve('diagnostics'))
@@ -41,8 +42,10 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
     (operation) => runWithDiagnosticsOwner(diagnosticsWriter, operation),
   )
   const processRegistry = createProcessRegistry(storage.resolve('work'))
-  const bundleResources = { config: createAtomicBundleResource(storage.resolve('config')), secrets: createAtomicBundleResource(storage.resolve('secrets')) }
-  const ragUploadResource = createRagUploadResource(storage.resolve('cache', 'uploads'))
+  const claudeInstallResource = createClaudeInstallResource(storage.resolve('extensions'))
+  const configSecretResources = createCrossGroupBundleResources([{ name: 'metadata', root: storage.resolve('config') }, { name: 'secret', root: storage.resolve('secrets') }])
+  const knowledgeSecretResources = createCrossGroupBundleResources([{ name: 'metadata', root: storage.resolve('knowledge') }, { name: 'secret', root: storage.resolve('secrets') }])
+  const ragUploadResources = createRagUploadResources(storage.resolve('cache', 'uploads'), storage.resolve('knowledge'))
   const lifecycles = new Map<StorageGroupId, ManagedGroupLifecycle>()
   let resumeMarketplace: (() => void) | undefined
   const extensionLifecycle = options.groupLifecycles?.extensions ?? {
@@ -61,8 +64,12 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   const drivers = new Map<StorageGroupId, StorageGroupDriver>()
   for (const id of STORAGE_GROUP_IDS) {
     drivers.set(id, id === 'knowledge'
-      ? createKnowledgeDriver(provider, cache)
-      : createGroupDriver(id, id === 'work' ? [processRegistry] : id === 'config' || id === 'secrets' ? [bundleResources[id]] : id === 'cache' ? [ragUploadResource] : [], lifecycles.get(id)))
+      ? createKnowledgeDriver(provider, cache, undefined, [knowledgeSecretResources.metadata, ragUploadResources.knowledge])
+      : createGroupDriver(id, id === 'work' ? [processRegistry]
+        : id === 'extensions' ? [claudeInstallResource]
+        : id === 'config' ? [configSecretResources.metadata]
+          : id === 'secrets' ? [configSecretResources.secret, knowledgeSecretResources.secret]
+            : id === 'cache' ? [ragUploadResources.cache] : [], lifecycles.get(id)))
   }
   let quiesced = false
   let closed = false

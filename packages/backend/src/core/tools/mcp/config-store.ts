@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import { resolveStoragePath } from '../../../storage/path-routing';
 
 import type { MCPServerEntry, MCPToolVisibility } from '../registry/types';
-import { withAtomicBundle } from '../../../storage/atomic-record-bundle';
+import { readCrossGroupBundle, transactCrossGroupBundle } from '../../../storage/cross-group-bundle';
 
 // ── 存储路径 ────────────────────────────────────────────────────────────────
 
@@ -28,9 +28,7 @@ function getVisibilityStorePath(): string {
 function getSecretsStorePath(): string {
   return resolveStoragePath('secrets', 'mcp', 'server-secrets.json');
 }
-function getBundleCoordinator(): string { return resolveStoragePath('secrets', '.transactions', 'mcp-servers'); }
-const secretsRoot = () => resolveStoragePath('secrets');
-const sealedPath = 'mcp/sealed-servers.json';
+const participants = () => [{ name: 'metadata', root: resolveStoragePath('config') }, { name: 'secret', root: resolveStoragePath('secrets') }];
 
 // ── 通用存储工具 ────────────────────────────────────────────────────────────
 
@@ -110,11 +108,10 @@ function sanitizeServer(entry: MCPServerEntry, previous: MCPServerSecrets | unde
 }
 
 function readServersStore(): MCPStoreData {
-  return withAtomicBundle(secretsRoot(), 'mcp-servers', (bundle) => {
-    const sealed = bundle.read(sealedPath);
-    const state = sealed ? JSON.parse(sealed) as { data: MCPStoreData; secrets: Record<string, MCPServerSecrets> } : { data: readJSON<MCPStoreData>(getServersStorePath(), { servers: [] }), secrets: loadServerSecrets() };
-    return { servers: state.data.servers.map((entry) => hydrateServer(entry, state.secrets[entry.name])) };
-  });
+  const committed = readCrossGroupBundle(participants(), 'mcp-servers', (bundle) => ({ metadata: bundle.read('metadata', 'mcp/servers.json'), secret: bundle.read('secret', 'mcp/server-secrets.json') }));
+  const data = committed?.metadata ? JSON.parse(committed.metadata) as MCPStoreData : readJSON<MCPStoreData>(getServersStorePath(), { servers: [] });
+  const secrets = committed?.secret ? JSON.parse(committed.secret) as Record<string, MCPServerSecrets> : loadServerSecrets();
+  return { servers: data.servers.map((entry) => hydrateServer(entry, secrets[entry.name])) };
 }
 
 function encodeServers(data: MCPStoreData, previous: Record<string, MCPServerSecrets>) {
@@ -128,17 +125,16 @@ function encodeServers(data: MCPStoreData, previous: Record<string, MCPServerSec
 }
 
 function mutateServersStore(mutator: (data: MCPStoreData) => boolean | void): boolean {
-  let changed = true; let mirror: MCPStoreData = { servers: [] }; let secretMirror: Record<string, MCPServerSecrets> = {};
-  withAtomicBundle(secretsRoot(), 'mcp-servers', (bundle) => {
-    const raw = bundle.read(sealedPath);
-    const current = raw ? JSON.parse(raw) as { data: MCPStoreData; secrets: Record<string, MCPServerSecrets> } : { data: readJSON<MCPStoreData>(getServersStorePath(), { servers: [] }), secrets: loadServerSecrets() };
+  let changed = true;
+  transactCrossGroupBundle(participants(), 'mcp-servers', (bundle) => {
+    const metadata = bundle.read('metadata', 'mcp/servers.json'); const secret = bundle.read('secret', 'mcp/server-secrets.json');
+    const current = { data: metadata ? JSON.parse(metadata) as MCPStoreData : readJSON<MCPStoreData>(getServersStorePath(), { servers: [] }), secrets: secret ? JSON.parse(secret) as Record<string, MCPServerSecrets> : loadServerSecrets() };
     const hydrated = { servers: current.data.servers.map((entry) => hydrateServer(entry, current.secrets[entry.name])) };
     changed = mutator(hydrated) !== false;
     if (!changed) return;
-    const encoded = encodeServers(hydrated, current.secrets); mirror = encoded.data; secretMirror = encoded.secrets;
-    bundle.write(sealedPath, JSON.stringify(encoded, null, 2));
+    const encoded = encodeServers(hydrated, current.secrets);
+    bundle.write('metadata', 'mcp/servers.json', JSON.stringify(encoded.data, null, 2)); bundle.write('secret', 'mcp/server-secrets.json', JSON.stringify(encoded.secrets, null, 2));
   });
-  if (changed) { writeJSON(getServersStorePath(), mirror); writeJSON(getSecretsStorePath(), secretMirror) }
   return changed;
 }
 

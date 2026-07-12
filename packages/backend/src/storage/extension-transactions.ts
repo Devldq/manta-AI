@@ -29,7 +29,15 @@ function fromRelative(root: string, value: unknown): string {
   if (typeof value !== 'string' || !value || isAbsolute(value)) throw new Error('Invalid extension journal path')
   const absolute = resolve(root, value)
   toRelative(root, absolute)
+  rejectPathLinks(root, absolute)
   return absolute
+}
+function rejectPathLinks(root: string, target: string): void {
+  const absoluteRoot = resolve(root); const rel = relative(absoluteRoot, resolve(target)); let current = absoluteRoot
+  for (const segment of ['', ...rel.split(sep)]) {
+    if (segment) current = join(current, segment)
+    if (existsSync(current) && lstatSync(current).isSymbolicLink()) throw new Error(`Extension path contains a symbolic link or reparse point: ${current}`)
+  }
 }
 function persist(root: string, journal: ExtensionJournal): void {
   const stored = {
@@ -83,6 +91,7 @@ function assertDestination(options: ExtensionTransactionOptions): void {
     const realRelative = relative(realRoot, realpathSync(ancestor))
     if (realRelative === '..' || realRelative.startsWith(`..${sep}`) || isAbsolute(realRelative)) throw new Error('Extension destination resolves outside the ASH extensions root')
   }
+  rejectPathLinks(options.extensionsRoot, options.destination)
 }
 
 function rejectLinks(path: string): void {

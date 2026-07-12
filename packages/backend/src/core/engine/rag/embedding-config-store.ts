@@ -1,9 +1,8 @@
 /* Global embedding preferences persist under the ASH config group. */
 import * as fs from 'fs'
-import * as path from 'node:path'
 import { resolveStoragePath } from '../../../storage/path-routing'
 import type { KnowledgeBaseConfig } from '../../storage/knowledge-base/store'
-import { withAtomicBundle } from '../../../storage/atomic-record-bundle'
+import { readCrossGroupBundle, transactCrossGroupBundle } from '../../../storage/cross-group-bundle'
 
 type EmbeddingProvider = 'openai' | 'local'
 
@@ -17,9 +16,7 @@ export interface EmbeddingConfig {
 
 const configFile = () => resolveStoragePath('config', 'embedding-config.json')
 const secretFile = () => resolveStoragePath('secrets', 'embedding-api-key.json')
-const bundleCoordinator = () => resolveStoragePath('secrets', '.transactions', 'embedding-config')
-const secretsRoot = () => resolveStoragePath('secrets')
-const sealedPath = 'embedding/sealed-config.json'
+const participants = () => [{ name: 'metadata', root: resolveStoragePath('config') }, { name: 'secret', root: resolveStoragePath('secrets') }]
 
 function readApiKey(): string | undefined {
   try { return (JSON.parse(fs.readFileSync(secretFile(), 'utf8')) as { apiKey?: string }).apiKey } catch { return undefined }
@@ -37,8 +34,8 @@ function fromEnv(): EmbeddingConfig {
 }
 
 export function getEmbeddingConfig(): EmbeddingConfig {
-  const sealed = withAtomicBundle(secretsRoot(), 'embedding-config', (bundle) => bundle.read(sealedPath))
-  if (sealed) return { ...fromEnv(), ...JSON.parse(sealed) } as EmbeddingConfig
+  const committed = readCrossGroupBundle(participants(), 'embedding-config', (bundle) => ({ metadata: bundle.read('metadata', 'embedding-config.json'), secret: bundle.read('secret', 'embedding-api-key.json') }))
+  if (committed?.metadata) return { ...fromEnv(), ...JSON.parse(committed.metadata), apiKey: committed.secret ? (JSON.parse(committed.secret) as { apiKey?: string }).apiKey : fromEnv().apiKey } as EmbeddingConfig
   try {
     if (fs.existsSync(configFile())) {
       const raw = fs.readFileSync(configFile(), 'utf-8')
@@ -54,15 +51,12 @@ export function getEmbeddingConfig(): EmbeddingConfig {
 }
 
 export function saveEmbeddingConfig(config: EmbeddingConfig & { clearApiKey?: boolean }): void {
-  let preferences: Omit<typeof config, 'apiKey' | 'clearApiKey'>; let nextApiKey: string | undefined
-  withAtomicBundle(secretsRoot(), 'embedding-config', (bundle) => {
-    const current = bundle.read(sealedPath); const previous = current ? (JSON.parse(current) as EmbeddingConfig).apiKey : readApiKey()
-    const { apiKey, clearApiKey, ...rest } = config; preferences = rest; nextApiKey = clearApiKey ? undefined : apiKey ?? previous
-    bundle.write(sealedPath, JSON.stringify({ ...rest, apiKey: nextApiKey }, null, 2))
+  transactCrossGroupBundle(participants(), 'embedding-config', (bundle) => {
+    const current = bundle.read('secret', 'embedding-api-key.json'); const previous = current ? (JSON.parse(current) as { apiKey?: string }).apiKey : readApiKey()
+    const { apiKey, clearApiKey, ...preferences } = config; const nextApiKey = clearApiKey ? undefined : apiKey ?? previous
+    bundle.write('metadata', 'embedding-config.json', JSON.stringify(nextApiKey ? { ...preferences, apiKeyRef: 'embedding:default' } : preferences, null, 2))
+    bundle.write('secret', 'embedding-api-key.json', JSON.stringify(nextApiKey ? { apiKey: nextApiKey } : {}, null, 2))
   })
-  fs.mkdirSync(path.dirname(configFile()), { recursive: true })
-  fs.writeFileSync(configFile(), JSON.stringify(nextApiKey ? { ...preferences!, apiKeyRef: 'embedding:default' } : preferences!, null, 2))
-  fs.mkdirSync(path.dirname(secretFile()), { recursive: true }); fs.writeFileSync(secretFile(), JSON.stringify(nextApiKey ? { apiKey: nextApiKey } : {}, null, 2))
 }
 
 export function applyToKnowledgeBase(kbConfig: KnowledgeBaseConfig): KnowledgeBaseConfig {

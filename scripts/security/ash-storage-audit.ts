@@ -95,6 +95,7 @@ function propertyTail(expression) {
 }
 function collectFacts(sourceFile) {
   const initializers = new Map()
+  const trustedStorageBindings = new Map()
   const functions = new Map()
   const parameters = new Set()
   const userIdentifiers = new Set()
@@ -111,6 +112,12 @@ function collectFacts(sourceFile) {
     if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
       const moduleName = node.moduleSpecifier.text
       const clause = node.importClause
+      if (/(?:^|\/)storage\/path-routing(?:\.[cm]?[jt]s)?$/.test(moduleName) || /(?:^|\/)path-routing(?:\.[cm]?[jt]s)?$/.test(moduleName)) {
+        if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) for (const element of clause.namedBindings.elements) {
+          const imported = element.propertyName?.text || element.name.text
+          if (['resolveStoragePath', 'safeStorageSegment'].includes(imported)) trustedStorageBindings.set(element.name.text, imported)
+        }
+      }
       if (['node:fs', 'fs', 'node:fs/promises', 'fs/promises'].includes(moduleName) && clause) {
         if (clause.name) fsNamespaces.add(clause.name.text)
         if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) fsNamespaces.add(clause.namedBindings.name.text)
@@ -193,7 +200,7 @@ function collectFacts(sourceFile) {
     ts.forEachChild(node, collectCalls)
   }
   collectCalls(sourceFile)
-  return { initializers, functions, parameters, userIdentifiers, parameterOrigins, fsNamespaces, fsBindings, childNamespaces, childBindings, databaseBindings, databaseNamespaces, databaseFactoryBindings }
+  return { initializers, functions, parameters, userIdentifiers, parameterOrigins, fsNamespaces, fsBindings, childNamespaces, childBindings, databaseBindings, databaseNamespaces, databaseFactoryBindings, trustedStorageBindings }
 }
 function namespaceRoot(expression) {
   let current = expression
@@ -274,8 +281,8 @@ function classify(expression, facts, seen = new Set()) {
   }
   if (ts.isCallExpression(expression)) {
     const name = calleeName(expression.expression)
-    if (name === 'safeStorageSegment') return 'segment'
-    if (name === 'resolveStoragePath') return 'ash'
+    if (ts.isIdentifier(expression.expression) && facts.trustedStorageBindings.get(expression.expression.text) === 'safeStorageSegment') return 'segment'
+    if (ts.isIdentifier(expression.expression) && facts.trustedStorageBindings.get(expression.expression.text) === 'resolveStoragePath') return 'ash'
     if (name === 'resolve' && ts.isPropertyAccessExpression(expression.expression)
       && /(?:storage|resolver)/i.test(expression.expression.expression.getText())) return 'ash'
     if (['join', 'resolve', 'normalize', 'dirname'].includes(name)) {

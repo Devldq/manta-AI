@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { runWithStorageResolver } from '../../../storage/path-routing'
-import { installClaudePlugin } from './marketplace'
+import { createClaudeInstallResource, installClaudePlugin } from './marketplace'
 
 describe('Claude plugin isolated import', () => {
   it('isolates CLI state, imports the real package into ASH, and cleans temporary state', async () => {
@@ -14,6 +14,7 @@ describe('Claude plugin isolated import', () => {
     const before = Object.fromEntries([...Object.keys(external), 'HOME', 'USERPROFILE'].map((key) => [key, process.env[key]]))
     Object.assign(process.env, external, { HOME: externalHome, USERPROFILE: externalHome, SECRET_HOST_VALUE: 'must-not-leak' })
     const resolve = (group: string, ...segments: string[]) => join(root, '.manta-ai', group, ...segments)
+    const installResource = createClaudeInstallResource(resolve('extensions'))
     const observed: Array<{ home?: string; config?: string; cwd: string }> = []
     const result = await runWithStorageResolver({ resolve }, () => installClaudePlugin('demo@claude-plugins-official', {
       claudeBin: 'fake-claude', marketplaceCache: null,
@@ -28,6 +29,7 @@ describe('Claude plugin isolated import', () => {
         expect(options.env.SECRET_HOST_VALUE).toBeUndefined()
         if (args.join(' ') === 'plugin marketplace list --json') return { stdout: '[]', stderr: '' }
         if (args[0] === 'plugin' && args[1] === 'install') {
+          expect(() => installResource.checkpoint()).toThrow(/still active/i)
           const packageDir = join(options.env.CLAUDE_CONFIG_DIR!, 'plugins', 'demo'); mkdirSync(join(packageDir, '.claude-plugin'), { recursive: true }); writeFileSync(join(packageDir, '.claude-plugin', 'plugin.json'), '{"name":"demo"}')
         }
         return { stdout: 'ok', stderr: '' }
@@ -39,6 +41,7 @@ describe('Claude plugin isolated import', () => {
     for (const directory of Object.values(external)) expect(readdirSync(directory)).toEqual([])
     expect(readdirSync(join(root, '.manta-ai', 'extensions', '.ash-cli-staging'))).toEqual([])
     expect(observed.length).toBeGreaterThanOrEqual(3)
+    expect(() => installResource.checkpoint()).not.toThrow()
     for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value
     delete process.env.SECRET_HOST_VALUE
   })

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
-import { createRagUploadStorage } from './rag-upload-storage'
+import { cleanupRagOrphans, createRagUploadStorage } from './rag-upload-storage'
 
 describe('RAG original document storage', () => {
   it('streams through cache/uploads, sanitizes names, and deduplicates identical content', async () => {
@@ -39,6 +39,7 @@ describe('RAG original document storage', () => {
     })).rejects.toThrow(/pipeline failed/)
     expect(readdirSync(join(root, 'cache', 'uploads'))).toEqual([])
     expect(readdirSync(join(root, 'knowledge', 'documents'))).toHaveLength(1)
+    expect(readdirSync(join(root, 'knowledge', '.orphans'))).toHaveLength(1)
   })
 
   it('does not invoke processing when durable copy fails', async () => {
@@ -48,5 +49,14 @@ describe('RAG original document storage', () => {
     let processed = false
     await expect(storage.ingest(Readable.from('hello'), 'a.txt', async () => { processed = true })).rejects.toThrow()
     expect(processed).toBe(false)
+  })
+
+  it('cleans only expired, unreferenced owned orphans', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-gc-')); const knowledge = join(root, 'knowledge')
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(root, 'cache'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('orphan'), 'a.txt', async () => { throw new Error('fail') })).rejects.toThrow('fail')
+    expect(await cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 1000), isReferenced: async () => true })).toEqual([])
+    const removed = await cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 1000), isReferenced: async () => false })
+    expect(removed).toHaveLength(1); expect(readdirSync(join(knowledge, '.orphans'))).toEqual([])
   })
 })

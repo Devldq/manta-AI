@@ -2,9 +2,12 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { resolveStoragePath, runWithStorageResolver } from './path-routing'
+import { resolveStoragePath, runWithStorageResolver, safeStorageSegment } from './path-routing'
 
 describe('ASH persistence routing', () => {
+  it.each(['CON.txt', 'COM1', 'NUL', 'name.', 'name ', 'name:', '.', '..', 'a/b', 'a\\b', 'bad\u0001'])('rejects non-portable storage segment %j', (value) => {
+    expect(() => safeStorageSegment(value)).toThrow(/unsafe/i)
+  })
   it('requires an injected resolver instead of silently falling back', () => {
     expect(() => resolveStoragePath('work', 'sessions')).toThrow(/storage resolver/i)
   })

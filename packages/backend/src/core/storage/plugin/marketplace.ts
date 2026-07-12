@@ -69,6 +69,7 @@ interface MarketplaceSchedulerState {
   execute(): Promise<void>
 }
 const schedulerOwners = new Map<symbol, MarketplaceSchedulerState>()
+const activeClaudeInstalls = new Map<string, number>()
 
 function getMarketplaceDataDir(): string {
   return resolveStoragePath('extensions', 'plugin-marketplace')
@@ -377,6 +378,7 @@ export async function installClaudePlugin(
 
   const claudeBin = options.claudeBin ?? resolveClaudeBinary()
   const extensionsRoot = resolveStoragePath('extensions')
+  activeClaudeInstalls.set(extensionsRoot, (activeClaudeInstalls.get(extensionsRoot) ?? 0) + 1)
   const isolation = createClaudeIsolation(extensionsRoot)
   let setupOutputs: CommandOutput[]
   let installOutput: CommandOutput
@@ -391,6 +393,7 @@ export async function installClaudePlugin(
     }
   } catch (error) {
     fs.rmSync(isolation.root, { recursive: true, force: true })
+    const remaining = (activeClaudeInstalls.get(extensionsRoot) ?? 1) - 1; if (remaining) activeClaudeInstalls.set(extensionsRoot, remaining); else activeClaudeInstalls.delete(extensionsRoot)
     throw error
   }
   try {
@@ -409,7 +412,16 @@ export async function installClaudePlugin(
       stdout: [...setupOutputs.map((output) => output.stdout), installOutput.stdout].filter(Boolean).join('\n'),
       stderr: [...setupOutputs.map((output) => output.stderr), installOutput.stderr].filter(Boolean).join('\n'),
     }
-  } finally { fs.rmSync(isolation.root, { recursive: true, force: true }) }
+  } finally { fs.rmSync(isolation.root, { recursive: true, force: true }); const remaining = (activeClaudeInstalls.get(extensionsRoot) ?? 1) - 1; if (remaining) activeClaudeInstalls.set(extensionsRoot, remaining); else activeClaudeInstalls.delete(extensionsRoot) }
+}
+
+export function createClaudeInstallResource(initialRoot: string) {
+  let root = initialRoot
+  const idle = () => activeClaudeInstalls.get(root) ? { ok: false, error: 'Claude plugin installations are still active' } : { ok: true }
+  return {
+    checkpoint() { const state = idle(); if (!state.ok) throw new Error(state.error) }, close() { const state = idle(); if (!state.ok) throw new Error(state.error) }, integrityCheck: idle,
+    reopen(nextRoot: string) { const state = idle(); if (!state.ok) throw new Error(state.error); root = nextRoot },
+  }
 }
 
 export function isClaudePluginInstallSource(source: string): boolean {

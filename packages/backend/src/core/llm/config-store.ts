@@ -5,15 +5,13 @@ import { resolveStoragePath } from '../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import type { LLMConfig, ModelProfile, LLMProfilesConfig } from './types'
 import { getDefaultLLMConfig, profileToLLMConfig } from './types'
-import { recoverAtomicBundle, withAtomicBundle } from '../../storage/atomic-record-bundle'
+import { readCrossGroupBundle, transactCrossGroupBundle } from '../../storage/cross-group-bundle'
 
 // 配置文件路径
 const profilesFile = () => resolveStoragePath('config', 'llm-profiles.json')
 const legacyFile = () => resolveStoragePath('config', 'llm-config.json')
 const profileSecretsFile = () => resolveStoragePath('secrets', 'llm-profile-api-keys.json')
-const bundleCoordinator = () => resolveStoragePath('secrets', '.transactions', 'llm-profiles')
-const secretsRoot = () => resolveStoragePath('secrets')
-const sealedPath = 'llm/sealed-profiles.json'
+const participants = () => [{ name: 'metadata', root: resolveStoragePath('config') }, { name: 'secret', root: resolveStoragePath('secrets') }]
 
 /** 安全写文件（先写 tmp 再 rename） */
 function safeWrite(filePath: string, data: unknown): void {
@@ -24,17 +22,15 @@ function safeWrite(filePath: string, data: unknown): void {
 }
 
 function readProfileSecrets(): Record<string, string> {
-  recoverAtomicBundle(bundleCoordinator())
   try { return JSON.parse(fs.readFileSync(profileSecretsFile(), 'utf8')) as Record<string, string> } catch { return {} }
 }
 
 function persistProfiles(config: LLMProfilesConfig): void {
-  let existing: Record<string, string> = {}; let secrets: Record<string, string> = {}; let profiles: ModelProfile[] = []
-  withAtomicBundle(secretsRoot(), 'llm-profiles', (bundle) => {
-  const sealed = bundle.read(sealedPath)
-  existing = sealed ? Object.fromEntries((JSON.parse(sealed) as LLMProfilesConfig).profiles.filter((profile) => profile.apiKey).map((profile) => [profile.id, profile.apiKey!])) : readProfileSecrets()
-  const activeIds = new Set(config.profiles.map(({ id }) => id))
-  secrets = {}
+  let profiles: ModelProfile[] = []
+  transactCrossGroupBundle(participants(), 'llm-profiles', (bundle) => {
+  const existingRaw = bundle.read('secret', 'llm-profile-api-keys.json')
+  const existing = existingRaw ? JSON.parse(existingRaw) as Record<string, string> : readProfileSecrets()
+  const secrets: Record<string, string> = {}
   profiles = config.profiles.map((profile) => {
     const clearApiKey = (profile as ModelProfile & { clearApiKey?: boolean }).clearApiKey === true
     const apiKey = clearApiKey ? undefined : profile.apiKey ?? existing[profile.id]
@@ -42,11 +38,9 @@ function persistProfiles(config: LLMProfilesConfig): void {
     const { apiKey: _, clearApiKey: __, ...metadata } = profile as ModelProfile & { clearApiKey?: boolean }
     return apiKey ? { ...metadata, apiKeyRef: `llm-profile:${profile.id}` } : metadata
   })
-  for (const id of Object.keys(existing)) if (!activeIds.has(id)) delete existing[id]
-  bundle.write(sealedPath, JSON.stringify({ ...config, profiles: profiles.map((profile) => ({ ...profile, apiKey: secrets[profile.id] })) }, null, 2))
+  bundle.write('secret', 'llm-profile-api-keys.json', JSON.stringify(secrets, null, 2))
+  bundle.write('metadata', 'llm-profiles.json', JSON.stringify({ ...config, profiles }, null, 2))
   })
-  safeWrite(profileSecretsFile(), secrets)
-  safeWrite(profilesFile(), { ...config, profiles })
 }
 
 function hydrateProfiles(config: LLMProfilesConfig): LLMProfilesConfig {
@@ -118,9 +112,11 @@ let migrationDone = false
 
 /** 读取多模型配置列表 */
 export function getLLMProfiles(): LLMProfilesConfig {
-  const sealed = withAtomicBundle(secretsRoot(), 'llm-profiles', (bundle) => bundle.read(sealedPath))
-  if (sealed) return JSON.parse(sealed) as LLMProfilesConfig
-  recoverAtomicBundle(bundleCoordinator())
+  const committed = readCrossGroupBundle(participants(), 'llm-profiles', (bundle) => ({ metadata: bundle.read('metadata', 'llm-profiles.json'), secrets: bundle.read('secret', 'llm-profile-api-keys.json') }))
+  if (committed?.metadata) {
+    const parsed = JSON.parse(committed.metadata) as LLMProfilesConfig; const secrets = committed.secrets ? JSON.parse(committed.secrets) as Record<string, string> : {}
+    return { ...parsed, profiles: parsed.profiles.map((profile) => ({ ...profile, apiKey: secrets[profile.id] })) }
+  }
   // 1. 尝试自动迁移旧格式（仅执行一次）
   if (!migrationDone) {
     tryMigrateLegacy()

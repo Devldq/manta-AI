@@ -21,7 +21,8 @@ export function resolveStoragePath(group: StorageGroupId, ...segments: string[])
 
 /** Validate one caller-controlled identifier before using it as a path segment. */
 export function safeStorageSegment(value: string): string {
-  if (!value || value === '.' || value === '..' || value.includes('/') || value.includes('\\') || value.includes('\0')) {
+  const reserved = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i
+  if (!value || value === '.' || value === '..' || /[<>:"/\\|?*\u0000-\u001f]/u.test(value) || /[. ]$/u.test(value) || reserved.test(value)) {
     throw new Error('Unsafe storage path segment')
   }
   return value

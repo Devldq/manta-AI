@@ -55,4 +55,12 @@ describe('extension storage transactions', () => {
     expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/journal|outside|child/i)
     expect(existsSync(join(root, 'outside'))).toBe(false)
   })
+
+  it('rejects recovery through a volume-internal junction to outside', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-journal-link-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); const outside = join(root, 'outside'); mkdirSync(source); mkdirSync(outside); writeFileSync(join(source, 'plugin.yaml'), 'new')
+    expect(() => transactionalInstallDirectory({ extensionsRoot, source, destination: join(extensionsRoot, 'plugins', 'demo'), fault: (phase) => { if (phase === 'journaled') throw new Error('crash') } })).toThrow('crash')
+    try { symlinkSync(outside, join(extensionsRoot, 'plugins'), 'junction') } catch { return }
+    expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/symbolic|reparse|link/i)
+    expect(existsSync(join(outside, 'demo'))).toBe(false)
+  })
 })
