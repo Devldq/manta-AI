@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { constants, createWriteStream, existsSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, rmSync, writeFileSync, renameSync } from 'node:fs'
+import { constants, createWriteStream, existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { copyFile, unlink } from 'node:fs/promises'
 import { basename, dirname, join, posix } from 'node:path'
 import { Transform, type Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { durableAtomicWrite, durableMkdir } from './durable-atomic'
 
 export interface RagUploadStorageOptions {
   cacheUploadsRoot: string
@@ -31,7 +32,7 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
   return {
     async ingest<T>(source: Readable, originalName: string, processStaged: (stagedPath: string, document: StoredRagDocument) => Promise<T>): Promise<StoredRagDocument & { result: T }> {
       activeUploads.set(options.cacheUploadsRoot, (activeUploads.get(options.cacheUploadsRoot) ?? 0) + 1)
-      mkdirSync(options.cacheUploadsRoot, { recursive: true })
+      durableMkdir(options.cacheUploadsRoot)
       const stagedPath = join(options.cacheUploadsRoot, `${randomUUID()}.upload`)
       const hash = createHash('sha256')
       let size = 0
@@ -48,14 +49,14 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
         if (size === 0) throw new Error('Uploaded file is empty')
         const sha256 = hash.digest('hex')
         const safeName = safeUploadName(originalName)
-        mkdirSync(options.documentsRoot, { recursive: true })
+        durableMkdir(options.documentsRoot)
         // Content-addressed names are safe on every supported filesystem and
         // make concurrent, differently named uploads converge on one object.
         const storedName = sha256
         const absolutePath = join(options.documentsRoot, storedName)
         const document = { absolutePath, relativePath: posix.join('documents', storedName), sha256, size, safeName }
-        const transactionId = basename(stagedPath, '.upload'); const orphanRoot = join(dirname(options.documentsRoot), '.orphans', sha256); mkdirSync(orphanRoot, { recursive: true }); const orphanPath = join(orphanRoot, `${transactionId}.json`)
-        const orphanTemp = `${orphanPath}.${randomUUID()}.tmp`; const orphanFd = openSync(orphanTemp, 'wx'); try { writeFileSync(orphanFd, JSON.stringify({ version: 1, hash: sha256, transactionId, createdAt: new Date().toISOString(), status: 'pending-pipeline' }), 'utf8') } finally { closeSync(orphanFd) }; renameSync(orphanTemp, orphanPath)
+        const transactionId = basename(stagedPath, '.upload'); const orphanRoot = join(dirname(options.documentsRoot), '.orphans', sha256); durableMkdir(orphanRoot); const orphanPath = join(orphanRoot, `${transactionId}.json`)
+        durableAtomicWrite(orphanPath, JSON.stringify({ version: 1, hash: sha256, transactionId, createdAt: new Date().toISOString(), status: 'pending-pipeline' }))
         if (!existsSync(absolutePath)) {
           try { await copyFile(stagedPath, absolutePath, constants.COPYFILE_EXCL) }
           catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') { await unlink(orphanPath).catch(() => undefined); throw error } }
@@ -94,12 +95,13 @@ export interface RagOrphanRecord { version: 1; hash: string; transactionId: stri
 export function inspectRagOrphans(knowledgeRoot: string): RagOrphanRecord[] {
   const root = join(knowledgeRoot, '.orphans'); if (!existsSync(root)) return []
   return readdirSync(root, { withFileTypes: true }).flatMap((hashDir) => {
+    if (hashDir.name.includes('.tmp')) { rmSync(join(root, hashDir.name), { recursive: true, force: true }); return [] }
     if (!hashDir.isDirectory() || !/^[a-f0-9]{64}$/.test(hashDir.name)) throw new Error(`Invalid RAG orphan hash directory: ${hashDir.name}`)
-    return readdirSync(join(root, hashDir.name)).filter((name) => name.endsWith('.json')).map((name) => {
+    const hashRoot = join(root, hashDir.name); const names = readdirSync(hashRoot); for (const name of names.filter((item) => item.includes('.tmp'))) rmSync(join(hashRoot, name), { force: true }); const records = readdirSync(hashRoot).filter((name) => name.endsWith('.json')).map((name) => {
     const record = JSON.parse(readFileSync(join(root, hashDir.name, name), 'utf8')) as RagOrphanRecord
     if (record.version !== 1 || record.hash !== hashDir.name || name !== `${record.transactionId}.json` || !record.transactionId || Number.isNaN(Date.parse(record.createdAt)) || record.status !== 'pending-pipeline') throw new Error(`Invalid RAG orphan record: ${name}`)
     return record
-  }) })
+  }); if (!records.length && !readdirSync(hashRoot).length) rmSync(hashRoot, { recursive: true }); return records })
 }
 export async function cleanupRagOrphans(knowledgeRoot: string, options: { olderThan: Date; isReferenced(hash: string): Promise<boolean> }): Promise<string[]> {
   const removed: string[] = []

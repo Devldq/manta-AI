@@ -638,90 +638,6 @@
       "reason": "Reviewed extension transaction primitive whose root-relative paths are lexically and segment-by-segment link/reparse validated."
     },
     {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 49,
-      "column": 24,
-      "operation": "rmSync",
-      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 67,
-      "column": 120,
-      "operation": "rmSync",
-      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 157,
-      "column": 43,
-      "operation": "rmSync",
-      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 158,
-      "column": 5,
-      "operation": "unlinkSync",
-      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 160,
-      "column": 7,
-      "operation": "mkdirSync",
-      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 160,
-      "column": 117,
-      "operation": "renameSync",
-      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 163,
-      "column": 80,
-      "operation": "rmSync",
-      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
-    },
-    {
-      "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 164,
-      "column": 45,
-      "operation": "rmSync",
-      "reason": "Reviewed cross-group 2PC/legacy quarantine primitive; roots and paths are contained and link/reparse checked."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 14,
-      "column": 3,
-      "operation": "mkdirSync",
-      "reason": "Reviewed durable atomic primitive used only after caller-specific ASH containment validation; file and parent directory are fsynced."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 14,
-      "column": 141,
-      "operation": "openSync",
-      "reason": "Reviewed durable atomic primitive used only after caller-specific ASH containment validation; file and parent directory are fsynced."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 15,
-      "column": 9,
-      "operation": "writeFileSync",
-      "reason": "Reviewed durable atomic primitive used only after caller-specific ASH containment validation; file and parent directory are fsynced."
-    },
-    {
-      "file": "packages/backend/src/storage/durable-atomic.ts",
-      "line": 17,
-      "column": 11,
-      "operation": "renameSync",
-      "reason": "Reviewed durable atomic primitive used only after caller-specific ASH containment validation; file and parent directory are fsynced."
-    },
-    {
       "file": "packages/backend/src/storage/file-lock.ts",
       "line": 14,
       "column": 55,
@@ -778,50 +694,190 @@
       "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
     },
     {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 57,
-      "column": 141,
+      "file": "packages/backend/src/storage/extension-transactions.ts",
+      "line": 72,
+      "column": 32,
       "operation": "mkdirSync",
+      "reason": "Reviewed creation of the contained extension lock directory before acquiring the shared audited lock."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 158,
+      "column": 43,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 159,
+      "column": 5,
+      "operation": "unlinkSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 161,
+      "column": 90,
+      "operation": "mkdirSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 162,
+      "column": 13,
+      "operation": "renameSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 162,
+      "column": 142,
+      "operation": "cpSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 162,
+      "column": 164,
+      "operation": "unlinkSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 167,
+      "column": 80,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 168,
+      "column": 45,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 16,
+      "column": 3,
+      "operation": "mkdirSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 18,
+      "column": 112,
+      "operation": "renameSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 19,
+      "column": 88,
+      "operation": "rmSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 21,
+      "column": 123,
+      "operation": "openSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 22,
+      "column": 9,
+      "operation": "writeFileSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 24,
+      "column": 11,
+      "operation": "renameSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs new directory parents and rename/remove parents."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 48,
+      "column": 39,
+      "operation": "createWriteStream",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 58,
-      "column": 309,
-      "operation": "renameSync",
+      "line": 61,
+      "column": 23,
+      "operation": "copyFile",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 62,
+      "column": 91,
+      "operation": "unlink",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
       "line": 65,
-      "column": 52,
-      "operation": "rmSync",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 68,
       "column": 15,
       "operation": "unlink",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 108,
+      "line": 66,
+      "column": 52,
+      "operation": "rmSync",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 69,
+      "column": 15,
+      "operation": "unlink",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 98,
+      "column": 42,
+      "operation": "rmSync",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 100,
+      "column": 151,
+      "operation": "rmSync",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 104,
+      "column": 61,
+      "operation": "rmSync",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 110,
       "column": 74,
       "operation": "unlink",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 110,
+      "line": 112,
       "column": 11,
       "operation": "unlink",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 110,
+      "line": 112,
       "column": 152,
       "operation": "rmSync",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
@@ -831,70 +887,21 @@
       "line": 36,
       "column": 32,
       "operation": "mkdirSync",
-      "reason": "Reviewed creation of the contained 2PC state directory before acquiring the shared audited lock."
+      "reason": "Reviewed contained 2PC lock/state recovery primitive."
     },
     {
-      "file": "packages/backend/src/storage/extension-transactions.ts",
-      "line": 72,
-      "column": 32,
-      "operation": "mkdirSync",
-      "reason": "Reviewed creation of the contained extension lock directory before acquiring the shared audited lock."
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 49,
+      "column": 24,
+      "operation": "rmSync",
+      "reason": "Reviewed contained 2PC lock/state recovery primitive."
     },
     {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 34,
-      "column": 7,
-      "operation": "mkdirSync",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 47,
-      "column": 39,
-      "operation": "createWriteStream",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 51,
-      "column": 9,
-      "operation": "mkdirSync",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 58,
-      "column": 82,
-      "operation": "openSync",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 58,
-      "column": 116,
-      "operation": "writeFileSync",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 60,
-      "column": 23,
-      "operation": "copyFile",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 61,
-      "column": 91,
-      "operation": "unlink",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
-    },
-    {
-      "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 64,
-      "column": 15,
-      "operation": "unlink",
-      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 67,
+      "column": 120,
+      "operation": "rmSync",
+      "reason": "Reviewed contained 2PC lock/state recovery primitive."
     }
   ],
   "literals": [

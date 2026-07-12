@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { runWithStorageResolver } from './path-routing'
 import { createProcessRegistry, type ProcessRegistry } from '../core/engine/runner/process-registry'
 import { recoverExtensionTransactions } from './extension-transactions'
-import { createCrossGroupBundleResources, migrateLegacyAtomicJournals } from './cross-group-bundle'
+import { createCrossGroupBundleResources, migrateLegacyAtomicJournals, type LegacyRecoveryWarning } from './cross-group-bundle'
 import { createRagUploadResources } from './rag-upload-storage'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
@@ -18,7 +18,7 @@ export interface BackendStorageRuntime extends StorageResolver {
   readonly diagnosticsWriter: RuntimeDiagnosticsWriter
   readonly marketplaceScheduler: ClaudeMarketplaceRuntimeOwner
   readonly processRegistry: ProcessRegistry
-  readonly legacyRecoveryWarnings: string[]
+  readonly legacyRecoveryWarnings: LegacyRecoveryWarning[]
   runInStorageContext<T>(operation: () => T): T
   quiesce(): Promise<void>
   checkpoint(): Promise<void>
@@ -107,7 +107,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
     async healthCheck() {
       if (closed) return { ok: false, error: 'closed' }
       if (quiesced) return { ok: false, error: 'quiesced' }
-      return provider.integrityCheck()
+      const health = await provider.integrityCheck(); return legacyRecoveryWarnings.length ? { ok: false, error: `degraded: ${legacyRecoveryWarnings.length} legacy journal(s) quarantined` } : health
     },
   }
 }

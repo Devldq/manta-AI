@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -56,8 +56,17 @@ describe('cross-group versioned 2PC', () => {
 
   it('quarantines an old absolute journal instead of writing its unknown root', () => {
     const base = mkdtempSync(join(tmpdir(), 'manta-legacy-quarantine-')); const legacy = join(base, 'new-secrets', '.transactions'); const outside = join(base, 'old-secrets', 'key.json'); mkdirSync(legacy, { recursive: true }); mkdirSync(join(base, 'old-secrets')); writeFileSync(outside, 'old')
-    writeFileSync(join(legacy, 'record.journal.json'), JSON.stringify({ writes: [{ path: outside, content: 'unsafe' }], deletes: [] }))
+    writeFileSync(join(legacy, 'record.journal.json'), JSON.stringify({ writes: [{ path: outside, content: 'SECRET_CANARY' }], deletes: [] }))
     const warnings = migrateLegacyAtomicJournals(legacy, [join(base, 'new-secrets')], join(base, 'diagnostics'))
-    expect(warnings).toHaveLength(1); expect(readFileSync(outside, 'utf8')).toBe('old'); expect(existsSync(legacy)).toBe(false); expect(existsSync(join(base, 'diagnostics'))).toBe(true)
+    expect(warnings).toHaveLength(1); expect(readFileSync(outside, 'utf8')).toBe('old'); expect(existsSync(legacy)).toBe(false); expect(existsSync(join(base, 'new-secrets', '.transactions-quarantine'))).toBe(true)
+    const diagnostic = readFileSync(join(base, 'diagnostics', readdirSync(join(base, 'diagnostics'))[0]), 'utf8'); expect(diagnostic).not.toContain('SECRET_CANARY'); expect(diagnostic).not.toContain('old-secrets')
+  })
+
+  it('retains unchanged committed targets across a partial update', () => {
+    const base = mkdtempSync(join(tmpdir(), 'manta-2pc-delta-')); const participants = roots(base)
+    transactCrossGroupBundle(participants, 'record', (tx) => { tx.write('metadata', 'm.json', 'm1'); tx.write('secret', 's.json', 's1') })
+    transactCrossGroupBundle(participants, 'record', (tx) => tx.write('metadata', 'm.json', 'm2'))
+    writeFileSync(join(participants[1].root, 's.json'), 'tampered')
+    expect(() => readCrossGroupBundle(participants, 'record', () => undefined)).toThrow(/hash mismatch/i)
   })
 })

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { acquireStorageFileLock } from './file-lock'
 import { durableAtomicWrite } from './durable-atomic'
@@ -51,7 +51,7 @@ function apply(root: string, state: PreparedState): void {
   }
 }
 function committed(state: PreparedState): CommittedState {
-  return { version: 1, id: state.id, generation: state.generation, phase: 'committed', txId: state.txId, targets: Object.fromEntries(state.changes.map((item) => [item.path, item.delete ? { absent: true } : { present: true, hash: item.hash! }])) }
+  return { version: 1, id: state.id, generation: state.generation, phase: 'committed', txId: state.txId, targets: { ...(state.previous?.targets ?? {}), ...Object.fromEntries(state.changes.map((item) => [item.path, item.delete ? { absent: true } : { present: true, hash: item.hash! }])) } }
 }
 function recoverLocked(participants: CrossGroupParticipant[], id: string): State[] {
   const states = participants.map((participant) => load(participant.root, id))
@@ -139,8 +139,9 @@ export function createCrossGroupBundleResources(initial: CrossGroupParticipant[]
 }
 
 /** One-time bridge for journals produced by the pre-2PC development build. */
-export function migrateLegacyAtomicJournals(legacyDirectory: string, currentRoots: string[], quarantineRoot: string): string[] {
-  const warnings: string[] = []
+export interface LegacyRecoveryWarning { time: string; code: 'LEGACY_JOURNAL_QUARANTINED'; journalId: string; reasonHash: string }
+export function migrateLegacyAtomicJournals(legacyDirectory: string, currentRoots: string[], diagnosticsRoot: string): LegacyRecoveryWarning[] {
+  const warnings: LegacyRecoveryWarning[] = []
   if (!existsSync(legacyDirectory)) return []
   for (const name of readdirSync(legacyDirectory).filter((entry) => entry.endsWith('.journal.json'))) {
     const file = join(legacyDirectory, name)
@@ -157,7 +158,10 @@ export function migrateLegacyAtomicJournals(legacyDirectory: string, currentRoot
     for (const target of journal.deletes) rmSync(resolveLegacy(target), { recursive: true, force: true })
     unlinkSync(file)
     } catch (error) {
-      mkdirSync(quarantineRoot, { recursive: true }); const target = join(quarantineRoot, `${Date.now()}-${name}`); renameSync(file, target); const warning = `Quarantined legacy journal ${name}: ${String(error)}`; durableAtomicWrite(`${target}.reason.txt`, warning); warnings.push(warning)
+      const quarantineRoot = join(dirname(legacyDirectory), '.transactions-quarantine'); mkdirSync(quarantineRoot, { recursive: true }); const journalId = createHash('sha256').update(name).digest('hex').slice(0, 16); const target = join(quarantineRoot, journalId)
+      try { renameSync(file, target) } catch (renameError) { if ((renameError as NodeJS.ErrnoException).code !== 'EXDEV') throw renameError; cpSync(file, target); unlinkSync(file) }
+      const warning: LegacyRecoveryWarning = { time: new Date().toISOString(), code: 'LEGACY_JOURNAL_QUARANTINED', journalId, reasonHash: createHash('sha256').update(String(error)).digest('hex') }; warnings.push(warning)
+      try { durableAtomicWrite(join(diagnosticsRoot, `${warning.time.replace(/[:.]/g, '-')}-${journalId}.json`), JSON.stringify(warning)) } catch { /* diagnostics must never block startup */ }
     }
   }
   for (const name of readdirSync(legacyDirectory)) if (name.endsWith('.lock')) rmSync(join(legacyDirectory, name), { force: true })
