@@ -18,6 +18,7 @@ const releaseDir = join(projectDir, 'release', 'win-unpacked')
 const resources = join(releaseDir, 'resources')
 const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const required = ['app.asar', join('frontend', 'dist'), join('backend', 'dist'), join('storage-hub', 'dist'), join('rag', 'dist'), '.manta', join('app.asar.unpacked', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')]
+const providerPackages = ['@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core']
 
 function run(file, args, options = {}) {
   const { timeoutMs = 180_000, ...spawnOptions } = options
@@ -99,10 +100,11 @@ async function rebuildForElectron() {
 async function bundleBackendForElectron(appDir) {
   // The backend is ESM today but its TypeScript output intentionally retains
   // extensionless relative specifiers for the tsx development loader.  Native
-  // Electron's ESM loader rejects those specifiers in an ASAR.  Bundle the
-  // desktop runtime entry to a CJS boundary, retaining the native binding as
-  // an external dependency; Electron can then dynamically import the package
-  // exactly as desktop main does in production.
+  // Electron's ESM loader rejects extensionless specifiers in an ASAR. Bundle
+  // the desktop runtime entry to CJS: Fastify and several of its transitive
+  // modules use CommonJS dynamic require, which cannot run from an ESM bundle.
+  // The two import.meta defaults are intentionally replaced: desktop always
+  // supplies bundledSeedRoot/frontendDist before those fallbacks are read.
   const backendDir = join(appDir, 'node_modules', '@manta', 'backend')
   const output = join(backendDir, 'dist', 'server.cjs')
   await bundle({
@@ -112,7 +114,8 @@ async function bundleBackendForElectron(appDir) {
     platform: 'node',
     format: 'cjs',
     target: 'node22',
-    external: ['better-sqlite3', '@langchain/openai', '@langchain/ollama', '@langchain/anthropic'],
+    external: ['better-sqlite3', '@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core', '@langchain/core/messages'],
+    define: { 'import.meta.url': 'undefined' },
   })
   const backendManifestPath = join(backendDir, 'package.json')
   const backendManifest = JSON.parse(await readFile(backendManifestPath, 'utf8'))
@@ -133,31 +136,12 @@ async function packageDirectory() {
     cp(join(projectDir, 'dist'), join(appDir, 'dist'), { recursive: true, dereference: true }),
     cp(join(projectDir, 'package.json'), join(appDir, 'package.json'), { dereference: true }),
   ])
-  // Electron evaluates the package entry before it can reach main.ts.  Keep a
-  // tiny CommonJS dispatcher as that entry so smoke diagnostics prove module
-  // resolution independently of window creation and never depend on Electron's
-  // `require.main` implementation for packaged apps.
-  const manifest = JSON.parse(await readFile(join(appDir, 'package.json'), 'utf8'))
-  manifest.main = 'smoke-dispatcher.cjs'
-  await writeFile(join(appDir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-  await writeFile(join(appDir, 'smoke-dispatcher.cjs'), `
-const { writeFileSync } = require('node:fs')
-const marker = process.env.MANTA_PACKAGE_SMOKE_FILE
-const finish = (value) => { if (marker) writeFileSync(marker, value) }
-if (process.env.MANTA_PACKAGE_SMOKE === '1') {
-  finish('started')
-  ;(async () => {
-    const backend = await import('@manta/backend')
-    if (typeof backend.startServer !== 'function' || typeof backend.createBackendStorageComposition !== 'function') throw new Error('Packaged @manta/backend did not resolve its ESM exports')
-    const Database = require('better-sqlite3'); const db = new Database(':memory:'); db.prepare('select 1').get(); db.close()
-    finish('ok'); process.stdout.write('MANTA_PACKAGE_SMOKE_OK\\n'); process.exit(0)
-  })().catch((error) => { finish('error:' + (error.stack || error)); process.stderr.write(String(error)); process.exit(1) })
-} else {
-  require('./dist/main.js')
-}
-`)
   await copyProductionDependencies(appDir)
   await bundleBackendForElectron(appDir)
+  // Provider imports are dynamic in the backend, so an archive can look
+  // healthy even when pnpm's flattened production graph omitted them.  Check
+  // the staging tree explicitly before it is sealed into app.asar.
+  await Promise.all(providerPackages.map((name) => access(join(appDir, 'node_modules', ...name.split('/'), 'package.json'))))
   await stageElectronRuntime()
   await mkdir(resources, { recursive: true })
   await Promise.all([
@@ -182,9 +166,12 @@ async function main() {
     const marker = join(markerRoot, 'main.marker')
     const executable = join(releaseDir, 'Manta.exe')
     const output = await run(executable, [], { env: { ...process.env, MANTA_PACKAGE_SMOKE: '1', MANTA_PACKAGE_SMOKE_FILE: marker } })
-    const mainMarker = await readFile(marker, 'utf8').catch(() => undefined)
-    if (mainMarker !== 'ok' || !output.includes('MANTA_PACKAGE_SMOKE_OK')) throw new Error(`Packaged main did not complete smoke mode (marker=${mainMarker ?? 'missing'}): ${output}`)
-    console.log(`Verified ${required.length} packaged runtime resources and actual packaged main`)
+    const rawMarker = await readFile(marker, 'utf8').catch(() => undefined)
+    let mainMarker
+    try { mainMarker = rawMarker && JSON.parse(rawMarker) } catch { throw new Error(`Packaged main wrote an invalid smoke marker: ${rawMarker ?? 'missing'}`) }
+    const providersLoaded = mainMarker?.providers && Object.values(mainMarker.providers).every(Boolean)
+    if (mainMarker?.status !== 'ok' || !mainMarker.actualEntry || !/([\\/])dist\1main\.js$/.test(mainMarker.entryFile ?? '') || !mainMarker.backend || !mainMarker.nativeSqlite || !providersLoaded || !output.includes('MANTA_PACKAGE_SMOKE_OK')) throw new Error(`Packaged dist/main.js did not complete smoke mode: ${rawMarker ?? 'missing'}; output: ${output}`)
+    console.log(`Verified ${required.length} packaged runtime resources, ${providerPackages.length} provider packages, and actual packaged dist/main.js`)
   } catch (error) { primary = error } finally {
     if (markerRoot) await rm(markerRoot, { recursive: true, force: true }).catch(() => {})
     await rm(join(projectDir, '.package-staging'), { recursive: true, force: true }).catch(() => {})
