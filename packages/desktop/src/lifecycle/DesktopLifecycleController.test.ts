@@ -12,6 +12,7 @@ function harness(value: unknown = undefined) {
     startServer: vi.fn(async () => { calls.push('server'); return server }),
     openOnboarding: vi.fn(async () => calls.push('onboarding')),
     openMain: vi.fn(async (url: string) => calls.push(url)),
+    readRelaunchIntent: vi.fn(async () => undefined), prepareRelaunch: vi.fn(), rollbackRelaunchIntent: vi.fn(), clearRelaunchIntent: vi.fn(), resetComposition: vi.fn(),
     quit: vi.fn(), relaunch: vi.fn(), seedRoot: 'C:/resources',
   }
   return { controller: new DesktopLifecycleController(deps), deps, calls, server }
@@ -46,24 +47,29 @@ describe('DesktopLifecycleController', () => {
     expect(server.close).toHaveBeenCalled()
   })
 
-  it('relaunches only after a committed healthy migration', async () => {
+  it('persists relaunch intent only after a committed migration', async () => {
     const { controller, deps } = harness(bootstrap)
     await controller.start()
     const operation = vi.fn(async () => 'op-1')
     await controller.migrateAndRelaunch(operation)
     expect(operation).toHaveBeenCalled()
+    expect(deps.prepareRelaunch).toHaveBeenCalledWith('op-1')
     expect(deps.relaunch.mock.invocationCallOrder[0]).toBeGreaterThan(operation.mock.invocationCallOrder[0])
     expect(deps.quit).toHaveBeenCalled()
   })
 
-  it('restores the previous mapping before relaunch when new-location health verification fails', async () => {
-    const { controller, deps, server } = harness(bootstrap)
-    await controller.start()
-    server.healthCheck.mockResolvedValueOnce({ ok: false, error: 'bad target' })
-    const rollback = vi.fn(async () => {})
-    await expect(controller.migrateAndRelaunch(async () => 'op', rollback)).rejects.toThrow('bad target')
-    expect(rollback).toHaveBeenCalled()
-    expect(deps.relaunch.mock.invocationCallOrder[0]).toBeGreaterThan(rollback.mock.invocationCallOrder[0])
+  it('uses a real new controller instance to rollback failed new-process health and start the old location once', async () => {
+    const shared: any = { intent: undefined, generation: 2, rolledBack: false }
+    const first = harness(bootstrap); first.deps.prepareRelaunch.mockImplementation(async (id: string) => { shared.intent = { operationId:id, attempt:0, phase:'awaiting-new-process-health' } })
+    await first.controller.start(); await first.controller.migrateAndRelaunch(async () => 'op')
+    expect(shared.intent.operationId).toBe('op')
+    const second = harness(bootstrap); second.deps.readRelaunchIntent.mockImplementation(async () => shared.intent)
+    second.deps.startServer.mockImplementationOnce(async () => ({ ...second.server, healthCheck: async () => ({ ok:false, error:'new native db failed' }) })).mockImplementationOnce(async () => second.server)
+    second.deps.rollbackRelaunchIntent.mockImplementation(async () => { shared.rolledBack=true; shared.generation=1 })
+    second.deps.clearRelaunchIntent.mockImplementation(async () => { shared.intent=undefined })
+    expect((await second.controller.start()).ok).toBe(true)
+    expect(shared.rolledBack).toBe(true); expect(shared.generation).toBe(1); expect(shared.intent).toBeUndefined()
+    expect(second.deps.startServer).toHaveBeenCalledTimes(2)
   })
 
   it('never relaunches an uncommitted migration', async () => {

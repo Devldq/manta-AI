@@ -1,7 +1,9 @@
 appId: com.manta.desktop
 productName: Manta
 directories:
-  output: dist
+  output: release
+
+asar: true
 
 files:
   - dist/**/*
@@ -32,6 +34,10 @@ mac:
   category: public.app-category.developer-tools
 
 win:
+  # Packaging smoke builds are intentionally unsigned.  Disabling rcedit keeps
+  # the local/CI directory build independent from electron-builder's optional
+  # winCodeSign download; release signing is configured by the release pipeline.
+  signAndEditExecutable: false
   target:
     - target: nsis
       arch:

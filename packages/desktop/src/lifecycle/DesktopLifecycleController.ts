@@ -1,4 +1,5 @@
 import type { AshBootstrap } from '@manta/shared'
+import type { RelaunchIntent } from './StorageControlStore'
 interface MantaServerHandle { readonly port: number; quiesce(): Promise<void>; close(): Promise<void>; healthCheck(): Promise<{ ok: boolean; error?: string }> }
 
 export interface StartupFailure { ok: false; error: { code: string; message: string; retryable: boolean } }
@@ -9,6 +10,11 @@ export interface DesktopLifecycleDependencies {
   startServer(options: { storage: unknown; bundledSeedRoot: string }): Promise<MantaServerHandle>
   openOnboarding(): Promise<unknown>
   openMain(url: string): Promise<unknown>
+  readRelaunchIntent(): Promise<RelaunchIntent | undefined>
+  prepareRelaunch(operationId: string): Promise<void>
+  rollbackRelaunchIntent(intent: RelaunchIntent): Promise<void>
+  clearRelaunchIntent(): Promise<void>
+  resetComposition(): Promise<void> | void
   quit(): void
   relaunch(): void
   seedRoot: string
@@ -25,28 +31,36 @@ export class DesktopLifecycleController {
   retry(): Promise<{ ok: true } | StartupFailure> { return this.start() }
 
   private async doStart(): Promise<{ ok: true } | StartupFailure> {
+    let intent: RelaunchIntent | undefined
     try {
-      if (!await this.deps.readBootstrap()) { await this.deps.openOnboarding(); return { ok: true } }
-      await this.deps.recover(); const composition = await this.deps.composeStorage()
-      this.server = await this.deps.startServer({ storage: composition.runtime, bundledSeedRoot: this.deps.seedRoot })
-      const health = await this.server.healthCheck(); if (!health.ok) throw Object.assign(new Error(health.error ?? 'Storage health check failed'), { code: 'STORAGE_UNHEALTHY' })
-      await this.deps.openMain(`http://127.0.0.1:${this.server.port}`); return { ok: true }
-    } catch (error) {
-      if (this.server) { try { await this.server.close() } catch { /* original startup error remains authoritative */ } this.server = undefined }
-      return { ok: false, error: { code: (error as any).code ?? 'STARTUP_FAILED', message: (error as Error).message, retryable: true } }
+      intent = await this.deps.readRelaunchIntent().catch((error) => { throw Object.assign(error as Error, { code: 'RELAUNCH_INTENT_INVALID' }) })
+      if (intent && intent.phase !== 'awaiting-new-process-health') {
+        await this.deps.rollbackRelaunchIntent(intent); await this.deps.resetComposition(); await this.bootOnce(true); await this.deps.clearRelaunchIntent(); return { ok:true }
+      }
+      await this.bootOnce(Boolean(intent)); if (intent) await this.deps.clearRelaunchIntent(); return { ok: true }
+    } catch (firstError) {
+      await this.closeFailedServer()
+      if (intent?.phase === 'awaiting-new-process-health' && intent.attempt === 0) {
+        try {
+          await this.deps.rollbackRelaunchIntent(intent); await this.deps.resetComposition(); await this.bootOnce(true); await this.deps.clearRelaunchIntent(); return { ok: true }
+        } catch (rollbackError) { await this.closeFailedServer(); return this.failure(new AggregateError([firstError, rollbackError], 'New location failed and old-location recovery did not start')) }
+      }
+      return this.failure(firstError)
     }
   }
 
-  async migrateAndRelaunch(operation: () => Promise<string>, rollback?: () => Promise<void>): Promise<string> {
-    const id = await operation(); const health = await this.server?.healthCheck()
-    if (health && !health.ok) {
-      const message = health.error ?? 'New storage location failed health verification'; const errors: unknown[] = []
-      if (this.server) { for (const operation of [() => this.server!.quiesce(), () => this.server!.close()]) try { await operation() } catch (error) { errors.push(error) }; this.server = undefined }
-      try { await rollback?.() } catch (error) { errors.push(error) }
-      if (!errors.length && rollback) { this.deps.relaunch(); this.deps.quit() }
-      if (errors.length) throw new AggregateError([new Error(message), ...errors], 'Migration health rollback failed')
-      throw new Error(message)
-    }
+  private async bootOnce(requireInitialized: boolean): Promise<void> {
+    if (!await this.deps.readBootstrap()) { if (requireInitialized) throw new Error('Relaunch recovery Bootstrap is missing'); await this.deps.openOnboarding(); return }
+    await this.deps.recover(); const composition = await this.deps.composeStorage()
+    this.server = await this.deps.startServer({ storage: composition.runtime, bundledSeedRoot: this.deps.seedRoot })
+    const health = await this.server.healthCheck(); if (!health.ok) throw Object.assign(new Error(health.error ?? 'Storage health check failed'), { code: 'STORAGE_UNHEALTHY' })
+    await this.deps.openMain(`http://127.0.0.1:${this.server.port}`)
+  }
+  private async closeFailedServer(): Promise<void> { if (this.server) { try { await this.server.close() } catch { /* preserve authoritative startup error */ } this.server=undefined } }
+  private failure(error: unknown): StartupFailure { return { ok:false, error:{ code:(error as any).code ?? 'STARTUP_FAILED', message:(error as Error).message, retryable:true } } }
+
+  async migrateAndRelaunch(operation: () => Promise<string>): Promise<string> {
+    const id = await operation(); await this.deps.prepareRelaunch(id)
     this.deps.relaunch(); this.deps.quit(); return id
   }
 

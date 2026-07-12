@@ -1,0 +1,19 @@
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+import { BootstrapStore } from '@manta/storage-hub'
+import { buildBackupRefs, restoreRelaunchIntent } from './RelaunchRecovery'
+import { StorageControlStore, type RelaunchIntent } from './StorageControlStore'
+
+const now='2026-01-01T00:00:00.000Z'
+describe('relaunch recovery', () => {
+  it('restores only the exact operation backup and never selects a newer unrelated backup by mtime', async () => {
+    const root=await mkdtemp(join(tmpdir(),'ash-rollback-')); const a=join(root,'a'); const b=join(root,'b'); const control=join(root,'control'); const bootstrapPath=join(control,'bootstrap.json')
+    const previous:any={schemaVersion:1,generation:1,volumes:[{id:'a',name:'A',parentPath:a,createdAt:now,updatedAt:now},{id:'b',name:'B',parentPath:b,createdAt:now,updatedAt:now}],groupAssignments:{extensions:'a',knowledge:'a',work:'a',config:'a',secrets:'a',diagnostics:'a',cache:'a'}}
+    const current:any={...previous,generation:2,groupAssignments:{...previous.groupAssignments,work:'b'}}; const refs=buildBackupRefs('exact-op','group',previous,current,'work'); const exact=refs[0] as any
+    await mkdir(exact.backupPath,{recursive:true}); await writeFile(join(exact.backupPath,'data.txt'),'exact'); await mkdir(join(a,'.manta-ai','.ash-backups','newer-op','work'),{recursive:true}); await writeFile(join(a,'.manta-ai','.ash-backups','newer-op','work','data.txt'),'wrong'); await mkdir(exact.targetPath,{recursive:true}); await writeFile(join(exact.targetPath,'data.txt'),'target')
+    const store=new StorageControlStore(control); const intent={schemaVersion:1,operationId:'exact-op',phase:'awaiting-new-process-health',attempt:0,previous,current,backupRefs:refs} as RelaunchIntent; await store.writeIntent(intent); await restoreRelaunchIntent(intent,bootstrapPath,store)
+    expect(await readFile(join(exact.sourcePath,'data.txt'),'utf8')).toBe('exact'); expect((await new BootstrapStore(bootstrapPath).read())?.generation).toBe(1); expect((await store.readIntent())?.phase).toBe('old-location-retry')
+  })
+})

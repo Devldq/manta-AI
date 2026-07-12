@@ -4,7 +4,8 @@ import type { FastifyInstance } from 'fastify'
 export interface StorageApiContext {
   readBootstrap(): Promise<AshBootstrap | undefined>
   inventory(scope?: { volumeId?: string; groupId?: any }): Promise<{ files: number; bytes: number; entries: unknown[] }>
-  listBackups(): Promise<Array<{ id: string; volumeId: string; createdAt: string; bytes: number }>>
+  getOperation?(id: string): Promise<unknown | undefined>
+  listBackups(): Promise<Array<{ id: string; operationId?: string; kind?: string; groupId?: string; volumeId?: string; createdAt: string; bytes: number }>>
 }
 
 export async function storageRoutes(app: FastifyInstance, options: StorageApiContext): Promise<void> {
@@ -24,8 +25,9 @@ export async function storageRoutes(app: FastifyInstance, options: StorageApiCon
     return { success: true, data: { volume: { ...volume, groups: Object.entries(bootstrap.groupAssignments).filter(([, id]) => id === volume.id).map(([id]) => id), inventory: await options.inventory({ volumeId: volume.id }) } } }
   })
   app.get<{ Params: { id: string } }>('/api/storage/operations/:id', async (request, reply) => {
-    const operation = (await options.readBootstrap())?.pendingMigration
-    if (!operation || operation.id !== request.params.id) return reply.status(404).send({ success: false, error: { code: 'OPERATION_NOT_FOUND', message: 'Storage operation was not found' } })
+    const persisted = await options.getOperation?.(request.params.id); const pending = (await options.readBootstrap())?.pendingMigration
+    const operation = persisted ?? (pending?.id === request.params.id ? pending : undefined)
+    if (!operation) return reply.status(404).send({ success: false, error: { code: 'OPERATION_NOT_FOUND', message: 'Storage operation was not found' } })
     return { success: true, data: { operation } }
   })
   app.get('/api/storage/backups', async () => ({ success: true, data: { backups: await options.listBackups() } }))

@@ -131,7 +131,7 @@ export const StorageOperationProgressSchema = z.object({
 })
 
 export const StorageIpcRequestSchema = z.discriminatedUnion('channel', [
-  z.object({ channel: z.literal('storage:select-parent') }),
+  z.object({ channel: z.literal('storage:select-parent'), purpose: z.enum(['createVolume', 'migrateVolume']) }),
   z.object({ channel: z.literal('storage:create-volume'), selectionId: z.string().min(1), name: z.string().min(1) }),
   z.object({ channel: z.literal('storage:relocate-volume'), volumeId: z.string().min(1), selectionId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:move-group'), groupId: StorageGroupIdSchema, targetVolumeId: z.string().min(1) }),
@@ -143,7 +143,7 @@ export const StorageIpcRequestSchema = z.discriminatedUnion('channel', [
 
 export const StorageIpcResponseSchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(true), operationId: z.string().min(1).optional(), selectionId: z.string().min(1).optional() }),
-  z.object({ ok: z.literal(false), error: z.object({ code: z.string().min(1), message: z.string().min(1) }) }),
+  z.object({ ok: z.literal(false), error: z.object({ code: z.string().min(1), message: z.string().min(1), details: z.record(z.string(), z.unknown()).optional() }) }),
 ])
 
 export type StorageIpcRequest = z.infer<typeof StorageIpcRequestSchema>

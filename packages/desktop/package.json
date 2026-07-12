@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm build && electron dist/main.js",
     "build": "node scripts/clean.cjs && tsc && node scripts/copy-assets.cjs",
+    "package:dir": "pnpm build && node scripts/package-smoke.cjs",
     "build:mac": "pnpm build && electron-builder --mac",
     "build:win": "pnpm build && electron-builder --win",
     "build:linux": "pnpm build && electron-builder --linux",
