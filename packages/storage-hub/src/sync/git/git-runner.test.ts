@@ -73,6 +73,15 @@ describe('GitSyncService', () => {
     await expect(readFile(path.join(root, '.ash', 'sync', 'git', '.git', 'HEAD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('rejects a Git workspace nested in a syncable group without creating Git data there', async () => {
+    const root = await directory()
+    const workspace = path.join(root, 'work')
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: () => workspace })
+
+    await expect(service.bindVolume({ volumeId: 'primary', mode: 'local' })).rejects.toThrow(/syncable storage group/i)
+    await expect(readFile(path.join(workspace, '.ash', 'sync', 'git', '.git', 'HEAD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('serializes conflicting concurrent bindings so the catalog and repository remote agree', async () => {
     const root = await directory()
     let releaseSecondBind!: () => void

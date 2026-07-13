@@ -1,5 +1,6 @@
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { STORAGE_GROUP_IDS } from '@manta/shared'
 import { GitBindingStore } from './git-binding-store'
 import { GitRunner, redactGitText } from './git-runner'
 import { GitBindingConflictError, UnavailableCredentialStore, type CredentialStore, type GitBinding, type GitBindingMode, type GitCredentialInput } from './types'
@@ -182,10 +183,18 @@ export class GitSyncService {
     if (typeof this.options.cachePath !== 'function') throw new Error('Git cache workspace resolver is required')
     const root = this.options.cachePath(volumeId)
     if (!root) throw new Error(`Volume ${volumeId} has an invalid cache workspace`)
-    if (resolve(root) === resolve(this.options.volumes.resolveVolumeRoot(volumeId))) throw new Error(`Volume ${volumeId} cannot use its active volume as a Git cache workspace`)
+    const volumeRoot = resolve(this.options.volumes.resolveVolumeRoot(volumeId))
+    if (resolve(root) === volumeRoot) throw new Error(`Volume ${volumeId} cannot use its active volume as a Git cache workspace`)
     const path = resolve(root, REPOSITORY_RELATIVE_PATH)
     const pathRelative = relative(root, path)
     if (pathRelative === '..' || pathRelative.startsWith(`..${sep}`) || isAbsolute(pathRelative)) throw new Error(`Volume ${volumeId} has an invalid cache workspace`)
+    for (const group of STORAGE_GROUP_IDS) {
+      if (SYNC_EXCLUDED_GROUPS.has(group)) continue
+      const groupRelative = relative(join(volumeRoot, group), path)
+      if (groupRelative === '' || (groupRelative !== '..' && !groupRelative.startsWith(`..${sep}`) && !isAbsolute(groupRelative))) {
+        throw new Error(`Volume ${volumeId} cannot use a syncable storage group as a Git cache workspace`)
+      }
+    }
     return path
   }
   private async scanForSecrets(repositoryPath: string): Promise<void> {

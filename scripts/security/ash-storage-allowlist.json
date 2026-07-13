@@ -2,49 +2,49 @@
   "calls": [
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 64,
+      "line": 65,
       "column": 15,
       "operation": "mkdir",
       "reason": "Reviewed disposable Git workspace creation under the injected ASH cache storage group; it never writes into the active synchronized volume."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 71,
+      "line": 72,
       "column": 15,
       "operation": "writeFile",
       "reason": "Reviewed Git ignore policy write under the injected ASH cache storage group; it never writes into the active synchronized volume."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 124,
+      "line": 125,
       "column": 11,
       "operation": "mkdir",
       "reason": "Reviewed reconstruction of a disposable Git workspace under the injected ASH cache storage group after cache cleanup or migration."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 128,
+      "line": 129,
       "column": 45,
       "operation": "writeFile",
       "reason": "Reviewed missing Git ignore policy restoration under the injected ASH cache storage group for the disposable workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 172,
+      "line": 173,
       "column": 64,
       "operation": "rm",
       "reason": "Reviewed rollback cleanup limited to a Git ignore file in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 173,
+      "line": 174,
       "column": 18,
       "operation": "writeFile",
       "reason": "Reviewed rollback restoration of a prior Git ignore file in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 175,
+      "line": 176,
       "column": 76,
       "operation": "rm",
       "reason": "Reviewed rollback removal of a newly created Git metadata directory in the injected ASH cache storage group workspace."
