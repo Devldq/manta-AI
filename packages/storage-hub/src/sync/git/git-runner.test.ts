@@ -92,6 +92,27 @@ describe('GitSyncService', () => {
     await expect(bindings.list()).resolves.toHaveLength(1)
   })
 
+  it('keeps each Git workspace in the injected cache group, outside the synchronized volume', async () => {
+    const root = await directory(); const cache = await directory()
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: (id) => path.join(cache, id) })
+    const binding = await service.bindVolume({ volumeId: 'primary', mode: 'local' })
+    const repositoryPath = path.join(cache, 'primary', binding.repositoryRelativePath)
+    await expect(new GitRunner().exec(['rev-parse', '--git-dir'], { cwd: repositoryPath })).resolves.toMatchObject({ stdout: expect.any(String) })
+    await expect(readFile(path.join(root, binding.repositoryRelativePath, '.git', 'HEAD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rebuilds a cleared cache workspace from its binding without writing Git data into the active volume', async () => {
+    const root = await directory(); const cache = await directory(); const leases = new StorageLeaseManager()
+    await mkdir(path.join(root, 'work'), { recursive: true }); await writeFile(path.join(root, 'work', 'task.md'), 'safe')
+    const cachePath = (id: string) => path.join(cache, id)
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath, snapshots: { generation: () => 1, leases } })
+    const binding = await service.bindVolume({ volumeId: 'primary', mode: 'local' })
+    await rm(cachePath('primary'), { recursive: true, force: true })
+    await expect(service.syncVolume('primary')).resolves.toMatchObject({ commit: expect.stringMatching(/^[a-f0-9]{40}$/) })
+    await expect(readFile(path.join(cachePath('primary'), binding.repositoryRelativePath, '.git', 'HEAD'), 'utf8')).resolves.toContain('ref:')
+    await expect(readFile(path.join(root, binding.repositoryRelativePath, '.git', 'HEAD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('rejects a remote request when the volume is already bound locally', async () => {
     const root = await directory()
     const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root) })

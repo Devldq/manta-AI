@@ -84,11 +84,11 @@ function installMainStorageIpc(origin: string): void {
     async configureGit(volumeId, config) {
       const capability = await composition.git.capability()
       if (!capability.available) throw Object.assign(new Error(capability.reason ?? 'Git is unavailable'), { code: 'GIT_UNAVAILABLE' })
-      return composition.git.bindVolume({ volumeId, mode: config.mode, remoteUrl: config.mode === 'remote' ? config.remoteUrl : undefined, credentialRef: config.mode === 'remote' ? config.authRef : undefined })
+      if (config.mode === 'remote' && config.authRef) throw Object.assign(new Error('Authenticated Git setup is unavailable in this build. Configure a system Git credential helper, then sync.'), { code: 'CREDENTIAL_STORE_UNAVAILABLE' })
+      return composition.git.bindVolume({ volumeId, mode: config.mode, remoteUrl: config.mode === 'remote' ? config.remoteUrl : undefined })
     },
     async syncVolume(volumeId) {
-      const operationId = randomUUID()
-      return { operationId, completion: composition.git.syncVolume(volumeId) }
+      return composition.git.syncVolume(volumeId)
     },
   } })
 }

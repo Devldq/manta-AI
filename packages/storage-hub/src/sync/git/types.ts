@@ -21,7 +21,7 @@ export interface GitCommandResult {
 
 export interface GitBinding {
   volumeId: string
-  /** Relative to the current active root of volumeId; never a persisted absolute path. */
+  /** @deprecated Relative to the injected cache workspace root, retained for catalog compatibility. */
   repositoryRelativePath: string
   mode: GitBindingMode
   remoteUrl?: string
@@ -30,6 +30,9 @@ export interface GitBinding {
   updatedAt: string
   /** Updated only after the snapshot commit (and remote push, if configured) succeeds. */
   lastSyncedGroupHashes?: Partial<Record<import('@manta/shared').StorageGroupId, string>>
+  /** Set only after the snapshot commit and any remote push succeeds. */
+  lastSyncedAt?: string
+  lastSyncStatus?: 'succeeded'
 }
 
 /** A volume can have exactly one immutable Git binding. */

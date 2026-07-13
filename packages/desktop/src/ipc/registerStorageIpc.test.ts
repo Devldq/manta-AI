@@ -20,7 +20,8 @@ describe('storage IPC', () => {
     expect(await handlers.get('storage:invoke')!(event, { nope: true })).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
     expect(await handlers.get('storage:invoke')!(event, { channel: 'storage:open-volume', volumeId: 'v1' })).toEqual({ ok: false, error: { code: 'VOLUME_OFFLINE', message: 'offline' } })
     services.openVolume = vi.fn(async () => {}); services.syncVolume = vi.fn(async () => '')
-    expect(await handlers.get('storage:invoke')!(event, { channel: 'storage:sync-volume', volumeId: 'v1' })).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+    expect(await handlers.get('storage:invoke')!(event, { channel: 'storage:sync-volume', volumeId: 'v1' })).toEqual({ ok: true, kind: 'completed' })
+    expect(services.syncVolume).toHaveBeenCalledWith('v1')
   })
 
   it('rejects a wrong webContents sender and a same-origin child frame', async () => {

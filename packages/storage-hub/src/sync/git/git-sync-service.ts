@@ -43,7 +43,7 @@ export class GitSyncService {
   private readonly credentials: CredentialStore
   /** Desktop binding requests share this service instance; serialize each volume's full setup transaction. */
   private readonly bindingTails = new Map<string, Promise<void>>()
-  constructor(private readonly options: { runner: GitRunner; bindings: GitBindingStore; volumes: { resolveVolumeRoot(volumeId: string): string }; credentials?: CredentialStore; snapshots?: { generation: () => number; leases: StorageLeaseManager; checkpoint?: (group: import('@manta/shared').StorageGroupId) => Promise<void> } }) { this.credentials = options.credentials ?? new UnavailableCredentialStore() }
+  constructor(private readonly options: { runner: GitRunner; bindings: GitBindingStore; volumes: { resolveVolumeRoot(volumeId: string): string }; cachePath?: (volumeId: string) => string; credentials?: CredentialStore; snapshots?: { generation: () => number; leases: StorageLeaseManager; checkpoint?: (group: import('@manta/shared').StorageGroupId) => Promise<void> } }) { this.credentials = options.credentials ?? new UnavailableCredentialStore() }
 
   async bindVolume(input: { volumeId: string; mode: GitBindingMode; remoteUrl?: string; credentialRef?: string; credential?: GitCredentialInput }): Promise<GitBinding> {
     if (input.mode === 'remote' && !input.remoteUrl) throw new Error('Remote Git binding requires a remote URL')
@@ -55,9 +55,10 @@ export class GitSyncService {
       const credentialRef = input.credential?.ref ?? input.credentialRef
       if (existing) {
         if (existing.mode !== input.mode || existing.remoteUrl !== input.remoteUrl || existing.credentialRef !== credentialRef) throw new GitBindingConflictError(input.volumeId)
+        await this.ensureRepository(existing)
         return existing
       }
-      const repositoryPath = this.repositoryPath({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH } as GitBinding)
+      const repositoryPath = this.repositoryPath(input.volumeId)
       const transaction: BindTransaction = { gitDirectoryCreated: false, remoteAdded: false }
       try {
         await mkdir(repositoryPath, { recursive: true })
@@ -88,11 +89,11 @@ export class GitSyncService {
   async listBindings(): Promise<GitBinding[]> { return this.options.bindings.list() }
   async capability() { return this.options.runner.capability() }
 
-  async status(volumeId: string): Promise<string> { const binding = await this.binding(volumeId); return (await this.options.runner.exec(['status', '--porcelain=v1'], { cwd: this.repositoryPath(binding) })).stdout }
-  async history(volumeId: string): Promise<string> { const binding = await this.binding(volumeId); return (await this.options.runner.exec(['log', '--format=%H%x09%s', '-n', '50'], { cwd: this.repositoryPath(binding) })).stdout }
+  async status(volumeId: string): Promise<string> { const binding = await this.binding(volumeId); return (await this.options.runner.exec(['status', '--porcelain=v1'], { cwd: this.repositoryPath(binding.volumeId) })).stdout }
+  async history(volumeId: string): Promise<string> { const binding = await this.binding(volumeId); return (await this.options.runner.exec(['log', '--format=%H%x09%s', '-n', '50'], { cwd: this.repositoryPath(binding.volumeId) })).stdout }
 
   async commitLocalSnapshot(volumeId: string, message: string): Promise<string> {
-    const binding = await this.binding(volumeId); const repositoryPath = this.repositoryPath(binding); await this.scanForSecrets(repositoryPath)
+    const binding = await this.binding(volumeId); const repositoryPath = this.repositoryPath(binding.volumeId); await this.scanForSecrets(repositoryPath)
     await this.options.runner.exec(['add', '--all'], { cwd: repositoryPath })
     const status = await this.status(volumeId)
     if (!status.trim()) return (await this.options.runner.exec(['rev-parse', '--verify', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
@@ -107,7 +108,7 @@ export class GitSyncService {
   async syncVolume(volumeId: string): Promise<{ commit: string; groupHashes: Partial<Record<import('@manta/shared').StorageGroupId, string>> }> {
     if (!this.options.snapshots) throw new Error('Git snapshot support is unavailable')
     return this.withBindingLock(volumeId, async () => {
-      const binding = await this.binding(volumeId); const repositoryPath = this.repositoryPath(binding)
+      const binding = await this.binding(volumeId); const repositoryPath = this.repositoryPath(binding.volumeId)
       const manifest = await buildVolumeSnapshot({ volumeId, generation: this.options.snapshots!.generation(), volumeRoot: this.options.volumes.resolveVolumeRoot(volumeId), cachePath: repositoryPath, leases: this.options.snapshots!.leases, checkpoint: this.options.snapshots!.checkpoint })
       const commit = await this.commitLocalSnapshot(volumeId, `ASH snapshot ${manifest.generation}`)
       if (binding.mode === 'remote') await this.pushWithRetry(repositoryPath)
@@ -116,7 +117,18 @@ export class GitSyncService {
     })
   }
 
-  private async binding(volumeId: string): Promise<GitBinding> { const binding = await this.options.bindings.get(volumeId); if (!binding) throw new Error(`Volume ${volumeId} has no Git binding`); this.repositoryPath(binding); return binding }
+  private async binding(volumeId: string): Promise<GitBinding> { const binding = await this.options.bindings.get(volumeId); if (!binding) throw new Error(`Volume ${volumeId} has no Git binding`); await this.ensureRepository(binding); return binding }
+  /** Recreates only the disposable checkout if a cache cleanup or cache migration removed it. */
+  private async ensureRepository(binding: GitBinding): Promise<void> {
+    const repositoryPath = this.repositoryPath(binding.volumeId)
+    await mkdir(repositoryPath, { recursive: true })
+    if (!await exists(join(repositoryPath, '.git'))) await this.options.runner.exec(['init', '--quiet'], { cwd: repositoryPath })
+    const gitignorePath = join(repositoryPath, '.gitignore')
+    if (!await exists(gitignorePath)) await writeFile(gitignorePath, SAFE_IGNORE, 'utf8')
+    if (binding.mode !== 'remote' || !binding.remoteUrl) return
+    try { await this.options.runner.exec(['remote', 'get-url', 'origin'], { cwd: repositoryPath }) }
+    catch { await this.options.runner.exec(['remote', 'add', 'origin', binding.remoteUrl], { cwd: repositoryPath }) }
+  }
   private async pushWithRetry(repositoryPath: string): Promise<void> {
     const branch = (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
     let lastError: unknown
@@ -149,11 +161,17 @@ export class GitSyncService {
     if (transaction.gitDirectoryCreated) await attempt(async () => { await rm(join(repositoryPath, '.git'), { recursive: true, force: true }) })
     if (failures.length) throw new AggregateError([original, ...failures], 'Git binding failed and rollback was incomplete', { cause: original })
   }
-  private repositoryPath(binding: Pick<GitBinding, 'volumeId' | 'repositoryRelativePath'>): string {
-    const root = this.options.volumes.resolveVolumeRoot(binding.volumeId)
-    const path = resolve(root, binding.repositoryRelativePath)
+  private repositoryPath(volumeId: string): string {
+    // A Git checkout is a transient rebuildable workspace.  Keeping it under the
+    // injected cache group guarantees snapshots never include their own .git data
+    // and lets cache/group migration carry it safely without touching source data.
+    // Legacy library callers are kept operational during the transition, while
+    // the application composition always injects `cachePath` from the ASH cache
+    // group.  No app code may rely on this compatibility fallback.
+    const root = this.options.cachePath?.(volumeId) ?? this.options.volumes.resolveVolumeRoot(volumeId)
+    const path = resolve(root, REPOSITORY_RELATIVE_PATH)
     const pathRelative = relative(root, path)
-    if (!root || isAbsolute(binding.repositoryRelativePath) || pathRelative === '..' || pathRelative.startsWith(`..${sep}`) || isAbsolute(pathRelative)) throw new Error(`Volume ${binding.volumeId} is not active or has an invalid Git binding`)
+    if (!root || pathRelative === '..' || pathRelative.startsWith(`..${sep}`) || isAbsolute(pathRelative)) throw new Error(`Volume ${volumeId} has an invalid cache workspace`)
     return path
   }
   private async scanForSecrets(repositoryPath: string): Promise<void> {

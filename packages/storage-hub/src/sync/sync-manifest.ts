@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { z } from 'zod'
-import type { StorageGroupId } from '@manta/shared'
+import { STORAGE_GROUP_IDS, type StorageGroupId } from '@manta/shared'
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
 
@@ -9,7 +9,10 @@ export const SyncManifestSchema = z.object({
   schemaVersion: z.literal(1),
   volumeId: z.string().min(1),
   generation: z.number().int().nonnegative(),
-  groupHashes: z.record(z.string(), hash).refine((groups) => Object.keys(groups).every((group) => group !== 'secrets' && group !== 'diagnostics' && group !== 'cache')),
+  groupHashes: z.record(z.string(), hash).refine(
+    (groups) => Object.keys(groups).every((group) => STORAGE_GROUP_IDS.includes(group as StorageGroupId) && !['secrets', 'diagnostics', 'cache'].includes(group)),
+    'Sync manifest contains an unsupported storage group',
+  ),
   createdAt: z.string().datetime(),
 })
 export type SyncManifest = z.infer<typeof SyncManifestSchema> & { groupHashes: Partial<Record<StorageGroupId, string>> }

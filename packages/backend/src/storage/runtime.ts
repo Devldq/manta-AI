@@ -131,6 +131,10 @@ export async function createBackendStorageComposition(bootstrap: BootstrapStore,
     // Resolve this lazily so config-group relocation is reflected after the required relaunch.
     bindings: new GitBindingStore(() => runtime!.resolve('config')),
     volumes: { resolveVolumeRoot: hub.resolveVolumeRoot },
+    // Git checkouts are rebuildable workspaces, not part of a volume snapshot.
+    // The cache group may live on a different volume and is routed lazily so its
+    // own migration is reflected after relaunch.
+    cachePath: (volumeId) => runtime!.resolve('cache', 'git-sync', volumeId),
     snapshots: {
       generation: () => initialBootstrap?.generation ?? 0,
       leases: hub.leases,

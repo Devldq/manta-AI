@@ -2,17 +2,87 @@
   "calls": [
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 37,
-      "column": 11,
+      "line": 64,
+      "column": 15,
       "operation": "mkdir",
-      "reason": "Reviewed per-volume Git repository creation under the injected ASH volume root selected by the storage registry."
+      "reason": "Reviewed disposable Git workspace creation under the injected ASH cache storage group; it never writes into the active synchronized volume."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 39,
+      "line": 71,
+      "column": 15,
+      "operation": "writeFile",
+      "reason": "Reviewed Git ignore policy write under the injected ASH cache storage group; it never writes into the active synchronized volume."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 124,
+      "column": 11,
+      "operation": "mkdir",
+      "reason": "Reviewed reconstruction of a disposable Git workspace under the injected ASH cache storage group after cache cleanup or migration."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 127,
+      "column": 45,
+      "operation": "writeFile",
+      "reason": "Reviewed missing Git ignore policy restoration under the injected ASH cache storage group for the disposable workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 158,
+      "column": 64,
+      "operation": "rm",
+      "reason": "Reviewed rollback cleanup limited to a Git ignore file in the injected ASH cache storage group workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 159,
+      "column": 18,
+      "operation": "writeFile",
+      "reason": "Reviewed rollback restoration of a prior Git ignore file in the injected ASH cache storage group workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 161,
+      "column": 76,
+      "operation": "rm",
+      "reason": "Reviewed rollback removal of a newly created Git metadata directory in the injected ASH cache storage group workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
+      "line": 14,
+      "column": 9,
+      "operation": "mkdir",
+      "reason": "Reviewed lease-protected snapshot directory creation under the injected ASH cache storage group for a disposable sync workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
+      "line": 21,
+      "column": 35,
+      "operation": "cp",
+      "reason": "Reviewed lease-protected copy from a resolved active volume into the injected ASH cache storage group disposable snapshot workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
+      "line": 44,
+      "column": 13,
+      "operation": "rm",
+      "reason": "Reviewed removal limited to a prior disposable group snapshot under the injected ASH cache storage group workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
+      "line": 51,
+      "column": 11,
+      "operation": "mkdir",
+      "reason": "Reviewed sync manifest parent creation under the injected ASH cache storage group disposable snapshot workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
+      "line": 52,
       "column": 11,
       "operation": "writeFile",
-      "reason": "Reviewed per-volume Git ignore policy write under the injected ASH volume root selected by the storage registry."
+      "reason": "Reviewed credential-free sync manifest write under the injected ASH cache storage group disposable snapshot workspace."
     },
     {
       "file": "packages/backend/src/core/storage/plugin/marketplace.ts",

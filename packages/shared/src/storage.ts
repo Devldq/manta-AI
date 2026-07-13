@@ -147,6 +147,9 @@ export const StorageGitBindingSchema = z.object({
   mode: z.enum(['local', 'remote']),
   remoteUrl: GitRemoteUrlSchema.optional(),
   credentialRef: GitCredentialRefSchema.optional(),
+  lastSyncedGroupHashes: z.record(StorageGroupIdSchema, z.string().regex(/^[a-f0-9]{64}$/)).optional(),
+  lastSyncedAt: z.string().datetime().optional(),
+  lastSyncStatus: z.literal('succeeded').optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 })
