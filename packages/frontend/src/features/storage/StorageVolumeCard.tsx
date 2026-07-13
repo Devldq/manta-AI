@@ -22,6 +22,7 @@ export function StorageVolumeCard({ volume, bytes = 0, files = 0, onRelocate, on
     <section aria-label={`${volume.name} Git sync`} style={{ marginTop: 10, fontSize: 12 }}>
       <div>Git: {git?.binding ? git.binding.mode : git?.available ? 'not configured' : 'unavailable'}</div>
       {git?.binding?.remoteUrl && <div style={{ overflowWrap: 'anywhere' }}>{git.binding.remoteUrl}</div>}
+      {git?.binding && <div role="status">This volume is already bound to {git.binding.mode} Git. To use a different repository, create another storage volume.</div>}
       {git?.reason && <div role="status">{git.reason}</div>}
       {git?.available && onConfigureGit && <><button disabled={disabled || gitLoading} onClick={() => void configure('local')}>Configure local Git</button><div><label>Remote URL <input aria-label={`${volume.name} Git remote URL`} value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} placeholder="https://host/owner/repository.git" /></label><label>Credential reference <input aria-label={`${volume.name} Git credential reference`} value={authRef} onChange={(event) => setAuthRef(event.target.value)} placeholder="keychain:work" /></label><button disabled={disabled || gitLoading} onClick={() => void configure('remote')}>Configure remote Git</button></div></>}
       {gitLoading && <div role="status">Configuring Git…</div>}{gitError && <div role="alert">{gitError}</div>}

@@ -77,6 +77,14 @@ describe('storage IPC', () => {
     await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:configure-git', volumeId: 'v1', mode: 'local' })).resolves.toEqual({ ok: false, error: { code: 'GIT_UNAVAILABLE', message: 'Git executable was not found' } })
   })
 
+  it('envelopes an incompatible Git binding as a typed conflict for the renderer', async () => {
+    const handlers = new Map<string, Function>(); const ipc: any = { handle: (name: string, fn: Function) => handlers.set(name, fn), removeHandler: vi.fn() }
+    const services: any = { configureGit: vi.fn(async () => { throw Object.assign(new Error('Volume v1 already has a local Git binding'), { code: 'GIT_BINDING_CONFLICT' }) }) }
+    registerStorageIpc({ ipcMain: ipc, trustedOrigin: 'http://127.0.0.1:4444', services })
+    const event = { senderFrame: { url: 'http://127.0.0.1:4444/' } }
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:configure-git', volumeId: 'v1', mode: 'remote', remoteUrl: 'https://example.test/ash.git' })).resolves.toEqual({ ok: false, error: { code: 'GIT_BINDING_CONFLICT', message: 'Volume v1 already has a local Git binding' } })
+  })
+
   it('rejects a credential value or arbitrary path in Git configuration', async () => {
     const handlers = new Map<string, Function>(); const ipc: any = { handle: (name: string, fn: Function) => handlers.set(name, fn), removeHandler: vi.fn() }
     const services: any = { configureGit: vi.fn(async () => ({ volumeId: 'v1', mode: 'local', createdAt: '2026-07-13T00:00:00.000Z', updatedAt: '2026-07-13T00:00:00.000Z' })) }

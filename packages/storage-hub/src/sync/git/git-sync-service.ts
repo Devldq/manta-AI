@@ -2,7 +2,7 @@ import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { GitBindingStore } from './git-binding-store'
 import { GitRunner, redactGitText } from './git-runner'
-import { UnavailableCredentialStore, type CredentialStore, type GitBinding, type GitBindingMode, type GitCredentialInput } from './types'
+import { GitBindingConflictError, UnavailableCredentialStore, type CredentialStore, type GitBinding, type GitBindingMode, type GitCredentialInput } from './types'
 
 const SYNC_EXCLUDED_GROUPS = new Set(['secrets', 'diagnostics', 'cache'])
 const SAFE_IGNORE = ['# Manta ASH Git snapshots never include sensitive or transient groups.', 'secrets/', 'diagnostics/', 'cache/', '.ash/'].join('\n') + '\n'
@@ -32,7 +32,11 @@ export class GitSyncService {
     if (input.credential && !this.credentials.available) throw new Error('A secure OS credential store is unavailable')
     if (input.credentialRef !== undefined && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(input.credentialRef)) throw new Error('Git credential reference is invalid')
     const existing = await this.options.bindings.get(input.volumeId)
-    if (existing) return this.options.bindings.bind({ ...existing })
+    const credentialRef = input.credential?.ref ?? input.credentialRef
+    if (existing) {
+      if (existing.mode !== input.mode || existing.remoteUrl !== input.remoteUrl || existing.credentialRef !== credentialRef) throw new GitBindingConflictError(input.volumeId)
+      return existing
+    }
     const repositoryPath = this.repositoryPath({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH } as GitBinding)
     await mkdir(repositoryPath, { recursive: true })
     await this.options.runner.exec(['init', '--quiet'], { cwd: repositoryPath })
@@ -40,7 +44,7 @@ export class GitSyncService {
     if (input.mode === 'remote' && input.remoteUrl) await this.options.runner.exec(['remote', 'add', 'origin', input.remoteUrl], { cwd: repositoryPath })
     if (input.credential) await this.credentials.put(input.credential.ref, input.credential.secret)
     const now = new Date().toISOString()
-    return this.options.bindings.bind({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH, mode: input.mode, remoteUrl: input.remoteUrl, credentialRef: input.credential?.ref ?? input.credentialRef, createdAt: now, updatedAt: now })
+    return this.options.bindings.bind({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH, mode: input.mode, remoteUrl: input.remoteUrl, credentialRef, createdAt: now, updatedAt: now })
   }
 
   async listBindings(): Promise<GitBinding[]> { return this.options.bindings.list() }

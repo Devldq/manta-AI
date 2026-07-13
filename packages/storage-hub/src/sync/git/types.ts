@@ -30,6 +30,16 @@ export interface GitBinding {
   updatedAt: string
 }
 
+/** A volume can have exactly one immutable Git binding. */
+export class GitBindingConflictError extends Error {
+  readonly code = 'GIT_BINDING_CONFLICT' as const
+
+  constructor(volumeId: string) {
+    super(`Volume ${volumeId} already has an incompatible Git binding`)
+    this.name = 'GitBindingConflictError'
+  }
+}
+
 export interface GitCredentialInput {
   ref: CredentialRef
   /** The value is accepted only for writing directly to an OS-backed store. */

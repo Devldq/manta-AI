@@ -60,6 +60,33 @@ describe('GitSyncService', () => {
     await expect(bindings.list()).resolves.toHaveLength(1)
   })
 
+  it('rejects a remote request when the volume is already bound locally', async () => {
+    const root = await directory()
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root) })
+
+    await service.bindVolume({ volumeId: 'primary', mode: 'local' })
+
+    await expect(service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/repository.git' })).rejects.toMatchObject({ code: 'GIT_BINDING_CONFLICT' })
+  })
+
+  it('rejects a local request when the volume is already bound to a remote', async () => {
+    const root = await directory()
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root) })
+
+    await service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/repository.git' })
+
+    await expect(service.bindVolume({ volumeId: 'primary', mode: 'local' })).rejects.toMatchObject({ code: 'GIT_BINDING_CONFLICT' })
+  })
+
+  it('rejects a different remote for an already-bound volume', async () => {
+    const root = await directory()
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root) })
+
+    await service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/first.git' })
+
+    await expect(service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/second.git' })).rejects.toMatchObject({ code: 'GIT_BINDING_CONFLICT' })
+  })
+
   it('does not persist supplied credentials and stores only the credential reference', async () => {
     const root = await directory(); const credentials = new FakeCredentialStore()
     const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), credentials, volumes: resolver('private', root) })
