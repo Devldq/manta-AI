@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -35,14 +35,14 @@ describe('per-volume content addressed storage', () => {
     await expect(manifests.write({ assetId: 'foreign', entries: [{ path: 'foreign.bin', hash: sha256('other volume'), size: 12 }] })).rejects.toThrow(/ENOENT|object/i)
   })
 
-  it('materializes by hardlink when available and falls back to a verified copy', async () => {
+  it('materializes by reflink when available and falls back to a verified copy', async () => {
     const volume = await root(); const source = join(volume, 'source.bin'); await writeFile(source, 'immutable bytes')
     const object = await new VolumeObjectStore(volume).ingestFile(source)
     const linked = join(volume, 'assets', 'linked.bin')
     const result = await materializeAsset({ volumeRoot: volume, object, destination: linked })
-    expect(['hardlink', 'reflink', 'copy']).toContain(result.strategy); expect(await readFile(linked, 'utf8')).toBe('immutable bytes')
+    expect(['reflink', 'copy']).toContain(result.strategy); expect(await readFile(linked, 'utf8')).toBe('immutable bytes')
     const copied = join(volume, 'assets', 'copied.bin')
-    const copy = await materializeAsset({ volumeRoot: volume, object, destination: copied, link: async () => { throw Object.assign(new Error('cross-device'), { code: 'EXDEV' }) }, reflink: async () => { throw new Error('reflink unavailable') } })
+    const copy = await materializeAsset({ volumeRoot: volume, object, destination: copied, reflink: async () => { throw Object.assign(new Error('reflink unavailable'), { code: 'ENOTSUP' }) } })
     expect(copy.strategy).toBe('copy'); expect(await readFile(copied, 'utf8')).toBe('immutable bytes')
   })
 
@@ -58,5 +58,36 @@ describe('per-volume content addressed storage', () => {
     const volume = await root(); const input = join(volume, 'config', 'settings.json'); await mkdir(join(volume, 'config'), { recursive: true }); await writeFile(input, '{}')
     await expect(new VolumeObjectStore(volume).ingestFile(input)).rejects.toThrow(/mutable|group/i)
     await expect(new AssetManifestStore(volume).write({ assetId: 'asset', entries: [{ path: 'config/settings.json', hash: sha256('x'), size: 1 }] })).rejects.toThrow(/path|group/i)
+  })
+
+  it('rejects a Windows destination on another drive before it can be materialized', async () => {
+    const volume = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('asset'))
+    await expect(materializeAsset({ volumeRoot: volume, object, destination: 'D:\\outside-volume\\asset.bin' })).rejects.toThrow(/escapes/i)
+  })
+
+  it('rejects a destination below a symlinked ancestor', async () => {
+    const volume = await root(); const outside = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('asset'))
+    const assets = join(volume, 'assets'); await symlink(outside, assets, process.platform === 'win32' ? 'junction' : 'dir')
+    await expect(materializeAsset({ volumeRoot: volume, object, destination: join(assets, 'asset.bin') })).rejects.toThrow(/symlink|reparse|escape/i)
+  })
+
+  it('does not let writes to a materialized asset mutate its CAS object', async () => {
+    const volume = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('immutable'))
+    const destination = join(volume, 'assets', 'asset.bin'); await materializeAsset({ volumeRoot: volume, object, destination })
+    await writeFile(destination, 'changed')
+    expect(await readFile(object.path, 'utf8')).toBe('immutable')
+  })
+
+  it('rejects malformed and identity-mismatched manifests when reading', async () => {
+    const volume = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('asset')); const manifests = new AssetManifestStore(volume)
+    const path = manifests.pathFor('expected')
+    await mkdir(join(volume, '.ash', 'assets'), { recursive: true })
+    await writeFile(path, JSON.stringify({ schemaVersion: 2, assetId: 'other', createdAt: 'not-a-date', entries: [{ path: 'one.bin', hash: object.hash, size: object.size }, { path: 'one.bin', hash: object.hash, size: object.size }] }))
+    await expect(manifests.read('expected')).rejects.toThrow(/schema|identifier|asset|created|unique/i)
+  })
+
+  it('propagates reflink permission errors instead of falling back to copy', async () => {
+    const volume = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('asset'))
+    await expect(materializeAsset({ volumeRoot: volume, object, destination: join(volume, 'assets', 'asset.bin'), reflink: async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }) } })).rejects.toThrow(/denied/i)
   })
 })

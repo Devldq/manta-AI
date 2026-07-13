@@ -1022,52 +1022,48 @@
       "reason": "Reviewed Phase 2 verification orchestrator which launches fixed repository tests and the storage audit; it does not select application persistence paths."
     },
     {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 49, "column": 98, "operation": "mkdir",
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 38, "column": 19, "operation": "mkdir",
       "reason": "Reviewed immutable CAS fanout directory under the explicit volume-local .ash object namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 57, "column": 13, "operation": "copyFile",
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 82, "column": 13, "operation": "copyFile",
       "reason": "Reviewed atomic CAS ingestion staging copy under the verified volume-local object namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 64, "column": 23, "operation": "rm",
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 89, "column": 23, "operation": "rm",
       "reason": "Reviewed cleanup of a random CAS object staging file below the verified object namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 68, "column": 115, "operation": "mkdir",
-      "reason": "Reviewed immutable CAS object directory creation under the explicit volume root."
-    },
-    {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 72, "column": 13, "operation": "writeFile",
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 97, "column": 13, "operation": "writeFile",
       "reason": "Reviewed atomic byte-ingest staging write below the verified volume-local CAS namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 76, "column": 23, "operation": "unlink",
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 101, "column": 23, "operation": "unlink",
       "reason": "Reviewed cleanup of a random CAS byte-ingest staging file."
     },
     {
-      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 28, "column": 53, "operation": "mkdir",
-      "reason": "Reviewed asset-manifest directory creation below the local volume .ash metadata namespace."
-    },
-    {
-      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 29, "column": 17, "operation": "writeFile",
+      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 28, "column": 17, "operation": "writeFile",
       "reason": "Reviewed atomic asset-manifest staging write below the verified per-volume metadata namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 29, "column": 121, "operation": "rename",
+      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 28, "column": 121, "operation": "rename",
       "reason": "Reviewed atomic commit of a validated asset manifest in the local volume metadata namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 29, "column": 180, "operation": "rm",
+      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 28, "column": 180, "operation": "rm",
       "reason": "Reviewed cleanup of an asset-manifest staging file owned by ASH."
     },
     {
-      "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 24, "column": 54, "operation": "copyFile",
+      "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 22, "column": 52, "operation": "copyFile",
       "reason": "Reviewed reflink attempt from a verified local immutable CAS object to an ASH-controlled asset destination."
     },
     {
-      "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 25, "column": 21, "operation": "copyFile",
+      "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 25, "column": 51, "operation": "copyFile",
       "reason": "Reviewed verified copy fallback from a local immutable CAS object to an ASH-controlled asset destination."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 25, "column": 13, "operation": "rm",
+      "reason": "Reviewed cleanup of a failed reflink staging file before the verified copy fallback."
     },
     {
       "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 28, "column": 204, "operation": "rename",
