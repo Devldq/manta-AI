@@ -80,6 +80,24 @@ describe('MigrationCoordinator', () => {
     expect(await readFile(join(volumeRoot(source), 'work', 'work.txt'), 'utf8')).toBe('remote')
   })
 
+  it('rolls back every earlier group when a later batch import group fails validation', async () => {
+    const { source, store } = await fixture()
+    const stagedWork = join(source, 'remote-work'); const stagedKnowledge = join(source, 'remote-knowledge')
+    await mkdir(stagedWork, { recursive: true }); await mkdir(stagedKnowledge, { recursive: true })
+    await writeFile(join(stagedWork, 'work.txt'), 'remote-work'); await writeFile(join(stagedKnowledge, 'knowledge.txt'), 'remote-knowledge')
+    const coordinator = new MigrationCoordinator({
+      store,
+      leases: new StorageLeaseManager(),
+      drivers: new Map<StorageGroupId, StorageGroupDriver>([
+        ['work', driver('work')],
+        ['knowledge', { ...driver('knowledge'), validate: async (path) => path.endsWith('knowledge') ? { ok: false, error: 'knowledge rejected' } : { ok: true } }],
+      ]),
+    })
+    await expect(coordinator.replaceGroupsFromStaging([{ group: 'work', source: stagedWork }, { group: 'knowledge', source: stagedKnowledge }], '00000000-0000-4000-8000-000000000013')).rejects.toThrow('knowledge rejected')
+    await expect(readFile(join(volumeRoot(source), 'work', 'work.txt'), 'utf8')).resolves.toBe('work')
+    await expect(readFile(join(volumeRoot(source), 'knowledge', 'knowledge.txt'), 'utf8')).resolves.toBe('knowledge')
+  })
+
   it('rejects a target without source plus the minimum 256 MiB margin', async () => {
     const { initial, source, store, target } = await fixture()
     const coordinator = new MigrationCoordinator({ store, leases: new StorageLeaseManager(), drivers: new Map(groups.map((group) => [group, driver(group)])), availableBytes: async () => 256 * 1024 * 1024 })

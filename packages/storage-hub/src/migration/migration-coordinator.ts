@@ -95,6 +95,41 @@ export class MigrationCoordinator {
     })
   }
 
+  /**
+   * Imports several independently stored groups as one live-data transaction.
+   * Backups are retained until every new group reopens and validates; a failure
+   * in a later group restores all earlier groups before the error escapes.
+   */
+  async replaceGroupsFromStaging(groups: Array<{ group: StorageGroupId; source: string }>, operationId = randomUUID()): Promise<string> {
+    if (!groups.length) return operationId
+    const unique = new Set(groups.map(({ group }) => group))
+    if (unique.size !== groups.length) throw new Error('An import group may only be selected once')
+    return this.transaction(async () => {
+      const current = await this.requiredBootstrap()
+      const values = await Promise.all(groups.map(async ({ group, source }) => ({ group, source, inventory: await inventoryTree(source) })))
+      let lease: StorageLease | undefined
+      const closed: StorageGroupId[] = []; const backedUp: typeof values = []; const installed: typeof values = []
+      const targetFor = (group: StorageGroupId) => { const volume = this.volume(current, current.groupAssignments[group]); return join(volumeRoot(volume.parentPath), group) }
+      const stagingFor = (group: StorageGroupId) => join(dirname(targetFor(group)), '.ash-staging', operationId, group)
+      const backupFor = (group: StorageGroupId) => join(dirname(targetFor(group)), '.ash-backups', operationId, group)
+      try {
+        lease = await this.options.leases.acquireExclusive(groups.map(({ group }) => group), { timeoutMs: this.options.leaseTimeoutMs ?? 30_000 })
+        for (const { group } of values) { const driver = this.driver(group); await driver.quiesce(); await driver.checkpoint(); await driver.close(); closed.push(group) }
+        for (const value of values) { const staging = stagingFor(value.group); await copyTree(value.source, staging, value.inventory); await this.validateCopy(value.inventory, staging, [value.group], true) }
+        for (const value of values) { const target = targetFor(value.group); const backup = backupFor(value.group); await mkdir(dirname(backup), { recursive: true }); await this.renameIfPresent(target, backup); backedUp.push(value); await mkdir(dirname(target), { recursive: true }); await rename(stagingFor(value.group), target); installed.push(value) }
+        for (const value of values) { const target = targetFor(value.group); await this.driver(value.group).reopen(target); const validation = await this.driver(value.group).validate(target); if (!validation.ok) throw new Error(validation.error ?? `Imported ${value.group} validation failed`) }
+        for (const value of backedUp) await rm(backupFor(value.group), { recursive: true, force: true })
+        return operationId
+      } catch (error) {
+        for (const value of [...installed].reverse()) await rm(targetFor(value.group), { recursive: true, force: true })
+        for (const value of [...backedUp].reverse()) { await mkdir(dirname(targetFor(value.group)), { recursive: true }); await this.renameIfPresent(backupFor(value.group), targetFor(value.group)) }
+        for (const value of values) await rm(stagingFor(value.group), { recursive: true, force: true })
+        for (const group of closed) await this.driver(group).reopen(targetFor(group)).catch(() => {})
+        throw error
+      } finally { lease?.release() }
+    })
+  }
+
   async recoverPending(): Promise<AshBootstrap | undefined> {
     const lock = await acquireMigrationFileLock(this.options.store.filePath, true)
     try {

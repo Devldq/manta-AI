@@ -146,7 +146,7 @@ export async function createBackendStorageComposition(bootstrap: BootstrapStore,
     importer: new ImportCoordinator({
       leases: hub.leases,
       resolveGroupRoot: (group) => runtime!.resolve(group),
-      replaceGroup: async (group, source) => { await hub.migrations!.replaceGroupFromStaging(group, source) },
+      replaceGroups: async (groups) => { await hub.migrations!.replaceGroupsFromStaging(groups) },
     }),
   })
   return { hub, runtime, git }

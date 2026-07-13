@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeCredentialStore, GitBindingStore, GitRunner, GitSyncService, redactGitText } from './index'
 import { StorageLeaseManager } from '../../runtime/lease-manager'
+import { planGroupConflicts } from '../conflict-planner'
 
 const directories: string[] = []
 
@@ -43,6 +44,23 @@ describe('GitRunner', () => {
     expect(redactGitText('Bearer ghp_123456789012345678901234567890123456')).not.toContain('ghp_')
     expect(redactGitText('fatal: https://example.test/repo?access_token=secret-value denied')).not.toContain('secret-value')
     expect(redactGitText('fatal: token_12345678901234567890 denied')).not.toContain('token_12345678901234567890')
+  })
+})
+
+describe('GitSyncService import authorization', () => {
+  it('rejects forged, omitted, and disallowed IPC decisions before the importer sees them', async () => {
+    const root = await directory(); const applied: unknown[] = []
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: { resolveVolumeRoot: () => root }, cachePath: () => `${root}.cache`, importer: { apply: async (value: unknown) => { applied.push(value) } } as any })
+    const plan = planGroupConflicts({ base: { work: 'a'.repeat(64), knowledge: 'a'.repeat(64) }, local: { work: 'a'.repeat(64), knowledge: 'b'.repeat(64) }, remote: { work: 'c'.repeat(64), knowledge: 'c'.repeat(64) } })
+    ;(service as any).imports.set('opaque', { volumeId: 'primary', stagingRoot: path.join(root, 'staging'), manifest: { schemaVersion: 1, volumeId: 'primary', generation: 1, groupHashes: { work: 'c'.repeat(64), knowledge: 'c'.repeat(64) }, createdAt: '2026-07-13T00:00:00.000Z' }, plan, localHashes: { work: 'a'.repeat(64), knowledge: 'b'.repeat(64) }, allowedChoices: new Map(plan.groups.map(({ group, choices }) => [group, new Set(choices)])) })
+    await expect(service.applyRemoteImport('primary', { sessionId: 'opaque', decisions: { config: 'keep-remote' } })).rejects.toThrow(/not offered/i)
+    expect(applied).toEqual([])
+    // Invalid renderer input does not reach the privileged importer.
+    expect((service as any).imports.has('opaque')).toBe(true)
+
+    ;(service as any).imports.set('opaque-2', { volumeId: 'primary', stagingRoot: path.join(root, 'staging'), manifest: { schemaVersion: 1, volumeId: 'primary', generation: 1, groupHashes: { work: 'c'.repeat(64), knowledge: 'c'.repeat(64) }, createdAt: '2026-07-13T00:00:00.000Z' }, plan, localHashes: { work: 'a'.repeat(64), knowledge: 'b'.repeat(64) }, allowedChoices: new Map(plan.groups.map(({ group, choices }) => [group, new Set(choices)])) })
+    await expect(service.applyRemoteImport('primary', { sessionId: 'opaque-2', decisions: { work: 'keep-remote' } })).rejects.toThrow(/knowledge.*required/i)
+    expect(applied).toEqual([])
   })
 })
 

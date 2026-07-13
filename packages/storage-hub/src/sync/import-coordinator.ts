@@ -27,13 +27,13 @@ export class ImportCoordinator {
   constructor(private readonly options: {
     leases: StorageLeaseManager
     resolveGroupRoot(group: StorageGroupId): string
-    replaceGroup(group: StorageGroupId, source: string): Promise<void>
-    restoreGroup?(group: StorageGroupId): Promise<void>
+    /** Replaces all selected groups as one rollback-capable live-data transaction. */
+    replaceGroups(groups: Array<{ group: StorageGroupId; source: string }>): Promise<void>
     hashGroup?(root: string): Promise<string>
   }) {}
 
   /** Applies only explicit remote decisions after the isolated snapshot is fully validated. */
-  async apply(input: { volumeId: string; stagingRoot: string; manifest: SyncManifest; decisions: Partial<Record<StorageGroupId, ImportChoice>> }): Promise<void> {
+  async apply(input: { volumeId: string; stagingRoot: string; manifest: SyncManifest; decisions: Partial<Record<StorageGroupId, ImportChoice>>; expectedLocalHashes?: Partial<Record<StorageGroupId, string>> }): Promise<void> {
     const manifest = SyncManifestSchema.parse(input.manifest) as SyncManifest
     if (manifest.volumeId !== input.volumeId) throw new Error('Fetched sync manifest does not belong to this volume')
     const selected = Object.entries(input.decisions).filter(([, choice]) => choice === 'keep-remote').map(([group]) => group as StorageGroupId)
@@ -44,12 +44,17 @@ export class ImportCoordinator {
     }
     if (!selected.length) return
     const lease = await this.options.leases.acquireExclusive(selected)
-    const applied: StorageGroupId[] = []
     try {
-      for (const group of selected) { applied.push(group); await this.options.replaceGroup(group, join(input.stagingRoot, group)) }
-    } catch (error) {
-      if (this.options.restoreGroup) for (const group of applied.reverse()) await this.options.restoreGroup(group)
-      throw error
+      // The lease closes the plan/apply TOCTOU window for every group that may
+      // be overwritten. A changed local digest must be replanned explicitly.
+      for (const group of selected) {
+        const expected = input.expectedLocalHashes?.[group]
+        if (expected !== undefined) {
+          const actual = await (this.options.hashGroup ?? hashSyncGroup)(this.options.resolveGroupRoot(group))
+          if (actual !== expected) throw new Error(`Local ${group} data changed after this import was planned; replan required`)
+        }
+      }
+      await this.options.replaceGroups(selected.map((group) => ({ group, source: join(input.stagingRoot, group) })))
     } finally { lease.release() }
   }
 }

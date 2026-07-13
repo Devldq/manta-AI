@@ -26,7 +26,7 @@ describe('planGroupConflicts', () => {
 
     expect(plan.groups).toEqual(expect.arrayContaining([
       expect.objectContaining({ group: 'knowledge', state: 'database-conflict', choices: ['keep-local', 'keep-remote'] }),
-      expect.objectContaining({ group: 'extensions', state: 'conflict', choices: ['keep-local', 'keep-remote', 'duplicate-asset'] }),
+      expect.objectContaining({ group: 'extensions', state: 'conflict', choices: ['keep-local', 'keep-remote'] }),
     ]))
     expect(plan.requiresConfirmation).toBe(true)
   })

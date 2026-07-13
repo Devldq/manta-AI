@@ -155,7 +155,10 @@ export const StorageGitBindingSchema = z.object({
 })
 
 /** A deliberate, group-level decision for a validated remote Git snapshot. */
-export const StorageImportChoiceSchema = z.enum(['keep-local', 'keep-remote', 'duplicate-asset'])
+// Imports are whole-group replacements.  Asset-level duplication would require
+// a separately validated immutable-asset format; do not advertise a no-op
+// choice until that format exists.
+export const StorageImportChoiceSchema = z.enum(['keep-local', 'keep-remote'])
 export const StorageGroupConflictStateSchema = z.enum(['unchanged', 'local-only', 'remote-only', 'remote-addition', 'conflict', 'database-conflict'])
 export const StorageGitImportGroupSchema = z.object({
   group: StorageGroupIdSchema,
