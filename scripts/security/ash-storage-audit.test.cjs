@@ -62,3 +62,11 @@ const e2e = runFixture({
 })
 assert.equal(e2e.status, 0, `${e2e.stdout}\n${e2e.stderr}`)
 process.stdout.write('ok - ignores dedicated E2E acceptance files\n')
+
+const hiddenProduction = runFixture({
+  file: 'packages/desktop/e2e/persistence.ts',
+  source: "import { writeFile } from 'node:fs/promises';\nexport async function persist() { await writeFile('/tmp/hidden', 'x') }",
+})
+assert.equal(hiddenProduction.status, 1, `${hiddenProduction.stdout}\n${hiddenProduction.stderr}`)
+assert.match(`${hiddenProduction.stdout}\n${hiddenProduction.stderr}`, /persistence\.ts:2:.*writeFile/)
+process.stdout.write('ok - audits production source even when it is placed under an e2e directory\n')

@@ -23,7 +23,7 @@ const normalized = (value) => value.split(path.sep).join('/')
 const productionExtensions = /\.(?:ts|tsx|js|mjs|cjs)$/
 // E2E is test-only: it deliberately creates operating-system temporary fixtures
 // and must not be interpreted as production persistence code.
-const excludedDirectories = new Set(['node_modules', 'dist', 'coverage', '.turbo', 'fixtures', 'e2e'])
+const excludedDirectories = new Set(['node_modules', 'dist', 'coverage', '.turbo', 'fixtures'])
 const files = []
 
 function walk(directory) {
@@ -33,7 +33,7 @@ function walk(directory) {
     if (entry.isDirectory()) {
       if (!excludedDirectories.has(entry.name)) walk(absolute)
     } else if (productionExtensions.test(entry.name)
-      && !/\.(?:test|spec)\.(?:ts|tsx|js|mjs|cjs)$/.test(entry.name)
+      && !/\.(?:test|spec|e2e)\.(?:ts|tsx|js|mjs|cjs)$/.test(entry.name)
       && !/\.d\.(?:ts|mts|cts)$/.test(entry.name)) files.push(absolute)
   }
 }
