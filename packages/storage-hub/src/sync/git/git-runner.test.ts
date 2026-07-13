@@ -48,6 +48,68 @@ describe('GitRunner', () => {
 })
 
 describe('GitSyncService import authorization', () => {
+  it('expires an import plan using the injected clock before it can modify live data', async () => {
+    const root = await directory(); const cache = `${root}.cache`; directories.push(cache)
+    const stagingRoot = path.join(cache, 'primary', '.ash', 'sync', 'import-staging', 'expired')
+    await mkdir(stagingRoot, { recursive: true }); await writeFile(path.join(root, 'live.txt'), 'unchanged')
+    let applied = false; let now = 1_000
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: { resolveVolumeRoot: () => root }, cachePath: (id) => path.join(cache, id), now: () => now, importSessionTtlMs: 10, importer: { apply: async () => { applied = true } } as any })
+    ;(service as any).imports.set('expired', { volumeId: 'primary', stagingRoot, manifest: { schemaVersion: 1, volumeId: 'primary', generation: 1, groupHashes: {}, createdAt: '2026-07-13T00:00:00.000Z' }, plan: { groups: [] }, localHashes: {}, allowedChoices: new Map(), expiresAt: 1_010 })
+    now = 1_011
+
+    await expect(service.applyRemoteImport('primary', { sessionId: 'expired', decisions: {} })).rejects.toThrow(/expired/i)
+    expect(applied).toBe(false)
+    await expect(readFile(path.join(root, 'live.txt'), 'utf8')).resolves.toBe('unchanged')
+    await expect(readFile(stagingRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('supersedes and cleans only the prior plan for the same volume', async () => {
+    const root = await directory(); const cache = `${root}.cache`; directories.push(cache)
+    const stagingOne = path.join(cache, 'primary', '.ash', 'sync', 'import-staging', 'one')
+    const stagingTwo = path.join(cache, 'primary', '.ash', 'sync', 'import-staging', 'two')
+    await Promise.all([mkdir(stagingOne, { recursive: true }), mkdir(stagingTwo, { recursive: true })]); await Promise.all([writeFile(path.join(stagingOne, 'marker'), 'one'), writeFile(path.join(stagingTwo, 'marker'), 'two')])
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: { resolveVolumeRoot: () => root }, cachePath: (id) => path.join(cache, id) })
+    const fetched = [stagingOne, stagingTwo]
+    ;(service as any).fetchRemoteImport = async () => ({ stagingRoot: fetched.shift(), manifest: { schemaVersion: 1, volumeId: 'primary', generation: 1, groupHashes: {}, createdAt: '2026-07-13T00:00:00.000Z' } })
+    ;(service as any).binding = async () => ({ lastSyncedGroupHashes: {} })
+
+    const first = await service.planRemoteImport('primary')
+    await service.planRemoteImport('primary')
+    expect((service as any).imports.has(first.sessionId)).toBe(false)
+    await expect(readFile(path.join(stagingOne, 'marker'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(path.join(stagingTwo, 'marker'))).resolves.toBeDefined()
+  })
+
+  it('keeps import plans for other volumes when one volume is superseded', async () => {
+    const root = await directory(); const cache = `${root}.cache`; directories.push(cache)
+    const roots = { alpha: path.join(root, 'alpha'), beta: path.join(root, 'beta') }
+    await Promise.all(Object.values(roots).map((item) => mkdir(item, { recursive: true })))
+    const alphaOne = path.join(cache, 'alpha', '.ash', 'sync', 'import-staging', 'one')
+    const alphaTwo = path.join(cache, 'alpha', '.ash', 'sync', 'import-staging', 'two')
+    const betaOne = path.join(cache, 'beta', '.ash', 'sync', 'import-staging', 'one')
+    await Promise.all([mkdir(alphaOne, { recursive: true }), mkdir(alphaTwo, { recursive: true }), mkdir(betaOne, { recursive: true })]); await writeFile(path.join(betaOne, 'marker'), 'beta')
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: { resolveVolumeRoot: (id) => roots[id as keyof typeof roots] }, cachePath: (id) => path.join(cache, id) })
+    const fetched = { alpha: [alphaOne, alphaTwo], beta: [betaOne] }
+    ;(service as any).fetchRemoteImport = async (id: keyof typeof fetched) => ({ stagingRoot: fetched[id].shift(), manifest: { schemaVersion: 1, volumeId: id, generation: 1, groupHashes: {}, createdAt: '2026-07-13T00:00:00.000Z' } })
+    ;(service as any).binding = async () => ({ lastSyncedGroupHashes: {} })
+
+    await service.planRemoteImport('alpha')
+    const beta = await service.planRemoteImport('beta')
+    await service.planRemoteImport('alpha')
+    expect((service as any).imports.has(beta.sessionId)).toBe(true)
+    await expect(readFile(path.join(betaOne, 'marker'))).resolves.toBeDefined()
+  })
+
+  it('never lets discard remove a staging path outside the cache group', async () => {
+    const root = await directory(); const cache = `${root}.cache`; directories.push(cache)
+    const unsafeStaging = path.join(root, 'must-not-delete'); await mkdir(unsafeStaging); await writeFile(path.join(unsafeStaging, 'marker'), 'live')
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: { resolveVolumeRoot: () => root }, cachePath: (id) => path.join(cache, id) })
+    ;(service as any).imports.set('unsafe', { volumeId: 'primary', stagingRoot: unsafeStaging, manifest: { schemaVersion: 1, volumeId: 'primary', generation: 1, groupHashes: {}, createdAt: '2026-07-13T00:00:00.000Z' }, plan: { groups: [] }, localHashes: {}, allowedChoices: new Map(), expiresAt: Number.MAX_SAFE_INTEGER })
+
+    await service.discardRemoteImport('primary', 'unsafe')
+    await expect(readFile(path.join(unsafeStaging, 'marker'), 'utf8')).resolves.toBe('live')
+  })
+
   it('rejects forged, omitted, and disallowed IPC decisions before the importer sees them', async () => {
     const root = await directory(); const applied: unknown[] = []
     const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: { resolveVolumeRoot: () => root }, cachePath: () => `${root}.cache`, importer: { apply: async (value: unknown) => { applied.push(value) } } as any })

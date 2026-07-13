@@ -23,6 +23,18 @@ type BindTransaction = {
   credential?: { ref: string; original?: string }
 }
 
+type ImportSession = {
+  volumeId: string
+  stagingRoot: string
+  manifest: SyncManifest
+  plan: ConflictPlan
+  localHashes: Partial<Record<import('@manta/shared').StorageGroupId, string>>
+  allowedChoices: Map<import('@manta/shared').StorageGroupId, ReadonlySet<ImportChoice>>
+  expiresAt: number
+}
+
+const DEFAULT_IMPORT_SESSION_TTL_MS = 5 * 60_000
+
 async function readOptional(path: string): Promise<string | undefined> {
   try { return await readFile(path, 'utf8') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error }
 }
@@ -48,8 +60,8 @@ export class GitSyncService {
   private readonly credentials: CredentialStore
   /** Desktop binding requests share this service instance; serialize each volume's full setup transaction. */
   private readonly bindingTails = new Map<string, Promise<void>>()
-  private readonly imports = new Map<string, { volumeId: string; stagingRoot: string; manifest: SyncManifest; plan: ConflictPlan; localHashes: Partial<Record<import('@manta/shared').StorageGroupId, string>>; allowedChoices: Map<import('@manta/shared').StorageGroupId, ReadonlySet<ImportChoice>> }>()
-  constructor(private readonly options: { runner: GitRunner; bindings: GitBindingStore; volumes: { resolveVolumeRoot(volumeId: string): string }; cachePath: (volumeId: string) => string; credentials?: CredentialStore; snapshots?: { generation: () => number; leases: StorageLeaseManager; checkpoint?: (group: import('@manta/shared').StorageGroupId) => Promise<void> }; importer?: ImportCoordinator }) { this.credentials = options.credentials ?? new UnavailableCredentialStore() }
+  private readonly imports = new Map<string, ImportSession>()
+  constructor(private readonly options: { runner: GitRunner; bindings: GitBindingStore; volumes: { resolveVolumeRoot(volumeId: string): string }; cachePath: (volumeId: string) => string; credentials?: CredentialStore; snapshots?: { generation: () => number; leases: StorageLeaseManager; checkpoint?: (group: import('@manta/shared').StorageGroupId) => Promise<void> }; importer?: ImportCoordinator; now?: () => number; importSessionTtlMs?: number }) { this.credentials = options.credentials ?? new UnavailableCredentialStore() }
 
   async bindVolume(input: { volumeId: string; mode: GitBindingMode; remoteUrl?: string; credentialRef?: string; credential?: GitCredentialInput }): Promise<GitBinding> {
     if (input.mode === 'remote' && !input.remoteUrl) throw new Error('Remote Git binding requires a remote URL')
@@ -157,19 +169,37 @@ export class GitSyncService {
   /** Creates an opaque, user-confirmable plan; paths never cross the privileged IPC boundary. */
   async planRemoteImport(volumeId: string): Promise<{ sessionId: string; plan: ConflictPlan }> {
     const fetched = await this.fetchRemoteImport(volumeId)
-    const binding = await this.binding(volumeId)
-    const local: Partial<Record<import('@manta/shared').StorageGroupId, string>> = {}
-    for (const group of Object.keys(fetched.manifest.groupHashes) as import('@manta/shared').StorageGroupId[]) local[group] = await hashSyncGroup(join(this.options.volumes.resolveVolumeRoot(volumeId), group))
-    const plan = planGroupConflicts({ base: binding.lastSyncedGroupHashes ?? {}, local, remote: fetched.manifest.groupHashes })
-    const allowedChoices = new Map(plan.groups.map(({ group, choices }) => [group, new Set(choices)]))
-    const sessionId = randomUUID(); this.imports.set(sessionId, { volumeId, stagingRoot: fetched.stagingRoot, manifest: fetched.manifest, plan, localHashes: local, allowedChoices })
-    return { sessionId, plan }
+    try {
+      return await this.withBindingLock(volumeId, async () => {
+        const binding = await this.binding(volumeId)
+        const local: Partial<Record<import('@manta/shared').StorageGroupId, string>> = {}
+        for (const group of Object.keys(fetched.manifest.groupHashes) as import('@manta/shared').StorageGroupId[]) local[group] = await hashSyncGroup(join(this.options.volumes.resolveVolumeRoot(volumeId), group))
+        const plan = planGroupConflicts({ base: binding.lastSyncedGroupHashes ?? {}, local, remote: fetched.manifest.groupHashes })
+        const allowedChoices = new Map(plan.groups.map(({ group, choices }) => [group, new Set(choices)]))
+        for (const [id, session] of this.imports) {
+          if (session.volumeId !== volumeId) continue
+          this.imports.delete(id)
+          await this.removeStaging(volumeId, session.stagingRoot)
+        }
+        const sessionId = randomUUID()
+        this.imports.set(sessionId, { volumeId, stagingRoot: fetched.stagingRoot, manifest: fetched.manifest, plan, localHashes: local, allowedChoices, expiresAt: this.now() + this.importSessionTtlMs() })
+        return { sessionId, plan }
+      })
+    } catch (error) {
+      await this.removeStaging(volumeId, fetched.stagingRoot)
+      throw error
+    }
   }
 
   async applyRemoteImport(volumeId: string, input: { sessionId: string; decisions: Partial<Record<import('@manta/shared').StorageGroupId, ImportChoice>> }): Promise<void> {
     return this.withBindingLock(volumeId, async () => {
       const session = this.imports.get(input.sessionId)
       if (!session || session.volumeId !== volumeId) throw new Error('Unknown or expired remote import plan')
+      if (session.expiresAt !== undefined && this.now() >= session.expiresAt) {
+        this.imports.delete(input.sessionId)
+        await this.removeStaging(volumeId, session.stagingRoot)
+        throw new Error('Remote import plan has expired')
+      }
       if (!this.options.importer) throw new Error('Remote import is unavailable')
       this.validateImportDecisions(session, input.decisions)
       try { await this.options.importer.apply({ volumeId, stagingRoot: session.stagingRoot, manifest: session.manifest, decisions: input.decisions, expectedLocalHashes: session.localHashes }) }
@@ -178,8 +208,10 @@ export class GitSyncService {
   }
 
   async discardRemoteImport(volumeId: string, sessionId: string): Promise<void> {
-    const session = this.imports.get(sessionId); if (!session || session.volumeId !== volumeId) return
-    this.imports.delete(sessionId); await this.removeStaging(volumeId, session.stagingRoot)
+    return this.withBindingLock(volumeId, async () => {
+      const session = this.imports.get(sessionId); if (!session || session.volumeId !== volumeId) return
+      this.imports.delete(sessionId); await this.removeStaging(volumeId, session.stagingRoot)
+    })
   }
 
   private async binding(volumeId: string): Promise<GitBinding> { const binding = await this.options.bindings.get(volumeId); if (!binding) throw new Error(`Volume ${volumeId} has no Git binding`); await this.ensureRepository(binding); return binding }
@@ -228,7 +260,16 @@ export class GitSyncService {
     }
     throw lastError
   }
+  private now(): number { return this.options.now?.() ?? Date.now() }
+  private importSessionTtlMs(): number {
+    const ttl = this.options.importSessionTtlMs ?? DEFAULT_IMPORT_SESSION_TTL_MS
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_IMPORT_SESSION_TTL_MS
+  }
   private async removeStaging(volumeId: string, stagingRoot: string): Promise<void> {
+    const stagingParent = resolve(this.options.cachePath(volumeId), '.ash', 'sync', 'import-staging')
+    const candidate = resolve(stagingRoot)
+    const pathFromParent = relative(stagingParent, candidate)
+    if (!pathFromParent || pathFromParent === '..' || pathFromParent.startsWith(`..${sep}`) || isAbsolute(pathFromParent)) return
     const repositoryPath = this.repositoryPath(volumeId)
     await this.options.runner.exec(['worktree', 'remove', '--force', stagingRoot], { cwd: repositoryPath }).catch(() => {})
     await rm(stagingRoot, { recursive: true, force: true })

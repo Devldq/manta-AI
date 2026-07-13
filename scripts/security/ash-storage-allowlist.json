@@ -2,70 +2,70 @@
   "calls": [
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 70,
+      "line": 82,
       "column": 15,
       "operation": "mkdir",
       "reason": "Reviewed disposable Git workspace creation under the injected ASH cache storage group; it never writes into the active synchronized volume."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 77,
+      "line": 89,
       "column": 15,
       "operation": "writeFile",
       "reason": "Reviewed Git ignore policy write under the injected ASH cache storage group; it never writes into the active synchronized volume."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 201,
+      "line": 233,
       "column": 11,
       "operation": "mkdir",
       "reason": "Reviewed reconstruction of a disposable Git workspace under the injected ASH cache storage group after cache cleanup or migration."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 205,
+      "line": 237,
       "column": 45,
       "operation": "writeFile",
       "reason": "Reviewed missing Git ignore policy restoration under the injected ASH cache storage group for the disposable workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 254,
+      "line": 295,
       "column": 64,
       "operation": "rm",
       "reason": "Reviewed rollback cleanup limited to a Git ignore file in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 255,
+      "line": 296,
       "column": 18,
       "operation": "writeFile",
       "reason": "Reviewed rollback restoration of a prior Git ignore file in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 257,
+      "line": 298,
       "column": 76,
       "operation": "rm",
       "reason": "Reviewed rollback removal of a newly created Git metadata directory in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 137,
+      "line": 149,
       "column": 13,
       "operation": "mkdir",
       "reason": "Reviewed creation of a disposable remote-import Git worktree under the injected ASH cache group; it is never an active synchronized volume."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 151,
+      "line": 163,
       "column": 15,
       "operation": "rm",
       "reason": "Reviewed cleanup limited to a failed disposable remote-import worktree under the injected ASH cache group."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 234,
+      "line": 275,
       "column": 11,
       "operation": "rm",
       "reason": "Reviewed cleanup of an opaque user-confirmation import staging worktree under the injected ASH cache group."
