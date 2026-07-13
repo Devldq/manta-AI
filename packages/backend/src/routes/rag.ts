@@ -33,6 +33,7 @@ import { createAISDKModel } from '../core/llm/ai-sdk-provider'
 import { createRagUploadStorage } from '../storage/rag-upload-storage'
 import { resolveStoragePath } from '../storage/path-routing'
 import { readFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 
 // ─── Embedding Service 工厂 ─────────────────────────────────────
 // 从 KB 配置或环境变量构建 embedding 服务，传入 rag 包
@@ -328,9 +329,9 @@ export async function ragRoutes(app: FastifyInstance) {
         cacheUploadsRoot: resolveStoragePath('cache', 'uploads'),
         documentsRoot: resolveStoragePath('knowledge', 'documents'),
       })
+      const docId = uuidv4()
       const stored = await uploadStorage.ingest(data.file, fileName, async (stagedPath, document) => {
         const buffer = await readFile(stagedPath)
-        const docId = uuidv4()
         const metadata: DocumentMetadata = {
           id: docId,
           name: fileName,
@@ -357,7 +358,7 @@ export async function ragRoutes(app: FastifyInstance) {
           },
         })
         return pipeline.process(buffer, metadata, kbId)
-      })
+      }, { volumeRoot: dirname(resolveStoragePath('knowledge')), documentId: docId })
       const result = stored.result
 
       const provider = getSQLiteVecProvider()

@@ -60,6 +60,14 @@ describe('per-volume content addressed storage', () => {
     await expect(new AssetManifestStore(volume).write({ assetId: 'asset', entries: [{ path: 'config/settings.json', hash: sha256('x'), size: 1 }] })).rejects.toThrow(/path|group/i)
   })
 
+  it('ingests only a regular file below an explicitly trusted volume cache staging root', async () => {
+    const volume = await root(); const staging = join(volume, 'cache', 'uploads'); await mkdir(staging, { recursive: true }); const input = join(staging, 'one.upload'); await writeFile(input, 'staged')
+    const objects = new VolumeObjectStore(volume)
+    await expect(objects.ingestStagedFile(input, staging)).resolves.toMatchObject({ hash: sha256('staged') })
+    const outside = join(volume, 'knowledge', 'document'); await mkdir(join(volume, 'knowledge')); await writeFile(outside, 'outside')
+    await expect(objects.ingestStagedFile(outside, staging)).rejects.toThrow(/staging|cache|outside/i)
+  })
+
   it('rejects a Windows destination on another drive before it can be materialized', async () => {
     const volume = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('asset'))
     await expect(materializeAsset({ volumeRoot: volume, object, destination: 'D:\\outside-volume\\asset.bin' })).rejects.toThrow(/escapes/i)
@@ -89,5 +97,14 @@ describe('per-volume content addressed storage', () => {
   it('propagates reflink permission errors instead of falling back to copy', async () => {
     const volume = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('asset'))
     await expect(materializeAsset({ volumeRoot: volume, object, destination: join(volume, 'assets', 'asset.bin'), reflink: async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }) } })).rejects.toThrow(/denied/i)
+  })
+
+  it('removes only the exact manifest revision approved by its caller', async () => {
+    const volume = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('asset')); const manifests = new AssetManifestStore(volume)
+    const first = await manifests.write({ assetId: 'removable', entries: [{ path: 'one.bin', hash: object.hash, size: object.size }] })
+    await expect(manifests.remove('removable', { createdAt: '2000-01-01T00:00:00.000Z' })).resolves.toBe(false)
+    await expect(manifests.read('removable')).resolves.toMatchObject({ createdAt: first.createdAt })
+    await expect(manifests.remove('removable', { createdAt: first.createdAt! })).resolves.toBe(true)
+    await expect(manifests.read('removable')).rejects.toThrow()
   })
 })

@@ -5,6 +5,7 @@ import { Transform, type Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { durableAtomicWrite, durableCopy, durableFsyncFile, durableMkdir, durableRemove } from './durable-atomic'
 import { acquireStorageFileLock } from './file-lock'
+import { createContentAssetService } from './content-assets'
 
 export interface RagUploadStorageOptions {
   cacheUploadsRoot: string
@@ -19,6 +20,7 @@ export interface StoredRagDocument {
   size: number
   safeName: string
 }
+export interface RagUploadAssetOptions { volumeRoot: string; documentId: string; beforePublish?: (assetId: string) => void | Promise<void> }
 const activeUploads = new Map<string, number>()
 const ragHashLockPath = (knowledgeRoot: string, hash: string) => join(knowledgeRoot, '.locks', `${hash}.lock`)
 
@@ -31,7 +33,7 @@ function safeUploadName(input: string): string {
 export function createRagUploadStorage(options: RagUploadStorageOptions) {
   const maxBytes = options.maxBytes ?? 50 * 1024 * 1024
   return {
-    async ingest<T>(source: Readable, originalName: string, processStaged: (stagedPath: string, document: StoredRagDocument) => Promise<T>): Promise<StoredRagDocument & { result: T }> {
+    async ingest<T>(source: Readable, originalName: string, processStaged: (stagedPath: string, document: StoredRagDocument) => Promise<T>, asset?: RagUploadAssetOptions): Promise<StoredRagDocument & { result: T }> {
       activeUploads.set(options.cacheUploadsRoot, (activeUploads.get(options.cacheUploadsRoot) ?? 0) + 1)
       durableMkdir(options.cacheUploadsRoot)
       const stagedPath = join(options.cacheUploadsRoot, `${randomUUID()}.upload`)
@@ -55,7 +57,7 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
         // make concurrent, differently named uploads converge on one object.
         const storedName = sha256
         const absolutePath = join(options.documentsRoot, storedName)
-        const document = { absolutePath, relativePath: posix.join('documents', storedName), sha256, size, safeName }
+        const document = { absolutePath, relativePath: asset ? `asset:document.${asset.documentId}` : posix.join('documents', storedName), sha256, size, safeName }
         const transactionId = basename(stagedPath, '.upload'); const orphanRoot = join(dirname(options.documentsRoot), '.orphans', sha256); durableMkdir(orphanRoot); const orphanPath = join(orphanRoot, `${transactionId}.json`)
         durableAtomicWrite(orphanPath, JSON.stringify({ version: 1, hash: sha256, transactionId, createdAt: new Date().toISOString(), status: 'pending-pipeline' }))
         durableFsyncFile(stagedPath, sha256)
@@ -64,7 +66,15 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
           if (!existsSync(absolutePath)) { try { durableCopy(stagedPath, absolutePath, { exclusive: true, expectedHash: sha256 }) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error } }
           durableFsyncFile(absolutePath, sha256)
         } finally { release() }
-        const result = await processStaged(stagedPath, document)
+        const prepared = asset
+          ? await createContentAssetService({ volumeRoot: asset.volumeRoot, trustedStagingRoot: options.cacheUploadsRoot, beforePublish: asset.beforePublish }).prepareDocument({ documentId: asset.documentId, source: stagedPath, name: safeName })
+          : undefined
+        if (prepared) document.absolutePath = prepared.object.path
+        let result: T
+        try { result = await processStaged(stagedPath, document) } catch (error) { await prepared?.rollback(); throw error }
+        if (asset) {
+          durableRemove(absolutePath)
+        }
         durableRemove(orphanPath)
         try { if (!readdirSync(orphanRoot).length) durableRemove(orphanRoot) } catch { /* another owner is changing */ }
         return { result, ...document }

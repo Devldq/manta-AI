@@ -69,6 +69,18 @@ export class VolumeObjectStore {
 
   async ingestFile(source: string): Promise<ContentObject> {
     this.assertIngestible(source)
+    return this.ingestVerifiedFile(source)
+  }
+
+  async ingestStagedFile(source: string, trustedStagingRoot: string): Promise<ContentObject> {
+    const stagingRoot = resolve(trustedStagingRoot); const absolute = resolve(source)
+    const parts = relative(this.volumeRoot, stagingRoot).split(/[\\/]/).filter(Boolean)
+    if (parts[0] !== 'cache' || !isContainedPath(stagingRoot, absolute) || absolute === stagingRoot) throw new Error('Trusted CAS staging file must be below a cache staging root in this volume')
+    await ensureSafeDirectory(this.volumeRoot, stagingRoot)
+    return this.ingestVerifiedFile(absolute)
+  }
+
+  private async ingestVerifiedFile(source: string): Promise<ContentObject> {
     const sourceStat = await lstat(source)
     if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) throw new Error('CAS ingestion requires a regular non-symbolic-link file')
     const value = await fileDigest(source); const target = await this.pathFor(value.hash); await ensureSafeDirectory(this.volumeRoot, dirname(target))

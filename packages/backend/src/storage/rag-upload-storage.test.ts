@@ -4,9 +4,49 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
+import { AssetManifestStore } from '@manta/storage-hub'
 import { cleanupRagOrphans, createRagUploadStorage } from './rag-upload-storage'
 
 describe('RAG original document storage', () => {
+  it('publishes one CAS object and separate manifests for equal uploads with different document IDs', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-cas-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
+    mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    const first = await storage.ingest(Readable.from('same'), 'a.txt', async () => 'a', { volumeRoot, documentId: 'doc-a' })
+    const second = await storage.ingest(Readable.from('same'), 'b.txt', async () => 'b', { volumeRoot, documentId: 'doc-b' })
+    expect(first.sha256).toBe(second.sha256)
+    const manifests = new AssetManifestStore(volumeRoot)
+    await expect(manifests.read('document.doc-a')).resolves.toMatchObject({ assetId: 'document.doc-a' })
+    await expect(manifests.read('document.doc-b')).resolves.toMatchObject({ assetId: 'document.doc-b' })
+    expect(readdirSync(join(volumeRoot, '.ash', 'objects', 'sha256', first.sha256.slice(0, 2)))).toEqual([first.sha256])
+  })
+
+  it('does not publish a document manifest when processing fails and retains recoverable content', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-cas-fail-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
+    mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('recover me'), 'a.txt', async () => { throw new Error('pipeline failed') }, { volumeRoot, documentId: 'doc-failed' })).rejects.toThrow(/pipeline failed/)
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-failed')).rejects.toThrow()
+    expect(readdirSync(join(knowledge, 'documents'))).toHaveLength(1)
+  })
+
+  it('does not start processing when document manifest publication fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-manifest-fail-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
+    mkdirSync(knowledge, { recursive: true }); let processed = false
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('recover me'), 'a.txt', async () => { processed = true }, { volumeRoot, documentId: 'doc-failed', beforePublish: () => { throw new Error('manifest fault') } })).rejects.toThrow(/manifest fault/)
+    expect(processed).toBe(false)
+    expect(readdirSync(join(knowledge, 'documents'))).toHaveLength(1)
+  })
+
+  it('does not delete an idempotent pre-existing manifest when a retry pipeline fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-existing-manifest-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
+    mkdirSync(knowledge, { recursive: true }); const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    await storage.ingest(Readable.from('same'), 'a.txt', async () => 'ok', { volumeRoot, documentId: 'doc-stable' })
+    await expect(storage.ingest(Readable.from('same'), 'a.txt', async () => { throw new Error('retry failed') }, { volumeRoot, documentId: 'doc-stable' })).rejects.toThrow(/retry failed/)
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-stable')).resolves.toMatchObject({ assetId: 'document.doc-stable' })
+  })
+
   it('streams through cache/uploads, sanitizes names, and deduplicates identical content', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-rag-upload-'))
     const storage = createRagUploadStorage({
