@@ -43,7 +43,7 @@ export class GitSyncService {
   private readonly credentials: CredentialStore
   /** Desktop binding requests share this service instance; serialize each volume's full setup transaction. */
   private readonly bindingTails = new Map<string, Promise<void>>()
-  constructor(private readonly options: { runner: GitRunner; bindings: GitBindingStore; volumes: { resolveVolumeRoot(volumeId: string): string }; cachePath?: (volumeId: string) => string; credentials?: CredentialStore; snapshots?: { generation: () => number; leases: StorageLeaseManager; checkpoint?: (group: import('@manta/shared').StorageGroupId) => Promise<void> } }) { this.credentials = options.credentials ?? new UnavailableCredentialStore() }
+  constructor(private readonly options: { runner: GitRunner; bindings: GitBindingStore; volumes: { resolveVolumeRoot(volumeId: string): string }; cachePath: (volumeId: string) => string; credentials?: CredentialStore; snapshots?: { generation: () => number; leases: StorageLeaseManager; checkpoint?: (group: import('@manta/shared').StorageGroupId) => Promise<void> } }) { this.credentials = options.credentials ?? new UnavailableCredentialStore() }
 
   async bindVolume(input: { volumeId: string; mode: GitBindingMode; remoteUrl?: string; credentialRef?: string; credential?: GitCredentialInput }): Promise<GitBinding> {
     if (input.mode === 'remote' && !input.remoteUrl) throw new Error('Remote Git binding requires a remote URL')
@@ -122,12 +122,26 @@ export class GitSyncService {
   private async ensureRepository(binding: GitBinding): Promise<void> {
     const repositoryPath = this.repositoryPath(binding.volumeId)
     await mkdir(repositoryPath, { recursive: true })
-    if (!await exists(join(repositoryPath, '.git'))) await this.options.runner.exec(['init', '--quiet'], { cwd: repositoryPath })
+    const rebuilt = !await exists(join(repositoryPath, '.git'))
+    if (rebuilt) await this.options.runner.exec(['init', '--quiet'], { cwd: repositoryPath })
     const gitignorePath = join(repositoryPath, '.gitignore')
     if (!await exists(gitignorePath)) await writeFile(gitignorePath, SAFE_IGNORE, 'utf8')
     if (binding.mode !== 'remote' || !binding.remoteUrl) return
     try { await this.options.runner.exec(['remote', 'get-url', 'origin'], { cwd: repositoryPath }) }
     catch { await this.options.runner.exec(['remote', 'add', 'origin', binding.remoteUrl], { cwd: repositoryPath }) }
+    if (!rebuilt) return
+    // Recreate the local branch ancestry without checking out, merging, or
+    // resetting snapshot files. This only touches the disposable cache repo,
+    // so a later snapshot commit remains a fast-forward of the remote state.
+    await this.options.runner.exec(['fetch', '--no-tags', 'origin'], { cwd: repositoryPath })
+    const branch = (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
+    const remoteRef = `refs/remotes/origin/${branch}`
+    try {
+      const remoteCommit = (await this.options.runner.exec(['rev-parse', '--verify', remoteRef], { cwd: repositoryPath })).stdout.trim()
+      await this.options.runner.exec(['update-ref', `refs/heads/${branch}`, remoteCommit], { cwd: repositoryPath })
+    } catch {
+      // An empty remote has no branch yet; the first snapshot will create it.
+    }
   }
   private async pushWithRetry(repositoryPath: string): Promise<void> {
     const branch = (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
@@ -165,13 +179,13 @@ export class GitSyncService {
     // A Git checkout is a transient rebuildable workspace.  Keeping it under the
     // injected cache group guarantees snapshots never include their own .git data
     // and lets cache/group migration carry it safely without touching source data.
-    // Legacy library callers are kept operational during the transition, while
-    // the application composition always injects `cachePath` from the ASH cache
-    // group.  No app code may rely on this compatibility fallback.
-    const root = this.options.cachePath?.(volumeId) ?? this.options.volumes.resolveVolumeRoot(volumeId)
+    if (typeof this.options.cachePath !== 'function') throw new Error('Git cache workspace resolver is required')
+    const root = this.options.cachePath(volumeId)
+    if (!root) throw new Error(`Volume ${volumeId} has an invalid cache workspace`)
+    if (resolve(root) === resolve(this.options.volumes.resolveVolumeRoot(volumeId))) throw new Error(`Volume ${volumeId} cannot use its active volume as a Git cache workspace`)
     const path = resolve(root, REPOSITORY_RELATIVE_PATH)
     const pathRelative = relative(root, path)
-    if (!root || pathRelative === '..' || pathRelative.startsWith(`..${sep}`) || isAbsolute(pathRelative)) throw new Error(`Volume ${volumeId} has an invalid cache workspace`)
+    if (pathRelative === '..' || pathRelative.startsWith(`..${sep}`) || isAbsolute(pathRelative)) throw new Error(`Volume ${volumeId} has an invalid cache workspace`)
     return path
   }
   private async scanForSecrets(repositoryPath: string): Promise<void> {

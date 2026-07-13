@@ -23,28 +23,28 @@
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 127,
+      "line": 128,
       "column": 45,
       "operation": "writeFile",
       "reason": "Reviewed missing Git ignore policy restoration under the injected ASH cache storage group for the disposable workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 158,
+      "line": 172,
       "column": 64,
       "operation": "rm",
       "reason": "Reviewed rollback cleanup limited to a Git ignore file in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 159,
+      "line": 173,
       "column": 18,
       "operation": "writeFile",
       "reason": "Reviewed rollback restoration of a prior Git ignore file in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 161,
+      "line": 175,
       "column": 76,
       "operation": "rm",
       "reason": "Reviewed rollback removal of a newly created Git metadata directory in the injected ASH cache storage group workspace."
