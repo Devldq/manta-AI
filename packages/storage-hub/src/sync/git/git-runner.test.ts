@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeCredentialStore, GitBindingStore, GitRunner, GitSyncService, redactGitText } from './index'
+import { StorageLeaseManager } from '../../runtime/lease-manager'
 
 const directories: string[] = []
 
@@ -257,5 +258,40 @@ describe('GitSyncService', () => {
     await new GitRunner().exec(['add', '-f', `${group}/forced.txt`], { cwd: repositoryPath })
     await expect(service.commitLocalSnapshot('primary', 'must fail')).rejects.toThrow(/excluded/i)
     await expect(new GitRunner().exec(['ls-files', '-z'], { cwd: repositoryPath })).resolves.toMatchObject({ stdout: '' })
+  })
+
+  it('snapshots persistent volume groups then commits and pushes them to a real bare remote', async () => {
+    const root = await directory(); const remote = await directory(); const git = new GitRunner(); const leases = new StorageLeaseManager()
+    await git.exec(['init', '--bare', '--quiet'], { cwd: remote })
+    await mkdir(path.join(root, 'work'), { recursive: true }); await mkdir(path.join(root, 'knowledge'), { recursive: true }); await mkdir(path.join(root, 'secrets'), { recursive: true })
+    await writeFile(path.join(root, 'work', 'task.md'), 'synchronized task')
+    await writeFile(path.join(root, 'knowledge', 'rag.sqlite'), 'sqlite snapshot')
+    await writeFile(path.join(root, 'knowledge', 'rag.sqlite-wal'), 'do not commit')
+    await writeFile(path.join(root, 'secrets', 'key.txt'), 'not synchronized')
+    const service = new GitSyncService({ runner: git, bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), snapshots: { generation: () => 9, leases } })
+    const binding = await service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/ash.git' })
+    await git.exec(['remote', 'set-url', 'origin', `file://${remote}`], { cwd: path.join(root, binding.repositoryRelativePath) })
+
+    const result = await service.syncVolume('primary')
+    expect(result.commit).toMatch(/^[a-f0-9]{40}$/)
+    expect((await service.listBindings())[0]).toMatchObject({ lastSyncedGroupHashes: { work: expect.stringMatching(/^[a-f0-9]{64}$/) } })
+    const clone = await directory(); await git.exec(['clone', '--quiet', `file://${remote}`, clone])
+    await expect(readFile(path.join(clone, 'work', 'task.md'), 'utf8')).resolves.toBe('synchronized task')
+    await expect(readFile(path.join(clone, 'knowledge', 'rag.sqlite-wal'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(path.join(clone, 'secrets', 'key.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(JSON.parse(await readFile(path.join(clone, 'ash-sync-manifest.json'), 'utf8')).groupHashes.work).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('redacts an offline remote failure and retries only the push without changing active data', async () => {
+    const root = await directory(); const remote = await directory(); const real = new GitRunner(); const commands: string[][] = []; const leases = new StorageLeaseManager()
+    await real.exec(['init', '--bare', '--quiet'], { cwd: remote }); await mkdir(path.join(root, 'work'), { recursive: true }); await writeFile(path.join(root, 'work', 'task.md'), 'safe')
+    const runner = new GitRunner({ execFile: async (_binary, args, options) => { commands.push([...args]); return real.exec(args, { cwd: options.cwd, env: options.env }) } })
+    const service = new GitSyncService({ runner, bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), snapshots: { generation: () => 1, leases } })
+    const binding = await service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/ash.git' })
+    // Simulate an offline endpoint after a previously valid configuration.
+    await real.exec(['remote', 'set-url', 'origin', 'https://alice:token_12345678901234567890@example.test/ash.git'], { cwd: path.join(root, binding.repositoryRelativePath) })
+    await expect(service.syncVolume('primary')).rejects.not.toThrow('token_12345678901234567890')
+    expect(commands.filter((command) => command[0] === 'push')).toHaveLength(2)
+    await expect(readFile(path.join(root, 'work', 'task.md'), 'utf8')).resolves.toBe('safe')
   })
 })

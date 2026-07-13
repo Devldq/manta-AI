@@ -115,6 +115,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
 }
 
 export async function createBackendStorageComposition(bootstrap: BootstrapStore, options: { onProgress?: (progress: import('@manta/shared').StorageOperationProgress) => void } = {}) {
+  const initialBootstrap = await bootstrap.read()
   let runtime: BackendStorageRuntime | undefined
   const hub = await createStorageHub({
     bootstrap,
@@ -130,6 +131,11 @@ export async function createBackendStorageComposition(bootstrap: BootstrapStore,
     // Resolve this lazily so config-group relocation is reflected after the required relaunch.
     bindings: new GitBindingStore(() => runtime!.resolve('config')),
     volumes: { resolveVolumeRoot: hub.resolveVolumeRoot },
+    snapshots: {
+      generation: () => initialBootstrap?.generation ?? 0,
+      leases: hub.leases,
+      checkpoint: async (group) => runtime!.drivers.get(group)?.checkpoint(),
+    },
   })
   return { hub, runtime, git }
 }

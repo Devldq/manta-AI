@@ -3,6 +3,8 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { GitBindingStore } from './git-binding-store'
 import { GitRunner, redactGitText } from './git-runner'
 import { GitBindingConflictError, UnavailableCredentialStore, type CredentialStore, type GitBinding, type GitBindingMode, type GitCredentialInput } from './types'
+import { buildVolumeSnapshot } from '../snapshot-builder'
+import type { StorageLeaseManager } from '../../runtime/lease-manager'
 
 const SYNC_EXCLUDED_GROUPS = new Set(['secrets', 'diagnostics', 'cache'])
 const SAFE_IGNORE = ['# Manta ASH Git snapshots never include sensitive or transient groups.', 'secrets/', 'diagnostics/', 'cache/', '.ash/'].join('\n') + '\n'
@@ -41,7 +43,7 @@ export class GitSyncService {
   private readonly credentials: CredentialStore
   /** Desktop binding requests share this service instance; serialize each volume's full setup transaction. */
   private readonly bindingTails = new Map<string, Promise<void>>()
-  constructor(private readonly options: { runner: GitRunner; bindings: GitBindingStore; volumes: { resolveVolumeRoot(volumeId: string): string }; credentials?: CredentialStore }) { this.credentials = options.credentials ?? new UnavailableCredentialStore() }
+  constructor(private readonly options: { runner: GitRunner; bindings: GitBindingStore; volumes: { resolveVolumeRoot(volumeId: string): string }; credentials?: CredentialStore; snapshots?: { generation: () => number; leases: StorageLeaseManager; checkpoint?: (group: import('@manta/shared').StorageGroupId) => Promise<void> } }) { this.credentials = options.credentials ?? new UnavailableCredentialStore() }
 
   async bindVolume(input: { volumeId: string; mode: GitBindingMode; remoteUrl?: string; credentialRef?: string; credential?: GitCredentialInput }): Promise<GitBinding> {
     if (input.mode === 'remote' && !input.remoteUrl) throw new Error('Remote Git binding requires a remote URL')
@@ -98,7 +100,31 @@ export class GitSyncService {
     return (await this.options.runner.exec(['rev-parse', '--verify', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
   }
 
+  /**
+   * Produces a lease-protected cache snapshot before Git touches it.  No Git
+   * checkout, merge, or reset is ever performed against the active volume.
+   */
+  async syncVolume(volumeId: string): Promise<{ commit: string; groupHashes: Partial<Record<import('@manta/shared').StorageGroupId, string>> }> {
+    if (!this.options.snapshots) throw new Error('Git snapshot support is unavailable')
+    return this.withBindingLock(volumeId, async () => {
+      const binding = await this.binding(volumeId); const repositoryPath = this.repositoryPath(binding)
+      const manifest = await buildVolumeSnapshot({ volumeId, generation: this.options.snapshots!.generation(), volumeRoot: this.options.volumes.resolveVolumeRoot(volumeId), cachePath: repositoryPath, leases: this.options.snapshots!.leases, checkpoint: this.options.snapshots!.checkpoint })
+      const commit = await this.commitLocalSnapshot(volumeId, `ASH snapshot ${manifest.generation}`)
+      if (binding.mode === 'remote') await this.pushWithRetry(repositoryPath)
+      await this.options.bindings.recordSync(volumeId, manifest.groupHashes)
+      return { commit, groupHashes: manifest.groupHashes }
+    })
+  }
+
   private async binding(volumeId: string): Promise<GitBinding> { const binding = await this.options.bindings.get(volumeId); if (!binding) throw new Error(`Volume ${volumeId} has no Git binding`); this.repositoryPath(binding); return binding }
+  private async pushWithRetry(repositoryPath: string): Promise<void> {
+    const branch = (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
+    let lastError: unknown
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try { await this.options.runner.exec(['push', 'origin', `HEAD:refs/heads/${branch}`], { cwd: repositoryPath }); return } catch (error) { lastError = error }
+    }
+    throw lastError
+  }
   private async withBindingLock<T>(volumeId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.bindingTails.get(volumeId) ?? Promise.resolve()
     let release!: () => void

@@ -28,6 +28,8 @@ export interface GitBinding {
   credentialRef?: CredentialRef
   createdAt: string
   updatedAt: string
+  /** Updated only after the snapshot commit (and remote push, if configured) succeeds. */
+  lastSyncedGroupHashes?: Partial<Record<import('@manta/shared').StorageGroupId, string>>
 }
 
 /** A volume can have exactly one immutable Git binding. */

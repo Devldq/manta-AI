@@ -86,6 +86,10 @@ function installMainStorageIpc(origin: string): void {
       if (!capability.available) throw Object.assign(new Error(capability.reason ?? 'Git is unavailable'), { code: 'GIT_UNAVAILABLE' })
       return composition.git.bindVolume({ volumeId, mode: config.mode, remoteUrl: config.mode === 'remote' ? config.remoteUrl : undefined, credentialRef: config.mode === 'remote' ? config.authRef : undefined })
     },
+    async syncVolume(volumeId) {
+      const operationId = randomUUID()
+      return { operationId, completion: composition.git.syncVolume(volumeId) }
+    },
   } })
 }
 

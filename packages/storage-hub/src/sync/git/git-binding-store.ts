@@ -37,6 +37,15 @@ export class GitBindingStore {
     return valid
   }
 
+  async recordSync(volumeId: string, groupHashes: NonNullable<GitBinding['lastSyncedGroupHashes']>): Promise<GitBinding> {
+    const catalog = await this.read(); const index = catalog.bindings.findIndex((item) => item.volumeId === volumeId)
+    if (index < 0) throw new Error(`Volume ${volumeId} has no Git binding`)
+    const updated = validate({ ...catalog.bindings[index], lastSyncedGroupHashes: groupHashes, updatedAt: new Date().toISOString() })
+    const bindings = [...catalog.bindings]; bindings[index] = updated
+    await writeJsonAtomic(this.filePath, { schemaVersion: 1, bindings })
+    return updated
+  }
+
   private async read(): Promise<GitBindingCatalog> {
     try {
       const parsed = JSON.parse(await readFile(this.filePath, 'utf8')) as GitBindingCatalog
