@@ -79,7 +79,7 @@ export function openLegacyRagStagingDatabase(name = 'manta-rag-staged', indexedD
           return entries
         },
         async listMetadata() {
-          const storeName = database.objectStoreNames.contains('metadata') ? 'metadata' : database.objectStoreNames.contains('batchMeta') ? 'batchMeta' : undefined
+          const storeName = database.objectStoreNames.contains('meta') ? 'meta' : database.objectStoreNames.contains('metadata') ? 'metadata' : database.objectStoreNames.contains('batchMeta') ? 'batchMeta' : undefined
           if (!storeName) return []
           const keys = await transaction<IDBValidKey[]>(database, storeName, 'readonly', (store) => store.getAllKeys()) ?? []
           const values = await Promise.all(keys.map((key) => transaction<unknown>(database, storeName, 'readonly', (store) => store.get(key))))

@@ -247,8 +247,8 @@
     { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 30, "column": 19, "operation": "mkdir", "reason": "Reviewed atomic operation-catalog lock creation below Electron userData for serialized relaunch recovery." },
     { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 32, "column": 80, "operation": "rm", "reason": "Reviewed stale operation-catalog lock cleanup below Electron userData after its bounded ownership timeout." },
     { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 37, "column": 54, "operation": "rm", "reason": "Reviewed operation-catalog lock cleanup below Electron userData in the lock holder finally path." },
-    { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 57, "column": 64, "operation": "rm", "reason": "Reviewed deletion of the single application-owned relaunch intent record after verified restart recovery." },
-    { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 59, "column": 88, "operation": "rename", "reason": "Reviewed quarantine of only the application-owned relaunch intent record when it cannot be parsed." },
+    { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 60, "column": 64, "operation": "rm", "reason": "Reviewed deletion of the single application-owned relaunch intent record after verified restart recovery." },
+    { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 62, "column": 88, "operation": "rename", "reason": "Reviewed quarantine of only the application-owned relaunch intent record when it cannot be parsed." },
     { "file": "packages/desktop/src/desktop-runtime.ts", "line": 83, "column": 598, "operation": "rm", "reason": "Reviewed explicit user-requested backup deletion constrained by a Bootstrap-derived validated backup ID." },
     { "file": "packages/desktop/scripts/build-win.cjs", "line": 8, "column": 16, "operation": "spawnSync", "reason": "Reviewed official electron-builder directory packaging process boundary, limited to its production artifact output." },
     {

@@ -11,10 +11,19 @@ async function putLegacyFile(database: IDBDatabase, key: string, value: unknown)
   })
 }
 
+async function putLegacyMeta(database: IDBDatabase, key: string, value: unknown): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction('meta', 'readwrite')
+    transaction.objectStore('meta').put(value, key)
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+  })
+}
+
 async function makeDatabase(name: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(name, 1)
-    request.onupgradeneeded = () => { request.result.createObjectStore('files'); request.result.createObjectStore('metadata') }
+    request.onupgradeneeded = () => { request.result.createObjectStore('files'); request.result.createObjectStore('meta') }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error)
   })
@@ -50,5 +59,20 @@ describe('legacy RAG staged IndexedDB migration', () => {
     await expect(migrateLegacyRagStaging({ database: legacy, upload: async () => { throw new Error('offline') } })).resolves.toEqual({ migrated: 0, retained: 1 })
     expect((await legacy.listFiles()).map((entry) => entry.key)).toEqual(['retry'])
     await legacy.close()
+  })
+
+  it('preserves the historical meta-store chunking configuration in the canonical upload', async () => {
+    const name = `manta-rag-staged-${crypto.randomUUID()}`
+    const database = await makeDatabase(name)
+    await putLegacyFile(database, 'with-meta', { id: 'with-meta', kbId: 'kb-a', file: new File(['meta'], 'meta.txt'), name: 'meta.txt', size: 4, type: 'text/plain' })
+    await putLegacyMeta(database, 'kb-a', { kbId: 'kb-a', chunkingConfig: { strategy: 'fixed', chunkSize: 512, overlap: 32 } })
+    database.close()
+
+    let uploadedMeta: unknown
+    const legacy = await openLegacyRagStagingDatabase(name)
+    await migrateLegacyRagStaging({ database: legacy, upload: async (_file, metadata) => { uploadedMeta = metadata; return { canonical: true } } })
+    await legacy.close()
+
+    expect(uploadedMeta).toEqual({ kbId: 'kb-a', chunkingConfig: { strategy: 'fixed', chunkSize: 512, overlap: 32 } })
   })
 })
