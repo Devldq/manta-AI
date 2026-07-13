@@ -7,7 +7,7 @@ import { durableAtomicWrite, durableMkdir, durableRecursiveCopy, durableRemove, 
 interface ExtensionTransactionOptions { extensionsRoot: string; destination: string; fault?: (phase: string) => void }
 interface InstallOptions extends ExtensionTransactionOptions { source: string; validate?: (stagedPath: string) => void; registryWrites?: Map<string, string> }
 interface ExtensionJournal {
-  version: 1
+  version: 1 | 2
   id: string; kind: 'install' | 'uninstall' | 'file'; phase: 'staged' | 'backed-up' | 'package-committed' | 'awaiting-snapshot' | 'completed'
   snapshotRequired?: true
   snapshotDecision?: 'pending' | 'keep' | 'rollback'
@@ -94,23 +94,29 @@ function persist(root: string, journal: ExtensionJournal): void {
 function readJournal(root: string, file: string): ExtensionJournal {
   let stored: Record<string, unknown>
   try { stored = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown> } catch { throw new Error(`Invalid extension transaction journal: ${file}`) }
-  if (stored.version !== 1 || typeof stored.id !== 'string' || basename(file) !== `${stored.id}.json` || !['install', 'uninstall', 'file'].includes(String(stored.kind)) || !['staged', 'backed-up', 'package-committed', 'awaiting-snapshot', 'completed'].includes(String(stored.phase))) throw new Error(`Invalid extension transaction journal schema: ${file}`)
+  if ((stored.version !== 1 && stored.version !== 2) || typeof stored.id !== 'string' || basename(file) !== `${stored.id}.json` || !['install', 'uninstall', 'file'].includes(String(stored.kind)) || !['staged', 'backed-up', 'package-committed', 'awaiting-snapshot', 'completed'].includes(String(stored.phase))) throw new Error(`Invalid extension transaction journal schema: ${file}`)
+  const version = stored.version as ExtensionJournal['version']
   const phase = stored.phase as ExtensionJournal['phase']
   const decision = stored.snapshotDecision
   const snapshotRequired = stored.snapshotRequired
-  if (snapshotRequired !== undefined && (snapshotRequired !== true || stored.kind !== 'install')) throw new Error(`Invalid extension transaction snapshot mode: ${file}`)
-  const validSnapshotState = phase === 'awaiting-snapshot'
-    ? snapshotRequired === true && decision === 'pending'
-    : phase === 'completed'
-      ? decision === undefined || (stored.kind === 'install' && ['keep', 'rollback'].includes(String(decision)))
-      : decision === undefined
-  if (!validSnapshotState) throw new Error(`Invalid extension transaction snapshot state: ${file}`)
   const packageFingerprint = stored.packageFingerprint
-  if ((stored.kind === 'install' && (typeof packageFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(packageFingerprint))) || (stored.kind !== 'install' && packageFingerprint !== undefined)) throw new Error(`Invalid extension transaction package fingerprint: ${file}`)
+  if (version === 1) {
+    if (phase === 'awaiting-snapshot' || snapshotRequired !== undefined || decision !== undefined || packageFingerprint !== undefined) throw new Error(`Invalid legacy extension transaction journal schema: ${file}`)
+  } else {
+    if (stored.kind !== 'install') throw new Error(`Invalid v2 extension transaction journal kind: ${file}`)
+    if (typeof packageFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(packageFingerprint)) throw new Error(`Invalid extension transaction package fingerprint: ${file}`)
+    if (snapshotRequired !== undefined && snapshotRequired !== true) throw new Error(`Invalid extension transaction snapshot mode: ${file}`)
+    const validSnapshotState = phase === 'awaiting-snapshot'
+      ? snapshotRequired === true && decision === 'pending'
+      : phase === 'completed'
+        ? decision === undefined || ['keep', 'rollback'].includes(String(decision))
+        : decision === undefined
+    if (!validSnapshotState) throw new Error(`Invalid extension transaction snapshot state: ${file}`)
+  }
   const writes = Array.isArray(stored.registryWrites) ? stored.registryWrites : []
   const deletes = Array.isArray(stored.registryDeletes) ? stored.registryDeletes : []
   return {
-    version: 1, id: stored.id, kind: stored.kind as ExtensionJournal['kind'], phase,
+    version, id: stored.id, kind: stored.kind as ExtensionJournal['kind'], phase,
     snapshotRequired: snapshotRequired as ExtensionJournal['snapshotRequired'],
     snapshotDecision: decision as ExtensionJournal['snapshotDecision'],
     packageFingerprint: packageFingerprint as string | undefined,
@@ -183,7 +189,7 @@ function applyRegistry(root: string, journal: ExtensionJournal): void {
 function finish(root: string, journal: ExtensionJournal, fault?: (phase: string) => void, awaitSnapshot = false): void {
   if (journal.phase === 'package-committed' && journal.kind === 'install' && !existsSync(journal.destination)) {
     if (journal.stagingPath && existsSync(journal.stagingPath)) {
-      if (!journal.packageFingerprint || fingerprintOrdinaryTree(journal.stagingPath) !== journal.packageFingerprint) throw new Error('Extension recovery package fingerprint mismatch')
+      if (journal.version === 2 && (!journal.packageFingerprint || fingerprintOrdinaryTree(journal.stagingPath) !== journal.packageFingerprint)) throw new Error('Extension recovery package fingerprint mismatch')
       durableRename(journal.stagingPath, journal.destination)
     }
     else if (journal.backupPath && existsSync(journal.backupPath)) { durableRename(journal.backupPath, journal.destination); journal.phase = 'completed'; persist(root, journal) }
@@ -195,10 +201,13 @@ function finish(root: string, journal: ExtensionJournal, fault?: (phase: string)
   }
   if (journal.phase === 'backed-up') {
     if (journal.kind === 'install') {
-      if (!journal.stagingPath || !journal.packageFingerprint) throw new Error('Extension staging recovery metadata is unavailable')
+      if (!journal.stagingPath || (journal.version === 2 && !journal.packageFingerprint)) throw new Error('Extension staging recovery metadata is unavailable')
       if (existsSync(journal.stagingPath)) {
-        if (fingerprintOrdinaryTree(journal.stagingPath) !== journal.packageFingerprint) throw new Error('Extension staging package fingerprint mismatch')
+        if (journal.version === 2 && fingerprintOrdinaryTree(journal.stagingPath) !== journal.packageFingerprint) throw new Error('Extension staging package fingerprint mismatch')
         durableMkdir(dirname(journal.destination)); if (!existsSync(journal.destination)) { durableRename(journal.stagingPath, journal.destination); fault?.('after-package-rename') }
+      } else if (journal.version === 1) {
+        if (existsSync(journal.destination)) throw new Error('Legacy extension backed-up journal cannot prove destination ownership without its staging payload')
+        throw new Error('Legacy extension staging payload is unavailable during recovery')
       } else if (!existsSync(journal.destination) || fingerprintOrdinaryTree(journal.destination) !== journal.packageFingerprint) {
         throw new Error('Extension committed package fingerprint mismatch while staging payload is unavailable')
       }
@@ -263,7 +272,7 @@ function installDirectoryUnlocked(options: InstallOptions, awaitSnapshot = false
     }
     catch (error) { ensureSafeInternalDirectory(options.extensionsRoot, dirname(stagingPath)); durableRemove(dirname(stagingPath)); throw error }
     const backupPath = existsSync(options.destination) ? join(options.extensionsRoot, '.ash-backups', id, relative(options.extensionsRoot, options.destination)) : undefined
-    const journal: ExtensionJournal = { version: 1, id, kind: 'install', phase: 'staged', snapshotRequired: awaitSnapshot ? true : undefined, packageFingerprint, destination: options.destination, stagingPath, backupPath, registryWrites: [...(options.registryWrites ?? new Map())].map(([path, content]) => ({ path, content })), registryDeletes: [] }
+    const journal: ExtensionJournal = { version: 2, id, kind: 'install', phase: 'staged', snapshotRequired: awaitSnapshot ? true : undefined, packageFingerprint, destination: options.destination, stagingPath, backupPath, registryWrites: [...(options.registryWrites ?? new Map())].map(([path, content]) => ({ path, content })), registryDeletes: [] }
     persist(options.extensionsRoot, journal); options.fault?.('journaled'); finish(options.extensionsRoot, journal, options.fault, awaitSnapshot)
     return Object.freeze({ extensionsRoot: options.extensionsRoot, destination: options.destination, transactionId: id, stagingPath, backupPath, registryPaths: Object.freeze([...(options.registryWrites?.keys() ?? [])]) })
 }

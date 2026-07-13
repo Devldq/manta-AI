@@ -58,7 +58,7 @@ describe('extension storage transactions', () => {
     expect(() => transactionalInstallDirectory({ extensionsRoot, source, destination: join(extensionsRoot, 'plugins', 'demo'), fault: (phase) => { if (phase === 'journaled') throw new Error('crash') } })).toThrow('crash')
     const journalFile = join(extensionsRoot, '.ash-transactions', readdirSync(join(extensionsRoot, '.ash-transactions'))[0])
     const journal = JSON.parse(readFileSync(journalFile, 'utf8'))
-    expect(journal.version).toBe(1); expect(JSON.stringify(journal)).not.toContain(extensionsRoot)
+    expect(journal.version).toBe(2); expect(journal.packageFingerprint).toMatch(/^[a-f0-9]{64}$/); expect(JSON.stringify(journal)).not.toContain(extensionsRoot)
     journal.destination = '../outside'; writeFileSync(journalFile, JSON.stringify(journal))
     expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/journal|outside|child/i)
     expect(existsSync(join(root, 'outside'))).toBe(false)
@@ -189,5 +189,32 @@ describe('extension storage transactions', () => {
     try { symlinkSync(outside, join(extensionsRoot, controlPath), process.platform === 'win32' ? 'junction' : 'dir') } catch { return }
     expect(() => transactionalInstallDirectory({ extensionsRoot, source, destination })).toThrow(/symbolic|reparse|link|directory/i)
     expect(readdirSync(outside)).toEqual([]); expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('old')
+  })
+
+  it.each(['staged', 'backed-up', 'package-committed', 'completed'] as const)('recovers a hand-written legacy v1 %s install journal', (phase) => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-v1-recover-')); const extensionsRoot = join(root, 'extensions'); const id = '11111111-1111-4111-8111-111111111111'; const destination = join(extensionsRoot, 'plugins', 'demo'); const stagingPath = join(extensionsRoot, '.ash-staging', id, 'payload'); const backupPath = join(extensionsRoot, '.ash-backups', id, 'plugins', 'demo'); const journals = join(extensionsRoot, '.ash-transactions')
+    mkdirSync(journals, { recursive: true })
+    if (phase === 'staged') { mkdirSync(destination, { recursive: true }); writeFileSync(join(destination, 'plugin.yaml'), 'old') } else { mkdirSync(backupPath, { recursive: true }); writeFileSync(join(backupPath, 'plugin.yaml'), 'old') }
+    if (phase === 'staged' || phase === 'backed-up') { mkdirSync(stagingPath, { recursive: true }); writeFileSync(join(stagingPath, 'plugin.yaml'), 'new') } else { mkdirSync(destination, { recursive: true }); writeFileSync(join(destination, 'plugin.yaml'), 'new') }
+    writeFileSync(join(journals, `${id}.json`), JSON.stringify({ version: 1, id, kind: 'install', phase, destination: 'plugins/demo', stagingPath: `.ash-staging/${id}/payload`, backupPath: `.ash-backups/${id}/plugins/demo`, registryWrites: [], registryDeletes: [] }))
+    recoverExtensionTransactions(extensionsRoot)
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('new'); expect(readFileSync(join(backupPath, 'plugin.yaml'), 'utf8')).toBe('old'); expect(readdirSync(journals)).toEqual([])
+  })
+
+  it('fails safe for a legacy v1 backed-up journal whose missing staging cannot prove destination ownership', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-v1-safety-')); const extensionsRoot = join(root, 'extensions'); const id = '22222222-2222-4222-8222-222222222222'; const destination = join(extensionsRoot, 'plugins', 'demo'); const backupPath = join(extensionsRoot, '.ash-backups', id, 'plugins', 'demo'); const journals = join(extensionsRoot, '.ash-transactions')
+    mkdirSync(destination, { recursive: true }); mkdirSync(backupPath, { recursive: true }); mkdirSync(journals, { recursive: true }); writeFileSync(join(destination, 'plugin.yaml'), 'foreign'); writeFileSync(join(backupPath, 'plugin.yaml'), 'old')
+    writeFileSync(join(journals, `${id}.json`), JSON.stringify({ version: 1, id, kind: 'install', phase: 'backed-up', destination: 'plugins/demo', stagingPath: `.ash-staging/${id}/payload`, backupPath: `.ash-backups/${id}/plugins/demo`, registryWrites: [], registryDeletes: [] }))
+    expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/^Legacy extension backed-up journal cannot prove destination ownership/)
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('foreign'); expect(readFileSync(join(backupPath, 'plugin.yaml'), 'utf8')).toBe('old'); expect(readdirSync(journals)).toEqual([`${id}.json`])
+  })
+
+  it('strictly rejects new v2 journals with a missing fingerprint or tampered snapshot state', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-v2-invalid-')); const extensionsRoot = join(root, 'extensions'); const id = '33333333-3333-4333-8333-333333333333'; const journals = join(extensionsRoot, '.ash-transactions'); const journalFile = join(journals, `${id}.json`); mkdirSync(journals, { recursive: true })
+    const base = { version: 2, id, kind: 'install', destination: 'plugins/demo', stagingPath: `.ash-staging/${id}/payload`, registryWrites: [], registryDeletes: [] }
+    writeFileSync(journalFile, JSON.stringify({ ...base, phase: 'staged' }))
+    expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/fingerprint|schema/i)
+    writeFileSync(journalFile, JSON.stringify({ ...base, phase: 'awaiting-snapshot', packageFingerprint: 'a'.repeat(64), snapshotRequired: true, snapshotDecision: 'keep' }))
+    expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/snapshot|state|schema/i)
   })
 })
