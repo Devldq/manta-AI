@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { recoverExtensionTransactions, rollbackCompletedExtensionInstall, transactionalInstallDirectory, transactionalUninstallDirectory, withLeasedExtensionInstall } from './extension-transactions'
+import { createContentAssetService } from './content-assets'
 
 describe('extension storage transactions', () => {
   it('stages replacement and preserves the previous install as a backup', () => {
@@ -123,5 +124,42 @@ describe('extension storage transactions', () => {
     try { symlinkSync(outside, join(extensionsRoot, 'plugin-registry'), process.platform === 'win32' ? 'junction' : 'dir') } catch { return }
     expect(() => transactionalInstallDirectory({ extensionsRoot, source, destination, registryWrites: new Map([[join(extensionsRoot, 'plugin-registry', 'demo.json'), 'new-registry']]) })).toThrow(/symbolic|reparse|outside|link/i)
     expect(existsSync(destination)).toBe(false); expect(readdirSync(outside)).toEqual([])
+  })
+
+  it('recovers an install interrupted after commit but before its snapshot completes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-awaiting-crash-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
+    mkdirSync(source, { recursive: true }); mkdirSync(destination, { recursive: true }); mkdirSync(join(extensionsRoot, 'plugin-registry')); writeFileSync(join(source, 'plugin.yaml'), 'new'); writeFileSync(join(destination, 'plugin.yaml'), 'old'); writeFileSync(registry, 'old-registry')
+    let snapshotStarted = false
+    await expect(withLeasedExtensionInstall({ extensionsRoot, source, destination, registryWrites: new Map([[registry, 'new-registry']]), fault: (phase) => { if (phase === 'awaiting-snapshot') throw new Error('process died') } }, async () => { snapshotStarted = true })).rejects.toThrow(/process died/)
+    expect(snapshotStarted).toBe(false); expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('new'); expect(readFileSync(registry, 'utf8')).toBe('new-registry')
+    recoverExtensionTransactions(extensionsRoot)
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('old'); expect(readFileSync(registry, 'utf8')).toBe('old-registry'); expect(readdirSync(join(extensionsRoot, '.ash-transactions'))).toEqual([])
+  })
+
+  it('rolls back on restart after a snapshot publishes but before its keep decision is acknowledged', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-published-crash-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
+    mkdirSync(source, { recursive: true }); mkdirSync(destination, { recursive: true }); mkdirSync(join(extensionsRoot, 'plugin-registry')); writeFileSync(join(source, 'plugin.yaml'), 'new'); writeFileSync(join(destination, 'plugin.yaml'), 'old'); writeFileSync(registry, 'old-registry')
+    let manifestId = ''
+    await expect(withLeasedExtensionInstall({ extensionsRoot, source, destination, registryWrites: new Map([[registry, 'new-registry']]), fault: (phase) => { if (phase === 'after-snapshot-publish') throw new Error('process died') } }, async () => {
+      manifestId = (await createContentAssetService({ volumeRoot }).snapshotPackage({ kind: 'plugin', logicalId: 'plugin-demo', version: '2', sourceRoot: destination })).manifest.assetId
+    })).rejects.toThrow(/process died/)
+    expect(existsSync(join(volumeRoot, '.ash', 'assets', `${manifestId}.json`))).toBe(true)
+    recoverExtensionTransactions(extensionsRoot)
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('old'); expect(readFileSync(registry, 'utf8')).toBe('old-registry'); expect(existsSync(join(volumeRoot, '.ash', 'assets', `${manifestId}.json`))).toBe(true); expect(readdirSync(join(extensionsRoot, '.ash-transactions'))).toEqual([])
+  })
+
+  it('rejects overlapping package and registry paths before creating partial state', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-overlap-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); mkdirSync(source); writeFileSync(join(source, 'plugin.yaml'), 'new')
+    const cases = [
+      { destination: join(extensionsRoot, 'plugins', 'nested'), registries: [join(extensionsRoot, 'plugins', 'nested', 'registry.json')] },
+      { destination: join(extensionsRoot, 'plugins', 'equal'), registries: [join(extensionsRoot, 'plugins', 'equal')] },
+      { destination: join(extensionsRoot, 'plugins', 'parent'), registries: [join(extensionsRoot, 'plugins')] },
+      { destination: join(extensionsRoot, 'plugins', 'pair'), registries: [join(extensionsRoot, 'plugin-registry'), join(extensionsRoot, 'plugin-registry', 'demo.json')] },
+    ]
+    for (const item of cases) {
+      expect(() => transactionalInstallDirectory({ extensionsRoot, source, destination: item.destination, registryWrites: new Map(item.registries.map((path) => [path, 'registry'])) })).toThrow(/overlap|nested|registry/i)
+      expect(existsSync(item.destination)).toBe(false)
+    }
+    expect(existsSync(join(extensionsRoot, '.ash-transactions'))).toBe(false)
   })
 })
