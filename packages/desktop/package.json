@@ -13,6 +13,7 @@
     "build:linux": "pnpm build && electron-builder --linux",
     "typecheck": "tsc --noEmit",
     "test:clean": "node --test scripts/clean.test.cjs",
+    "test:e2e:ash": "pnpm --filter @manta/frontend build && pnpm build && vitest run --config vitest.e2e.config.ts",
     "test": "pnpm test:clean && vitest run --coverage --coverage.reporter=text-summary --coverage.reporter=json --coverage.exclude=**/*.test.ts --coverage.exclude=**/dist/** --coverage.exclude=**/.package-staging/** --coverage.exclude=**/release/** --coverage.exclude=**/release-*/** --coverage.exclude=**/coverage/**"
   },
   "dependencies": {

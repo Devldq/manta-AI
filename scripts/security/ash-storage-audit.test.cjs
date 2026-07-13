@@ -55,3 +55,10 @@ const stale = runFixture({ file: 'packages/sample/src/clean.ts', source: 'export
 assert.equal(stale.status, 1, `${stale.stdout}\n${stale.stderr}`)
 assert.match(`${stale.stdout}\n${stale.stderr}`, /stale allowlist entry/)
 process.stdout.write('ok - rejects stale callsite allowlists\n')
+
+const e2e = runFixture({
+  file: 'packages/desktop/e2e/storage-onboarding.e2e.ts',
+  source: "import { mkdtemp } from 'node:fs/promises';\nexport async function acceptance() { return mkdtemp('ash-e2e-') }",
+})
+assert.equal(e2e.status, 0, `${e2e.stdout}\n${e2e.stderr}`)
+process.stdout.write('ok - ignores dedicated E2E acceptance files\n')

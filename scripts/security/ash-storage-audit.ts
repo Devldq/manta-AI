@@ -21,7 +21,9 @@ const allowlist = fs.existsSync(allowlistPath)
   : { calls: [], literals: [] }
 const normalized = (value) => value.split(path.sep).join('/')
 const productionExtensions = /\.(?:ts|tsx|js|mjs|cjs)$/
-const excludedDirectories = new Set(['node_modules', 'dist', 'coverage', '.turbo', 'fixtures'])
+// E2E is test-only: it deliberately creates operating-system temporary fixtures
+// and must not be interpreted as production persistence code.
+const excludedDirectories = new Set(['node_modules', 'dist', 'coverage', '.turbo', 'fixtures', 'e2e'])
 const files = []
 
 function walk(directory) {
