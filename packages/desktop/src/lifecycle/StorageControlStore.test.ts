@@ -24,6 +24,19 @@ describe('StorageControlStore', () => {
     await store.clearIntent(); expect(await store.readIntent()).toBeUndefined()
   })
 
+  it('atomically records a committed operation and relaunch intent before marking it relaunching', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ash-intent-')); const store = new StorageControlStore(root)
+    const timestamp='2026-01-01T00:00:00.000Z'; const snapshot=(generation:number)=>({schemaVersion:1 as const,generation,volumes:[{id:'volume',name:'Volume',parentPath:'C:/control',createdAt:timestamp,updatedAt:timestamp}],groupAssignments:{extensions:'volume',knowledge:'volume',work:'volume',config:'volume',secrets:'volume',diagnostics:'volume',cache:'volume'}})
+    await store.startOperation('op-atomic', 'volume')
+    await store.completeOperation('op-atomic', [], { previous: snapshot(1), current: snapshot(2) })
+    expect((await store.getOperation('op-atomic'))?.status).toBe('running')
+    expect((await store.getOperation('op-atomic'))?.phase).toBe('committed')
+    await store.commitRelaunchIntent({ schemaVersion:1, operationId:'op-atomic', phase:'awaiting-new-process-health', attempt:0, previous:snapshot(1), current:snapshot(2), backupRefs:[] })
+    const reopened = new StorageControlStore(root)
+    expect((await reopened.getOperation('op-atomic'))?.phase).toBe('relaunching')
+    expect((await reopened.readIntent())?.operationId).toBe('op-atomic')
+  })
+
   it('serializes concurrent instances so their operation updates are not lost', async () => {
     const root = await mkdtemp(join(tmpdir(), 'ash-control-concurrent-'))
     const stores = Array.from({ length: 16 }, () => new StorageControlStore(root))

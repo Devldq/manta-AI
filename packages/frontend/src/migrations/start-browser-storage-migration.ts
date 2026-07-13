@@ -1,5 +1,6 @@
 import { clientState, type ClientStateKey } from '@/lib/client-state'
 import { createBrowserStorageImporter, openBrowserStorageImportDatabaseWithFallback, openLegacyLocalStorageImportDatabase } from './browser-storage-importer'
+import { migrateLegacyRagStaging, openLegacyRagStagingDatabase, uploadLegacyRagFile } from './legacy-rag-staged-migration'
 
 const legacyKeys: Record<string, ClientStateKey> = { 'manta:theme': 'theme', 'manta:sidebar': 'sidebar', 'manta:webhook': 'webhook' }
 
@@ -23,4 +24,11 @@ export async function migrateBrowserStorageToAsh(): Promise<void> {
   const v4 = await openBrowserStorageImportDatabaseWithFallback()
   await createBrowserStorageImporter({ database: v4.database, persist: persistRecords }).importOnce()
   await createBrowserStorageImporter({ database: openLegacyLocalStorageImportDatabase(), persist: persistRecords }).importOnce()
+  // The legacy RAG queue is a recovery source, never a renderer persistence
+  // mechanism. Failures keep its exact rows for the next startup retry.
+  try {
+    const legacyRag = await openLegacyRagStagingDatabase()
+    try { await migrateLegacyRagStaging({ database: legacyRag, upload: uploadLegacyRagFile }) }
+    finally { await legacyRag.close() }
+  } catch { /* IndexedDB unavailable/offline; retry on next start */ }
 }

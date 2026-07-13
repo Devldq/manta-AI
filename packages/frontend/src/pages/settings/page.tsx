@@ -5,6 +5,7 @@ import React from 'react'
 import { Link } from 'react-router-dom'
 import { SkeletonList } from '@/components/skeleton'
 import { StorageSettingsPanel } from '@/features/storage/StorageSettingsPanel'
+import { clientState } from '@/lib/client-state'
 
 interface RunnerStatus {
   id: string
@@ -56,6 +57,7 @@ export default function SettingsPage() {
   })
   const [webhookSaving, setWebhookSaving] = useState(false)
   const [webhookSaved, setWebhookSaved] = useState(false)
+  const [webhookError, setWebhookError] = useState('')
   const [plugins, setPlugins] = useState<PluginManifest[]>([])
   const [pluginsLoading, setPluginsLoading] = useState(false)
   const [installPkg, setInstallPkg] = useState('')
@@ -76,6 +78,7 @@ export default function SettingsPage() {
     
     // 并行执行数据获取
     Promise.allSettled([probeRunners(), loadPlugins()])
+    void clientState.load<WebhookConfig>('webhook').then((saved) => { if (saved) setWebhook(saved) }).catch(() => setWebhookError('Unable to load webhook settings'))
     
     // AI: 加载 README
     fetch('/api/readme')
@@ -210,13 +213,15 @@ export default function SettingsPage() {
     }
   }
 
-  function saveWebhook() {
+  async function saveWebhook() {
     setWebhookSaving(true)
-    setTimeout(() => {
+    setWebhookError('')
+    try {
+      if (!await clientState.set('webhook', webhook)) throw new Error('Webhook settings could not be saved')
       setWebhookSaving(false)
       setWebhookSaved(true)
       setTimeout(() => setWebhookSaved(false), 2000)
-    }, 300)
+    } catch (error) { setWebhookSaving(false); setWebhookError(error instanceof Error ? error.message : 'Webhook settings could not be saved') }
   }
 
   // AI start: 自动更新相关函数
@@ -627,6 +632,7 @@ export default function SettingsPage() {
                 {webhookSaved ? '✓ 已保存' : webhookSaving ? '保存中...' : '保存配置'}
               </button>
             </div>
+            {webhookError && <p role="alert" style={{ color: 'var(--color-status-failed)', fontSize: '12px', marginTop: '8px' }}>{webhookError}</p>}
           </div>
         </section>
 

@@ -47,7 +47,7 @@ async function trackedMigration(id: string, kind: 'volume'|'group', value: strin
 async function startTrackedMigration(kind: 'volume'|'group', value: string, operation: (operationId: string) => Promise<string>) {
   const id=randomUUID(); await controlStore().startOperation(id,kind)
   const completion=trackedMigration(id,kind,value,operation)
-    .then(async()=>{ await controlStore().markRelaunching(id); await controller.relaunchAfterMigration(id) })
+    .then(async()=>{ await controller.relaunchAfterMigration(id) })
     .catch(async(error)=>{ await controlStore().failOperation(id,error).catch(()=>{}); throw error })
   return { operationId:id, completion }
 }
@@ -93,7 +93,7 @@ const controller = new DesktopLifecycleController({
   async openOnboarding() { disposeOnboarding?.(); onboardingWindow = createOnboardingWindow(); disposeOnboarding = registerSecureOnboardingIpc({ ipcMain, getWindow: () => onboardingWindow, dialog, app, selections, bootstrapPath: bootstrapPath(), initializeStorage, onboardingUrl: onboardingPageUrl() }); const senderId = onboardingWindow.webContents.id; onboardingWindow.on('closed', () => { selections.clearSender(senderId); onboardingWindow = undefined; if (!quitting) app.quit() }) },
   async openMain(url) { activeWindow = createMainWindow(url); installMainStorageIpc(url); disposeLegacyIpc?.(); disposeLegacyIpc = registerLegacyIpc(); const senderId = activeWindow.webContents.id; activeWindow.on('closed', () => { selections.clearSender(senderId); activeWindow = undefined }) },
   async readRelaunchIntent() { const intent=await controlStore().readIntent(); if(!intent)return undefined; const active=await new BootstrapStore(bootstrapPath()).read(); try { if(!active) throw new Error('Bootstrap is missing'); return await validateRelaunchIntent(intent,active,controlStore()) } catch(error) { await controlStore().quarantineIntent(); throw Object.assign(error as Error,{code:'RELAUNCH_INTENT_INVALID'}) } },
-  async prepareRelaunch(operationId) { const intent=pendingIntents.get(operationId); if (!intent) throw new Error(`Missing durable relaunch intent for ${operationId}`); try { await controlStore().writeIntent(intent) } catch(error) { await restoreRelaunchIntent(intent,bootstrapPath(),controlStore()).catch((rollbackError)=>{ throw new AggregateError([error,rollbackError],'Migration committed but relaunch intent could not be persisted') }); throw error } finally { pendingIntents.delete(operationId) } },
+  async prepareRelaunch(operationId) { const intent=pendingIntents.get(operationId); if (!intent) throw new Error(`Missing durable relaunch intent for ${operationId}`); try { await controlStore().commitRelaunchIntent(intent) } catch(error) { await restoreRelaunchIntent(intent,bootstrapPath(),controlStore()).catch((rollbackError)=>{ throw new AggregateError([error,rollbackError],'Migration committed but relaunch intent could not be persisted') }); throw error } finally { pendingIntents.delete(operationId) } },
   rollbackRelaunchIntent: (intent) => restoreRelaunchIntent(intent,bootstrapPath(),controlStore()),
   completeRelaunchOperation: (id) => controlStore().markSucceeded(id),
   clearRelaunchIntent: () => controlStore().clearIntent(),

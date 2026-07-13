@@ -56,7 +56,7 @@ export async function validateRelaunchIntent(intent:RelaunchIntent,active:AshBoo
     const value=ref.kind==='group'?ref.groupId:ref.volumeId
     try{return buildBackupRefs(operation.id,ref.kind,operation.rollbackContext!.previous,operation.rollbackContext!.current,value)}catch{return[]}
   })
-  if(operation.status!=='succeeded'||!identical(operation.backupRefs,expected)||!identical(intent.backupRefs,expected)) throw new Error('Relaunch intent is not trusted by the canonical operation backup references')
+  if(operation.status!=='running'||operation.phase!=='relaunching'||!identical(operation.backupRefs,expected)||!identical(intent.backupRefs,expected)) throw new Error('Relaunch intent is not trusted by the canonical operation backup references')
   return intent
 }
 

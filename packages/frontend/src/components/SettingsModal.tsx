@@ -15,6 +15,7 @@ import {
 } from '@/lib/theme-presets'
 import { setColorModeClass } from '@/components/ThemeInitializer'
 import { StorageSettingsPanel } from '@/features/storage/StorageSettingsPanel'
+import { clientState } from '@/lib/client-state'
 
 /* AI start: 类型定义 */
 interface RunnerStatus {
@@ -540,6 +541,7 @@ function SettingsTab() {
   const [webhook, setWebhook] = useState<WebhookConfig>({ url: '', type: 'feishu', enabled: false })
   const [webhookSaving, setWebhookSaving] = useState(false)
   const [webhookSaved, setWebhookSaved] = useState(false)
+  const [webhookError, setWebhookError] = useState('')
   const [plugins, setPlugins] = useState<PluginManifest[]>([])
   const [pluginsLoading, setPluginsLoading] = useState(false)
   const [installPkg, setInstallPkg] = useState('')
@@ -578,6 +580,7 @@ function SettingsTab() {
     setIsElectron(typeof api?.selectDirectory === 'function')
     probeRunners()
     loadPlugins()
+    void clientState.load<WebhookConfig>('webhook').then((saved) => { if (saved) setWebhook(saved) }).catch(() => setWebhookError('Unable to load webhook settings'))
     fetch('/api/readme')
       .then((r) => r.json())
       .then((d) => setReadme(d.content ?? ''))
@@ -639,13 +642,15 @@ function SettingsTab() {
     }
   }
 
-  function saveWebhook() {
+  async function saveWebhook() {
     setWebhookSaving(true)
-    setTimeout(() => {
+    setWebhookError('')
+    try {
+      if (!await clientState.set('webhook', webhook)) throw new Error('Webhook settings could not be saved')
       setWebhookSaving(false)
       setWebhookSaved(true)
       setTimeout(() => setWebhookSaved(false), 2000)
-    }, 300)
+    } catch (error) { setWebhookSaving(false); setWebhookError(error instanceof Error ? error.message : 'Webhook settings could not be saved') }
   }
 
   return (
@@ -803,6 +808,7 @@ function SettingsTab() {
               {webhookSaved ? '✓ 已保存' : webhookSaving ? '保存中...' : '保存配置'}
             </button>
           </div>
+          {webhookError && <p role="alert" style={{ color: 'var(--color-status-failed)', fontSize: '12px', marginTop: '8px' }}>{webhookError}</p>}
         </div>
       </section>
 
