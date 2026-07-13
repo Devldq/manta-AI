@@ -162,4 +162,32 @@ describe('extension storage transactions', () => {
     }
     expect(existsSync(join(extensionsRoot, '.ash-transactions'))).toBe(false)
   })
+
+  it('recovers the exact staged package after a crash between rename and phase persistence', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-rename-crash-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo')
+    mkdirSync(join(source, 'nested'), { recursive: true }); mkdirSync(destination, { recursive: true }); writeFileSync(join(source, 'plugin.yaml'), 'new'); writeFileSync(join(source, 'nested', 'empty-marker'), ''); writeFileSync(join(destination, 'plugin.yaml'), 'old')
+    await expect(withLeasedExtensionInstall({ extensionsRoot, source, destination, fault: (phase) => { if (phase === 'after-package-rename') throw new Error('process died') } }, async () => undefined)).rejects.toThrow(/process died/)
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('new')
+    recoverExtensionTransactions(extensionsRoot)
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('old'); expect(readdirSync(join(extensionsRoot, '.ash-transactions'))).toEqual([])
+  })
+
+  it('fails safe when destination content differs after a crash between rename and phase persistence', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-rename-tamper-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo')
+    mkdirSync(source); mkdirSync(destination, { recursive: true }); writeFileSync(join(source, 'plugin.yaml'), 'new'); writeFileSync(join(destination, 'plugin.yaml'), 'old')
+    await expect(withLeasedExtensionInstall({ extensionsRoot, source, destination, fault: (phase) => { if (phase === 'after-package-rename') throw new Error('process died') } }, async () => undefined)).rejects.toThrow(/process died/)
+    writeFileSync(join(destination, 'plugin.yaml'), 'foreign')
+    expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/fingerprint|content|staging|mismatch/i)
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('foreign')
+    const transactionId = readdirSync(join(extensionsRoot, '.ash-transactions'))[0].replace(/\.json$/, '')
+    expect(readFileSync(join(extensionsRoot, '.ash-backups', transactionId, 'plugins', 'demo', 'plugin.yaml'), 'utf8')).toBe('old')
+  })
+
+  it.each(['.ash', '.ash-transactions', '.ash-staging', '.ash-backups'])('rejects a %s junction before control-path IO escapes the extensions root', (controlPath) => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-control-link-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const outside = join(root, 'outside')
+    mkdirSync(source); mkdirSync(destination, { recursive: true }); mkdirSync(outside); writeFileSync(join(source, 'plugin.yaml'), 'new'); writeFileSync(join(destination, 'plugin.yaml'), 'old')
+    try { symlinkSync(outside, join(extensionsRoot, controlPath), process.platform === 'win32' ? 'junction' : 'dir') } catch { return }
+    expect(() => transactionalInstallDirectory({ extensionsRoot, source, destination })).toThrow(/symbolic|reparse|link|directory/i)
+    expect(readdirSync(outside)).toEqual([]); expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('old')
+  })
 })

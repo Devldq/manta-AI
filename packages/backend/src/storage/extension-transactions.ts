@@ -1,6 +1,6 @@
 import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { acquireStorageFileLock } from './file-lock'
 import { durableAtomicWrite, durableMkdir, durableRecursiveCopy, durableRemove, durableRename } from './durable-atomic'
 
@@ -11,6 +11,7 @@ interface ExtensionJournal {
   id: string; kind: 'install' | 'uninstall' | 'file'; phase: 'staged' | 'backed-up' | 'package-committed' | 'awaiting-snapshot' | 'completed'
   snapshotRequired?: true
   snapshotDecision?: 'pending' | 'keep' | 'rollback'
+  packageFingerprint?: string
   destination: string; stagingPath?: string; backupPath?: string; content?: string
   registryWrites: Array<{ path: string; content: string }>; registryDeletes: string[]
 }
@@ -23,6 +24,40 @@ const rolledBackInstallReceipts = new WeakSet<object>()
 
 function atomicWrite(path: string, content: string): void {
   durableAtomicWrite(path, content)
+}
+
+function ensureSafeInternalDirectory(root: string, directory: string): void {
+  const absoluteRoot = resolve(root); const absoluteDirectory = resolve(directory)
+  const rel = relative(absoluteRoot, absoluteDirectory)
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Extension control directory must remain inside its trusted root')
+  if (!existsSync(absoluteRoot)) durableMkdir(absoluteRoot)
+  const rootStat = lstatSync(absoluteRoot)
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error('Extension root must be an ordinary directory')
+  let current = absoluteRoot
+  for (const segment of rel ? rel.split(sep) : []) {
+    current = join(current, segment)
+    if (!existsSync(current)) durableMkdir(current)
+    const stat = lstatSync(current)
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Extension control path contains a symbolic link, reparse point, or non-directory: ${current}`)
+  }
+}
+
+function fingerprintOrdinaryTree(root: string): string {
+  const hash = createHash('sha256')
+  const visit = (path: string, name: string): void => {
+    const stat = lstatSync(path)
+    if (stat.isSymbolicLink()) throw new Error(`Extension package fingerprint refuses symbolic links or reparse points: ${path}`)
+    if (stat.isDirectory()) {
+      hash.update(`D\0${name}\0${stat.mode & 0o777}\0`)
+      for (const entry of readdirSync(path).sort()) visit(join(path, entry), name === '.' ? entry : `${name}/${entry}`)
+      return
+    }
+    if (!stat.isFile()) throw new Error(`Extension package fingerprint refuses non-file entry: ${path}`)
+    const content = readFileSync(path)
+    hash.update(`F\0${name}\0${stat.mode & 0o777}\0${content.byteLength}\0`); hash.update(content); hash.update('\0')
+  }
+  visit(root, '.')
+  return hash.digest('hex')
 }
 function toRelative(root: string, absolutePath: string): string {
   const value = relative(resolve(root), resolve(absolutePath))
@@ -44,6 +79,7 @@ function rejectPathLinks(root: string, target: string): void {
   }
 }
 function persist(root: string, journal: ExtensionJournal): void {
+  ensureSafeInternalDirectory(root, transactionsDir(root))
   const stored = {
     ...journal,
     destination: toRelative(root, journal.destination),
@@ -69,12 +105,15 @@ function readJournal(root: string, file: string): ExtensionJournal {
       ? decision === undefined || (stored.kind === 'install' && ['keep', 'rollback'].includes(String(decision)))
       : decision === undefined
   if (!validSnapshotState) throw new Error(`Invalid extension transaction snapshot state: ${file}`)
+  const packageFingerprint = stored.packageFingerprint
+  if ((stored.kind === 'install' && (typeof packageFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(packageFingerprint))) || (stored.kind !== 'install' && packageFingerprint !== undefined)) throw new Error(`Invalid extension transaction package fingerprint: ${file}`)
   const writes = Array.isArray(stored.registryWrites) ? stored.registryWrites : []
   const deletes = Array.isArray(stored.registryDeletes) ? stored.registryDeletes : []
   return {
     version: 1, id: stored.id, kind: stored.kind as ExtensionJournal['kind'], phase,
     snapshotRequired: snapshotRequired as ExtensionJournal['snapshotRequired'],
     snapshotDecision: decision as ExtensionJournal['snapshotDecision'],
+    packageFingerprint: packageFingerprint as string | undefined,
     destination: fromRelative(root, stored.destination),
     stagingPath: stored.stagingPath === undefined ? undefined : fromRelative(root, stored.stagingPath),
     backupPath: stored.backupPath === undefined ? undefined : fromRelative(root, stored.backupPath),
@@ -85,7 +124,7 @@ function readJournal(root: string, file: string): ExtensionJournal {
 }
 
 function acquire(root: string): () => void {
-  const path = lockPath(root); durableMkdir(dirname(path))
+  const path = lockPath(root); ensureSafeInternalDirectory(root, dirname(path))
   return acquireStorageFileLock(path)
 }
 
@@ -130,31 +169,39 @@ function applyRegistry(root: string, journal: ExtensionJournal): void {
   for (const item of journal.registryWrites) {
     assertDestination({ extensionsRoot: root, destination: item.path })
     if (existsSync(item.path)) {
-      const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, item.path)); rejectPathLinks(root, backup); if (!existsSync(backup)) durableRecursiveCopy(item.path, backup)
+      const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, item.path)); rejectPathLinks(root, backup); ensureSafeInternalDirectory(root, dirname(backup)); if (!existsSync(backup)) durableRecursiveCopy(item.path, backup)
     }
     atomicWrite(item.path, item.content)
   }
   for (const path of journal.registryDeletes) {
     assertDestination({ extensionsRoot: root, destination: path })
     if (!existsSync(path)) continue
-    const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, path)); rejectPathLinks(root, backup); durableMkdir(dirname(backup)); if (!existsSync(backup)) durableRename(path, backup); else durableRemove(path)
+    const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, path)); rejectPathLinks(root, backup); ensureSafeInternalDirectory(root, dirname(backup)); if (!existsSync(backup)) durableRename(path, backup); else durableRemove(path)
   }
 }
 
 function finish(root: string, journal: ExtensionJournal, fault?: (phase: string) => void, awaitSnapshot = false): void {
   if (journal.phase === 'package-committed' && journal.kind === 'install' && !existsSync(journal.destination)) {
-    if (journal.stagingPath && existsSync(journal.stagingPath)) durableRename(journal.stagingPath, journal.destination)
+    if (journal.stagingPath && existsSync(journal.stagingPath)) {
+      if (!journal.packageFingerprint || fingerprintOrdinaryTree(journal.stagingPath) !== journal.packageFingerprint) throw new Error('Extension recovery package fingerprint mismatch')
+      durableRename(journal.stagingPath, journal.destination)
+    }
     else if (journal.backupPath && existsSync(journal.backupPath)) { durableRename(journal.backupPath, journal.destination); journal.phase = 'completed'; persist(root, journal) }
     else throw new Error('Extension committed package and recovery payload are both missing')
   }
   if (journal.phase === 'staged') {
-    if (existsSync(journal.destination)) { if (!journal.backupPath) throw new Error('Missing extension backup path'); durableMkdir(dirname(journal.backupPath)); if (!existsSync(journal.backupPath)) durableRename(journal.destination, journal.backupPath) }
+    if (existsSync(journal.destination)) { if (!journal.backupPath) throw new Error('Missing extension backup path'); ensureSafeInternalDirectory(root, dirname(journal.backupPath)); if (!existsSync(journal.backupPath)) durableRename(journal.destination, journal.backupPath) }
     journal.phase = 'backed-up'; persist(root, journal); fault?.('after-backup')
   }
   if (journal.phase === 'backed-up') {
     if (journal.kind === 'install') {
-      if (!journal.stagingPath || !existsSync(journal.stagingPath)) throw new Error('Extension staging payload is unavailable during recovery')
-      durableMkdir(dirname(journal.destination)); if (!existsSync(journal.destination)) durableRename(journal.stagingPath, journal.destination)
+      if (!journal.stagingPath || !journal.packageFingerprint) throw new Error('Extension staging recovery metadata is unavailable')
+      if (existsSync(journal.stagingPath)) {
+        if (fingerprintOrdinaryTree(journal.stagingPath) !== journal.packageFingerprint) throw new Error('Extension staging package fingerprint mismatch')
+        durableMkdir(dirname(journal.destination)); if (!existsSync(journal.destination)) { durableRename(journal.stagingPath, journal.destination); fault?.('after-package-rename') }
+      } else if (!existsSync(journal.destination) || fingerprintOrdinaryTree(journal.destination) !== journal.packageFingerprint) {
+        throw new Error('Extension committed package fingerprint mismatch while staging payload is unavailable')
+      }
     } else if (journal.kind === 'file') {
       atomicWrite(journal.destination, journal.content ?? '')
     }
@@ -168,10 +215,14 @@ function finish(root: string, journal: ExtensionJournal, fault?: (phase: string)
       journal.phase = 'completed'; persist(root, journal); fault?.('after-registry-commit')
     }
   }
-  if (journal.phase === 'completed') { if (journal.stagingPath) durableRemove(dirname(journal.stagingPath)); durableRemove(journalPath(root, journal.id)) }
+  if (journal.phase === 'completed') {
+    if (journal.stagingPath) { ensureSafeInternalDirectory(root, dirname(journal.stagingPath)); durableRemove(dirname(journal.stagingPath)) }
+    ensureSafeInternalDirectory(root, transactionsDir(root)); durableRemove(journalPath(root, journal.id))
+  }
 }
 
 function recoverUnlocked(root: string): void {
+  ensureSafeInternalDirectory(root, transactionsDir(root))
   if (!existsSync(transactionsDir(root))) return
   for (const file of readdirSync(transactionsDir(root)).filter((name) => name.endsWith('.json')).sort()) {
     const journal = readJournal(root, join(transactionsDir(root), file))
@@ -204,10 +255,15 @@ function installDirectoryUnlocked(options: InstallOptions, awaitSnapshot = false
     for (const path of options.registryWrites?.keys() ?? []) assertDestination({ extensionsRoot: options.extensionsRoot, destination: path })
     assertDisjointTransactionPaths(options.destination, options.registryWrites?.keys() ?? [])
     const id = randomUUID(); const stagingPath = join(options.extensionsRoot, '.ash-staging', id, 'payload')
-    try { durableRecursiveCopy(options.source, stagingPath, { filter: (source) => !['node_modules', '.git'].includes(basename(source)), afterCopy: () => options.fault?.('copy-entry') }); options.validate?.(stagingPath) }
-    catch (error) { durableRemove(dirname(stagingPath)); throw error }
+    ensureSafeInternalDirectory(options.extensionsRoot, dirname(stagingPath))
+    let packageFingerprint: string
+    try {
+      durableRecursiveCopy(options.source, stagingPath, { filter: (source) => !['node_modules', '.git'].includes(basename(source)), afterCopy: () => options.fault?.('copy-entry') }); options.validate?.(stagingPath)
+      packageFingerprint = fingerprintOrdinaryTree(stagingPath)
+    }
+    catch (error) { ensureSafeInternalDirectory(options.extensionsRoot, dirname(stagingPath)); durableRemove(dirname(stagingPath)); throw error }
     const backupPath = existsSync(options.destination) ? join(options.extensionsRoot, '.ash-backups', id, relative(options.extensionsRoot, options.destination)) : undefined
-    const journal: ExtensionJournal = { version: 1, id, kind: 'install', phase: 'staged', snapshotRequired: awaitSnapshot ? true : undefined, destination: options.destination, stagingPath, backupPath, registryWrites: [...(options.registryWrites ?? new Map())].map(([path, content]) => ({ path, content })), registryDeletes: [] }
+    const journal: ExtensionJournal = { version: 1, id, kind: 'install', phase: 'staged', snapshotRequired: awaitSnapshot ? true : undefined, packageFingerprint, destination: options.destination, stagingPath, backupPath, registryWrites: [...(options.registryWrites ?? new Map())].map(([path, content]) => ({ path, content })), registryDeletes: [] }
     persist(options.extensionsRoot, journal); options.fault?.('journaled'); finish(options.extensionsRoot, journal, options.fault, awaitSnapshot)
     return Object.freeze({ extensionsRoot: options.extensionsRoot, destination: options.destination, transactionId: id, stagingPath, backupPath, registryPaths: Object.freeze([...(options.registryWrites?.keys() ?? [])]) })
 }
@@ -233,12 +289,13 @@ function rollbackInstallState(options: CompletedExtensionInstall): void {
     return { path, backup: join(backupRoot, 'registry', value), failed: join(backupRoot, '.failed-registry', value) }
   })
   for (const path of [backupRoot, packageBackup, failedPackage, ...registries.flatMap((item) => [item.path, item.backup, item.failed])]) rejectPathLinks(options.extensionsRoot, path)
+  ensureSafeInternalDirectory(options.extensionsRoot, backupRoot)
 
   if (!existsSync(failedPackage) && existsSync(options.destination)) {
-    durableMkdir(dirname(failedPackage)); durableRename(options.destination, failedPackage)
+    ensureSafeInternalDirectory(options.extensionsRoot, dirname(failedPackage)); durableRename(options.destination, failedPackage)
   }
   for (const item of registries) {
-    if (!existsSync(item.failed) && existsSync(item.path)) { durableMkdir(dirname(item.failed)); durableRename(item.path, item.failed) }
+    if (!existsSync(item.failed) && existsSync(item.path)) { ensureSafeInternalDirectory(options.extensionsRoot, dirname(item.failed)); durableRename(item.path, item.failed) }
     if (existsSync(item.backup)) {
       if (existsSync(item.path)) throw new Error('Extension registry rollback destination is occupied')
       durableMkdir(dirname(item.path)); durableRename(item.backup, item.path)
