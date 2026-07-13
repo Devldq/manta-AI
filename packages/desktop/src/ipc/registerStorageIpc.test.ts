@@ -59,4 +59,14 @@ describe('storage IPC', () => {
     const event = { senderFrame: { url: 'http://127.0.0.1:4444/' } }
     await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:create-volume', selectionId: 'selection-1', name: 'New volume' })).resolves.toEqual({ ok: true, kind: 'volume-created', volumeId: 'volume-new' })
   })
+
+  it('forwards only typed Git configuration and rejects a credential value or arbitrary path', async () => {
+    const handlers = new Map<string, Function>(); const ipc: any = { handle: (name: string, fn: Function) => handlers.set(name, fn), removeHandler: vi.fn() }
+    const services: any = { configureGit: vi.fn(async () => ({ operationId: 'git-configured' })) }
+    registerStorageIpc({ ipcMain: ipc, trustedOrigin: 'http://127.0.0.1:4444', services })
+    const event = { senderFrame: { url: 'http://127.0.0.1:4444/' } }
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:configure-git', volumeId: 'v1', mode: 'remote', remoteUrl: 'https://example.test/ash.git', authRef: 'keychain:work' })).resolves.toMatchObject({ ok: true, operationId: 'git-configured' })
+    expect(services.configureGit).toHaveBeenCalledWith('v1', expect.objectContaining({ mode: 'remote', remoteUrl: 'https://example.test/ash.git', authRef: 'keychain:work' }))
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:configure-git', volumeId: 'v1', mode: 'remote', remoteUrl: 'https://token@evil.test/repo.git', authRef: 'C:\\secret' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+  })
 })

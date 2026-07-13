@@ -23,6 +23,11 @@ export async function createStorageHub(options: {
   const base = {
     resolve: (group: StorageGroupId, ...segments: string[]) => router.resolve(group, ...segments),
     volumeFor: (group: StorageGroupId) => registry.volumeFor(group),
+    resolveVolumeRoot: (volumeId: string) => {
+      const volume = value.volumes.find((item) => item.id === volumeId)
+      if (!volume) throw new Error('Volume not found')
+      return volumeRoot(volume.parentPath)
+    },
     inventory: async (scope?: { volumeId?: string; groupId?: StorageGroupId }) => {
       if (scope?.groupId) return inventoryTree(router.resolve(scope.groupId))
       const volume = scope?.volumeId ? value.volumes.find((item) => item.id === scope.volumeId) : value.volumes[0]

@@ -5,7 +5,7 @@ import { StorageOperationDialog } from './StorageOperationDialog'
 import { createSubmissionGate } from './submission-gate'
 import { StorageOverview } from './StorageOverview'
 import { StorageVolumeCard } from './StorageVolumeCard'
-import { storageApi, type StorageBackup, type StorageOverview as Overview, type StorageVolumeDetails } from './storage-api'
+import { storageApi, type StorageBackup, type StorageGitBinding, type StorageGitCapability, type StorageOverview as Overview, type StorageVolumeDetails } from './storage-api'
 import { useStorageOperation } from './useStorageOperation'
 
 const EMPTY: Overview = { volumes: [], groups: [] }
@@ -14,6 +14,8 @@ export function StorageSettingsPanel() {
   const [overview, setOverview] = useState<Overview>(EMPTY)
   const [volumes, setVolumes] = useState<StorageVolumeDetails[]>([])
   const [backups, setBackups] = useState<StorageBackup[]>([])
+  const [gitCapability, setGitCapability] = useState<StorageGitCapability>({ available: false })
+  const [gitBindings, setGitBindings] = useState<StorageGitBinding[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error>()
   const [submitting, setSubmitting] = useState(false)
@@ -23,8 +25,8 @@ export function StorageSettingsPanel() {
   const refresh = useCallback(async () => {
     setLoading(true); setError(undefined)
     try {
-      const [summary, nextVolumes, nextBackups] = await Promise.all([storageApi.overview(), storageApi.volumes(), storageApi.backups()])
-      setVolumes(nextVolumes); setOverview(summary); setBackups(nextBackups); operation.resume(summary.operation, summary.operations)
+      const [summary, nextVolumes, nextBackups, capability, bindings] = await Promise.all([storageApi.overview(), storageApi.volumes(), storageApi.backups(), storageApi.gitCapabilities(), storageApi.gitBindings()])
+      setVolumes(nextVolumes); setOverview(summary); setBackups(nextBackups); setGitCapability(capability); setGitBindings(bindings); operation.resume(summary.operation, summary.operations)
     } catch (reason) { setError(reason as Error) } finally { setLoading(false) }
   // `resume` only captures stable React setters/ref; this keeps refresh stable.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -40,10 +42,10 @@ export function StorageSettingsPanel() {
     if (error) return <div role="alert">{error.message} <button onClick={() => void refresh()}>Retry</button></div>
     return <>
       <StorageOverview overview={overview} onMove={moveGroup} disabled={busy} />
-      <h3 style={{ marginTop: 20 }}>Volumes</h3><div style={{ display: 'grid', gap: 10 }}>{volumes.map((volume) => <StorageVolumeCard key={volume.id} volume={volume} bytes={volume.inventory?.bytes} files={volume.inventory?.files} disabled={busy} onOpen={() => void run({ channel: 'storage:open-volume', volumeId: volume.id })} onRelocate={() => migrateVolume(volume)} />)}</div>
+      <h3 style={{ marginTop: 20 }}>Volumes</h3><div style={{ display: 'grid', gap: 10 }}>{volumes.map((volume) => <StorageVolumeCard key={volume.id} volume={volume} bytes={volume.inventory?.bytes} files={volume.inventory?.files} disabled={busy} git={{ ...gitCapability, binding: gitBindings.find((binding) => binding.volumeId === volume.id) }} onConfigureGit={(request) => run(request)} onOpen={() => void run({ channel: 'storage:open-volume', volumeId: volume.id })} onRelocate={() => migrateVolume(volume)} />)}</div>
       <button disabled={busy} onClick={createVolume} style={{ marginTop: 12 }}>Create volume</button>
       <h3 style={{ marginTop: 20 }}>Automatic backups</h3>{backups.length === 0 ? <p>No backups yet.</p> : <ul>{backups.map((backup) => <li key={backup.id}>{backup.id} · {backup.bytes ?? 0} bytes <button disabled={busy} onClick={() => setDialog({ title: 'Delete backup', body: 'This permanently removes only the verified inactive backup. Active storage can never be selected.', action: () => run({ channel: 'storage:delete-backup', backupId: backup.id }) })}>Delete backup</button></li>)}</ul>}
     </>
-  }, [backups, busy, error, loading, overview, refresh, volumes])
+  }, [backups, busy, error, gitBindings, gitCapability, loading, overview, refresh, volumes])
   return <section aria-label="Storage settings" style={{ padding: 20, overflow: 'auto', height: '100%' }}><h2>Storage</h2><p style={{ color: 'var(--color-text-muted)' }}>Manage the seven ASH storage groups. Cloud folders such as iCloud sync normally through the operating system.</p>{operation.operation && <p role="status">{operation.operation.phase}: {operation.operation.progress?.message ?? 'Operation in progress'}</p>}{operation.error && <p role="alert">{operation.error.message}</p>}{content}<StorageOperationDialog open={!!dialog} title={dialog?.title ?? ''} body={dialog?.body ?? ''} confirmLabel="Confirm and continue" busy={busy} onCancel={() => setDialog(undefined)} onConfirm={async () => { const current = dialog; if (!current) return; try { await submission.run(current.action); setDialog(undefined) } catch (reason) { setError(reason as Error) } }} /></section>
 }

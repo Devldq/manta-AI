@@ -15,4 +15,24 @@ describe('storage routes', () => {
     expect((await app.inject('/api/storage/backups')).json().data.backups[0].id).toBe('b1')
     await app.close()
   })
+
+  it('exposes only typed, credential-free Git binding state for active volumes', async () => {
+    const bootstrap: any = { generation: 1, volumes: [{ id: 'v1', name: 'Default', parentPath: '/data', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], groupAssignments: { extensions:'v1',knowledge:'v1',work:'v1',config:'v1',secrets:'v1',diagnostics:'v1',cache:'v1' } }
+    const app = await buildApp({ storage: { resolve: () => '/data/.manta-ai' } as any, registerRoutes: false, storageApi: {
+      readBootstrap: async () => bootstrap, inventory: async () => ({ files: 0, bytes: 0, entries: [] }), listBackups: async () => [],
+      git: {
+        capability: async () => ({ available: true, version: '2.47.1' }),
+        bindings: async () => [{ volumeId: 'v1', mode: 'remote', remoteUrl: 'https://example.test/ash.git', credentialRef: 'keychain:work', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
+        status: async (id: string) => id === 'v1' ? '?? manifest.json\n' : '',
+        history: async () => 'abc\tInitial snapshot\n',
+      },
+    } })
+    expect((await app.inject('/api/storage/git/capabilities')).json().data).toEqual({ available: true, version: '2.47.1' })
+    const binding = (await app.inject('/api/storage/git/bindings')).json().data.bindings[0]
+    expect(binding).toMatchObject({ volumeId: 'v1', remoteUrl: 'https://example.test/ash.git', credentialRef: 'keychain:work' })
+    expect((await app.inject('/api/storage/volumes/v1/git/status')).json().data.status).toBe('?? manifest.json\n')
+    expect((await app.inject('/api/storage/volumes/v1/git/history')).json().data.history).toBe('abc\tInitial snapshot\n')
+    expect((await app.inject('/api/storage/volumes/missing/git/status')).statusCode).toBe(404)
+    await app.close()
+  })
 })

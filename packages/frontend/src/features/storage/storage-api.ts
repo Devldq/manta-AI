@@ -1,6 +1,8 @@
 import type { StorageGroupId, StorageOperationProgress, StorageVolumeRecord } from '@manta/shared'
 
 export interface StorageVolumeDetails extends StorageVolumeRecord { groups: StorageGroupId[]; inventory: { bytes: number; files: number } }
+export interface StorageGitCapability { available: boolean; version?: string; reason?: string }
+export interface StorageGitBinding { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; createdAt: string; updatedAt: string }
 
 export interface StorageOverview {
   volumes: StorageVolumeRecord[]
@@ -33,6 +35,8 @@ export function createStorageApi(fetchImpl: Fetch = fetch): {
   volume(id: string): Promise<StorageVolumeDetails>
   operation(id: string): Promise<StorageOperation>
   backups(): Promise<StorageBackup[]>
+  gitCapabilities(): Promise<StorageGitCapability>
+  gitBindings(): Promise<StorageGitBinding[]>
 } {
   async function read<T>(path: string): Promise<T> {
     const response = await fetchImpl(path, { headers: { Accept: 'application/json' } })
@@ -47,6 +51,8 @@ export function createStorageApi(fetchImpl: Fetch = fetch): {
     volume: async (id) => (await read<{ volume: StorageVolumeDetails }>(`/api/storage/volumes/${encodeURIComponent(id)}`)).volume,
     operation: async (id) => (await read<{ operation: StorageOperation }>(`/api/storage/operations/${encodeURIComponent(id)}`)).operation,
     backups: async () => (await read<{ backups: StorageBackup[] }>('/api/storage/backups')).backups,
+    gitCapabilities: () => read<StorageGitCapability>('/api/storage/git/capabilities'),
+    gitBindings: async () => (await read<{ bindings: StorageGitBinding[] }>('/api/storage/git/bindings')).bindings,
   }
 }
 

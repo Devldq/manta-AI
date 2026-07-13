@@ -26,10 +26,11 @@ export class GitSyncService {
   private readonly credentials: CredentialStore
   constructor(private readonly options: { runner: GitRunner; bindings: GitBindingStore; volumes: { resolveVolumeRoot(volumeId: string): string }; credentials?: CredentialStore }) { this.credentials = options.credentials ?? new UnavailableCredentialStore() }
 
-  async bindVolume(input: { volumeId: string; mode: GitBindingMode; remoteUrl?: string; credential?: GitCredentialInput }): Promise<GitBinding> {
+  async bindVolume(input: { volumeId: string; mode: GitBindingMode; remoteUrl?: string; credentialRef?: string; credential?: GitCredentialInput }): Promise<GitBinding> {
     if (input.mode === 'remote' && !input.remoteUrl) throw new Error('Remote Git binding requires a remote URL')
     if (input.remoteUrl) assertSafeRemote(input.remoteUrl)
     if (input.credential && !this.credentials.available) throw new Error('A secure OS credential store is unavailable')
+    if (input.credentialRef !== undefined && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(input.credentialRef)) throw new Error('Git credential reference is invalid')
     const existing = await this.options.bindings.get(input.volumeId)
     if (existing) return this.options.bindings.bind({ ...existing })
     const repositoryPath = this.repositoryPath({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH } as GitBinding)
@@ -39,10 +40,11 @@ export class GitSyncService {
     if (input.mode === 'remote' && input.remoteUrl) await this.options.runner.exec(['remote', 'add', 'origin', input.remoteUrl], { cwd: repositoryPath })
     if (input.credential) await this.credentials.put(input.credential.ref, input.credential.secret)
     const now = new Date().toISOString()
-    return this.options.bindings.bind({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH, mode: input.mode, remoteUrl: input.remoteUrl, credentialRef: input.credential?.ref, createdAt: now, updatedAt: now })
+    return this.options.bindings.bind({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH, mode: input.mode, remoteUrl: input.remoteUrl, credentialRef: input.credential?.ref ?? input.credentialRef, createdAt: now, updatedAt: now })
   }
 
   async listBindings(): Promise<GitBinding[]> { return this.options.bindings.list() }
+  async capability() { return this.options.runner.capability() }
 
   async status(volumeId: string): Promise<string> { const binding = await this.binding(volumeId); return (await this.options.runner.exec(['status', '--porcelain=v1'], { cwd: this.repositoryPath(binding) })).stdout }
   async history(volumeId: string): Promise<string> { const binding = await this.binding(volumeId); return (await this.options.runner.exec(['log', '--format=%H%x09%s', '-n', '50'], { cwd: this.repositoryPath(binding) })).stdout }

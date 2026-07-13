@@ -141,6 +141,7 @@ export const GitRemoteUrlSchema = z.string().min(1).superRefine((value, context)
     if (!['https:', 'http:', 'ssh:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) context.addIssue({ code: 'custom', message: 'Git remote URL is invalid' })
   } catch { context.addIssue({ code: 'custom', message: 'Git remote URL is invalid' }) }
 })
+export const GitCredentialRefSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/, 'Git credential reference is invalid')
 
 export const StorageIpcRequestSchema = z.union([
   z.object({ channel: z.literal('storage:select-parent'), purpose: z.enum(['createVolume', 'migrateVolume']) }),
@@ -149,7 +150,7 @@ export const StorageIpcRequestSchema = z.union([
   z.object({ channel: z.literal('storage:move-group'), groupId: StorageGroupIdSchema, targetVolumeId: z.string().min(1) }),
   z.union([
     z.object({ channel: z.literal('storage:configure-git'), volumeId: z.string().min(1), mode: z.literal('local') }),
-    z.object({ channel: z.literal('storage:configure-git'), volumeId: z.string().min(1), mode: z.literal('remote'), remoteUrl: GitRemoteUrlSchema, authRef: z.string().min(1).optional() }),
+    z.object({ channel: z.literal('storage:configure-git'), volumeId: z.string().min(1), mode: z.literal('remote'), remoteUrl: GitRemoteUrlSchema, authRef: GitCredentialRefSchema.optional() }),
   ]),
   z.object({ channel: z.literal('storage:sync-volume'), volumeId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:delete-backup'), backupId: z.string().min(1) }),

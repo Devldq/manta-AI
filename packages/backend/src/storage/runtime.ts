@@ -1,7 +1,7 @@
 import type { StorageGroupId } from '@manta/shared'
 import { STORAGE_GROUP_IDS } from '@manta/shared'
 import { EmbeddingCacheManager, configureSQLiteVecProvider, resetSQLiteVecProvider } from '@manta/rag'
-import { BootstrapStore, createStorageHub, type StorageGroupDriver } from '@manta/storage-hub'
+import { BootstrapStore, createStorageHub, GitBindingStore, GitRunner, GitSyncService, type StorageGroupDriver } from '@manta/storage-hub'
 import { createClaudeInstallResource, createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner, type PluginMarketplaceCache } from '../core/storage/plugin/marketplace'
 import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } from './group-drivers'
 import { runWithDiagnosticsOwner, RuntimeDiagnosticsWriter } from './runtime-diagnostics'
@@ -125,5 +125,11 @@ export async function createBackendStorageComposition(bootstrap: BootstrapStore,
     },
   })
   if (!runtime || !hub.migrations) throw new Error('Failed to compose Backend storage migration drivers')
-  return { hub, runtime }
+  const git = new GitSyncService({
+    runner: new GitRunner(),
+    // Resolve this lazily so config-group relocation is reflected after the required relaunch.
+    bindings: new GitBindingStore(() => runtime!.resolve('config')),
+    volumes: { resolveVolumeRoot: hub.resolveVolumeRoot },
+  })
+  return { hub, runtime, git }
 }
