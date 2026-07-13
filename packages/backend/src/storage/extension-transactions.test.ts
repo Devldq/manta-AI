@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, readdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, readdirSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { recoverExtensionTransactions, transactionalInstallDirectory, transactionalUninstallDirectory } from './extension-transactions'
+import { recoverExtensionTransactions, rollbackCompletedExtensionInstall, transactionalInstallDirectory, transactionalUninstallDirectory } from './extension-transactions'
 
 describe('extension storage transactions', () => {
   it('stages replacement and preserves the previous install as a backup', () => {
@@ -69,5 +69,30 @@ describe('extension storage transactions', () => {
     try { symlinkSync(outside, join(extensionsRoot, 'plugins'), 'junction') } catch { return }
     expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/symbolic|reparse|link/i)
     expect(existsSync(join(outside, 'demo'))).toBe(false)
+  })
+
+  it('restores the exact prior package and registries after a completed install', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-rollback-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
+    mkdirSync(source, { recursive: true }); mkdirSync(destination, { recursive: true }); mkdirSync(join(extensionsRoot, 'plugin-registry'), { recursive: true }); writeFileSync(join(source, 'plugin.yaml'), 'new'); writeFileSync(join(destination, 'plugin.yaml'), 'old'); writeFileSync(registry, 'old-registry')
+    const result = transactionalInstallDirectory({ extensionsRoot, source, destination, registryWrites: new Map([[registry, 'new-registry']]) })
+    rollbackCompletedExtensionInstall({ extensionsRoot, destination, transactionId: result.transactionId, registryPaths: [registry] })
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('old'); expect(readFileSync(registry, 'utf8')).toBe('old-registry')
+  })
+
+  it('removes a first install and newly-created registry during completed rollback', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-first-rollback-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
+    mkdirSync(source); writeFileSync(join(source, 'plugin.yaml'), 'new')
+    const result = transactionalInstallDirectory({ extensionsRoot, source, destination, registryWrites: new Map([[registry, 'new-registry']]) })
+    rollbackCompletedExtensionInstall({ extensionsRoot, destination, transactionId: result.transactionId, registryPaths: [registry] })
+    expect(existsSync(destination)).toBe(false); expect(existsSync(registry)).toBe(false)
+  })
+
+  it('refuses completed rollback through a linked backup ancestor', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-rollback-link-')); const extensionsRoot = join(root, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const outside = join(root, 'outside')
+    mkdirSync(source); mkdirSync(outside); writeFileSync(join(source, 'plugin.yaml'), 'new')
+    const result = transactionalInstallDirectory({ extensionsRoot, source, destination })
+    const backupRoot = join(extensionsRoot, '.ash-backups'); const retained = `${backupRoot}-retained`; mkdirSync(backupRoot); renameSync(backupRoot, retained); symlinkSync(outside, backupRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    expect(() => rollbackCompletedExtensionInstall({ extensionsRoot, destination, transactionId: result.transactionId, registryPaths: [] })).toThrow(/symbolic|reparse|link/i)
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('new'); expect(readdirSync(outside)).toEqual([])
   })
 })

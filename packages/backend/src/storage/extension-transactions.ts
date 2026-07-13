@@ -146,6 +146,47 @@ export function transactionalInstallDirectory(options: InstallOptions): { transa
   } finally { release() }
 }
 
+export interface CompletedExtensionInstallRollback {
+  extensionsRoot: string
+  destination: string
+  transactionId: string
+  registryPaths: string[]
+}
+
+export function rollbackCompletedExtensionInstall(options: CompletedExtensionInstallRollback): void {
+  assertDestination(options)
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(options.transactionId)) throw new Error('Invalid extension transaction identifier')
+  for (const path of options.registryPaths) assertDestination({ extensionsRoot: options.extensionsRoot, destination: path })
+  const release = acquire(options.extensionsRoot)
+  try {
+    recoverUnlocked(options.extensionsRoot)
+    const backupRoot = join(options.extensionsRoot, '.ash-backups', options.transactionId)
+    const packageRelative = relative(options.extensionsRoot, options.destination)
+    const packageBackup = join(backupRoot, packageRelative)
+    const failedPackage = join(backupRoot, '.failed-install', packageRelative)
+    const registries = options.registryPaths.map((path) => {
+      const value = relative(options.extensionsRoot, path)
+      return { path, backup: join(backupRoot, 'registry', value), failed: join(backupRoot, '.failed-registry', value) }
+    })
+    for (const path of [backupRoot, packageBackup, failedPackage, ...registries.flatMap((item) => [item.path, item.backup, item.failed])]) rejectPathLinks(options.extensionsRoot, path)
+
+    if (!existsSync(failedPackage) && existsSync(options.destination)) {
+      durableMkdir(dirname(failedPackage)); durableRename(options.destination, failedPackage)
+    }
+    for (const item of registries) {
+      if (!existsSync(item.failed) && existsSync(item.path)) { durableMkdir(dirname(item.failed)); durableRename(item.path, item.failed) }
+      if (existsSync(item.backup)) {
+        if (existsSync(item.path)) throw new Error('Extension registry rollback destination is occupied')
+        durableMkdir(dirname(item.path)); durableRename(item.backup, item.path)
+      }
+    }
+    if (existsSync(packageBackup)) {
+      if (existsSync(options.destination)) throw new Error('Extension package rollback destination is occupied')
+      durableMkdir(dirname(options.destination)); durableRename(packageBackup, options.destination)
+    }
+  } finally { release() }
+}
+
 export function transactionalUninstallDirectory(options: ExtensionTransactionOptions & { registryDeletes?: string[] }): string | undefined {
   assertDestination(options); const release = acquire(options.extensionsRoot)
   try {
