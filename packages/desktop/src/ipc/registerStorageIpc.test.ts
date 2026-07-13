@@ -47,8 +47,16 @@ describe('storage IPC', () => {
     const services: any = { moveGroup: vi.fn(async () => ({ operationId: 'op-deferred', completion })) }
     registerStorageIpc({ ipcMain: ipc, trustedOrigin: 'http://127.0.0.1:4444', services })
     const event = { senderFrame: { url: 'http://127.0.0.1:4444/' } }
-    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:move-group', groupId: 'work', targetVolumeId: 'v2' })).resolves.toEqual({ ok: true, operationId: 'op-deferred' })
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:move-group', groupId: 'work', targetVolumeId: 'v2' })).resolves.toEqual({ ok: true, kind: 'operation-started', operationId: 'op-deferred' })
     expect(services.moveGroup).toHaveBeenCalledOnce()
     finish()
+  })
+
+  it('returns an immediate volume-created result without starting an operation', async () => {
+    const handlers = new Map<string, Function>(); const ipc: any = { handle: (name: string, fn: Function) => handlers.set(name, fn), removeHandler: vi.fn() }
+    const services: any = { createVolume: vi.fn(async () => 'volume-new') }
+    registerStorageIpc({ ipcMain: ipc, trustedOrigin: 'http://127.0.0.1:4444', services })
+    const event = { senderFrame: { url: 'http://127.0.0.1:4444/' } }
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:create-volume', selectionId: 'selection-1', name: 'New volume' })).resolves.toEqual({ ok: true, kind: 'volume-created', volumeId: 'volume-new' })
   })
 })

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { loadStagedFiles, removeStagedFileById, saveStagedFiles } from './staged-files-db'
+import { loadStagedFiles, removeStagedFileById, removeStagedFilesById, saveStagedFiles } from './staged-files-db'
 
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
@@ -78,5 +78,12 @@ describe('ASH RAG staging client', () => {
     await expect(removeStagedFileById(id, 'delete-kb')).rejects.toThrow('503')
     const reloaded = await loadStagedFiles('delete-kb')
     expect(reloaded.map((file) => file.id)).toEqual([id])
+  })
+
+  it('acknowledges each canonical deletion independently and retains failures for retry', async () => {
+    const fetcher = vi.fn(async (input: string) => new Response(null, { status: input.endsWith('/a') ? 204 : 503 }))
+    vi.stubGlobal('fetch', fetcher)
+    await expect(removeStagedFilesById('kb-1', ['a', 'b'])).resolves.toEqual({ deletedIds: ['a'], failures: [{ id: 'b', error: expect.any(Error) }] })
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 })

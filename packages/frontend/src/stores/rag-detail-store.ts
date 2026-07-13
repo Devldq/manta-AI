@@ -6,6 +6,7 @@ import {
   saveStagedFiles,
   loadStagedFiles,
   removeStagedFileById,
+  removeStagedFilesById,
   clearAllForKb,
   saveBatchMeta,
   loadBatchMeta,
@@ -954,9 +955,33 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
   },
 
   clearStagedFiles: () => {
-    set({ stagedFiles: [], stagedFileProgress: {} })
     const kbId = get().currentKbId
-    if (kbId) void clearAllForKb(kbId).catch((error: unknown) => console.warn('[RAG Batch] staged cache clear retained for retry', error))
+    const staged = get().stagedFiles
+    if (!kbId) { set({ stagedFiles: [], stagedFileProgress: {} }); return }
+    void removeStagedFilesById(kbId, staged.map((file) => file.id)).then(async ({ deletedIds, failures }) => {
+      const deleted = new Set(deletedIds)
+      const failureById = new Map(failures.map((failure) => [failure.id, failure.error]))
+      set((state) => {
+        const progress = { ...state.stagedFileProgress }
+        for (const id of deleted) delete progress[id]
+        for (const [id, error] of failureById) progress[id] = { ...progress[id], stage: 'error', progress: progress[id]?.progress ?? 0, error: error.message }
+        return { stagedFiles: state.stagedFiles.filter((file) => !deleted.has(file.id)), stagedFileProgress: progress }
+      })
+      if (failures.length === 0) { await clearBatchMeta(kbId); return }
+      // Acknowledge partial success before reloading. Merge only retained rows
+      // so a server reload cannot resurrect an acknowledged deletion.
+      try {
+        const persisted = await loadStagedFiles(kbId)
+        set((state) => {
+          const current = new Map(state.stagedFiles.map((file) => [file.id, file]))
+          for (const file of persisted) if (!deleted.has(file.id)) current.set(file.id, { id: file.id, file: file.file, name: file.name, size: file.size, type: file.type, relativePath: file.relativePath })
+          return { stagedFiles: [...current.values()] }
+        })
+      } catch (reason) {
+        const message = reason instanceof Error ? reason.message : 'Unable to reload staged files'
+        set((state) => ({ stagedFileProgress: Object.fromEntries(Object.entries(state.stagedFileProgress).map(([id, progress]) => failureById.has(id) ? [id, { ...progress, stage: 'error', error: message }] : [id, progress])) }))
+      }
+    })
   },
 
   updateChunkingConfig: (config: Partial<ChunkingConfig>) => {

@@ -7,7 +7,7 @@ export interface StartedStorageOperation { operationId: string; completion?: Pro
 type StorageOperationStart = string | StartedStorageOperation
 export interface StorageIpcServices {
   selectParent(purpose: 'createVolume' | 'migrateVolume', event: any): Promise<string | undefined>
-  createVolume(name: string, selectionId: string, event: any): Promise<StorageOperationStart>
+  createVolume(name: string, selectionId: string, event: any): Promise<string>
   relocateVolume(volumeId: string, selectionId: string, event: any): Promise<StorageOperationStart>
   moveGroup(groupId: StorageGroupId, targetVolumeId: string): Promise<StorageOperationStart>
   openVolume(volumeId: string): Promise<void>
@@ -35,14 +35,14 @@ export function registerStorageIpc(options: { ipcMain: IpcMainLike; trustedOrigi
       if (event.senderFrame?.top && event.senderFrame.top !== event.senderFrame) throw Object.assign(new Error('Untrusted IPC frame'), { code: 'UNTRUSTED_FRAME' })
       const request = StorageIpcRequestSchema.parse(raw); let response: StorageIpcResponse
       switch (request.channel) {
-        case 'storage:select-parent': { const selectionId = await options.services.selectParent(request.purpose, event); response = { ok: true, selectionId }; break }
-        case 'storage:create-volume': assertId(request.selectionId, 'selectionId'); response = { ok: true, operationId: startedOperation(await options.services.createVolume(request.name, request.selectionId, event)) }; break
-        case 'storage:relocate-volume': assertId(request.volumeId, 'volumeId'); assertId(request.selectionId, 'selectionId'); response = { ok: true, operationId: startedOperation(await options.services.relocateVolume(request.volumeId, request.selectionId, event)) }; break
-        case 'storage:move-group': assertId(request.targetVolumeId, 'targetVolumeId'); response = { ok: true, operationId: startedOperation(await options.services.moveGroup(request.groupId, request.targetVolumeId)) }; break
-        case 'storage:open-volume': assertId(request.volumeId, 'volumeId'); await options.services.openVolume(request.volumeId); response = { ok: true }; break
-        case 'storage:delete-backup': assertId(request.backupId, 'backupId'); await options.services.deleteBackup(request.backupId); response = { ok: true }; break
-        case 'storage:configure-git': assertId(request.volumeId, 'volumeId'); if (!options.services.configureGit) throw new Error('Git is unavailable'); response = { ok: true, operationId: startedOperation(await options.services.configureGit(request.volumeId, request.remoteUrl, request.authRef)) }; break
-        case 'storage:sync-volume': assertId(request.volumeId, 'volumeId'); if (!options.services.syncVolume) throw new Error('Sync is unavailable'); response = { ok: true, operationId: startedOperation(await options.services.syncVolume(request.volumeId)) }; break
+        case 'storage:select-parent': { const selectionId = await options.services.selectParent(request.purpose, event); response = { ok: true, kind: 'parent-selected', selectionId }; break }
+        case 'storage:create-volume': assertId(request.selectionId, 'selectionId'); response = { ok: true, kind: 'volume-created', volumeId: await options.services.createVolume(request.name, request.selectionId, event) }; break
+        case 'storage:relocate-volume': assertId(request.volumeId, 'volumeId'); assertId(request.selectionId, 'selectionId'); response = { ok: true, kind: 'operation-started', operationId: startedOperation(await options.services.relocateVolume(request.volumeId, request.selectionId, event)) }; break
+        case 'storage:move-group': assertId(request.targetVolumeId, 'targetVolumeId'); response = { ok: true, kind: 'operation-started', operationId: startedOperation(await options.services.moveGroup(request.groupId, request.targetVolumeId)) }; break
+        case 'storage:open-volume': assertId(request.volumeId, 'volumeId'); await options.services.openVolume(request.volumeId); response = { ok: true, kind: 'completed' }; break
+        case 'storage:delete-backup': assertId(request.backupId, 'backupId'); await options.services.deleteBackup(request.backupId); response = { ok: true, kind: 'completed' }; break
+        case 'storage:configure-git': assertId(request.volumeId, 'volumeId'); if (!options.services.configureGit) throw new Error('Git is unavailable'); response = { ok: true, kind: 'operation-started', operationId: startedOperation(await options.services.configureGit(request.volumeId, request.remoteUrl, request.authRef)) }; break
+        case 'storage:sync-volume': assertId(request.volumeId, 'volumeId'); if (!options.services.syncVolume) throw new Error('Sync is unavailable'); response = { ok: true, kind: 'operation-started', operationId: startedOperation(await options.services.syncVolume(request.volumeId)) }; break
       }
       return StorageIpcResponseSchema.parse(response)
     } catch (error) {

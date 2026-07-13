@@ -76,6 +76,22 @@ export async function removeStagedFileById(id: string, kbId?: string): Promise<v
   }
   for (const [cacheKey, file] of offlineFiles) if (file.id === id && (!kbId || file.kbId === kbId)) offlineFiles.delete(cacheKey)
 }
+export interface StagedFileDeletionFailure { id: string; error: Error }
+export interface StagedFileDeletionResult { deletedIds: string[]; failures: StagedFileDeletionFailure[] }
+/**
+ * Deletion is deliberately per-file: a failed canonical remote DELETE must
+ * remain visible and retryable instead of being hidden by an optimistic clear.
+ */
+export async function removeStagedFilesById(kbId: string, ids: string[]): Promise<StagedFileDeletionResult> {
+  const settled = await Promise.all(ids.map(async (id) => {
+    try { await removeStagedFileById(id, kbId); return { id, error: undefined as Error | undefined } }
+    catch (reason) { return { id, error: reason instanceof Error ? reason : new Error('Unable to remove staged file') } }
+  }))
+  return {
+    deletedIds: settled.filter((result) => !result.error).map((result) => result.id),
+    failures: settled.filter((result): result is { id: string; error: Error } => !!result.error),
+  }
+}
 export async function clearStagedFilesForKb(kbId: string): Promise<void> { const files = await loadStagedFiles(kbId); await Promise.all(files.map((file) => removeStagedFileById(file.id, kbId))) }
 async function loadSessions(): Promise<Record<string, BatchMeta>> { const value = await clientState.load<{ sessions?: Record<string, BatchMeta> }>('rag-batch'); return value?.sessions ?? {} }
 export async function saveBatchMeta(meta: BatchMeta): Promise<void> { const sessions = await loadSessions(); if (!(await clientState.set('rag-batch', { sessions: { ...sessions, [meta.kbId]: meta } }))) throw new Error('RAG batch metadata persistence failed') }

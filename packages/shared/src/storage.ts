@@ -141,8 +141,11 @@ export const StorageIpcRequestSchema = z.discriminatedUnion('channel', [
   z.object({ channel: z.literal('storage:open-volume'), volumeId: z.string().min(1) }),
 ])
 
-export const StorageIpcResponseSchema = z.discriminatedUnion('ok', [
-  z.object({ ok: z.literal(true), operationId: z.string().min(1).optional(), selectionId: z.string().min(1).optional() }),
+export const StorageIpcResponseSchema = z.union([
+  z.object({ ok: z.literal(true), kind: z.literal('parent-selected'), selectionId: z.string().min(1).optional() }),
+  z.object({ ok: z.literal(true), kind: z.literal('volume-created'), volumeId: z.string().min(1) }),
+  z.object({ ok: z.literal(true), kind: z.literal('operation-started'), operationId: z.string().min(1) }),
+  z.object({ ok: z.literal(true), kind: z.literal('completed') }),
   z.object({ ok: z.literal(false), error: z.object({ code: z.string().min(1), message: z.string().min(1), details: z.record(z.string(), z.unknown()).optional() }) }),
 ])
 
