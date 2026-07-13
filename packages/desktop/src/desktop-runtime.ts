@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { BootstrapStore, inventoryTree, volumeRoot } from '@manta/storage-hub'
+import { BootstrapStore, inspectFolderHealth, inventoryTree, volumeRoot } from '@manta/storage-hub'
 import { DesktopLifecycleController } from './lifecycle/DesktopLifecycleController'
 import { initializeStorage } from './lifecycle/initializeStorage'
 import { createStorageVolume } from './lifecycle/createStorageVolume'
@@ -14,6 +14,7 @@ import { createOnboardingWindow, onboardingPageUrl } from './windows/createOnboa
 import { StorageControlStore, type RelaunchIntent } from './lifecycle/StorageControlStore'
 import type { StorageOperationProgress } from '@manta/shared'
 import { assertDeletableBackup, buildBackupRefs, pathExists, restoreRelaunchIntent, trustedBackupRefs, validateRelaunchIntent } from './lifecycle/RelaunchRecovery'
+import { createCloudSyncRuntime } from './lifecycle/createCloudSyncRuntime'
 
 interface BackendModule {
   createBackendStorageComposition(store: BootstrapStore, options?: { onProgress?: (progress: unknown) => void }): Promise<any>
@@ -25,6 +26,7 @@ const importEsm = new Function('specifier', 'return import(specifier)') as (spec
 let activeWindow: BrowserWindow | undefined
 let onboardingWindow: BrowserWindow | undefined
 let composition: any
+let cloudSync: ReturnType<typeof createCloudSyncRuntime> | undefined
 let disposeStorageIpc: (() => void) | undefined
 let disposeLegacyIpc: (() => void) | undefined
 let quitting = false
@@ -88,7 +90,8 @@ function installMainStorageIpc(origin: string): void {
       return composition.git.bindVolume({ volumeId, mode: config.mode, remoteUrl: config.mode === 'remote' ? config.remoteUrl : undefined })
     },
     async syncVolume(volumeId) {
-      return composition.git.syncVolume(volumeId)
+      if (!cloudSync) throw Object.assign(new Error('Storage sync runtime is unavailable'), { code: 'SYNC_UNAVAILABLE' })
+      return cloudSync.syncNow(volumeId)
     },
     async planGitImport(volumeId) {
       const result = await composition.git.planRemoteImport(volumeId)
@@ -105,9 +108,21 @@ function installMainStorageIpc(origin: string): void {
 let disposeOnboarding: (() => void) | undefined
 const controller = new DesktopLifecycleController({
   async readBootstrap() { return new BootstrapStore(bootstrapPath()).read() },
-  async recover() { const bootstrapStore=new BootstrapStore(bootstrapPath()); const before=await bootstrapStore.read(); const journal=before?.pendingMigration; const backend = await importEsm('@manta/backend'); composition = await (backend as BackendModule).createBackendStorageComposition(bootstrapStore, { onProgress: (raw: unknown) => { const progress=raw as StorageOperationProgress; const prior=progressTails.get(progress.operationId) ?? Promise.resolve(); const next=prior.then(()=>controlStore().recordProgress(progress)); progressTails.set(progress.operationId,next.catch(()=>{})); void next.catch(()=>{}); activeWindow?.webContents.send('storage:progress',progress) } }); try { await composition.hub.migrations?.recoverPending(); if (journal) { await controlStore().startOperation(journal.id,journal.kind); const after=await bootstrapStore.read(); if (['planned','quiescing','copying','validating'].includes(journal.phase) || !before?.previous || !after) await controlStore().failOperation(journal.id,new Error('Migration rolled back during startup recovery')); else { const previous={schemaVersion:1 as const,...before.previous}; const value=journal.kind==='volume'?journal.sourceVolumeId:journal.groups[0]; await controlStore().completeOperation(journal.id,buildBackupRefs(journal.id,journal.kind,previous,after,value),{previous,current:after}) } } } catch(error) { if (journal) { await controlStore().startOperation(journal.id,journal.kind); await controlStore().failOperation(journal.id,error) } throw error } },
+  async recover() { const bootstrapStore=new BootstrapStore(bootstrapPath()); const before=await bootstrapStore.read(); const journal=before?.pendingMigration; const backend = await importEsm('@manta/backend'); composition = await (backend as BackendModule).createBackendStorageComposition(bootstrapStore, { onProgress: (raw: unknown) => { const progress=raw as StorageOperationProgress; const prior=progressTails.get(progress.operationId) ?? Promise.resolve(); const next=prior.then(()=>controlStore().recordProgress(progress)); progressTails.set(progress.operationId,next.catch(()=>{})); void next.catch(()=>{}); activeWindow?.webContents.send('storage:progress',progress) } }); try { await composition.hub.migrations?.recoverPending(); if (journal) { await controlStore().startOperation(journal.id,journal.kind); const after=await bootstrapStore.read(); if (['planned','quiescing','copying','validating'].includes(journal.phase) || !before?.previous || !after) await controlStore().failOperation(journal.id,new Error('Migration rolled back during startup recovery')); else { const previous={schemaVersion:1 as const,...before.previous}; const value=journal.kind==='volume'?journal.sourceVolumeId:journal.groups[0]; await controlStore().completeOperation(journal.id,buildBackupRefs(journal.id,journal.kind,previous,after,value),{previous,current:after}) } }
+    cloudSync = createCloudSyncRuntime({
+      volumes: async () => {
+        const [bootstrap, bindings] = await Promise.all([bootstrapStore.read(), composition.git.listBindings()])
+        const bound = new Set(bindings.map((binding: { volumeId: string }) => binding.volumeId))
+        return (bootstrap?.volumes ?? []).filter((volume) => bound.has(volume.id)).map((volume) => ({ volumeId: volume.id, root: volumeRoot(volume.parentPath) }))
+      },
+      inspect: inspectFolderHealth,
+      sync: (volumeId) => composition.git.syncVolume(volumeId),
+      pollIntervalMs: 60_000,
+      syncIntervalMs: 15 * 60_000,
+    })
+  } catch(error) { if (journal) { await controlStore().startOperation(journal.id,journal.kind); await controlStore().failOperation(journal.id,error) } throw error } },
   async composeStorage() { return composition },
-  async startServer({ storage, bundledSeedRoot }) { const backend = await importEsm('@manta/backend') as BackendModule; return backend.startServer({ storage, port: 0, host: '127.0.0.1', bundledSeedRoot, frontendDist: app.isPackaged ? join(process.resourcesPath, 'frontend', 'dist') : join(__dirname, '../../frontend/dist'), isDev: false, storageApi: { readBootstrap: () => new BootstrapStore(bootstrapPath()).read(), inventory: composition.hub.inventory, getOperation:(id:string)=>controlStore().getOperation(id), listOperations:()=>controlStore().listOperations(), listBackups, git: { capability: () => composition.git.capability(), bindings: () => composition.git.listBindings(), status: (volumeId:string) => composition.git.status(volumeId), history: (volumeId:string) => composition.git.history(volumeId) } } }) },
+  async startServer({ storage, bundledSeedRoot }) { const backend = await importEsm('@manta/backend') as BackendModule; await cloudSync?.start(); return backend.startServer({ storage, port: 0, host: '127.0.0.1', bundledSeedRoot, frontendDist: app.isPackaged ? join(process.resourcesPath, 'frontend', 'dist') : join(__dirname, '../../frontend/dist'), isDev: false, storageApi: { readBootstrap: () => new BootstrapStore(bootstrapPath()).read(), inventory: composition.hub.inventory, volumeHealth: async () => cloudSync?.health() ?? {}, getOperation:(id:string)=>controlStore().getOperation(id), listOperations:()=>controlStore().listOperations(), listBackups, git: { capability: () => composition.git.capability(), bindings: () => composition.git.listBindings(), status: (volumeId:string) => composition.git.status(volumeId), history: (volumeId:string) => composition.git.history(volumeId) } } }) },
   async openOnboarding() { disposeOnboarding?.(); onboardingWindow = createOnboardingWindow(); disposeOnboarding = registerSecureOnboardingIpc({ ipcMain, getWindow: () => onboardingWindow, dialog, app, selections, bootstrapPath: bootstrapPath(), initializeStorage, onboardingUrl: onboardingPageUrl() }); const senderId = onboardingWindow.webContents.id; onboardingWindow.on('closed', () => { selections.clearSender(senderId); onboardingWindow = undefined; if (!quitting) app.quit() }) },
   async openMain(url) { activeWindow = createMainWindow(url); installMainStorageIpc(url); disposeLegacyIpc?.(); disposeLegacyIpc = registerLegacyIpc(); const senderId = activeWindow.webContents.id; activeWindow.on('closed', () => { selections.clearSender(senderId); activeWindow = undefined }) },
   async readRelaunchIntent() { const intent=await controlStore().readIntent(); if(!intent)return undefined; const active=await new BootstrapStore(bootstrapPath()).read(); try { if(!active) throw new Error('Bootstrap is missing'); return await validateRelaunchIntent(intent,active,controlStore()) } catch(error) { await controlStore().quarantineIntent(); throw Object.assign(error as Error,{code:'RELAUNCH_INTENT_INVALID'}) } },
@@ -115,7 +130,7 @@ const controller = new DesktopLifecycleController({
   rollbackRelaunchIntent: (intent) => restoreRelaunchIntent(intent,bootstrapPath(),controlStore()),
   completeRelaunchOperation: (id) => controlStore().markSucceeded(id),
   clearRelaunchIntent: () => controlStore().clearIntent(),
-  async resetComposition() { const current=composition; composition=undefined; if (current?.runtime) await current.runtime.close().catch(()=>{}) },
+  async resetComposition() { cloudSync?.dispose(); cloudSync=undefined; const current=composition; composition=undefined; if (current?.runtime) await current.runtime.close().catch(()=>{}) },
   quit: () => app.quit(), relaunch: () => app.relaunch(), seedRoot: app.isPackaged ? process.resourcesPath : join(__dirname, '../../..'),
 })
 

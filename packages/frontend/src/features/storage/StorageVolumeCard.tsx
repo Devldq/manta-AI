@@ -3,8 +3,9 @@ import { GitRemoteUrlSchema, type StorageGitImportPlan, type StorageIpcRequest, 
 
 type GitBinding = { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; lastSyncedAt?: string; lastSyncStatus?: 'succeeded'; createdAt: string; updatedAt: string }
 type ImportDecisions = Extract<StorageIpcRequest, { channel: 'storage:apply-git-import' }>['decisions']
+type VolumeHealth = { status: 'healthy' | 'offline' | 'unreadable' | 'conflict'; conflicts: string[]; checkedAt: string; reason?: string }
 
-export function StorageVolumeCard({ volume, bytes = 0, files = 0, onRelocate, onOpen, disabled, git, onConfigureGit, onSync, onPlanImport, onApplyImport }: { volume: StorageVolumeRecord; bytes?: number; files?: number; onRelocate: () => void; onOpen: () => void; disabled: boolean; git?: { available: boolean; reason?: string; binding?: GitBinding }; onConfigureGit?: (request: Extract<StorageIpcRequest, { channel: 'storage:configure-git' }>) => Promise<void> | void; onSync?: () => Promise<void> | void; onPlanImport?: () => Promise<StorageGitImportPlan>; onApplyImport?: (plan: StorageGitImportPlan, decisions: ImportDecisions) => Promise<void> }) {
+export function StorageVolumeCard({ volume, bytes = 0, files = 0, onRelocate, onOpen, disabled, git, health, onConfigureGit, onSync, onPlanImport, onApplyImport }: { volume: StorageVolumeRecord; bytes?: number; files?: number; onRelocate: () => void; onOpen: () => void; disabled: boolean; git?: { available: boolean; reason?: string; binding?: GitBinding }; health?: VolumeHealth; onConfigureGit?: (request: Extract<StorageIpcRequest, { channel: 'storage:configure-git' }>) => Promise<void> | void; onSync?: () => Promise<void> | void; onPlanImport?: () => Promise<StorageGitImportPlan>; onApplyImport?: (plan: StorageGitImportPlan, decisions: ImportDecisions) => Promise<void> }) {
   const [remoteUrl, setRemoteUrl] = useState(git?.binding?.remoteUrl ?? '')
   const [gitError, setGitError] = useState<string>()
   const [gitLoading, setGitLoading] = useState(false)
@@ -21,6 +22,7 @@ export function StorageVolumeCard({ volume, bytes = 0, files = 0, onRelocate, on
   return <article aria-label={`${volume.name} volume`} style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: 12 }}>
     <strong>{volume.name}</strong><div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)', overflowWrap: 'anywhere' }}>{volume.parentPath}/.manta-ai</div><div style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: '6px 0' }}>{bytes} bytes · {files} files</div>
     <button disabled={disabled} onClick={onOpen}>Open</button> <button disabled={disabled} onClick={onRelocate}>Migrate volume</button>
+    {health && health.status !== 'healthy' && <div role="alert" style={{ marginTop: 8 }}>Automatic sync paused: this folder is {health.status}.{health.reason ? ` (${health.reason})` : ''}{health.conflicts.length ? ` Conflicts: ${health.conflicts.join(', ')}` : ''}</div>}
     <section aria-label={`${volume.name} Git sync`} style={{ marginTop: 10, fontSize: 12 }}>
       <div>Git: {git?.binding ? git.binding.mode : git?.available ? 'not configured' : 'unavailable'}</div>
       {git?.binding?.remoteUrl && <div style={{ overflowWrap: 'anywhere' }}>{git.binding.remoteUrl}</div>}

@@ -19,6 +19,7 @@
     "storage:audit": "pnpm storage:audit:test && node scripts/security/ash-storage-audit.ts",
     "storage:audit:test": "node scripts/security/ash-storage-audit.test.cjs",
     "verify:ash:phase1": "node scripts/verify/ash-phase1.ts",
+    "verify:ash:phase2": "node scripts/verify/ash-phase2.ts",
     "clean": "pnpm exec turbo run clean"
   },
   "devDependencies": {

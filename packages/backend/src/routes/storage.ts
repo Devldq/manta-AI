@@ -13,6 +13,8 @@ export interface StorageApiContext {
   readBootstrap(): Promise<AshBootstrap | undefined>
   inventory(scope?: { volumeId?: string; groupId?: any }): Promise<{ files: number; bytes: number; entries: unknown[] }>
   health?(): Promise<{ ok: boolean; status: string }>
+  /** Desktop-owned cloud-folder state; distinct from backend database health. */
+  volumeHealth?(): Promise<Record<string, { status: 'healthy' | 'offline' | 'unreadable' | 'conflict'; conflicts: string[]; checkedAt: string; reason?: string }>>
   getOperation?(id: string): Promise<unknown | undefined>
   listOperations?(): Promise<Array<{ id: string; status?: string; phase?: string; updatedAt?: string }>>
   listBackups(): Promise<Array<{ id: string; operationId?: string; kind?: string; groupId?: string; volumeId?: string; createdAt: string; bytes: number }>>
@@ -23,6 +25,7 @@ export async function storageRoutes(app: FastifyInstance, options: StorageApiCon
   app.get('/api/storage/overview', async (_request, reply) => {
     const bootstrap = await options.readBootstrap(); if (!bootstrap) return reply.status(503).send({ success: false, error: { code: 'STORAGE_NOT_INITIALIZED', message: 'Storage is not initialized' } })
     const health = await options.health?.() ?? { ok: true, status: 'healthy' }
+    const volumeHealth = await options.volumeHealth?.() ?? {}
     const groups = await Promise.all(STORAGE_GROUP_IDS.map(async (id) => {
       const volumeId = bootstrap.groupAssignments[id]
       const volume = bootstrap.volumes.find((candidate) => candidate.id === volumeId)
@@ -37,7 +40,7 @@ export async function storageRoutes(app: FastifyInstance, options: StorageApiCon
     const totalFiles = volumeInventories.reduce((sum, item) => sum + item.files, 0)
     const operations = (await options.listOperations?.() ?? []).sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''))
     const active = operations.find((operation) => operation.status === 'running' || operation.status === 'recovering')
-    return { success: true, data: { generation: bootstrap.generation, volumes: bootstrap.volumes, groups, logicalBytes, totalBytes, totalFiles, operation: active ?? bootstrap.pendingMigration ?? operations[0], operations } }
+    return { success: true, data: { generation: bootstrap.generation, volumes: bootstrap.volumes, groups, logicalBytes, totalBytes, totalFiles, volumeHealth, operation: active ?? bootstrap.pendingMigration ?? operations[0], operations } }
   })
   app.get('/api/storage/volumes', async (_request, reply) => {
     const bootstrap = await options.readBootstrap(); if (!bootstrap) return reply.status(503).send({ success: false, error: { code: 'STORAGE_NOT_INITIALIZED', message: 'Storage is not initialized' } })

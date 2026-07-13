@@ -35,4 +35,15 @@ describe('storage routes', () => {
     expect((await app.inject('/api/storage/volumes/missing/git/status')).statusCode).toBe(404)
     await app.close()
   })
+
+  it('exposes volume folder health separately from backend health so the settings page can explain why automatic sync is paused', async () => {
+    const bootstrap: any = { generation: 1, volumes: [{ id: 'v1', name: 'iCloud', parentPath: '/icloud', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], groupAssignments: { extensions:'v1',knowledge:'v1',work:'v1',config:'v1',secrets:'v1',diagnostics:'v1',cache:'v1' } }
+    const app = await buildApp({ storage: { resolve: () => '/icloud/.manta-ai' } as any, registerRoutes: false, storageApi: {
+      readBootstrap: async () => bootstrap, inventory: async () => ({ files: 0, bytes: 0, entries: [] }), listBackups: async () => [],
+      volumeHealth: async () => ({ v1: { status: 'unreadable', reason: 'inventory-unreadable', conflicts: [], checkedAt: '2026-07-13T00:00:00.000Z' } }),
+    } })
+    const overview = (await app.inject('/api/storage/overview')).json().data
+    expect(overview.volumeHealth.v1).toMatchObject({ status: 'unreadable', reason: 'inventory-unreadable' })
+    await app.close()
+  })
 })

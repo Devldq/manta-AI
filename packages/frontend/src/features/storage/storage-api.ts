@@ -10,6 +10,7 @@ export interface StorageOverview {
   logicalBytes?: number
   actualBytes?: number
   savingsBytes?: number
+  volumeHealth?: Record<string, { status: 'healthy' | 'offline' | 'unreadable' | 'conflict'; conflicts: string[]; checkedAt: string; reason?: string }>
   operation?: StorageOperation
   operations?: StorageOperation[]
 }
