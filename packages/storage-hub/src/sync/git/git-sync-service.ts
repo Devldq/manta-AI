@@ -24,6 +24,8 @@ function hasPotentialSecret(content: string): boolean {
 
 export class GitSyncService {
   private readonly credentials: CredentialStore
+  /** Desktop binding requests share this service instance; serialize each volume's full setup transaction. */
+  private readonly bindingTails = new Map<string, Promise<void>>()
   constructor(private readonly options: { runner: GitRunner; bindings: GitBindingStore; volumes: { resolveVolumeRoot(volumeId: string): string }; credentials?: CredentialStore }) { this.credentials = options.credentials ?? new UnavailableCredentialStore() }
 
   async bindVolume(input: { volumeId: string; mode: GitBindingMode; remoteUrl?: string; credentialRef?: string; credential?: GitCredentialInput }): Promise<GitBinding> {
@@ -31,20 +33,22 @@ export class GitSyncService {
     if (input.remoteUrl) assertSafeRemote(input.remoteUrl)
     if (input.credential && !this.credentials.available) throw new Error('A secure OS credential store is unavailable')
     if (input.credentialRef !== undefined && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(input.credentialRef)) throw new Error('Git credential reference is invalid')
-    const existing = await this.options.bindings.get(input.volumeId)
-    const credentialRef = input.credential?.ref ?? input.credentialRef
-    if (existing) {
-      if (existing.mode !== input.mode || existing.remoteUrl !== input.remoteUrl || existing.credentialRef !== credentialRef) throw new GitBindingConflictError(input.volumeId)
-      return existing
-    }
-    const repositoryPath = this.repositoryPath({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH } as GitBinding)
-    await mkdir(repositoryPath, { recursive: true })
-    await this.options.runner.exec(['init', '--quiet'], { cwd: repositoryPath })
-    await writeFile(join(repositoryPath, '.gitignore'), SAFE_IGNORE, 'utf8')
-    if (input.mode === 'remote' && input.remoteUrl) await this.options.runner.exec(['remote', 'add', 'origin', input.remoteUrl], { cwd: repositoryPath })
-    if (input.credential) await this.credentials.put(input.credential.ref, input.credential.secret)
-    const now = new Date().toISOString()
-    return this.options.bindings.bind({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH, mode: input.mode, remoteUrl: input.remoteUrl, credentialRef, createdAt: now, updatedAt: now })
+    return this.withBindingLock(input.volumeId, async () => {
+      const existing = await this.options.bindings.get(input.volumeId)
+      const credentialRef = input.credential?.ref ?? input.credentialRef
+      if (existing) {
+        if (existing.mode !== input.mode || existing.remoteUrl !== input.remoteUrl || existing.credentialRef !== credentialRef) throw new GitBindingConflictError(input.volumeId)
+        return existing
+      }
+      const repositoryPath = this.repositoryPath({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH } as GitBinding)
+      await mkdir(repositoryPath, { recursive: true })
+      await this.options.runner.exec(['init', '--quiet'], { cwd: repositoryPath })
+      await writeFile(join(repositoryPath, '.gitignore'), SAFE_IGNORE, 'utf8')
+      if (input.mode === 'remote' && input.remoteUrl) await this.options.runner.exec(['remote', 'add', 'origin', input.remoteUrl], { cwd: repositoryPath })
+      if (input.credential) await this.credentials.put(input.credential.ref, input.credential.secret)
+      const now = new Date().toISOString()
+      return this.options.bindings.bind({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH, mode: input.mode, remoteUrl: input.remoteUrl, credentialRef, createdAt: now, updatedAt: now })
+    })
   }
 
   async listBindings(): Promise<GitBinding[]> { return this.options.bindings.list() }
@@ -63,6 +67,14 @@ export class GitSyncService {
   }
 
   private async binding(volumeId: string): Promise<GitBinding> { const binding = await this.options.bindings.get(volumeId); if (!binding) throw new Error(`Volume ${volumeId} has no Git binding`); this.repositoryPath(binding); return binding }
+  private async withBindingLock<T>(volumeId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.bindingTails.get(volumeId) ?? Promise.resolve()
+    let release!: () => void
+    const current = previous.catch(() => undefined).then(() => new Promise<void>((resolve) => { release = resolve }))
+    this.bindingTails.set(volumeId, current)
+    await previous.catch(() => undefined)
+    try { return await operation() } finally { release(); if (this.bindingTails.get(volumeId) === current) this.bindingTails.delete(volumeId) }
+  }
   private repositoryPath(binding: Pick<GitBinding, 'volumeId' | 'repositoryRelativePath'>): string {
     const root = this.options.volumes.resolveVolumeRoot(binding.volumeId)
     const path = resolve(root, binding.repositoryRelativePath)

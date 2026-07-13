@@ -48,6 +48,37 @@ describe('GitSyncService', () => {
     return { resolveVolumeRoot(id) { if (id !== volumeId) throw new Error(`Inactive volume ${id}`); return root } }
   }
 
+  it('serializes conflicting concurrent bindings so the catalog and repository remote agree', async () => {
+    const root = await directory()
+    let releaseSecondBind!: () => void
+    const secondBind = new Promise<void>((resolve) => { releaseSecondBind = resolve })
+    let bindCalls = 0
+    class BarrierBindingStore extends GitBindingStore {
+      override async bind(binding: Parameters<GitBindingStore['bind']>[0]) {
+        bindCalls += 1
+        if (bindCalls === 1) await Promise.race([secondBind, new Promise((resolve) => setTimeout(resolve, 100))])
+        else releaseSecondBind()
+        return super.bind(binding)
+      }
+    }
+    const bindings = new BarrierBindingStore(path.join(root, 'config'))
+    const service = new GitSyncService({ runner: new GitRunner(), bindings, volumes: resolver('primary', root) })
+
+    const remoteUrl = 'https://example.test/owner/repository.git'
+    const remote = service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const local = service.bindVolume({ volumeId: 'primary', mode: 'local' })
+    const outcomes = await Promise.allSettled([remote, local])
+
+    expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1)
+    expect(outcomes.filter((outcome) => outcome.status === 'rejected').map((outcome) => (outcome as PromiseRejectedResult).reason)).toEqual([expect.objectContaining({ code: 'GIT_BINDING_CONFLICT' })])
+    const [binding] = await bindings.list()
+    expect(binding).toBeDefined()
+    const repositoryPath = path.join(root, binding.repositoryRelativePath)
+    const configuredRemote = await new GitRunner().exec(['remote', 'get-url', 'origin'], { cwd: repositoryPath }).then((result) => result.stdout.trim()).catch(() => undefined)
+    expect(configuredRemote).toBe(binding.mode === 'remote' ? remoteUrl : undefined)
+  })
+
   it('initializes one local repository per volume and writes a safe gitignore', async () => {
     const root = await directory()
     const bindings = new GitBindingStore(path.join(root, 'config'))
