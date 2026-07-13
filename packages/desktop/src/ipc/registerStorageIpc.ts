@@ -5,6 +5,7 @@ interface IpcMainLike { handle(channel: string, listener: (event: any, request: 
 interface IpcRendererLike { invoke(channel: string, request?: unknown): Promise<unknown>; on(channel: string, listener: (...args: any[]) => void): void; removeListener(channel: string, listener: (...args: any[]) => void): void }
 export interface StartedStorageOperation { operationId: string; completion?: Promise<unknown> }
 type StorageOperationStart = string | StartedStorageOperation
+type ConfiguredGitBinding = { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; createdAt: string; updatedAt: string }
 export interface StorageIpcServices {
   selectParent(purpose: 'createVolume' | 'migrateVolume', event: any): Promise<string | undefined>
   createVolume(name: string, selectionId: string, event: any): Promise<string>
@@ -12,7 +13,7 @@ export interface StorageIpcServices {
   moveGroup(groupId: StorageGroupId, targetVolumeId: string): Promise<StorageOperationStart>
   openVolume(volumeId: string): Promise<void>
   deleteBackup(backupId: string): Promise<void>
-  configureGit?(volumeId: string, config: Extract<StorageIpcRequest, { channel: 'storage:configure-git' }>): Promise<StorageOperationStart>
+  configureGit?(volumeId: string, config: Extract<StorageIpcRequest, { channel: 'storage:configure-git' }>): Promise<ConfiguredGitBinding>
   syncVolume?(volumeId: string): Promise<StorageOperationStart>
 }
 
@@ -41,7 +42,7 @@ export function registerStorageIpc(options: { ipcMain: IpcMainLike; trustedOrigi
         case 'storage:move-group': assertId(request.targetVolumeId, 'targetVolumeId'); response = { ok: true, kind: 'operation-started', operationId: startedOperation(await options.services.moveGroup(request.groupId, request.targetVolumeId)) }; break
         case 'storage:open-volume': assertId(request.volumeId, 'volumeId'); await options.services.openVolume(request.volumeId); response = { ok: true, kind: 'completed' }; break
         case 'storage:delete-backup': assertId(request.backupId, 'backupId'); await options.services.deleteBackup(request.backupId); response = { ok: true, kind: 'completed' }; break
-        case 'storage:configure-git': assertId(request.volumeId, 'volumeId'); if (!options.services.configureGit) throw new Error('Git is unavailable'); response = { ok: true, kind: 'operation-started', operationId: startedOperation(await options.services.configureGit(request.volumeId, request)) }; break
+        case 'storage:configure-git': assertId(request.volumeId, 'volumeId'); if (!options.services.configureGit) throw Object.assign(new Error('Git is unavailable'), { code: 'GIT_UNAVAILABLE' }); response = { ok: true, kind: 'git-configured', binding: await options.services.configureGit(request.volumeId, request) }; break
         case 'storage:sync-volume': assertId(request.volumeId, 'volumeId'); if (!options.services.syncVolume) throw new Error('Sync is unavailable'); response = { ok: true, kind: 'operation-started', operationId: startedOperation(await options.services.syncVolume(request.volumeId)) }; break
       }
       return StorageIpcResponseSchema.parse(response)

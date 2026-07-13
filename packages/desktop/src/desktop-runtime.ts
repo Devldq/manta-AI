@@ -82,13 +82,9 @@ function installMainStorageIpc(origin: string): void {
     async openVolume(id) { const bootstrap = await new BootstrapStore(bootstrapPath()).read(); const volume = bootstrap?.volumes.find((item) => item.id === id); if (!volume) throw new Error('Unknown volume'); await shell.openPath(volumeRoot(volume.parentPath)) },
     async deleteBackup(id) { const active=await new BootstrapStore(bootstrapPath()).read(); if(!active) throw new Error('Storage is not initialized'); const operations=await controlStore().listOperations(); const matches=(await Promise.all(operations.map(async(operation)=>(await trustedBackupRefs(operation,active)).map((ref)=>({operation,ref}))))).flat().filter(({ref})=>`${ref.operationId}--${ref.kind==='group'?ref.groupId:ref.volumeId}`===id); if (matches.length!==1) throw new Error('Unknown or active backup'); await assertDeletableBackup(matches[0].ref,matches[0].operation,active); await rm(matches[0].ref.backupPath,{recursive:true,force:true}) },
     async configureGit(volumeId, config) {
-      const operationId = randomUUID()
-      const completion = (async () => {
-        const capability = await composition.git.capability()
-        if (!capability.available) throw Object.assign(new Error(capability.reason ?? 'Git is unavailable'), { code: 'GIT_UNAVAILABLE' })
-        await composition.git.bindVolume({ volumeId, mode: config.mode, remoteUrl: config.mode === 'remote' ? config.remoteUrl : undefined, credentialRef: config.mode === 'remote' ? config.authRef : undefined })
-      })()
-      return { operationId, completion }
+      const capability = await composition.git.capability()
+      if (!capability.available) throw Object.assign(new Error(capability.reason ?? 'Git is unavailable'), { code: 'GIT_UNAVAILABLE' })
+      return composition.git.bindVolume({ volumeId, mode: config.mode, remoteUrl: config.mode === 'remote' ? config.remoteUrl : undefined, credentialRef: config.mode === 'remote' ? config.authRef : undefined })
     },
   } })
 }

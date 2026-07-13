@@ -28,4 +28,12 @@ describe('storage settings presentation', () => {
     expect(html).not.toContain('password')
     expect(html).not.toContain('token')
   })
+
+  it('shows Git unavailability without configuration controls', () => {
+    const html = renderToStaticMarkup(<StorageVolumeCard volume={{ id: 'volume-1', name: 'Private', parentPath: '/private', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }} disabled={false} onOpen={() => {}} onRelocate={() => {}} git={{ available: false, reason: 'Git executable was not found' }} onConfigureGit={() => {}} />)
+    expect(html).toContain('Git: unavailable')
+    expect(html).toContain('Git executable was not found')
+    expect(html).not.toContain('Configure local Git')
+    expect(html).not.toContain('Configure remote Git')
+  })
 })

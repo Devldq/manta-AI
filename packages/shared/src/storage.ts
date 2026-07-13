@@ -142,6 +142,14 @@ export const GitRemoteUrlSchema = z.string().min(1).superRefine((value, context)
   } catch { context.addIssue({ code: 'custom', message: 'Git remote URL is invalid' }) }
 })
 export const GitCredentialRefSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/, 'Git credential reference is invalid')
+export const StorageGitBindingSchema = z.object({
+  volumeId: z.string().min(1),
+  mode: z.enum(['local', 'remote']),
+  remoteUrl: GitRemoteUrlSchema.optional(),
+  credentialRef: GitCredentialRefSchema.optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+})
 
 export const StorageIpcRequestSchema = z.union([
   z.object({ channel: z.literal('storage:select-parent'), purpose: z.enum(['createVolume', 'migrateVolume']) }),
@@ -161,6 +169,7 @@ export const StorageIpcResponseSchema = z.union([
   z.object({ ok: z.literal(true), kind: z.literal('parent-selected'), selectionId: z.string().min(1).optional() }),
   z.object({ ok: z.literal(true), kind: z.literal('volume-created'), volumeId: z.string().min(1) }),
   z.object({ ok: z.literal(true), kind: z.literal('operation-started'), operationId: z.string().min(1) }),
+  z.object({ ok: z.literal(true), kind: z.literal('git-configured'), binding: StorageGitBindingSchema }),
   z.object({ ok: z.literal(true), kind: z.literal('completed') }),
   z.object({ ok: z.literal(false), error: z.object({ code: z.string().min(1), message: z.string().min(1), details: z.record(z.string(), z.unknown()).optional() }) }),
 ])
