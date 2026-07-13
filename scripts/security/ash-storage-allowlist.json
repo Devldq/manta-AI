@@ -1081,21 +1081,21 @@
   "literals": [
     {
       "file": "packages/backend/src/storage/extension-seeds.ts",
-      "line": 30,
+      "line": 59,
       "column": 38,
       "operation": "repository runtime root",
       "reason": "Reviewed read-only bundled extension seed import from the repository's historical .manta source tree into the ASH extensions group."
     },
     {
       "file": "packages/backend/src/storage/extension-seeds.ts",
-      "line": 31,
+      "line": 60,
       "column": 38,
       "operation": "repository runtime root",
       "reason": "Reviewed read-only bundled extension seed import from the repository's historical .manta source tree into the ASH extensions group."
     },
     {
       "file": "packages/backend/src/storage/extension-seeds.ts",
-      "line": 32,
+      "line": 61,
       "column": 38,
       "operation": "repository runtime root",
       "reason": "Reviewed read-only bundled extension seed import from the repository's historical .manta source tree into the ASH extensions group."

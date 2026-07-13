@@ -40,6 +40,16 @@ export interface MantaServerHandle {
   healthCheck(): Promise<StorageHealthResult>
 }
 
+export async function initializeBundledExtensionsForStartup<T>(options: {
+  seed(): Promise<void>
+  loadRuntime(): Promise<{ scanPlugins(): T[]; registerPlugin(scanned: T): void; initializeSkills(): unknown | Promise<unknown> }>
+}): Promise<void> {
+  await options.seed()
+  const runtime = await options.loadRuntime()
+  for (const scanned of runtime.scanPlugins()) runtime.registerPlugin(scanned)
+  await runtime.initializeSkills()
+}
+
 export async function startServer(options: StartServerOptions): Promise<MantaServerHandle> {
   let app: FastifyInstance | undefined
   const schedulerDisposers: Array<() => void | Promise<void>> = []
@@ -120,13 +130,15 @@ function defaultStartupHooks(bundledSeedRoot?: string): ServerStartupHooks {
       const { seedBundledExtensions } = await import('./storage/extension-seeds.js')
       const { resolveStoragePath } = await import('./storage/path-routing.js')
       const seedRoot = bundledSeedRoot ?? process.env.MANTA_BUNDLED_ASSETS_DIR ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
-      seedBundledExtensions({ extensionsRoot: resolveStoragePath('extensions'), seedRoot, version: process.env.MANTA_BUNDLED_ASSETS_VERSION ?? '2.0.0' })
-      const [{ scanPluginFiles }, { registerPlugin }] = await Promise.all([
-        import('./core/storage/plugin/scanner.js'), import('./core/storage/plugin/store.js'),
-      ])
-      for (const scanned of scanPluginFiles()) registerPlugin(scanned.manifest, scanned.dirPath)
-      const { initializeSkills } = await import('./core/storage/skill/store.js')
-      initializeSkills()
+      await initializeBundledExtensionsForStartup({
+        seed: () => seedBundledExtensions({ extensionsRoot: resolveStoragePath('extensions'), seedRoot, version: process.env.MANTA_BUNDLED_ASSETS_VERSION ?? '2.0.0' }),
+        async loadRuntime() {
+          const [{ scanPluginFiles }, { registerPlugin }, { initializeSkills }] = await Promise.all([
+            import('./core/storage/plugin/scanner.js'), import('./core/storage/plugin/store.js'), import('./core/storage/skill/store.js'),
+          ])
+          return { scanPlugins: scanPluginFiles, registerPlugin: (scanned: ReturnType<typeof scanPluginFiles>[number]) => registerPlugin(scanned.manifest, scanned.dirPath), initializeSkills }
+        },
+      })
     },
   }
 }

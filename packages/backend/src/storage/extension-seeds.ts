@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { transactionalInstallDirectory, transactionalWriteExtensionFile } from './extension-transactions'
+import { installImmutableExtensionPackage, type ImmutableExtensionInstallOptions } from './immutable-extension-install'
+import { createContentAssetService } from './content-assets'
 
 interface SeedManifest { version: string; entries: Record<string, { sourceHash: string }> }
-export interface SeedBundledExtensionsOptions { extensionsRoot: string; seedRoot: string; version: string }
+type SnapshotPackage = NonNullable<ImmutableExtensionInstallOptions['snapshotPackage']>
+export interface SeedBundledExtensionsOptions { extensionsRoot: string; seedRoot: string; version: string; snapshotPackage?: SnapshotPackage }
 
 function hashTree(path: string): string {
   const hash = createHash('sha256')
@@ -19,19 +22,44 @@ function hashTree(path: string): string {
   return hash.digest('hex')
 }
 
-export function seedBundledExtensions(options: SeedBundledExtensionsOptions): void {
+function packageLogicalId(kind: 'skill' | 'plugin', name: string): string {
+  return `bundled-${createHash('sha256').update(`${kind}/${name}`).digest('hex').slice(0, 24)}`
+}
+
+export async function seedBundledExtensions(options: SeedBundledExtensionsOptions): Promise<void> {
   const manifestPath = join(options.extensionsRoot, '.ash', 'seed-manifest.json')
   let previous: SeedManifest | undefined
   try { previous = JSON.parse(readFileSync(manifestPath, 'utf8')) as SeedManifest } catch { previous = undefined }
-  if (previous?.version === options.version) return
+  const sameVersion = previous?.version === options.version
+  const entries: SeedManifest['entries'] = {}
+  const snapshotPackage = options.snapshotPackage ?? createContentAssetService({ volumeRoot: dirname(options.extensionsRoot) }).snapshotPackage
+  const packages: Array<{ source: string; target: string; group: string; kind: 'skill' | 'plugin' }> = [
+    { source: join(options.seedRoot, 'skills'), target: join(options.extensionsRoot, 'skills'), group: 'skills', kind: 'skill' },
+    { source: join(options.seedRoot, 'plugins'), target: join(options.extensionsRoot, 'plugins'), group: 'plugins', kind: 'plugin' },
+  ]
+  for (const location of packages) {
+    if (!existsSync(location.source)) continue
+    for (const name of readdirSync(location.source).sort()) {
+      const source = join(location.source, name)
+      if (!lstatSync(source).isDirectory()) continue
+      const destination = join(location.target, name); const key = `${location.group}/${name}`; const sourceHash = hashTree(source); const prior = previous?.entries[key]
+      if (sameVersion && prior?.sourceHash !== sourceHash) continue
+      const targetHash = existsSync(destination) ? hashTree(destination) : undefined
+      const logicalId = packageLogicalId(location.kind, name)
+      if (!existsSync(destination) || (prior && targetHash === prior.sourceHash && targetHash !== sourceHash)) {
+        await installImmutableExtensionPackage({ extensionsRoot: options.extensionsRoot, source, destination, kind: location.kind, logicalId, version: options.version, snapshotPackage: options.snapshotPackage })
+      } else {
+        await snapshotPackage({ kind: location.kind, logicalId, version: options.version, sourceRoot: source })
+      }
+      entries[key] = { sourceHash }
+    }
+  }
+  if (sameVersion) return
   const sources: Array<{ source: string; target: string; group: string; registry?: 'skill' | 'plugin' }> = [
-    { source: join(options.seedRoot, 'skills'), target: join(options.extensionsRoot, 'skills'), group: 'skills' },
-    { source: join(options.seedRoot, 'plugins'), target: join(options.extensionsRoot, 'plugins'), group: 'plugins' },
     { source: join(options.seedRoot, '.manta', 'skills'), target: join(options.extensionsRoot, 'skill-registry'), group: 'skill-registry', registry: 'skill' },
     { source: join(options.seedRoot, '.manta', 'plugins'), target: join(options.extensionsRoot, 'plugin-registry'), group: 'plugin-registry', registry: 'plugin' },
     { source: join(options.seedRoot, '.manta', 'plugin-marketplace'), target: join(options.extensionsRoot, 'plugin-marketplace'), group: 'plugin-marketplace' },
   ]
-  const entries: SeedManifest['entries'] = {}
   for (const location of sources) {
     if (!existsSync(location.source)) continue
     for (const name of readdirSync(location.source).sort()) {
