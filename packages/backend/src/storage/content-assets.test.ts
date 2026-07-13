@@ -60,7 +60,7 @@ describe('backend content asset snapshots', () => {
     await expect(assets.snapshotPackage({ kind: 'skill', logicalId: 'skill-existing', version: '1.0.2', sourceRoot: packageRoot })).rejects.toThrow(/link|reparse|\.git/i)
   })
 
-  it('rolls back a failed legacy conversion and retires a shared old file only after every manifest verifies', async () => {
+  it('retains recoverable source and immutable successful manifests when a legacy conversion fails', async () => {
     const volumeRoot = mkdtempSync(join(tmpdir(), 'manta-legacy-assets-'))
     const legacy = join(volumeRoot, 'knowledge', 'documents', 'shared')
     mkdirSync(join(volumeRoot, 'knowledge', 'documents'), { recursive: true }); writeFileSync(legacy, 'legacy bytes')
@@ -74,7 +74,7 @@ describe('backend content asset snapshots', () => {
     await expect(failing.migrateLegacyDocuments(documents)).rejects.toThrow(/manifest fault/)
     expect(existsSync(legacy)).toBe(true)
     const manifests = new AssetManifestStore(volumeRoot)
-    await expect(manifests.read('document.doc-old-a')).rejects.toThrow()
+    await expect(manifests.read('document.doc-old-a')).resolves.toMatchObject({ assetId: 'document.doc-old-a' })
     await expect(manifests.read('document.doc-old-b')).rejects.toThrow()
 
     const migrated = await createContentAssetService({ volumeRoot }).migrateLegacyDocuments(documents)
@@ -83,6 +83,23 @@ describe('backend content asset snapshots', () => {
     expect(readFileSync(migrated.retiredSources[0], 'utf8')).toBe('legacy bytes')
     await expect(manifests.read('document.doc-old-a')).resolves.toMatchObject({ assetId: 'document.doc-old-a' })
     await expect(manifests.read('document.doc-old-b')).resolves.toMatchObject({ assetId: 'document.doc-old-b' })
+  })
+
+  it('does not delete an immutable manifest reused by another transaction when its creator later fails', async () => {
+    const volumeRoot = mkdtempSync(join(tmpdir(), 'manta-shared-manifest-owner-')); const legacy = join(volumeRoot, 'knowledge', 'documents', 'shared')
+    mkdirSync(join(volumeRoot, 'knowledge', 'documents'), { recursive: true }); writeFileSync(legacy, 'shared immutable bytes')
+    const reuser = createContentAssetService({ volumeRoot }); let publications = 0
+    const creator = createContentAssetService({ volumeRoot, beforePublish: async () => {
+      if (++publications !== 2) return
+      await reuser.snapshotDocument({ documentId: 'doc-shared-a', source: legacy, name: 'a.txt' })
+      throw new Error('creator transaction failed')
+    } })
+    await expect(creator.migrateLegacyDocuments([
+      { documentId: 'doc-shared-a', source: legacy, name: 'a.txt' },
+      { documentId: 'doc-shared-b', source: legacy, name: 'b.txt' },
+    ])).rejects.toThrow('creator transaction failed')
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-shared-a')).resolves.toMatchObject({ assetId: 'document.doc-shared-a' })
+    expect(readFileSync(legacy, 'utf8')).toBe('shared immutable bytes')
   })
 
   it('refuses to retire legacy content through a linked backup ancestor', async () => {

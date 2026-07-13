@@ -112,12 +112,4 @@ describe('per-volume content addressed storage', () => {
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
   })
 
-  it('removes only the exact manifest revision approved by its caller', async () => {
-    const volume = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('asset')); const manifests = new AssetManifestStore(volume)
-    const first = await manifests.write({ assetId: 'removable', entries: [{ path: 'one.bin', hash: object.hash, size: object.size }] })
-    await expect(manifests.remove('removable', { createdAt: '2000-01-01T00:00:00.000Z' })).resolves.toBe(false)
-    await expect(manifests.read('removable')).resolves.toMatchObject({ createdAt: first.createdAt })
-    await expect(manifests.remove('removable', { createdAt: first.createdAt! })).resolves.toBe(true)
-    await expect(manifests.read('removable')).rejects.toThrow()
-  })
 })

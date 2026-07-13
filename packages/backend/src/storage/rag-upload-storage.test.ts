@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -230,6 +230,42 @@ describe('RAG original document storage', () => {
     expect(await cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 1000), isReferenced: async () => true })).toEqual([])
     const removed = await cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 1000), isReferenced: async () => false })
     expect(removed).toHaveLength(1); expect(readdirSync(join(knowledge, '.orphans'))).toEqual([])
+  })
+
+  it('re-reads prepared owners inside the hash lock immediately before orphan deletion', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-owner-interleave-')); const knowledge = join(root, 'knowledge')
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(root, 'cache'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('interleaved owner'), 'a.txt', async () => { throw new Error('pipeline failed') })).rejects.toThrow('pipeline failed')
+    const hash = readdirSync(join(knowledge, 'documents'))[0]!; const transactionId = randomUUID(); const transactionRoot = join(knowledge, '.asset-transactions')
+    const removed = await cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 60_000), isReferenced: async () => {
+      mkdirSync(transactionRoot, { recursive: true })
+      writeFileSync(join(transactionRoot, `${transactionId}.json`), JSON.stringify({
+        schemaVersion: 1, transactionId, phase: 'prepared', assetId: 'document.doc-interleaved', documentId: 'doc-interleaved', safeName: 'a.txt', hash,
+        size: Buffer.byteLength('interleaved owner'), sourcePath: `knowledge/documents/${hash}`, createdAt: new Date().toISOString(),
+      }))
+      return false
+    } })
+    expect(removed).toEqual([])
+    expect(readFileSync(join(knowledge, 'documents', hash), 'utf8')).toBe('interleaved owner')
+  })
+
+  it('serializes an async GC decision with a new prepared owner without deadlocking or losing its source', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-async-lock-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('async lock bytes'), 'old.txt', async () => { throw new Error('old failure') })).rejects.toThrow('old failure')
+    const hash = readdirSync(join(knowledge, 'documents'))[0]!
+    let enterGc!: () => void; const gcEntered = new Promise<void>((resolve) => { enterGc = resolve })
+    let releaseGc!: () => void; const gcGate = new Promise<void>((resolve) => { releaseGc = resolve })
+    const gc = cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 60_000), isReferenced: async () => { enterGc(); await gcGate; return false } })
+    await gcEntered
+    let ownerSettled = false
+    const owner = storage.ingest(Readable.from('async lock bytes'), 'owner.txt', async () => undefined, {
+      volumeRoot, documentId: 'doc-async-owner', fault: (phase) => { if (phase === 'after-prepared') throw new Error('owner crash') },
+    }).finally(() => { ownerSettled = true })
+    await Promise.resolve(); expect(ownerSettled).toBe(false)
+    releaseGc(); await expect(gc).resolves.toEqual([hash]); await expect(owner).rejects.toThrow('owner crash')
+    expect(readFileSync(join(knowledge, 'documents', hash), 'utf8')).toBe('async lock bytes')
+    expect(readdirSync(join(knowledge, '.asset-transactions'))).toHaveLength(1)
   })
 
   it('keeps the failed owner when identical concurrent uploads split success and failure', async () => {

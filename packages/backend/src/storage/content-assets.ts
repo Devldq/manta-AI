@@ -12,7 +12,6 @@ export interface ContentAssetServiceOptions {
 export interface DocumentAssetInput { documentId: string; source: string; name: string }
 export interface PackageAssetInput { kind: 'skill' | 'plugin' | 'marketplace'; logicalId: string; version: string; sourceRoot: string }
 export interface ContentAssetSnapshot { object: ContentObject; manifest: Required<AssetManifest> }
-export interface PreparedContentAsset extends ContentAssetSnapshot { rollback(): Promise<void> }
 
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/
 const forbiddenPackageDirectories = new Set(['.git', 'node_modules'])
@@ -83,28 +82,18 @@ export function createContentAssetService(options: ContentAssetServiceOptions) {
   }
 
   return {
-    async publishDocumentObject(input: { documentId: string; name: string; object: ContentObject }): Promise<PreparedContentAsset> {
+    async publishDocumentObject(input: { documentId: string; name: string; object: ContentObject }): Promise<ContentAssetSnapshot> {
       assertLogicalId(input.documentId, 'Document ID')
       const published = await publish(`document.${input.documentId}`, [{ path: `knowledge/documents/${safeLeaf(input.name)}`, hash: input.object.hash, size: input.object.size }])
-      return { object: input.object, manifest: published.manifest, async rollback() { if (published.created) await manifests.remove(published.manifest.assetId, { createdAt: published.manifest.createdAt }) } }
+      return { object: input.object, manifest: published.manifest }
     },
-    async stageDocument(input: DocumentAssetInput): Promise<{ object: ContentObject; publish(): Promise<PreparedContentAsset> }> {
+    async stageDocument(input: DocumentAssetInput): Promise<{ object: ContentObject; publish(): Promise<ContentAssetSnapshot> }> {
       assertLogicalId(input.documentId, 'Document ID')
       const object = await ingestDocument(input.source)
       return { object, async publish() { return createContentAssetService(options).publishDocumentObject({ documentId: input.documentId, name: input.name, object }) } }
     },
-    async prepareDocument(input: DocumentAssetInput): Promise<PreparedContentAsset> {
-      const { created, ...snapshot } = await snapshotDocumentInternal(input)
-      return {
-        ...snapshot,
-        async rollback() {
-          if (created) await manifests.remove(snapshot.manifest.assetId, { createdAt: snapshot.manifest.createdAt })
-        },
-      }
-    },
-
     async snapshotDocument(input: DocumentAssetInput): Promise<ContentAssetSnapshot> {
-      const { rollback: _rollback, ...snapshot } = await this.prepareDocument(input)
+      const { created: _created, ...snapshot } = await snapshotDocumentInternal(input)
       return snapshot
     },
 
@@ -137,18 +126,11 @@ export function createContentAssetService(options: ContentAssetServiceOptions) {
         const stat = await lstat(source)
         if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Legacy document must be an ordinary file')
       }
-      const created: Array<{ assetId: string; createdAt: string }> = []
       const snapshots: ContentAssetSnapshot[] = []
-      try {
-        for (const input of inputs) {
-          const snapshot = await snapshotDocumentInternal(input); snapshots.push(snapshot)
-          if (snapshot.created) created.push({ assetId: snapshot.manifest.assetId, createdAt: snapshot.manifest.createdAt })
-        }
-        for (const snapshot of snapshots) await manifests.read(snapshot.manifest.assetId)
-      } catch (error) {
-        await Promise.all(created.map((item) => manifests.remove(item.assetId, { createdAt: item.createdAt })))
-        throw error
+      for (const input of inputs) {
+        const snapshot = await snapshotDocumentInternal(input); snapshots.push(snapshot)
       }
+      for (const snapshot of snapshots) await manifests.read(snapshot.manifest.assetId)
 
       const backupRoot = resolve(volumeRoot, '.ash-backups', 'content-migration', randomUUID())
       const retired: Array<{ source: string; backup: string }> = []
@@ -160,7 +142,6 @@ export function createContentAssetService(options: ContentAssetServiceOptions) {
         }
       } catch (error) {
         for (const item of retired.reverse()) await rename(item.backup, item.source)
-        await Promise.all(created.map((item) => manifests.remove(item.assetId, { createdAt: item.createdAt })))
         throw error
       }
       return { manifests: snapshots.map((snapshot) => snapshot.manifest), retiredSources: retired.map((item) => item.backup) }

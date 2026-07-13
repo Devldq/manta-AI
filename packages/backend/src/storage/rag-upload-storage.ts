@@ -4,9 +4,8 @@ import { basename, dirname, join, posix } from 'node:path'
 import { Transform, type Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { durableAtomicWrite, durableCopy, durableFsyncFile, durableMkdir, durableRemove } from './durable-atomic'
-import { acquireStorageFileLock } from './file-lock'
 import { createContentAssetService } from './content-assets'
-import { abortPreparedRagAssetTransaction, beginRagAssetTransaction, cleanupRagAssetTransaction, inspectRagAssetTransactions, markRagAssetPipelineCommitted, recoverRagAssetTransactions, type RagAssetFaultPoint } from './rag-asset-transactions'
+import { abortPreparedRagAssetTransaction, beginRagAssetTransaction, cleanupRagAssetTransaction, inspectRagAssetTransactions, markRagAssetPipelineCommitted, recoverRagAssetTransactions, withRagHashLock, type RagAssetFaultPoint } from './rag-asset-transactions'
 
 export interface RagUploadStorageOptions {
   cacheUploadsRoot: string
@@ -23,7 +22,6 @@ export interface StoredRagDocument {
 }
 export interface RagUploadAssetOptions { volumeRoot: string; documentId: string; beforePublish?: (assetId: string) => void | Promise<void>; fault?: (point: RagAssetFaultPoint) => void | Promise<void> }
 const activeUploads = new Map<string, number>()
-const ragHashLockPath = (knowledgeRoot: string, hash: string) => join(knowledgeRoot, '.locks', `${hash}.lock`)
 
 function safeUploadName(input: string): string {
   const leaf = basename(input.replaceAll('\\', '/')).replace(/[^\p{L}\p{N}._-]+/gu, '_')
@@ -59,36 +57,38 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
         const storedName = sha256
         const absolutePath = join(options.documentsRoot, storedName)
         const document = { absolutePath, relativePath: asset ? `asset:document.${asset.documentId}` : posix.join('documents', storedName), sha256, size, safeName }
-        const transactionId = basename(stagedPath, '.upload'); const orphanRoot = join(dirname(options.documentsRoot), '.orphans', sha256); durableMkdir(orphanRoot); const orphanPath = join(orphanRoot, `${transactionId}.json`)
-        durableAtomicWrite(orphanPath, JSON.stringify({ version: 1, hash: sha256, transactionId, createdAt: new Date().toISOString(), status: 'pending-pipeline' }))
+        const transactionId = basename(stagedPath, '.upload'); const knowledgeRoot = dirname(options.documentsRoot); const orphanRoot = join(knowledgeRoot, '.orphans', sha256); const orphanPath = join(orphanRoot, `${transactionId}.json`)
         durableFsyncFile(stagedPath, sha256)
-        const lock = ragHashLockPath(dirname(options.documentsRoot), sha256); durableMkdir(dirname(lock)); const release = acquireStorageFileLock(lock)
-        try {
+        await withRagHashLock(knowledgeRoot, sha256, () => {
+          durableMkdir(orphanRoot)
+          durableAtomicWrite(orphanPath, JSON.stringify({ version: 1, hash: sha256, transactionId, createdAt: new Date().toISOString(), status: 'pending-pipeline' }))
           if (!existsSync(absolutePath)) { try { durableCopy(stagedPath, absolutePath, { exclusive: true, expectedHash: sha256 }) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error } }
           durableFsyncFile(absolutePath, sha256)
-        } finally { release() }
+        })
         const stagedAsset = asset
           ? await createContentAssetService({ volumeRoot: asset.volumeRoot, trustedStagingRoot: options.cacheUploadsRoot, beforePublish: asset.beforePublish }).stageDocument({ documentId: asset.documentId, source: stagedPath, name: safeName })
           : undefined
         if (stagedAsset) document.absolutePath = stagedAsset.object.path
         if (asset && stagedAsset) {
-          beginRagAssetTransaction({ volumeRoot: asset.volumeRoot, knowledgeRoot: dirname(options.documentsRoot), transactionId, documentId: asset.documentId, safeName, hash: stagedAsset.object.hash, size: stagedAsset.object.size, source: absolutePath })
+          await beginRagAssetTransaction({ volumeRoot: asset.volumeRoot, knowledgeRoot, transactionId, documentId: asset.documentId, safeName, hash: stagedAsset.object.hash, size: stagedAsset.object.size, source: absolutePath })
           await asset.fault?.('after-prepared')
         }
         let result: T
         try { result = await processStaged(stagedPath, document) }
         catch (error) {
-          if (asset && stagedAsset) abortPreparedRagAssetTransaction({ volumeRoot: asset.volumeRoot, knowledgeRoot: dirname(options.documentsRoot) }, transactionId)
+          if (asset && stagedAsset) await abortPreparedRagAssetTransaction({ volumeRoot: asset.volumeRoot, knowledgeRoot }, transactionId)
           throw error
         }
         if (asset && stagedAsset) {
-          markRagAssetPipelineCommitted({ volumeRoot: asset.volumeRoot, knowledgeRoot: dirname(options.documentsRoot) }, transactionId)
+          await markRagAssetPipelineCommitted({ volumeRoot: asset.volumeRoot, knowledgeRoot }, transactionId)
           await asset.fault?.('after-pipeline-committed')
           await stagedAsset.publish()
-          try { await asset.fault?.('before-cleanup'); cleanupRagAssetTransaction({ volumeRoot: asset.volumeRoot, knowledgeRoot: dirname(options.documentsRoot) }, transactionId) } catch { /* Publication is durable; cleanup is retried by startup recovery. */ }
+          try { await asset.fault?.('before-cleanup'); await cleanupRagAssetTransaction({ volumeRoot: asset.volumeRoot, knowledgeRoot }, transactionId) } catch { /* Publication is durable; cleanup is retried by startup recovery. */ }
         } else {
-          durableRemove(orphanPath)
-          try { if (!readdirSync(orphanRoot).length) durableRemove(orphanRoot) } catch { /* another owner is changing */ }
+          await withRagHashLock(knowledgeRoot, sha256, () => {
+            durableRemove(orphanPath)
+            try { if (!readdirSync(orphanRoot).length) durableRemove(orphanRoot) } catch { /* another owner is changing */ }
+          })
         }
         return { result, ...document }
       } finally {
@@ -133,18 +133,18 @@ export function inspectRagOrphans(knowledgeRoot: string): RagOrphanRecord[] {
 }
 export async function cleanupRagOrphans(knowledgeRoot: string, options: { olderThan: Date; isReferenced(hash: string): Promise<boolean> }): Promise<string[]> {
   const removed: string[] = []
-  const transactionHashes = new Set(inspectRagAssetTransactions({ volumeRoot: dirname(knowledgeRoot), knowledgeRoot }).map((record) => record.hash))
   for (const hash of [...new Set(inspectRagOrphans(knowledgeRoot).map((record) => record.hash))]) {
-    const lock = ragHashLockPath(knowledgeRoot, hash); durableMkdir(dirname(lock)); const release = acquireStorageFileLock(lock)
-    try {
+    const didRemove = await withRagHashLock(knowledgeRoot, hash, async () => {
       const records = inspectRagOrphans(knowledgeRoot).filter((record) => record.hash === hash)
       const referenced = await options.isReferenced(hash)
-      if (referenced || transactionHashes.has(hash)) continue
+      const transactionOwned = inspectRagAssetTransactions({ volumeRoot: dirname(knowledgeRoot), knowledgeRoot }).some((record) => record.hash === hash)
+      if (referenced || transactionOwned) return false
       const ownerDir = join(knowledgeRoot, '.orphans', hash)
       for (const record of records) if (new Date(record.createdAt) < options.olderThan) durableRemove(join(ownerDir, `${record.transactionId}.json`))
-      if (existsSync(ownerDir) && readdirSync(ownerDir).length) continue
-      durableRemove(join(knowledgeRoot, 'documents', hash)); durableRemove(ownerDir); removed.push(hash)
-    } finally { release() }
+      if (existsSync(ownerDir) && readdirSync(ownerDir).length) return false
+      durableRemove(join(knowledgeRoot, 'documents', hash)); durableRemove(ownerDir); return true
+    })
+    if (didRemove) removed.push(hash)
   }
   return removed
 }
