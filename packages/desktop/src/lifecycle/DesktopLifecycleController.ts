@@ -41,6 +41,7 @@ export class DesktopLifecycleController {
       await this.bootOnce(Boolean(intent)); if (intent) { await this.deps.completeRelaunchOperation(intent.operationId); await this.deps.clearRelaunchIntent() } return { ok: true }
     } catch (firstError) {
       await this.closeFailedServer()
+      await this.resetAfterFailedStart()
       if (intent?.phase === 'awaiting-new-process-health' && intent.attempt === 0) {
         try {
           await this.deps.rollbackRelaunchIntent(intent); await this.deps.resetComposition(); await this.bootOnce(true); await this.deps.clearRelaunchIntent(); return { ok: true }
@@ -58,6 +59,8 @@ export class DesktopLifecycleController {
     await this.deps.openMain(`http://127.0.0.1:${this.server.port}`)
   }
   private async closeFailedServer(): Promise<void> { if (this.server) { try { await this.server.close() } catch { /* preserve authoritative startup error */ } this.server=undefined } }
+  /** Release every runtime owned by a failed boot before a retry can recover again. */
+  private async resetAfterFailedStart(): Promise<void> { try { await this.deps.resetComposition() } catch { /* preserve authoritative startup error */ } }
   private failure(error: unknown): StartupFailure { return { ok:false, error:{ code:(error as any).code ?? 'STARTUP_FAILED', message:(error as Error).message, retryable:true } } }
 
   async migrateAndRelaunch(operation: () => Promise<string>): Promise<string> {
@@ -72,10 +75,11 @@ export class DesktopLifecycleController {
   }
 
   async shutdown(): Promise<void> {
-    if (!this.server) return
     const errors: unknown[] = []
-    for (const operation of [() => this.server!.quiesce(), () => this.server!.close()]) try { await operation() } catch (error) { errors.push(error) }
+    const server = this.server
+    if (server) for (const operation of [() => server.quiesce(), () => server.close()]) try { await operation() } catch (error) { errors.push(error) }
     this.server = undefined
+    try { await this.deps.resetComposition() } catch (error) { errors.push(error) }
     if (errors.length === 1) throw errors[0]; if (errors.length > 1) throw new AggregateError(errors, 'Desktop shutdown failed')
   }
 }

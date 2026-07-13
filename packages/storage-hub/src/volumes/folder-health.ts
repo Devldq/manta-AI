@@ -1,4 +1,5 @@
-import { inventoryTree, type StorageInventory } from '../inventory/file-inventory'
+import { lstat, readdir } from 'node:fs/promises'
+import { join } from 'node:path'
 
 export type FolderHealthStatus = 'healthy' | 'offline' | 'unreadable' | 'conflict'
 export type FolderHealthReason = 'root-unavailable' | 'inventory-unreadable'
@@ -12,8 +13,8 @@ export interface FolderHealth {
 }
 
 export interface FolderHealthOptions {
-  /** Injectable so platform integrations can use metadata-only cloud inventory APIs. */
-  inventory?: (root: string) => Promise<Pick<StorageInventory, 'entries'>>
+  /** Injectable so platform integrations can use native cloud metadata APIs. */
+  inventory?: (root: string) => Promise<{ entries: ReadonlyArray<{ relativePath: string }> }>
   now?: () => Date
 }
 
@@ -36,14 +37,32 @@ function unreadable(error: unknown): boolean {
 }
 
 /**
- * Reads only a volume inventory. It intentionally never uses fs.watch or changes
- * the filesystem, so a cloud provider's offline placeholder can never become an
- * empty local snapshot.
+ * Enumerates names and file metadata only. In particular, this must not hash or
+ * open files: doing either can ask a cloud provider to hydrate an offline file.
+ */
+async function metadataInventory(root: string): Promise<{ entries: Array<{ relativePath: string }> }> {
+  const entries: Array<{ relativePath: string }> = []
+  async function walk(directory: string, prefix: string): Promise<void> {
+    for (const name of (await readdir(directory)).sort()) {
+      const absolute = join(directory, name)
+      const relativePath = prefix ? `${prefix}/${name}` : name
+      const stats = await lstat(absolute)
+      entries.push({ relativePath })
+      if (stats.isDirectory() && !stats.isSymbolicLink()) await walk(absolute, relativePath)
+    }
+  }
+  await walk(root, '')
+  return { entries }
+}
+
+/**
+ * Reads only directory metadata. It intentionally never reads file contents,
+ * hashes files, uses fs.watch, or changes the filesystem.
  */
 export async function inspectFolderHealth(root: string, options: FolderHealthOptions = {}): Promise<FolderHealth> {
   const checkedAt = (options.now ?? (() => new Date()))().toISOString()
   try {
-    const inventory = await (options.inventory ?? inventoryTree)(root)
+    const inventory = await (options.inventory ?? metadataInventory)(root)
     const conflicts = inventory.entries
       .map((entry) => entry.relativePath)
       .filter((relativePath) => CONFLICT_COPY_NAME.test(relativePath))

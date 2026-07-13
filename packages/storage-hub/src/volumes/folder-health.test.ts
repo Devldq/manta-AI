@@ -1,10 +1,18 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { FolderHealthPoller, inspectFolderHealth } from './folder-health'
 
 describe('inspectFolderHealth', () => {
+  it('uses a metadata-only default walker so health checks never read or hash cloud files', async () => {
+    const source = await readFile(new URL('./folder-health.ts', import.meta.url), 'utf8')
+
+    expect(source).not.toContain('inventoryTree')
+    expect(source).not.toContain('createReadStream')
+    expect(source).not.toContain('readFile(')
+  })
+
   it('reports an unavailable volume root as offline', async () => {
     const health = await inspectFolderHealth(join(tmpdir(), `ash-missing-${Date.now()}`))
     expect(health).toMatchObject({ status: 'offline', reason: 'root-unavailable' })

@@ -47,6 +47,18 @@ describe('DesktopLifecycleController', () => {
     expect(server.close).toHaveBeenCalled()
   })
 
+  it('disposes the recovered composition before retrying a failed startup', async () => {
+    const { controller, deps, server } = harness(bootstrap)
+    server.healthCheck.mockResolvedValueOnce({ ok: false, error: 'cloud volume unavailable' })
+
+    expect((await controller.start()).ok).toBe(false)
+    expect(deps.resetComposition).toHaveBeenCalledTimes(1)
+
+    await expect(controller.retry()).resolves.toEqual({ ok: true })
+    expect(deps.recover).toHaveBeenCalledTimes(2)
+    expect(deps.resetComposition).toHaveBeenCalledTimes(1)
+  })
+
   it('persists relaunch intent only after a committed migration', async () => {
     const { controller, deps } = harness(bootstrap)
     await controller.start()
@@ -93,5 +105,16 @@ describe('DesktopLifecycleController', () => {
     server.close.mockRejectedValueOnce(new Error('c'))
     await expect(controller.shutdown()).rejects.toBeInstanceOf(AggregateError)
     expect(server.close).toHaveBeenCalled()
+  })
+
+  it('disposes the composition during normal shutdown after the server closes', async () => {
+    const { controller, deps, server } = harness(bootstrap)
+    await controller.start()
+
+    await controller.shutdown()
+
+    expect(server.close).toHaveBeenCalled()
+    expect(deps.resetComposition).toHaveBeenCalledTimes(1)
+    expect(deps.resetComposition.mock.invocationCallOrder[0]).toBeGreaterThan(server.close.mock.invocationCallOrder[0])
   })
 })
