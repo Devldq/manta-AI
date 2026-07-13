@@ -154,6 +154,22 @@ export const StorageGitBindingSchema = z.object({
   updatedAt: z.string().min(1),
 })
 
+/** A deliberate, group-level decision for a validated remote Git snapshot. */
+export const StorageImportChoiceSchema = z.enum(['keep-local', 'keep-remote', 'duplicate-asset'])
+export const StorageGroupConflictStateSchema = z.enum(['unchanged', 'local-only', 'remote-only', 'remote-addition', 'conflict', 'database-conflict'])
+export const StorageGitImportGroupSchema = z.object({
+  group: StorageGroupIdSchema,
+  state: StorageGroupConflictStateSchema,
+  choices: z.array(StorageImportChoiceSchema).min(1),
+  defaultChoice: StorageImportChoiceSchema,
+})
+export const StorageGitImportPlanSchema = z.object({
+  volumeId: z.string().min(1),
+  sessionId: z.string().min(1),
+  groups: z.array(StorageGitImportGroupSchema),
+  requiresConfirmation: z.boolean(),
+})
+
 export const StorageIpcRequestSchema = z.union([
   z.object({ channel: z.literal('storage:select-parent'), purpose: z.enum(['createVolume', 'migrateVolume']) }),
   z.object({ channel: z.literal('storage:create-volume'), selectionId: z.string().min(1), name: z.string().min(1) }),
@@ -164,6 +180,8 @@ export const StorageIpcRequestSchema = z.union([
     z.object({ channel: z.literal('storage:configure-git'), volumeId: z.string().min(1), mode: z.literal('remote'), remoteUrl: GitRemoteUrlSchema, authRef: GitCredentialRefSchema.optional() }),
   ]),
   z.object({ channel: z.literal('storage:sync-volume'), volumeId: z.string().min(1) }),
+  z.object({ channel: z.literal('storage:plan-git-import'), volumeId: z.string().min(1) }),
+  z.object({ channel: z.literal('storage:apply-git-import'), volumeId: z.string().min(1), sessionId: z.string().min(1), decisions: z.partialRecord(StorageGroupIdSchema, StorageImportChoiceSchema) }),
   z.object({ channel: z.literal('storage:delete-backup'), backupId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:open-volume'), volumeId: z.string().min(1) }),
 ])
@@ -174,8 +192,10 @@ export const StorageIpcResponseSchema = z.union([
   z.object({ ok: z.literal(true), kind: z.literal('operation-started'), operationId: z.string().min(1) }),
   z.object({ ok: z.literal(true), kind: z.literal('git-configured'), binding: StorageGitBindingSchema }),
   z.object({ ok: z.literal(true), kind: z.literal('completed') }),
+  z.object({ ok: z.literal(true), kind: z.literal('git-import-plan'), plan: StorageGitImportPlanSchema }),
   z.object({ ok: z.literal(false), error: z.object({ code: z.string().min(1), message: z.string().min(1), details: z.record(z.string(), z.unknown()).optional() }) }),
 ])
 
 export type StorageIpcRequest = z.infer<typeof StorageIpcRequestSchema>
 export type StorageIpcResponse = z.infer<typeof StorageIpcResponseSchema>
+export type StorageGitImportPlan = z.infer<typeof StorageGitImportPlanSchema>

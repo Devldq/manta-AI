@@ -1,7 +1,7 @@
 import type { StorageGroupId } from '@manta/shared'
 import { STORAGE_GROUP_IDS } from '@manta/shared'
 import { EmbeddingCacheManager, configureSQLiteVecProvider, resetSQLiteVecProvider } from '@manta/rag'
-import { BootstrapStore, createStorageHub, GitBindingStore, GitRunner, GitSyncService, type StorageGroupDriver } from '@manta/storage-hub'
+import { BootstrapStore, createStorageHub, GitBindingStore, GitRunner, GitSyncService, ImportCoordinator, type StorageGroupDriver } from '@manta/storage-hub'
 import { createClaudeInstallResource, createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner, type PluginMarketplaceCache } from '../core/storage/plugin/marketplace'
 import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } from './group-drivers'
 import { runWithDiagnosticsOwner, RuntimeDiagnosticsWriter } from './runtime-diagnostics'
@@ -140,6 +140,14 @@ export async function createBackendStorageComposition(bootstrap: BootstrapStore,
       leases: hub.leases,
       checkpoint: async (group) => runtime!.drivers.get(group)?.checkpoint(),
     },
+    // The importer delegates replacement to MigrationCoordinator so a remote
+    // import has the same quiesce, validation, atomic swap, recovery, and
+    // relaunch-safe lifecycle as every other live storage mutation.
+    importer: new ImportCoordinator({
+      leases: hub.leases,
+      resolveGroupRoot: (group) => runtime!.resolve(group),
+      replaceGroup: async (group, source) => { await hub.migrations!.replaceGroupFromStaging(group, source) },
+    }),
   })
   return { hub, runtime, git }
 }

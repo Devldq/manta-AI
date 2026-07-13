@@ -90,6 +90,15 @@ function installMainStorageIpc(origin: string): void {
     async syncVolume(volumeId) {
       return composition.git.syncVolume(volumeId)
     },
+    async planGitImport(volumeId) {
+      const result = await composition.git.planRemoteImport(volumeId)
+      // Keep the cache staging directory and all filesystem details in the
+      // main process.  The renderer receives only an opaque one-use session.
+      return { volumeId, sessionId: result.sessionId, ...result.plan }
+    },
+    async applyGitImport(volumeId, input) {
+      await composition.git.applyRemoteImport(volumeId, input)
+    },
   } })
 }
 

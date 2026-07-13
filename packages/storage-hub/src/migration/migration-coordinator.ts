@@ -65,6 +65,36 @@ export class MigrationCoordinator {
     })
   }
 
+  /**
+   * Replaces one active group from a fully validated cache staging directory.
+   * The caller never supplies a live destination: this coordinator resolves it
+   * from the canonical bootstrap and keeps a recoverable backup until reopen
+   * validation succeeds.
+   */
+  async replaceGroupFromStaging(group: StorageGroupId, stagedGroupPath: string, operationId = randomUUID()): Promise<string> {
+    return this.transaction(async () => {
+      const current = await this.requiredBootstrap(); const volume = this.volume(current, current.groupAssignments[group])
+      const target = join(volumeRoot(volume.parentPath), group); const staging = join(volumeRoot(volume.parentPath), '.ash-staging', operationId, group); const backup = join(volumeRoot(volume.parentPath), '.ash-backups', operationId, group)
+      const inventory = await inventoryTree(stagedGroupPath); let lease: StorageLease | undefined; let closed = false; let backedUp = false
+      try {
+        lease = await this.options.leases.acquireExclusive([group], { timeoutMs: this.options.leaseTimeoutMs ?? 30_000 })
+        const driver = this.driver(group); await driver.quiesce(); await driver.checkpoint(); await driver.close(); closed = true
+        await copyTree(stagedGroupPath, staging, inventory); await this.validateCopy(inventory, staging, [group], true)
+        await mkdir(dirname(backup), { recursive: true }); await this.renameIfPresent(target, backup); backedUp = true
+        await mkdir(dirname(target), { recursive: true }); await rename(staging, target)
+        await driver.reopen(target); const validation = await driver.validate(target); if (!validation.ok) throw new Error(validation.error ?? `Imported ${group} validation failed`)
+        await rm(backup, { recursive: true, force: true }); return operationId
+      } catch (error) {
+        // Before the old group is moved there is nothing to restore; never
+        // quarantine the still-live target on a staging validation failure.
+        if (backedUp) { await this.isolate(staging, target, operationId); await this.restoreBackup(backup, target) }
+        else await this.isolate(staging, join(staging, '.never-live'), operationId)
+        if (closed) await this.driver(group).reopen(target)
+        throw error
+      } finally { lease?.release() }
+    })
+  }
+
   async recoverPending(): Promise<AshBootstrap | undefined> {
     const lock = await acquireMigrationFileLock(this.options.store.filePath, true)
     try {

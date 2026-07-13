@@ -65,6 +65,21 @@ describe('MigrationCoordinator', () => {
     expect(JSON.parse(await readFile(join(volumeRoot(source), 'ash-volume.json'), 'utf8')).groups).not.toContain('work')
   })
 
+  it('atomically replaces an active group from cache staging and restores it when validation fails', async () => {
+    const { source, store } = await fixture(); const reopened: string[] = []
+    const coordinator = new MigrationCoordinator({ store, leases: new StorageLeaseManager(), drivers: new Map([['work', { ...driver('work'), reopen: async (path) => { reopened.push(path) } }]]) })
+    const staged = join(source, 'remote-work')
+    await mkdir(staged, { recursive: true }); await writeFile(join(staged, 'work.txt'), 'remote')
+    await coordinator.replaceGroupFromStaging('work', staged, '00000000-0000-4000-8000-000000000011')
+    expect(await readFile(join(volumeRoot(source), 'work', 'work.txt'), 'utf8')).toBe('remote')
+    expect(reopened).toContain(join(volumeRoot(source), 'work'))
+
+    await writeFile(join(staged, 'work.txt'), 'broken')
+    const failing = new MigrationCoordinator({ store, leases: new StorageLeaseManager(), drivers: new Map([['work', { ...driver('work'), validate: async (path) => path.endsWith('work') ? { ok: false, error: 'invalid import' } : { ok: true } }]]) })
+    await expect(failing.replaceGroupFromStaging('work', staged, '00000000-0000-4000-8000-000000000012')).rejects.toThrow('invalid import')
+    expect(await readFile(join(volumeRoot(source), 'work', 'work.txt'), 'utf8')).toBe('remote')
+  })
+
   it('rejects a target without source plus the minimum 256 MiB margin', async () => {
     const { initial, source, store, target } = await fixture()
     const coordinator = new MigrationCoordinator({ store, leases: new StorageLeaseManager(), drivers: new Map(groups.map((group) => [group, driver(group)])), availableBytes: async () => 256 * 1024 * 1024 })

@@ -78,6 +78,17 @@ describe('storage IPC', () => {
     await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:configure-git', volumeId: 'v1', mode: 'local' })).resolves.toEqual({ ok: false, error: { code: 'GIT_UNAVAILABLE', message: 'Git executable was not found' } })
   })
 
+  it('returns a typed remote conflict plan and requires its opaque session when applying it', async () => {
+    const handlers = new Map<string, Function>(); const ipc: any = { handle: (name: string, fn: Function) => handlers.set(name, fn), removeHandler: vi.fn() }
+    const plan = { volumeId: 'v1', sessionId: 'import-session-1', requiresConfirmation: true, groups: [{ group: 'knowledge', state: 'database-conflict', choices: ['keep-local', 'keep-remote'], defaultChoice: 'keep-local' }] }
+    const services: any = { planGitImport: vi.fn(async () => plan), applyGitImport: vi.fn(async () => {}) }
+    registerStorageIpc({ ipcMain: ipc, trustedOrigin: 'http://127.0.0.1:4444', services })
+    const event = { senderFrame: { url: 'http://127.0.0.1:4444/' } }
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:plan-git-import', volumeId: 'v1' })).resolves.toEqual({ ok: true, kind: 'git-import-plan', plan })
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:apply-git-import', volumeId: 'v1', sessionId: 'import-session-1', decisions: { knowledge: 'keep-remote' } })).resolves.toEqual({ ok: true, kind: 'completed' })
+    expect(services.applyGitImport).toHaveBeenCalledWith('v1', { sessionId: 'import-session-1', decisions: { knowledge: 'keep-remote' } })
+  })
+
   it('envelopes an incompatible Git binding as a typed conflict for the renderer', async () => {
     const handlers = new Map<string, Function>(); const ipc: any = { handle: (name: string, fn: Function) => handlers.set(name, fn), removeHandler: vi.fn() }
     const services: any = { configureGit: vi.fn(async () => { throw Object.assign(new Error('Volume v1 already has a local Git binding'), { code: 'GIT_BINDING_CONFLICT' }) }) }

@@ -13,7 +13,9 @@ async function directory(): Promise<string> {
   return result
 }
 
-afterEach(async () => { await Promise.all(directories.splice(0).map((item) => rm(item, { recursive: true, force: true }))) })
+// Git may release nested metadata handles a moment after a child process exits on Windows.
+// Retry only disposable test directories so root-level parallel test runs cannot flake on ENOTEMPTY.
+afterEach(async () => { await Promise.all(directories.splice(0).map((item) => rm(item, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }))) })
 
 describe('GitRunner', () => {
   it('discovers an installed Git version and runs without a shell or interactive prompts', async () => {
@@ -146,6 +148,8 @@ describe('GitSyncService', () => {
     await expect(readFile(path.join(root, binding.repositoryRelativePath, '.git', 'HEAD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  // This performs two real bare-repository pushes and a clone. Allow CI's concurrent
+  // package builds without weakening the default timeout for ordinary unit tests.
   it('continues pushing a remote snapshot after its disposable cache workspace is removed', async () => {
     const root = await directory(); const cache = await directory(); const remote = await directory(); const real = new GitRunner(); const leases = new StorageLeaseManager()
     await real.exec(['init', '--bare', '--quiet'], { cwd: remote })
@@ -173,6 +177,23 @@ describe('GitSyncService', () => {
     expect(commands.filter(({ args }) => ['checkout', 'merge', 'reset'].includes(args[0]))).toEqual([])
     expect(commands.filter(({ cwd }) => cwd?.startsWith(root)).map(({ args }) => args[0])).not.toContain('init')
     await expect(readFile(path.join(root, '.ash', 'sync', 'git', '.git', 'HEAD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  }, 15_000)
+
+  it('fetches a remote manifest only into a disposable cache staging worktree', async () => {
+    const root = await directory(); const cache = await directory(); const remote = await directory(); const real = new GitRunner(); const leases = new StorageLeaseManager()
+    await real.exec(['init', '--bare', '--quiet'], { cwd: remote })
+    await mkdir(path.join(root, 'work'), { recursive: true }); await writeFile(path.join(root, 'work', 'task.md'), 'remote')
+    const remoteUrl = 'https://example.test/ash.git'; const cachePath = (id: string) => path.join(cache, id)
+    const runner = new GitRunner({ execFile: async (_binary, args, options) => real.exec(args[0] === 'remote' && args[1] === 'add' && args[3] === remoteUrl ? [...args.slice(0, 3), `file://${remote}`] : args, { cwd: options.cwd, env: options.env }) })
+    const service = new GitSyncService({ runner, bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath, snapshots: { generation: () => 2, leases } })
+    await service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl }); await service.syncVolume('primary')
+    await writeFile(path.join(root, 'work', 'task.md'), 'local unchanged')
+
+    const fetched = await service.fetchRemoteImport('primary')
+    expect(fetched.manifest).toMatchObject({ volumeId: 'primary', groupHashes: { work: expect.any(String) } })
+    await expect(readFile(path.join(fetched.stagingRoot, 'work', 'task.md'), 'utf8')).resolves.toBe('remote')
+    await expect(readFile(path.join(root, 'work', 'task.md'), 'utf8')).resolves.toBe('local unchanged')
+    expect(fetched.stagingRoot.startsWith(cache)).toBe(true)
   })
 
   it('rejects a remote request when the volume is already bound locally', async () => {

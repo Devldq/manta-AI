@@ -1,4 +1,4 @@
-import type { StorageGroupId, StorageIpcRequest, StorageIpcResponse, StorageOperationProgress } from '@manta/shared'
+import type { StorageGitImportPlan, StorageGroupId, StorageIpcRequest, StorageIpcResponse, StorageOperationProgress } from '@manta/shared'
 import { StorageIpcRequestSchema, StorageIpcResponseSchema } from '@manta/storage-hub'
 
 interface IpcMainLike { handle(channel: string, listener: (event: any, request: unknown) => unknown): void; removeHandler(channel: string): void }
@@ -15,6 +15,8 @@ export interface StorageIpcServices {
   deleteBackup(backupId: string): Promise<void>
   configureGit?(volumeId: string, config: Extract<StorageIpcRequest, { channel: 'storage:configure-git' }>): Promise<ConfiguredGitBinding>
   syncVolume?(volumeId: string): Promise<unknown>
+  planGitImport?(volumeId: string): Promise<StorageGitImportPlan>
+  applyGitImport?(volumeId: string, input: Pick<Extract<StorageIpcRequest, { channel: 'storage:apply-git-import' }>, 'sessionId' | 'decisions'>): Promise<void>
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
@@ -44,6 +46,8 @@ export function registerStorageIpc(options: { ipcMain: IpcMainLike; trustedOrigi
         case 'storage:delete-backup': assertId(request.backupId, 'backupId'); await options.services.deleteBackup(request.backupId); response = { ok: true, kind: 'completed' }; break
         case 'storage:configure-git': assertId(request.volumeId, 'volumeId'); if (!options.services.configureGit) throw Object.assign(new Error('Git is unavailable'), { code: 'GIT_UNAVAILABLE' }); response = { ok: true, kind: 'git-configured', binding: await options.services.configureGit(request.volumeId, request) }; break
         case 'storage:sync-volume': assertId(request.volumeId, 'volumeId'); if (!options.services.syncVolume) throw new Error('Sync is unavailable'); await options.services.syncVolume(request.volumeId); response = { ok: true, kind: 'completed' }; break
+        case 'storage:plan-git-import': assertId(request.volumeId, 'volumeId'); if (!options.services.planGitImport) throw Object.assign(new Error('Git import is unavailable'), { code: 'GIT_IMPORT_UNAVAILABLE' }); response = { ok: true, kind: 'git-import-plan', plan: await options.services.planGitImport(request.volumeId) }; break
+        case 'storage:apply-git-import': assertId(request.volumeId, 'volumeId'); assertId(request.sessionId, 'sessionId'); if (!options.services.applyGitImport) throw Object.assign(new Error('Git import is unavailable'), { code: 'GIT_IMPORT_UNAVAILABLE' }); await options.services.applyGitImport(request.volumeId, { sessionId: request.sessionId, decisions: request.decisions }); response = { ok: true, kind: 'completed' }; break
       }
       return StorageIpcResponseSchema.parse(response)
     } catch (error) {
