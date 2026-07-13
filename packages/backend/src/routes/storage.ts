@@ -7,6 +7,7 @@ export interface StorageApiContext {
   inventory(scope?: { volumeId?: string; groupId?: any }): Promise<{ files: number; bytes: number; entries: unknown[] }>
   health?(): Promise<{ ok: boolean; status: string }>
   getOperation?(id: string): Promise<unknown | undefined>
+  listOperations?(): Promise<Array<{ id: string; status?: string; phase?: string; updatedAt?: string }>>
   listBackups(): Promise<Array<{ id: string; operationId?: string; kind?: string; groupId?: string; volumeId?: string; createdAt: string; bytes: number }>>
 }
 
@@ -26,7 +27,9 @@ export async function storageRoutes(app: FastifyInstance, options: StorageApiCon
     const volumeInventories = await Promise.all(bootstrap.volumes.map((volume) => options.inventory({ volumeId: volume.id })))
     const totalBytes = volumeInventories.reduce((sum, item) => sum + item.bytes, 0)
     const totalFiles = volumeInventories.reduce((sum, item) => sum + item.files, 0)
-    return { success: true, data: { generation: bootstrap.generation, volumes: bootstrap.volumes, groups, logicalBytes, totalBytes, totalFiles, operation: bootstrap.pendingMigration } }
+    const operations = (await options.listOperations?.() ?? []).sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''))
+    const active = operations.find((operation) => operation.status === 'running' || operation.status === 'recovering')
+    return { success: true, data: { generation: bootstrap.generation, volumes: bootstrap.volumes, groups, logicalBytes, totalBytes, totalFiles, operation: active ?? bootstrap.pendingMigration ?? operations[0], operations } }
   })
   app.get('/api/storage/volumes', async (_request, reply) => {
     const bootstrap = await options.readBootstrap(); if (!bootstrap) return reply.status(503).send({ success: false, error: { code: 'STORAGE_NOT_INITIALIZED', message: 'Storage is not initialized' } })

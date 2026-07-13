@@ -9,10 +9,11 @@ export interface StorageOverview {
   actualBytes?: number
   savingsBytes?: number
   operation?: StorageOperation
+  operations?: StorageOperation[]
 }
 
 export interface StorageBackup { id: string; volumeId: string; path: string; bytes?: number; createdAt?: string }
-export interface StorageOperation { id: string; phase: string; progress?: StorageOperationProgress; error?: { code: string; message: string } }
+export interface StorageOperation { id: string; phase: string; status?: 'running' | 'succeeded' | 'failed' | 'recovering' | string; updatedAt?: string; progress?: StorageOperationProgress; error?: { code: string; message: string } | string }
 export interface StorageApiError extends Error { code: string; details?: unknown }
 
 type Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>

@@ -12,7 +12,7 @@ function harness(value: unknown = undefined) {
     startServer: vi.fn(async () => { calls.push('server'); return server }),
     openOnboarding: vi.fn(async () => calls.push('onboarding')),
     openMain: vi.fn(async (url: string) => calls.push(url)),
-    readRelaunchIntent: vi.fn(async () => undefined), prepareRelaunch: vi.fn(), rollbackRelaunchIntent: vi.fn(), clearRelaunchIntent: vi.fn(), resetComposition: vi.fn(),
+    readRelaunchIntent: vi.fn(async () => undefined), prepareRelaunch: vi.fn(), rollbackRelaunchIntent: vi.fn(), completeRelaunchOperation: vi.fn(), clearRelaunchIntent: vi.fn(), resetComposition: vi.fn(),
     quit: vi.fn(), relaunch: vi.fn(), seedRoot: 'C:/resources',
   }
   return { controller: new DesktopLifecycleController(deps), deps, calls, server }
@@ -70,6 +70,14 @@ describe('DesktopLifecycleController', () => {
     expect((await second.controller.start()).ok).toBe(true)
     expect(shared.rolledBack).toBe(true); expect(shared.generation).toBe(1); expect(shared.intent).toBeUndefined()
     expect(second.deps.startServer).toHaveBeenCalledTimes(2)
+  })
+
+  it('marks a relaunching operation succeeded only after the new process is healthy', async () => {
+    const { controller, deps } = harness(bootstrap)
+    deps.readRelaunchIntent.mockResolvedValue({ operationId: 'op-health', phase: 'awaiting-new-process-health', attempt: 0 })
+    await expect(controller.start()).resolves.toEqual({ ok: true })
+    expect(deps.completeRelaunchOperation).toHaveBeenCalledWith('op-health')
+    expect(deps.clearRelaunchIntent.mock.invocationCallOrder[0]).toBeGreaterThan(deps.completeRelaunchOperation.mock.invocationCallOrder[0])
   })
 
   it('never relaunches an uncommitted migration', async () => {

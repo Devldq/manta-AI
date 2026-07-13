@@ -39,4 +39,16 @@ describe('storage IPC', () => {
     dispose()
     expect(ipcRenderer.removeListener).toHaveBeenCalledWith('storage:progress', listeners.get('storage:progress'))
   })
+
+  it('returns a durable operation id before a deferred migration completes', async () => {
+    const handlers = new Map<string, Function>(); const ipc: any = { handle: (name: string, fn: Function) => handlers.set(name, fn), removeHandler: vi.fn() }
+    let finish!: () => void
+    const completion = new Promise<void>((resolve) => { finish = resolve })
+    const services: any = { moveGroup: vi.fn(async () => ({ operationId: 'op-deferred', completion })) }
+    registerStorageIpc({ ipcMain: ipc, trustedOrigin: 'http://127.0.0.1:4444', services })
+    const event = { senderFrame: { url: 'http://127.0.0.1:4444/' } }
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:move-group', groupId: 'work', targetVolumeId: 'v2' })).resolves.toEqual({ ok: true, operationId: 'op-deferred' })
+    expect(services.moveGroup).toHaveBeenCalledOnce()
+    finish()
+  })
 })

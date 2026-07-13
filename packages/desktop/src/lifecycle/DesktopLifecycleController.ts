@@ -13,6 +13,7 @@ export interface DesktopLifecycleDependencies {
   readRelaunchIntent(): Promise<RelaunchIntent | undefined>
   prepareRelaunch(operationId: string): Promise<void>
   rollbackRelaunchIntent(intent: RelaunchIntent): Promise<void>
+  completeRelaunchOperation(operationId: string): Promise<void>
   clearRelaunchIntent(): Promise<void>
   resetComposition(): Promise<void> | void
   quit(): void
@@ -37,7 +38,7 @@ export class DesktopLifecycleController {
       if (intent && intent.phase !== 'awaiting-new-process-health') {
         await this.deps.rollbackRelaunchIntent(intent); await this.deps.resetComposition(); await this.bootOnce(true); await this.deps.clearRelaunchIntent(); return { ok:true }
       }
-      await this.bootOnce(Boolean(intent)); if (intent) await this.deps.clearRelaunchIntent(); return { ok: true }
+      await this.bootOnce(Boolean(intent)); if (intent) { await this.deps.completeRelaunchOperation(intent.operationId); await this.deps.clearRelaunchIntent() } return { ok: true }
     } catch (firstError) {
       await this.closeFailedServer()
       if (intent?.phase === 'awaiting-new-process-health' && intent.attempt === 0) {
@@ -60,8 +61,14 @@ export class DesktopLifecycleController {
   private failure(error: unknown): StartupFailure { return { ok:false, error:{ code:(error as any).code ?? 'STARTUP_FAILED', message:(error as Error).message, retryable:true } } }
 
   async migrateAndRelaunch(operation: () => Promise<string>): Promise<string> {
-    const id = await operation(); await this.deps.prepareRelaunch(id)
-    this.deps.relaunch(); this.deps.quit(); return id
+    const id = await operation(); await this.relaunchAfterMigration(id)
+    return id
+  }
+
+  /** The migration has already committed; make its relaunch durable before quitting. */
+  async relaunchAfterMigration(id: string): Promise<void> {
+    await this.deps.prepareRelaunch(id)
+    this.deps.relaunch(); this.deps.quit()
   }
 
   async shutdown(): Promise<void> {

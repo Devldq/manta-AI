@@ -21,7 +21,7 @@ export function StorageSettingsPanel() {
     setLoading(true); setError(undefined)
     try {
       const [summary, nextVolumes, nextBackups] = await Promise.all([storageApi.overview(), storageApi.volumes(), storageApi.backups()])
-      setVolumes(nextVolumes); setOverview(summary); setBackups(nextBackups); operation.resume(summary.operation)
+      setVolumes(nextVolumes); setOverview(summary); setBackups(nextBackups); operation.resume(summary.operation, summary.operations)
     } catch (reason) { setError(reason as Error) } finally { setLoading(false) }
   // `resume` only captures stable React setters/ref; this keeps refresh stable.
   // eslint-disable-next-line react-hooks/exhaustive-deps

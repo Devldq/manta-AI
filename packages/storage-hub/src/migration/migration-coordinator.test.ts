@@ -47,6 +47,12 @@ describe('MigrationCoordinator', () => {
     expect(await readFile(join(volumeRoot(target), 'work', 'work.txt'), 'utf8')).toBe('work')
   })
 
+  it('uses a caller-provided operation id for the durable migration journal', async () => {
+    const { coordinator, target } = await fixture()
+    const operationId = '00000000-0000-4000-8000-000000000001'
+    await expect(coordinator.relocateVolume('v1', target, operationId)).resolves.toBe(operationId)
+  })
+
   it('moves one group and retains its source as a transaction backup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'ash-group-')); const source = join(root, 'source'); const target = join(root, 'target'); const store = new BootstrapStore(join(root, 'bootstrap.json'))
     const initial = bootstrap(source); initial.volumes.push({ id: 'v2', name: 'other', parentPath: target, createdAt: now, updatedAt: now }); await store.write(initial)

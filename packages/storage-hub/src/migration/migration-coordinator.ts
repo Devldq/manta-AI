@@ -22,11 +22,11 @@ export class MigrationCoordinator {
   private running = false
   constructor(private readonly options: MigrationCoordinatorOptions) {}
 
-  async relocateVolume(volumeId: string, targetParentPath: string): Promise<string> {
+  async relocateVolume(volumeId: string, targetParentPath: string, operationId = randomUUID()): Promise<string> {
     return this.transaction(async () => {
       const current = await this.requiredBootstrap(); const volume = this.volume(current, volumeId); const groups = this.groupsFor(current, volumeId)
       const sourceRoot = volumeRoot(volume.parentPath); const finalRoot = volumeRoot(targetParentPath); await this.rejectOverlap(sourceRoot, finalRoot); await this.ensureAbsent(finalRoot)
-      const id = randomUUID(); const staging = join(dirname(finalRoot), `${basename(finalRoot)}.migrating-${id}`); const inventory = await inventoryTree(sourceRoot); await this.ensureCapacity(targetParentPath, inventory.bytes)
+      const id = operationId; const staging = join(dirname(finalRoot), `${basename(finalRoot)}.migrating-${id}`); const inventory = await inventoryTree(sourceRoot); await this.ensureCapacity(targetParentPath, inventory.bytes)
       let lease: StorageLease | undefined; const closed: StorageGroupId[] = []; let committed = false; let journal = this.journal(id, 'volume', volumeId, groups, current, { targetParentPath }, inventory)
       try {
         lease = await this.options.leases.acquireExclusive(groups, { timeoutMs: this.options.leaseTimeoutMs ?? 30_000 }); await this.persistJournal(current, journal)
@@ -45,11 +45,11 @@ export class MigrationCoordinator {
     })
   }
 
-  async moveGroup(group: StorageGroupId, targetVolumeId: string): Promise<string> {
+  async moveGroup(group: StorageGroupId, targetVolumeId: string, operationId = randomUUID()): Promise<string> {
     return this.transaction(async () => {
       const current = await this.requiredBootstrap(); const sourceVolumeId = current.groupAssignments[group]; if (sourceVolumeId === targetVolumeId) throw new Error(`${group} is already assigned to ${targetVolumeId}`)
       const source = this.volume(current, sourceVolumeId); const target = this.volume(current, targetVolumeId); const sourcePath = join(volumeRoot(source.parentPath), group); const targetPath = join(volumeRoot(target.parentPath), group); await this.rejectOverlap(sourcePath, targetPath); await this.ensureAbsent(targetPath)
-      const id = randomUUID(); const staging = join(volumeRoot(target.parentPath), '.ash-staging', id, group); const backup = join(volumeRoot(source.parentPath), '.ash-backups', id, group); const inventory = await inventoryTree(sourcePath); await this.ensureCapacity(target.parentPath, inventory.bytes)
+      const id = operationId; const staging = join(volumeRoot(target.parentPath), '.ash-staging', id, group); const backup = join(volumeRoot(source.parentPath), '.ash-backups', id, group); const inventory = await inventoryTree(sourcePath); await this.ensureCapacity(target.parentPath, inventory.bytes)
       let lease: StorageLease | undefined; let closed = false; let committed = false; let journal = this.journal(id, 'group', sourceVolumeId, [group], current, { targetVolumeId }, inventory)
       try {
         lease = await this.options.leases.acquireExclusive([group], { timeoutMs: this.options.leaseTimeoutMs ?? 30_000 }); await this.persistJournal(current, journal)
