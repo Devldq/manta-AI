@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { GitBindingStore } from './git-binding-store'
 import { GitRunner, redactGitText } from './git-runner'
@@ -8,6 +8,21 @@ const SYNC_EXCLUDED_GROUPS = new Set(['secrets', 'diagnostics', 'cache'])
 const SAFE_IGNORE = ['# Manta ASH Git snapshots never include sensitive or transient groups.', 'secrets/', 'diagnostics/', 'cache/', '.ash/'].join('\n') + '\n'
 
 const REPOSITORY_RELATIVE_PATH = join('.ash', 'sync', 'git')
+
+type BindTransaction = {
+  gitDirectoryCreated: boolean
+  remoteAdded: boolean
+  gitignore?: { path: string; original?: string }
+  credential?: { ref: string; original?: string }
+}
+
+async function readOptional(path: string): Promise<string | undefined> {
+  try { return await readFile(path, 'utf8') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try { await lstat(path); return true } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error }
+}
 
 function assertSafeRemote(remoteUrl: string): void {
   // URLs are deliberately credential-free. SSH users and scp syntax are omitted so a
@@ -41,13 +56,30 @@ export class GitSyncService {
         return existing
       }
       const repositoryPath = this.repositoryPath({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH } as GitBinding)
-      await mkdir(repositoryPath, { recursive: true })
-      await this.options.runner.exec(['init', '--quiet'], { cwd: repositoryPath })
-      await writeFile(join(repositoryPath, '.gitignore'), SAFE_IGNORE, 'utf8')
-      if (input.mode === 'remote' && input.remoteUrl) await this.options.runner.exec(['remote', 'add', 'origin', input.remoteUrl], { cwd: repositoryPath })
-      if (input.credential) await this.credentials.put(input.credential.ref, input.credential.secret)
-      const now = new Date().toISOString()
-      return this.options.bindings.bind({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH, mode: input.mode, remoteUrl: input.remoteUrl, credentialRef, createdAt: now, updatedAt: now })
+      const transaction: BindTransaction = { gitDirectoryCreated: false, remoteAdded: false }
+      try {
+        await mkdir(repositoryPath, { recursive: true })
+        const gitDirectory = join(repositoryPath, '.git')
+        const hadGitDirectory = await exists(gitDirectory)
+        await this.options.runner.exec(['init', '--quiet'], { cwd: repositoryPath })
+        transaction.gitDirectoryCreated = !hadGitDirectory && await exists(gitDirectory)
+        const gitignorePath = join(repositoryPath, '.gitignore')
+        transaction.gitignore = { path: gitignorePath, original: await readOptional(gitignorePath) }
+        await writeFile(gitignorePath, SAFE_IGNORE, 'utf8')
+        if (input.mode === 'remote' && input.remoteUrl) {
+          await this.options.runner.exec(['remote', 'add', 'origin', input.remoteUrl], { cwd: repositoryPath })
+          transaction.remoteAdded = true
+        }
+        if (input.credential) {
+          transaction.credential = { ref: input.credential.ref, original: await this.credentials.get(input.credential.ref) }
+          await this.credentials.put(input.credential.ref, input.credential.secret)
+        }
+        const now = new Date().toISOString()
+        return await this.options.bindings.bind({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH, mode: input.mode, remoteUrl: input.remoteUrl, credentialRef, createdAt: now, updatedAt: now })
+      } catch (error) {
+        await this.rollbackBind(repositoryPath, transaction, error)
+        throw error
+      }
     })
   }
 
@@ -74,6 +106,22 @@ export class GitSyncService {
     this.bindingTails.set(volumeId, current)
     await previous.catch(() => undefined)
     try { return await operation() } finally { release(); if (this.bindingTails.get(volumeId) === current) this.bindingTails.delete(volumeId) }
+  }
+  /** Reverts only resources created or overwritten by the active binding transaction. */
+  private async rollbackBind(repositoryPath: string, transaction: BindTransaction, original: unknown): Promise<void> {
+    const failures: unknown[] = []
+    const attempt = async (operation: () => Promise<void>) => { try { await operation() } catch (error) { failures.push(error) } }
+    if (transaction.credential) await attempt(async () => {
+      if (transaction.credential!.original === undefined) await this.credentials.remove(transaction.credential!.ref)
+      else await this.credentials.put(transaction.credential!.ref, transaction.credential!.original)
+    })
+    if (transaction.remoteAdded) await attempt(async () => { await this.options.runner.exec(['remote', 'remove', 'origin'], { cwd: repositoryPath }) })
+    if (transaction.gitignore) await attempt(async () => {
+      if (transaction.gitignore!.original === undefined) await rm(transaction.gitignore!.path, { force: true })
+      else await writeFile(transaction.gitignore!.path, transaction.gitignore!.original, 'utf8')
+    })
+    if (transaction.gitDirectoryCreated) await attempt(async () => { await rm(join(repositoryPath, '.git'), { recursive: true, force: true }) })
+    if (failures.length) throw new AggregateError([original, ...failures], 'Git binding failed and rollback was incomplete', { cause: original })
   }
   private repositoryPath(binding: Pick<GitBinding, 'volumeId' | 'repositoryRelativePath'>): string {
     const root = this.options.volumes.resolveVolumeRoot(binding.volumeId)

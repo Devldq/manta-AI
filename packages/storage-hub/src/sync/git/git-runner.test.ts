@@ -130,6 +130,74 @@ describe('GitSyncService', () => {
     await expect(credentials.get('keychain:private')).resolves.toBe(token)
   })
 
+  it('rolls back a remote setup when credential storage fails, so a local retry starts cleanly', async () => {
+    const root = await directory()
+    let failCredentialWrite!: () => void
+    const credentialWriteMayFail = new Promise<void>((resolve) => { failCredentialWrite = resolve })
+    let credentialWriteStarted!: () => void
+    const credentialWriteStartedPromise = new Promise<void>((resolve) => { credentialWriteStarted = resolve })
+    class FailingCredentialStore extends FakeCredentialStore {
+      override async put(): Promise<void> { credentialWriteStarted(); await credentialWriteMayFail; throw new Error('keychain unavailable') }
+    }
+    const credentials = new FailingCredentialStore()
+    const bindings = new GitBindingStore(path.join(root, 'config'))
+    const service = new GitSyncService({ runner: new GitRunner(), bindings, credentials, volumes: resolver('primary', root) })
+    const repositoryPath = path.join(root, '.ash', 'sync', 'git')
+
+    const remote = service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/repository.git', credential: { ref: 'keychain:primary', secret: 'test-secret' } })
+    await credentialWriteStartedPromise
+    const local = service.bindVolume({ volumeId: 'primary', mode: 'local' })
+    failCredentialWrite()
+    await expect(remote).rejects.toThrow('keychain unavailable')
+
+    await expect(credentials.get('keychain:primary')).resolves.toBeUndefined()
+    await expect(new GitRunner().exec(['remote', 'get-url', 'origin'], { cwd: repositoryPath })).rejects.toThrow()
+    await expect(local).resolves.toMatchObject({ mode: 'local' })
+    await expect(bindings.list()).resolves.toMatchObject([{ mode: 'local' }])
+  })
+
+  it('rolls back credentials and repository changes when catalog persistence fails', async () => {
+    const root = await directory()
+    class FailingBindingStore extends GitBindingStore {
+      private shouldFail = true
+      override async bind(binding: Parameters<GitBindingStore['bind']>[0]) {
+        if (this.shouldFail) { this.shouldFail = false; throw new Error('catalog unavailable') }
+        return super.bind(binding)
+      }
+    }
+    const credentials = new FakeCredentialStore()
+    const bindings = new FailingBindingStore(path.join(root, 'config'))
+    const service = new GitSyncService({ runner: new GitRunner(), bindings, credentials, volumes: resolver('primary', root) })
+    const repositoryPath = path.join(root, '.ash', 'sync', 'git')
+
+    await expect(service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/repository.git', credential: { ref: 'keychain:primary', secret: 'test-secret' } })).rejects.toThrow('catalog unavailable')
+
+    await expect(bindings.list()).resolves.toEqual([])
+    await expect(credentials.get('keychain:primary')).resolves.toBeUndefined()
+    await expect(new GitRunner().exec(['remote', 'get-url', 'origin'], { cwd: repositoryPath })).rejects.toThrow()
+    await expect(new GitRunner().exec(['rev-parse', '--git-dir'], { cwd: repositoryPath })).rejects.toThrow()
+    await expect(service.bindVolume({ volumeId: 'primary', mode: 'local' })).resolves.toMatchObject({ mode: 'local' })
+    await expect(bindings.list()).resolves.toMatchObject([{ mode: 'local' }])
+  })
+
+  it('preserves a pre-existing repository and gitignore while undoing a failed remote binding', async () => {
+    const root = await directory()
+    const repositoryPath = path.join(root, '.ash', 'sync', 'git')
+    await mkdir(repositoryPath, { recursive: true })
+    await new GitRunner().exec(['init', '--quiet'], { cwd: repositoryPath })
+    await writeFile(path.join(repositoryPath, '.gitignore'), 'keep-this-rule\n')
+    class FailingBindingStore extends GitBindingStore {
+      override async bind(): Promise<never> { throw new Error('catalog unavailable') }
+    }
+    const service = new GitSyncService({ runner: new GitRunner(), bindings: new FailingBindingStore(path.join(root, 'config')), volumes: resolver('primary', root) })
+
+    await expect(service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/repository.git' })).rejects.toThrow('catalog unavailable')
+
+    await expect(new GitRunner().exec(['rev-parse', '--git-dir'], { cwd: repositoryPath })).resolves.toMatchObject({ stdout: expect.any(String) })
+    await expect(new GitRunner().exec(['remote', 'get-url', 'origin'], { cwd: repositoryPath })).rejects.toThrow()
+    await expect(readFile(path.join(repositoryPath, '.gitignore'), 'utf8')).resolves.toBe('keep-this-rule\n')
+  })
+
   it('blocks a commit before Git add when a syncable group contains a known secret', async () => {
     const root = await directory(); const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root) })
     const binding = await service.bindVolume({ volumeId: 'primary', mode: 'local' })
