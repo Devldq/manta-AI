@@ -16,6 +16,7 @@ interface ExtensionJournal {
 const transactionsDir = (root: string) => join(root, '.ash-transactions')
 const journalPath = (root: string, id: string) => join(transactionsDir(root), `${id}.json`)
 const lockPath = (root: string) => join(root, '.ash', 'extension-transactions.lock')
+const activeInstallReceipts = new WeakSet<object>()
 
 function atomicWrite(path: string, content: string): void {
   durableAtomicWrite(path, content)
@@ -94,14 +95,16 @@ function rejectLinks(path: string): void {
 
 function applyRegistry(root: string, journal: ExtensionJournal): void {
   for (const item of journal.registryWrites) {
+    assertDestination({ extensionsRoot: root, destination: item.path })
     if (existsSync(item.path)) {
-      const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, item.path)); if (!existsSync(backup)) durableRecursiveCopy(item.path, backup)
+      const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, item.path)); rejectPathLinks(root, backup); if (!existsSync(backup)) durableRecursiveCopy(item.path, backup)
     }
     atomicWrite(item.path, item.content)
   }
   for (const path of journal.registryDeletes) {
+    assertDestination({ extensionsRoot: root, destination: path })
     if (!existsSync(path)) continue
-    const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, path)); durableMkdir(dirname(backup)); if (!existsSync(backup)) durableRename(path, backup); else durableRemove(path)
+    const backup = join(root, '.ash-backups', journal.id, 'registry', relative(root, path)); rejectPathLinks(root, backup); durableMkdir(dirname(backup)); if (!existsSync(backup)) durableRename(path, backup); else durableRemove(path)
   }
 }
 
@@ -134,31 +137,43 @@ function recoverUnlocked(root: string): void {
 }
 export function recoverExtensionTransactions(extensionsRoot: string): void { const release = acquire(extensionsRoot); try { recoverUnlocked(extensionsRoot) } finally { release() } }
 
-export function transactionalInstallDirectory(options: InstallOptions): { transactionId: string; stagingPath: string; backupPath?: string } {
-  assertDestination(options); rejectLinks(options.source); const release = acquire(options.extensionsRoot)
-  try {
-    options.fault?.('locked'); recoverUnlocked(options.extensionsRoot); const id = randomUUID(); const stagingPath = join(options.extensionsRoot, '.ash-staging', id, 'payload')
+export interface CompletedExtensionInstall {
+  readonly extensionsRoot: string
+  readonly destination: string
+  readonly transactionId: string
+  readonly stagingPath: string
+  readonly backupPath?: string
+  readonly registryPaths: readonly string[]
+}
+
+function validateInstallOptions(options: InstallOptions): void {
+  assertDestination(options); rejectLinks(options.source)
+  for (const path of options.registryWrites?.keys() ?? []) assertDestination({ extensionsRoot: options.extensionsRoot, destination: path })
+}
+
+function installDirectoryUnlocked(options: InstallOptions): CompletedExtensionInstall {
+    options.fault?.('locked'); recoverUnlocked(options.extensionsRoot)
+    for (const path of options.registryWrites?.keys() ?? []) assertDestination({ extensionsRoot: options.extensionsRoot, destination: path })
+    const id = randomUUID(); const stagingPath = join(options.extensionsRoot, '.ash-staging', id, 'payload')
     try { durableRecursiveCopy(options.source, stagingPath, { filter: (source) => !['node_modules', '.git'].includes(basename(source)), afterCopy: () => options.fault?.('copy-entry') }); options.validate?.(stagingPath) }
     catch (error) { durableRemove(dirname(stagingPath)); throw error }
     const backupPath = existsSync(options.destination) ? join(options.extensionsRoot, '.ash-backups', id, relative(options.extensionsRoot, options.destination)) : undefined
     const journal: ExtensionJournal = { version: 1, id, kind: 'install', phase: 'staged', destination: options.destination, stagingPath, backupPath, registryWrites: [...(options.registryWrites ?? new Map())].map(([path, content]) => ({ path, content })), registryDeletes: [] }
-    persist(options.extensionsRoot, journal); options.fault?.('journaled'); finish(options.extensionsRoot, journal, options.fault); return { transactionId: id, stagingPath, backupPath }
+    persist(options.extensionsRoot, journal); options.fault?.('journaled'); finish(options.extensionsRoot, journal, options.fault)
+    return Object.freeze({ extensionsRoot: options.extensionsRoot, destination: options.destination, transactionId: id, stagingPath, backupPath, registryPaths: Object.freeze([...(options.registryWrites?.keys() ?? [])]) })
+}
+
+export function transactionalInstallDirectory(options: InstallOptions): CompletedExtensionInstall {
+  validateInstallOptions(options); const release = acquire(options.extensionsRoot)
+  try {
+    return installDirectoryUnlocked(options)
   } finally { release() }
 }
 
-export interface CompletedExtensionInstallRollback {
-  extensionsRoot: string
-  destination: string
-  transactionId: string
-  registryPaths: string[]
-}
-
-export function rollbackCompletedExtensionInstall(options: CompletedExtensionInstallRollback): void {
+function rollbackCompletedExtensionInstallUnlocked(options: CompletedExtensionInstall): void {
   assertDestination(options)
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(options.transactionId)) throw new Error('Invalid extension transaction identifier')
   for (const path of options.registryPaths) assertDestination({ extensionsRoot: options.extensionsRoot, destination: path })
-  const release = acquire(options.extensionsRoot)
-  try {
     recoverUnlocked(options.extensionsRoot)
     const backupRoot = join(options.extensionsRoot, '.ash-backups', options.transactionId)
     const packageRelative = relative(options.extensionsRoot, options.destination)
@@ -184,13 +199,29 @@ export function rollbackCompletedExtensionInstall(options: CompletedExtensionIns
       if (existsSync(options.destination)) throw new Error('Extension package rollback destination is occupied')
       durableMkdir(dirname(options.destination)); durableRename(packageBackup, options.destination)
     }
-  } finally { release() }
+}
+
+export function rollbackCompletedExtensionInstall(receipt: CompletedExtensionInstall): void {
+  if (!activeInstallReceipts.has(receipt)) throw new Error('Completed extension install rollback requires an active issued lease receipt')
+  rollbackCompletedExtensionInstallUnlocked(receipt)
+}
+
+export async function withLeasedExtensionInstall<T>(options: InstallOptions, decide: (receipt: CompletedExtensionInstall) => Promise<T>): Promise<T> {
+  validateInstallOptions(options); const release = acquire(options.extensionsRoot)
+  let receipt: CompletedExtensionInstall | undefined
+  try {
+    receipt = installDirectoryUnlocked(options); activeInstallReceipts.add(receipt)
+    try { return await decide(receipt) } catch (error) { rollbackCompletedExtensionInstall(receipt); throw error }
+  } finally {
+    if (receipt) activeInstallReceipts.delete(receipt)
+    release()
+  }
 }
 
 export function transactionalUninstallDirectory(options: ExtensionTransactionOptions & { registryDeletes?: string[] }): string | undefined {
-  assertDestination(options); const release = acquire(options.extensionsRoot)
+  assertDestination(options); for (const path of options.registryDeletes ?? []) assertDestination({ extensionsRoot: options.extensionsRoot, destination: path }); const release = acquire(options.extensionsRoot)
   try {
-    recoverUnlocked(options.extensionsRoot); if (!existsSync(options.destination) && !(options.registryDeletes ?? []).some(existsSync)) return undefined
+    recoverUnlocked(options.extensionsRoot); for (const path of options.registryDeletes ?? []) assertDestination({ extensionsRoot: options.extensionsRoot, destination: path }); if (!existsSync(options.destination) && !(options.registryDeletes ?? []).some(existsSync)) return undefined
     const id = randomUUID(); const backupPath = existsSync(options.destination) ? join(options.extensionsRoot, '.ash-backups', id, relative(options.extensionsRoot, options.destination)) : undefined
     const journal: ExtensionJournal = { version: 1, id, kind: 'uninstall', phase: 'staged', destination: options.destination, backupPath, registryWrites: [], registryDeletes: options.registryDeletes ?? [] }
     persist(options.extensionsRoot, journal); finish(options.extensionsRoot, journal, options.fault); return backupPath

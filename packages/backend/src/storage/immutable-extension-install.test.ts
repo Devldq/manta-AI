@@ -28,4 +28,20 @@ describe('immutable extension installation', () => {
     await expect(installImmutableExtensionPackage({ extensionsRoot, source, destination, kind: 'plugin', logicalId: 'plugin-new', version: '1.0.0', registryWrites: new Map([[registry, 'new-registry']]), snapshotPackage: async () => { throw new Error('snapshot fault') } })).rejects.toThrow(/snapshot fault/)
     expect(existsSync(destination)).toBe(false); expect(existsSync(registry)).toBe(false)
   })
+
+  it('holds one exclusive lease until the async snapshot decides to keep or roll back', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-immutable-lease-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const destination = join(extensionsRoot, 'plugins', 'demo'); const sourceA = join(root, 'source-a'); const sourceB = join(root, 'source-b')
+    mkdirSync(sourceA); mkdirSync(sourceB); mkdirSync(destination, { recursive: true }); writeFileSync(join(destination, 'plugin.yaml'), 'old'); writeFileSync(join(sourceA, 'plugin.yaml'), 'a'); writeFileSync(join(sourceB, 'plugin.yaml'), 'b')
+    let entered!: () => void; const snapshotEntered = new Promise<void>((resolve) => { entered = resolve })
+    let rejectSnapshot!: (error: Error) => void; const decision = new Promise<never>((_resolve, reject) => { rejectSnapshot = reject })
+    const installA = installImmutableExtensionPackage({ extensionsRoot, source: sourceA, destination, kind: 'plugin', logicalId: 'plugin-a', version: '1', snapshotPackage: async () => { entered(); return decision } })
+    const rejectedA = expect(installA).rejects.toThrow(/snapshot failed/)
+    await snapshotEntered
+    await expect(installImmutableExtensionPackage({ extensionsRoot, source: sourceB, destination, kind: 'plugin', logicalId: 'plugin-b', version: '1' })).rejects.toThrow(/lock|busy/i)
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('a')
+    rejectSnapshot(new Error('snapshot failed')); await rejectedA
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('old')
+    await installImmutableExtensionPackage({ extensionsRoot, source: sourceB, destination, kind: 'plugin', logicalId: 'plugin-b', version: '1' })
+    expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('b')
+  })
 })
