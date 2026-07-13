@@ -21,7 +21,8 @@ export interface GitCommandResult {
 
 export interface GitBinding {
   volumeId: string
-  repositoryPath: string
+  /** Relative to the current active root of volumeId; never a persisted absolute path. */
+  repositoryRelativePath: string
   mode: GitBindingMode
   remoteUrl?: string
   credentialRef?: CredentialRef

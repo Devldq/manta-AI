@@ -130,12 +130,27 @@ export const StorageOperationProgressSchema = z.object({
   message: z.string(),
 })
 
-export const StorageIpcRequestSchema = z.discriminatedUnion('channel', [
+/** A credential-free remote accepted by the privileged storage IPC surface. */
+export const GitRemoteUrlSchema = z.string().min(1).superRefine((value, context) => {
+  if (/\s|@|[?#]/.test(value) || /(?:token|secret|password|credential|key)=?/i.test(value)) {
+    context.addIssue({ code: 'custom', message: 'Git remote URL must not include credentials, query, or fragment' })
+    return
+  }
+  try {
+    const parsed = new URL(value)
+    if (!['https:', 'http:', 'ssh:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) context.addIssue({ code: 'custom', message: 'Git remote URL is invalid' })
+  } catch { context.addIssue({ code: 'custom', message: 'Git remote URL is invalid' }) }
+})
+
+export const StorageIpcRequestSchema = z.union([
   z.object({ channel: z.literal('storage:select-parent'), purpose: z.enum(['createVolume', 'migrateVolume']) }),
   z.object({ channel: z.literal('storage:create-volume'), selectionId: z.string().min(1), name: z.string().min(1) }),
   z.object({ channel: z.literal('storage:relocate-volume'), volumeId: z.string().min(1), selectionId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:move-group'), groupId: StorageGroupIdSchema, targetVolumeId: z.string().min(1) }),
-  z.object({ channel: z.literal('storage:configure-git'), volumeId: z.string().min(1), remoteUrl: z.string().min(1), authRef: z.string().min(1).optional() }),
+  z.union([
+    z.object({ channel: z.literal('storage:configure-git'), volumeId: z.string().min(1), mode: z.literal('local') }),
+    z.object({ channel: z.literal('storage:configure-git'), volumeId: z.string().min(1), mode: z.literal('remote'), remoteUrl: GitRemoteUrlSchema, authRef: z.string().min(1).optional() }),
+  ]),
   z.object({ channel: z.literal('storage:sync-volume'), volumeId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:delete-backup'), backupId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:open-volume'), volumeId: z.string().min(1) }),

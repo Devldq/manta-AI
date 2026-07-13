@@ -13,6 +13,8 @@ function environment(overrides?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export function redactGitText(value: string): string {
   return value
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[REDACTED]@')
+    .replace(/([?&](?:access[_-]?token|token|secret|password|credential|key)=[^\s&#]+)/gi, (_match, prefix: string) => `${prefix.split('=')[0]}=[REDACTED]`)
+    .replace(/\b(?:token|secret|password|credential|key)_[A-Za-z0-9._-]{8,}\b/gi, '[REDACTED]')
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/g, '[REDACTED]')
     .replace(/\bBearer\s+[^\s]+/gi, 'Bearer [REDACTED]')
 }
