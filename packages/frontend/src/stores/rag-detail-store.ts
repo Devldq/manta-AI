@@ -10,6 +10,7 @@ import {
   saveBatchMeta,
   loadBatchMeta,
   clearBatchMeta,
+  claimStagedFiles,
 } from '@/stores/lib/staged-files-db'
 
 // ── 文档列表轮询定时器（有 processing 文档时自动刷新）─────────
@@ -918,7 +919,16 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     set((s) => ({ stagedFiles: [...s.stagedFiles, ...staged] }))
     // 持久化到 IndexedDB（fire-and-forget）
     const kbId = get().currentKbId
-    if (kbId) saveStagedFiles(kbId, get().stagedFiles).catch(() => {})
+    // File bytes become recoverable only after the cache API acknowledges
+    // them.  On offline failure they remain visibly local and are retried by
+    // the next add/process action; no browser durable store is claimed.
+    if (kbId) void saveStagedFiles(kbId, staged).then((persisted) => {
+      const byLocalId = new Map(staged.map((file, index) => [file.id, persisted[index]]))
+      set((state) => ({ stagedFiles: state.stagedFiles.map((file) => {
+        const remote = byLocalId.get(file.id)
+        return remote ? { ...file, id: remote.id, name: remote.name, size: remote.size, type: remote.type } : file
+      }) }))
+    }).catch((error) => console.warn('[RAG Batch] staged cache upload retained for retry', error))
   },
 
   removeStagedFile: (id: string) => {
@@ -930,12 +940,12 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
         stagedFileProgress: nextProgress,
       }
     })
-    removeStagedFileById(id).catch(() => {})
+    removeStagedFileById(id, get().currentKbId ?? undefined).catch(() => {})
   },
 
   removeStagedFileById: (id: string) => {
     set((s) => ({ stagedFiles: s.stagedFiles.filter((f) => f.id !== id) }))
-    removeStagedFileById(id).catch(() => {})
+    removeStagedFileById(id, get().currentKbId ?? undefined).catch(() => {})
   },
 
   clearStagedFiles: () => {
@@ -967,6 +977,9 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       chunkingConfig: { ...chunkingConfig },
       startedAt: new Date().toISOString(),
     }).catch(() => {})
+    // Claim only canonical IDs. A local offline file will fail naturally when
+    // upload starts and remains in memory for a visible retry.
+    await claimStagedFiles(kbId, stagedFiles.filter((file) => /^[a-f0-9]{64}$/.test(file.id)).map((file) => file.id), `batch-${kbId}`).catch(() => {})
 
     const concurrency = Math.max(1, Math.min(chunkingConfig.batchConcurrency || 1, 50, stagedFiles.length))
 
@@ -987,6 +1000,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     })
 
     const errors: string[] = []
+    const completedStageIds = new Set<string>()
     let completedCount = alreadyCompleted
     let nextIndex = 0
 
@@ -1024,6 +1038,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       while (nextIndex < stagedFiles.length) {
         const myIndex = nextIndex++
         const sf = stagedFiles[myIndex]
+        let succeeded = false
 
         // 标记为上传中，记录开始时间，并加入 active 列表
         setProgress(sf.id, { stage: 'uploading', progress: 0, startTime: Date.now() })
@@ -1088,6 +1103,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
                   }
                   case 'done': {
                     fileDone = true
+                    succeeded = true
                     setProgress(sf.id, { stage: 'done', progress: 100, endTime: Date.now() })
                     updateActiveFile(sf.name, 100, 'done')
                     break
@@ -1114,6 +1130,10 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
         }
 
         removeActiveFile(sf.name)
+        if (succeeded && /^[a-f0-9]{64}$/.test(sf.id)) {
+          completedStageIds.add(sf.id)
+          await removeStagedFileById(sf.id, kbId).catch(() => {})
+        }
         completedCount++
         set({ batchCompletedCount: completedCount })
         // 每个文件完成后静默刷新文档列表，增量合并不闪烁
@@ -1137,7 +1157,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       batchProcessing: false,
       batchDone: true,
       batchErrors: errors,
-      stagedFiles: [],
+      stagedFiles: stagedFiles.filter((file) => !completedStageIds.has(file.id)),
       batchActiveFiles: [],
       stagedFileProgress: {},
     })
@@ -1152,7 +1172,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     }
 
     // 清除 IndexedDB 中的批处理数据
-    await clearAllForKb(kbId).catch(() => {})
+    if (errors.length === 0) await clearAllForKb(kbId).catch(() => {})
 
     // 短暂展示完成后清理
     setTimeout(() => {

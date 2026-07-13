@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { ClientStateStore } from '../storage/client-state-store'
 
-const validKeys = new Set(['theme', 'sidebar', 'webhook', 'browser-import'])
+const validKeys = new Set(['theme', 'sidebar', 'webhook', 'browser-import', 'rag-batch'])
 function validKey(key: string): boolean { return validKeys.has(key) }
 
 export async function storageClientStateRoutes(app: FastifyInstance, store: ClientStateStore): Promise<void> {

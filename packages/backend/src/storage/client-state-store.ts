@@ -57,7 +57,7 @@ export class ClientStateStore {
   private fileFor(key: string): string { return join(typeof this.configRoot === 'function' ? this.configRoot() : this.configRoot, 'client-state', `${key}.json`) }
   private assertKey(key: string): void {
     if (!keyPattern.test(key)) throw new Error('Invalid client state key')
-    if (!['theme', 'sidebar', 'webhook', 'browser-import'].includes(key)) throw new Error(`Invalid client state key: ${key}`)
+    if (!['theme', 'sidebar', 'webhook', 'browser-import', 'rag-batch'].includes(key)) throw new Error(`Invalid client state key: ${key}`)
   }
 }
 

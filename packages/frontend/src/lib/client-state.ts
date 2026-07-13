@@ -1,4 +1,4 @@
-export type ClientStateKey = 'theme' | 'sidebar' | 'webhook' | 'browser-import'
+export type ClientStateKey = 'theme' | 'sidebar' | 'webhook' | 'browser-import' | 'rag-batch'
 type StateValue = object
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 

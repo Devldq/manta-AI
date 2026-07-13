@@ -17,7 +17,12 @@ const queryClient = new QueryClient({
 
 // This importer owns the only legacy-browser persistence access. Normal app
 // paths use the ASH-backed client-state API exclusively.
-void migrateBrowserStorageToAsh()
+void migrateBrowserStorageToAsh().catch((error) => {
+  // A migration failure must neither abort React startup nor delete its source.
+  // Keep a diagnostic breadcrumb for support without treating browser state as
+  // canonical application persistence.
+  console.warn('[ASH] browser storage migration will retry on next startup', error)
+})
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

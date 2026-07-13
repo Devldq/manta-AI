@@ -802,7 +802,35 @@
     { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 213, "column": 24, "operation": "mkdtemp", "reason": "Reviewed release smoke marker directory creation under the operating system temporary directory." },
     { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 226, "column": 27, "operation": "rm", "reason": "Reviewed release smoke marker cleanup restricted to its operating-system temporary directory." },
     { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 227, "column": 53, "operation": "rm", "reason": "Reviewed release smoke final cleanup restricted to its ephemeral package staging tree." },
-    { "file": "packages/desktop/src/main.ts", "line": 49, "column": 25, "operation": "writeFile", "reason": "Reviewed package-smoke marker write to the test harness temporary file passed only through MANTA_PACKAGE_SMOKE_FILE." }
+    { "file": "packages/desktop/src/main.ts", "line": 49, "column": 25, "operation": "writeFile", "reason": "Reviewed package-smoke marker write to the test harness temporary file passed only through MANTA_PACKAGE_SMOKE_FILE." },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 43, "column": 129, "operation": "mkdir",
+      "reason": "Reviewed ASH cache staging directory creation under the resolver-owned cache group with every Agent-controlled knowledge-base segment validated."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 48, "column": 41, "operation": "createWriteStream",
+      "reason": "Reviewed ASH cache staging byte write beneath a resolver-owned cache group using validated content-addressed temporary names."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 48, "column": 112, "operation": "rm",
+      "reason": "Reviewed ASH cache staging failure cleanup limited to the resolver-owned validated temporary upload object."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 49, "column": 29, "operation": "rm",
+      "reason": "Reviewed ASH cache staging empty-upload cleanup limited to the resolver-owned validated temporary upload object."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 53, "column": 17, "operation": "rename",
+      "reason": "Reviewed ASH cache staging atomic commit between resolver-owned validated temporary and content-addressed cache paths."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 53, "column": 123, "operation": "rm",
+      "reason": "Reviewed ASH cache staging failed atomic-commit cleanup limited to the resolver-owned validated temporary object."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 53, "column": 176, "operation": "rm",
+      "reason": "Reviewed ASH cache staging duplicate-content cleanup limited to the resolver-owned validated temporary object."
+    }
   ],
   "literals": [
     {

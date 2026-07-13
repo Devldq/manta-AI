@@ -9,6 +9,8 @@ import { runWithStorageResolver } from './storage/path-routing'
 import { storageRoutes, type StorageApiContext } from './routes/storage'
 import { ClientStateStore } from './storage/client-state-store'
 import { storageClientStateRoutes } from './routes/storage-client-state'
+import { RagStagingStore } from './storage/rag-staging-store'
+import { ragStagingRoutes } from './routes/rag-staging'
 
 export interface BuildAppOptions { storage: StorageResolver & { diagnosticsWriter?: RuntimeDiagnosticsWriter; healthCheck?: () => Promise<StorageHealthResult> }; isDev?: boolean; registerRoutes?: boolean; storageApi?: StorageApiContext; clientState?: ClientStateStore; frontendDist?: string }
 
@@ -34,6 +36,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.get('/api/health/storage', async () => ({ success: true, data: options.storage.healthCheck ? await options.storage.healthCheck() : { ok: true, status: 'healthy', warnings: [] } }))
   if (options.storageApi) await app.register(storageRoutes, { ...options.storageApi, health: options.storageApi.health ?? options.storage.healthCheck })
   await app.register(storageClientStateRoutes, options.clientState ?? new ClientStateStore(() => options.storage.resolve('config')))
+  const multipart = await import('@fastify/multipart')
+  await app.register((multipart as any).default ?? multipart)
+  await app.register(ragStagingRoutes, new RagStagingStore())
   if (!isDev) {
     const frontendDist = options.frontendDist ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../frontend/dist')
     if (existsSync(frontendDist)) {
