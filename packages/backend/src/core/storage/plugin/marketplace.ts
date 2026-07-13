@@ -7,10 +7,11 @@ import * as fs from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { ensureDir, readJsonFile } from '../shared/fs-utils'
-import { preparePluginRegistration, registerPlugin } from './store'
+import { registerPlugin } from './store'
 import { runWithoutDiagnosticsOwner } from '../../../storage/runtime-diagnostics'
 import { resolveStoragePath } from '../../../storage/path-routing'
-import { transactionalInstallDirectory, transactionalWriteExtensionFile } from '../../../storage/extension-transactions'
+import { transactionalWriteExtensionFile } from '../../../storage/extension-transactions'
+import { installPluginPackage, type InstallPluginPackageOptions } from '../../../storage/plugin-package-install'
 
 const execFileAsync = promisify(execFile)
 
@@ -59,6 +60,7 @@ export interface ClaudePluginInstallOptions {
   claudeBin?: string
   marketplaceCache?: PluginMarketplaceCache | null
   execute?: (bin: string, args: string[], options: ClaudeExecutionOptions) => Promise<CommandOutput>
+  snapshotPackage?: InstallPluginPackageOptions['snapshotPackage']
 }
 interface ClaudeIsolation { root: string; configDir: string; env: NodeJS.ProcessEnv }
 
@@ -402,13 +404,9 @@ export async function installClaudePlugin(
     if (!installedSource) throw new Error('Claude CLI completed without producing an installed plugin package in its isolated configuration directory')
     const manifest = manifestFromClaudePlugin(commandSpec, item)
     const destination = resolveStoragePath('extensions', 'plugins', manifest.id)
-    const prepared = preparePluginRegistration(manifest, destination)
-    transactionalInstallDirectory({
-      extensionsRoot, source: installedSource, destination,
-      registryWrites: new Map([[prepared.filePath, JSON.stringify(prepared.definition, null, 2)]]),
-    })
+    const plugin = await installPluginPackage({ extensionsRoot, source: installedSource, destination, manifest, snapshotPackage: options.snapshotPackage })
     return {
-      plugin: prepared.definition, marketplaceItem: item, command: [claudeBin, 'plugin', 'install', commandSpec],
+      plugin, marketplaceItem: item, command: [claudeBin, 'plugin', 'install', commandSpec],
       stdout: [...setupOutputs.map((output) => output.stdout), installOutput.stdout].filter(Boolean).join('\n'),
       stderr: [...setupOutputs.map((output) => output.stderr), installOutput.stderr].filter(Boolean).join('\n'),
     }

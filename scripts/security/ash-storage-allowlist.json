@@ -107,14 +107,14 @@
     },
     {
       "file": "packages/backend/src/core/storage/plugin/marketplace.ts",
-      "line": 395,
+      "line": 397,
       "column": 5,
       "operation": "rmSync",
       "reason": "Reviewed cleanup of an isolated external Claude CLI import directory created solely for this explicit user-requested plugin installation."
     },
     {
       "file": "packages/backend/src/core/storage/plugin/marketplace.ts",
-      "line": 415,
+      "line": 413,
       "column": 15,
       "operation": "rmSync",
       "reason": "Reviewed cleanup of an isolated external Claude CLI import directory created solely for this explicit user-requested plugin installation."

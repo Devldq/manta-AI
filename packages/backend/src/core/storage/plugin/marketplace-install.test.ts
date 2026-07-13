@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -46,9 +46,26 @@ describe('Claude plugin isolated import', () => {
     expect(readdirSync(externalHome)).toEqual([])
     for (const directory of Object.values(external)) expect(readdirSync(directory)).toEqual([])
     expect(readdirSync(join(root, '.manta-ai', 'extensions', '.ash-cli-staging'))).toEqual([])
+    const assets = readdirSync(join(root, '.manta-ai', '.ash', 'assets')).map((name) => JSON.parse(readFileSync(join(root, '.manta-ai', '.ash', 'assets', name), 'utf8')))
+    expect(assets).toHaveLength(1); expect(assets[0].entries.every((entry: { path: string }) => !/registry|plugin-marketplace|ash-cli-staging/.test(entry.path))).toBe(true)
     expect(observed.length).toBeGreaterThanOrEqual(3)
     expect(() => installResource.checkpoint()).not.toThrow()
     for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value
     delete process.env.SECRET_HOST_VALUE
+  })
+
+  it('leaves no partial active package or registry when marketplace snapshot publication fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-claude-snapshot-fail-')); const resolve = (group: string, ...segments: string[]) => join(root, '.manta-ai', group, ...segments)
+    await expect(runWithStorageResolver({ resolve }, () => installClaudePlugin('demo@claude-plugins-official', {
+      claudeBin: 'fake-claude', marketplaceCache: null, snapshotPackage: async () => { throw new Error('snapshot fault') },
+      execute: async (_bin, args, options) => {
+        if (args.join(' ') === 'plugin marketplace list --json') return { stdout: '[]', stderr: '' }
+        if (args[0] === 'plugin' && args[1] === 'install') { const packageDir = join(options.env.CLAUDE_CONFIG_DIR!, 'plugins', 'demo'); mkdirSync(join(packageDir, '.claude-plugin'), { recursive: true }); writeFileSync(join(packageDir, '.claude-plugin', 'plugin.json'), '{"name":"demo"}') }
+        return { stdout: 'ok', stderr: '' }
+      },
+    }))).rejects.toThrow(/snapshot fault/)
+    const extensions = resolve('extensions'); expect(existsSync(join(extensions, 'plugins', 'claude.demo'))).toBe(false)
+    expect(existsSync(join(extensions, 'plugin-registry')) ? readdirSync(join(extensions, 'plugin-registry')) : []).toEqual([])
+    expect(readdirSync(join(extensions, '.ash-cli-staging'))).toEqual([])
   })
 })
