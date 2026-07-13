@@ -9,7 +9,7 @@ interface InstallOptions extends ExtensionTransactionOptions { source: string; v
 interface ExtensionJournal {
   version: 1 | 2
   id: string; kind: 'install' | 'uninstall' | 'file'; phase: 'staged' | 'backed-up' | 'package-committed' | 'awaiting-snapshot' | 'completed'
-  snapshotRequired?: true
+  snapshotRequired?: boolean
   snapshotDecision?: 'pending' | 'keep' | 'rollback'
   packageFingerprint?: string
   destination: string; stagingPath?: string; backupPath?: string; content?: string
@@ -105,12 +105,14 @@ function readJournal(root: string, file: string): ExtensionJournal {
   } else {
     if (stored.kind !== 'install') throw new Error(`Invalid v2 extension transaction journal kind: ${file}`)
     if (typeof packageFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(packageFingerprint)) throw new Error(`Invalid extension transaction package fingerprint: ${file}`)
-    if (snapshotRequired !== undefined && snapshotRequired !== true) throw new Error(`Invalid extension transaction snapshot mode: ${file}`)
-    const validSnapshotState = phase === 'awaiting-snapshot'
-      ? snapshotRequired === true && decision === 'pending'
-      : phase === 'completed'
-        ? decision === undefined || ['keep', 'rollback'].includes(String(decision))
-        : decision === undefined
+    if (snapshotRequired !== undefined && typeof snapshotRequired !== 'boolean') throw new Error(`Invalid extension transaction snapshot mode: ${file}`)
+    const validSnapshotState = snapshotRequired === true
+      ? phase === 'awaiting-snapshot'
+        ? decision === 'pending'
+        : phase === 'completed'
+          ? ['keep', 'rollback'].includes(String(decision))
+          : decision === undefined
+      : phase !== 'awaiting-snapshot' && decision === undefined
     if (!validSnapshotState) throw new Error(`Invalid extension transaction snapshot state: ${file}`)
   }
   const writes = Array.isArray(stored.registryWrites) ? stored.registryWrites : []
@@ -192,7 +194,7 @@ function finish(root: string, journal: ExtensionJournal, fault?: (phase: string)
       if (journal.version === 2 && (!journal.packageFingerprint || fingerprintOrdinaryTree(journal.stagingPath) !== journal.packageFingerprint)) throw new Error('Extension recovery package fingerprint mismatch')
       durableRename(journal.stagingPath, journal.destination)
     }
-    else if (journal.backupPath && existsSync(journal.backupPath)) { durableRename(journal.backupPath, journal.destination); journal.phase = 'completed'; persist(root, journal) }
+    else if (journal.backupPath && existsSync(journal.backupPath)) { durableRename(journal.backupPath, journal.destination); journal.phase = 'completed'; if (journal.snapshotRequired) journal.snapshotDecision = 'rollback'; persist(root, journal) }
     else throw new Error('Extension committed package and recovery payload are both missing')
   }
   if (journal.phase === 'staged') {

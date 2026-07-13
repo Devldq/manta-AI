@@ -216,5 +216,11 @@ describe('extension storage transactions', () => {
     expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/fingerprint|schema/i)
     writeFileSync(journalFile, JSON.stringify({ ...base, phase: 'awaiting-snapshot', packageFingerprint: 'a'.repeat(64), snapshotRequired: true, snapshotDecision: 'keep' }))
     expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/snapshot|state|schema/i)
+    for (const snapshotDecision of ['keep', 'rollback']) {
+      writeFileSync(journalFile, JSON.stringify({ ...base, phase: 'completed', packageFingerprint: 'a'.repeat(64), snapshotDecision }))
+      expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/snapshot|state|schema/i)
+    }
+    writeFileSync(journalFile, JSON.stringify({ ...base, phase: 'completed', packageFingerprint: 'a'.repeat(64), snapshotRequired: true }))
+    expect(() => recoverExtensionTransactions(extensionsRoot)).toThrow(/snapshot|state|schema/i)
   })
 })
