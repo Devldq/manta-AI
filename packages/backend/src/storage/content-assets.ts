@@ -64,7 +64,14 @@ export function createContentAssetService(options: ContentAssetServiceOptions) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
     await options.beforePublish?.(assetId)
-    return { manifest: await manifests.write({ assetId, entries }), created: true }
+    try { return { manifest: await manifests.write({ assetId, entries }), created: true } }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      const current = await manifests.read(assetId)
+      const matches = current.entries.length === entries.length && current.entries.every((entry, index) => entry.path === entries[index]?.path && entry.hash === entries[index]?.hash && entry.size === entries[index]?.size)
+      if (!matches) throw new Error(`Asset ${assetId} already exists with different immutable content`)
+      return { manifest: current, created: false }
+    }
   }
 
   const snapshotDocumentInternal = async (input: DocumentAssetInput): Promise<ContentAssetSnapshot & { created: boolean }> => {
@@ -76,6 +83,16 @@ export function createContentAssetService(options: ContentAssetServiceOptions) {
   }
 
   return {
+    async publishDocumentObject(input: { documentId: string; name: string; object: ContentObject }): Promise<PreparedContentAsset> {
+      assertLogicalId(input.documentId, 'Document ID')
+      const published = await publish(`document.${input.documentId}`, [{ path: `knowledge/documents/${safeLeaf(input.name)}`, hash: input.object.hash, size: input.object.size }])
+      return { object: input.object, manifest: published.manifest, async rollback() { if (published.created) await manifests.remove(published.manifest.assetId, { createdAt: published.manifest.createdAt }) } }
+    },
+    async stageDocument(input: DocumentAssetInput): Promise<{ object: ContentObject; publish(): Promise<PreparedContentAsset> }> {
+      assertLogicalId(input.documentId, 'Document ID')
+      const object = await ingestDocument(input.source)
+      return { object, async publish() { return createContentAssetService(options).publishDocumentObject({ documentId: input.documentId, name: input.name, object }) } }
+    },
     async prepareDocument(input: DocumentAssetInput): Promise<PreparedContentAsset> {
       const { created, ...snapshot } = await snapshotDocumentInternal(input)
       return {

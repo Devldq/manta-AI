@@ -76,7 +76,7 @@ export class VolumeObjectStore {
     const stagingRoot = resolve(trustedStagingRoot); const absolute = resolve(source)
     const parts = relative(this.volumeRoot, stagingRoot).split(/[\\/]/).filter(Boolean)
     if (parts[0] !== 'cache' || !isContainedPath(stagingRoot, absolute) || absolute === stagingRoot) throw new Error('Trusted CAS staging file must be below a cache staging root in this volume')
-    await ensureSafeDirectory(this.volumeRoot, stagingRoot)
+    await ensureSafeDirectory(this.volumeRoot, dirname(absolute))
     return this.ingestVerifiedFile(absolute)
   }
 

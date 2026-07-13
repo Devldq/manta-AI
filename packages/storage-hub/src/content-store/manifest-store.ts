@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { link, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { assertContentHash, assertContainedPath, ensureSafeDirectory, VolumeObjectStore } from './object-store'
 
@@ -25,7 +25,7 @@ export class AssetManifestStore {
     const manifest: Required<AssetManifest> = { schemaVersion: 1, assetId: input.assetId, entries: input.entries.map((entry) => ({ ...entry })), createdAt: input.createdAt ?? new Date().toISOString() }
     await this.validate(manifest, input.assetId)
     const path = this.pathFor(input.assetId); await ensureSafeDirectory(this.volumeRoot, dirname(path)); const temporary = `${path}.${randomUUID()}.tmp`
-    try { await writeFile(temporary, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' }); await rename(temporary, path); return manifest } finally { await rm(temporary, { force: true }) }
+    try { await writeFile(temporary, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' }); await link(temporary, path); return manifest } finally { await rm(temporary, { force: true }) }
   }
   async read(assetId: string): Promise<Required<AssetManifest>> { const parsed: unknown = JSON.parse(await readFile(this.pathFor(assetId), 'utf8')); if (!parsed || typeof parsed !== 'object') throw new Error('Asset manifest is invalid'); const value = parsed as AssetManifest; await this.validate(value, assetId); return { schemaVersion: 1, assetId: value.assetId, entries: value.entries.map((entry) => ({ ...entry })), createdAt: value.createdAt! } }
   async remove(assetId: string, expected: { createdAt: string }): Promise<boolean> {

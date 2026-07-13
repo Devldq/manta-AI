@@ -68,6 +68,12 @@ describe('per-volume content addressed storage', () => {
     await expect(objects.ingestStagedFile(outside, staging)).rejects.toThrow(/staging|cache|outside/i)
   })
 
+  it('rejects a staged file below a linked nested cache ancestor', async () => {
+    const volume = await root(); const outside = await root(); const staging = join(volume, 'cache', 'uploads'); await mkdir(staging, { recursive: true })
+    await symlink(outside, join(staging, 'linked'), process.platform === 'win32' ? 'junction' : 'dir'); const input = join(outside, 'document.upload'); await writeFile(input, 'outside')
+    await expect(new VolumeObjectStore(volume).ingestStagedFile(join(staging, 'linked', 'document.upload'), staging)).rejects.toThrow(/symlink|junction|reparse|ancestor/i)
+  })
+
   it('rejects a Windows destination on another drive before it can be materialized', async () => {
     const volume = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('asset'))
     await expect(materializeAsset({ volumeRoot: volume, object, destination: 'D:\\outside-volume\\asset.bin' })).rejects.toThrow(/escapes/i)
@@ -97,6 +103,13 @@ describe('per-volume content addressed storage', () => {
   it('propagates reflink permission errors instead of falling back to copy', async () => {
     const volume = await root(); const object = await new VolumeObjectStore(volume).ingestBytes(Buffer.from('asset'))
     await expect(materializeAsset({ volumeRoot: volume, object, destination: join(volume, 'assets', 'asset.bin'), reflink: async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }) } })).rejects.toThrow(/denied/i)
+  })
+
+  it('creates an immutable manifest once when concurrent publishers disagree', async () => {
+    const volume = await root(); const objects = new VolumeObjectStore(volume); const first = await objects.ingestBytes(Buffer.from('one')); const second = await objects.ingestBytes(Buffer.from('two')); const manifests = new AssetManifestStore(volume)
+    const results = await Promise.allSettled([manifests.write({ assetId: 'race', entries: [{ path: 'one.bin', hash: first.hash, size: first.size }] }), manifests.write({ assetId: 'race', entries: [{ path: 'two.bin', hash: second.hash, size: second.size }] })])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
   })
 
   it('removes only the exact manifest revision approved by its caller', async () => {

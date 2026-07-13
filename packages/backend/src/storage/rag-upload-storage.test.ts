@@ -1,13 +1,25 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
 import { AssetManifestStore } from '@manta/storage-hub'
-import { cleanupRagOrphans, createRagUploadStorage } from './rag-upload-storage'
+import { cleanupRagOrphans, createRagUploadStorage, recoverRagAssetTransactions } from './rag-upload-storage'
+import { matchesReadyRagDocument } from './rag-asset-transactions'
 
 describe('RAG original document storage', () => {
+  it('requires exact ready document identity, hash, and asset reference for crash recovery', () => {
+    const record = { documentId: 'doc-exact', assetId: 'document.doc-exact', hash: 'a'.repeat(64) }
+    const ready = { id: 'doc-exact', status: 'ready', sourceSha256: 'a'.repeat(64), sourcePath: 'asset:document.doc-exact' }
+    expect(matchesReadyRagDocument(record, ready)).toBe(true)
+    expect(matchesReadyRagDocument(record, { ...ready, id: 'doc-other' })).toBe(false)
+    expect(matchesReadyRagDocument(record, { ...ready, status: 'processing' })).toBe(false)
+    expect(matchesReadyRagDocument(record, { ...ready, sourceSha256: 'b'.repeat(64) })).toBe(false)
+    expect(matchesReadyRagDocument(record, { ...ready, sourcePath: 'asset:document.doc-other' })).toBe(false)
+    expect(matchesReadyRagDocument(record, null)).toBe(false)
+  })
+
   it('publishes one CAS object and separate manifests for equal uploads with different document IDs', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-rag-cas-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
     mkdirSync(knowledge, { recursive: true })
@@ -28,14 +40,125 @@ describe('RAG original document storage', () => {
     await expect(storage.ingest(Readable.from('recover me'), 'a.txt', async () => { throw new Error('pipeline failed') }, { volumeRoot, documentId: 'doc-failed' })).rejects.toThrow(/pipeline failed/)
     await expect(new AssetManifestStore(volumeRoot).read('document.doc-failed')).rejects.toThrow()
     expect(readdirSync(join(knowledge, 'documents'))).toHaveLength(1)
+    expect(readdirSync(join(knowledge, '.asset-transactions'))).toEqual([])
   })
 
-  it('does not start processing when document manifest publication fails', async () => {
+  it('does not expose an asset manifest while the RAG pipeline is still running', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-private-stage-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    await storage.ingest(Readable.from('private until committed'), 'a.txt', async () => {
+      await expect(new AssetManifestStore(volumeRoot).read('document.doc-private')).rejects.toThrow()
+      return 'ok'
+    }, { volumeRoot, documentId: 'doc-private' })
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-private')).resolves.toBeDefined()
+  })
+
+  it('never publishes a prepared-only transaction during restart recovery and keeps its ordinary source', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-prepared-recovery-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('recoverable ordinary source'), 'a.txt', async () => 'not-called', {
+      volumeRoot, documentId: 'doc-prepared', fault: (phase) => { if (phase === 'after-prepared') throw new Error('simulated crash') },
+    })).rejects.toThrow(/simulated crash/)
+    const transactionRoot = join(knowledge, '.asset-transactions')
+    const journalName = readdirSync(transactionRoot)[0]!
+    const journal = JSON.parse(readFileSync(join(transactionRoot, journalName), 'utf8')) as { phase: string; sourcePath: string }
+    expect(journal).toMatchObject({ phase: 'prepared' })
+    expect(journal.sourcePath).not.toMatch(/^(?:[\\/]|[a-zA-Z]:)/)
+    await recoverRagAssetTransactions({ volumeRoot, knowledgeRoot: knowledge })
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-prepared')).rejects.toThrow()
+    expect(readdirSync(join(knowledge, 'documents'))).toHaveLength(1)
+    expect(existsSync(join(transactionRoot, journalName))).toBe(true)
+  })
+
+  it('does not garbage-collect the recoverable ordinary source owned by a prepared asset transaction', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-prepared-gc-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('retain through gc'), 'a.txt', async () => undefined, {
+      volumeRoot, documentId: 'doc-retained', fault: (phase) => { if (phase === 'after-prepared') throw new Error('crash') },
+    })).rejects.toThrow('crash')
+    expect(await cleanupRagOrphans(knowledge, { olderThan: new Date(Date.now() + 60_000), isReferenced: async () => false })).toEqual([])
+    expect(readdirSync(join(knowledge, 'documents'))).toHaveLength(1)
+  })
+
+  it('does not let a successful equal-byte asset cleanup delete another prepared transaction source', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-shared-prepared-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('shared recovery bytes'), 'failed.txt', async () => undefined, {
+      volumeRoot, documentId: 'doc-prepared-owner', fault: (phase) => { if (phase === 'after-prepared') throw new Error('crash') },
+    })).rejects.toThrow('crash')
+    await storage.ingest(Readable.from('shared recovery bytes'), 'ready.txt', async () => 'ready', { volumeRoot, documentId: 'doc-ready-owner' })
+    expect(readdirSync(join(knowledge, 'documents'))).toHaveLength(1)
+    await recoverRagAssetTransactions({ volumeRoot, knowledgeRoot: knowledge })
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-prepared-owner')).rejects.toThrow()
+    expect(readdirSync(join(knowledge, 'documents'))).toHaveLength(1)
+  })
+
+  it('durably advances and publishes a prepared transaction only when the exact pipeline record is authoritative', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-authoritative-recovery-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('database committed before crash'), 'a.txt', async () => undefined, {
+      volumeRoot, documentId: 'doc-authoritative', fault: (phase) => { if (phase === 'after-prepared') throw new Error('crash') },
+    })).rejects.toThrow('crash')
+    let observed: { documentId: string; assetId: string; hash: string } | undefined
+    await recoverRagAssetTransactions({ volumeRoot, knowledgeRoot: knowledge }, { isPipelineCommitted: async (record) => { observed = record; return record.documentId === 'doc-authoritative' && record.assetId === 'document.doc-authoritative' } })
+    expect(observed).toMatchObject({ documentId: 'doc-authoritative', assetId: 'document.doc-authoritative' })
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-authoritative')).resolves.toMatchObject({ entries: [expect.objectContaining({ hash: observed!.hash })] })
+    expect(readdirSync(join(knowledge, '.asset-transactions'))).toEqual([])
+  })
+
+  it('publishes only a durably pipeline-committed transaction during restart recovery', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-committed-recovery-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    let processed = false
+    await expect(storage.ingest(Readable.from('publish after restart'), 'a.txt', async () => { processed = true; return 'done' }, {
+      volumeRoot, documentId: 'doc-committed', fault: (phase) => { if (phase === 'after-pipeline-committed') throw new Error('simulated crash') },
+    })).rejects.toThrow(/simulated crash/)
+    expect(processed).toBe(true)
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-committed')).rejects.toThrow()
+    await recoverRagAssetTransactions({ volumeRoot, knowledgeRoot: knowledge })
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-committed')).resolves.toMatchObject({ assetId: 'document.doc-committed' })
+    expect(readdirSync(join(knowledge, 'documents'))).toEqual([])
+    expect(readdirSync(join(knowledge, '.asset-transactions'))).toEqual([])
+  })
+
+  it('returns pipeline success when post-publication cleanup fails and recovery retries it idempotently', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-cleanup-recovery-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    const completed = await storage.ingest(Readable.from('business success'), 'a.txt', async () => 'accepted', {
+      volumeRoot, documentId: 'doc-cleanup', fault: (phase) => { if (phase === 'before-cleanup') throw new Error('cleanup unavailable') },
+    })
+    expect(completed.result).toBe('accepted')
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-cleanup')).resolves.toBeDefined()
+    expect(readdirSync(join(knowledge, 'documents'))).toHaveLength(1)
+    expect(readdirSync(join(knowledge, '.asset-transactions'))).toHaveLength(1)
+    await recoverRagAssetTransactions({ volumeRoot, knowledgeRoot: knowledge })
+    await recoverRagAssetTransactions({ volumeRoot, knowledgeRoot: knowledge })
+    expect(readdirSync(join(knowledge, 'documents'))).toEqual([])
+    expect(readdirSync(join(knowledge, '.asset-transactions'))).toEqual([])
+  })
+
+  it('rejects tampered root-relative journals and linked transaction ancestors', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-journal-safe-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    await expect(storage.ingest(Readable.from('tamper target'), 'a.txt', async () => undefined, {
+      volumeRoot, documentId: 'doc-tampered', fault: (phase) => { if (phase === 'after-prepared') throw new Error('crash') },
+    })).rejects.toThrow('crash')
+    const transactionRoot = join(knowledge, '.asset-transactions'); const journalPath = join(transactionRoot, readdirSync(transactionRoot)[0]!)
+    const journal = JSON.parse(readFileSync(journalPath, 'utf8')); journal.sourcePath = '../outside'; writeFileSync(journalPath, JSON.stringify(journal))
+    await expect(recoverRagAssetTransactions({ volumeRoot, knowledgeRoot: knowledge })).rejects.toThrow(/journal|relative|outside|path/i)
+
+    const outside = mkdtempSync(join(tmpdir(), 'manta-rag-journal-outside-')); const held = `${transactionRoot}.held`; renameSync(transactionRoot, held)
+    symlinkSync(outside, transactionRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    await expect(storage.ingest(Readable.from('must stay inside'), 'b.txt', async () => undefined, { volumeRoot, documentId: 'doc-linked' })).rejects.toThrow(/link|reparse|ancestor/i)
+    expect(readdirSync(outside)).toEqual([])
+  })
+
+  it('does not publish a manifest when post-pipeline publication fails', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-rag-manifest-fail-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
     mkdirSync(knowledge, { recursive: true }); let processed = false
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await expect(storage.ingest(Readable.from('recover me'), 'a.txt', async () => { processed = true }, { volumeRoot, documentId: 'doc-failed', beforePublish: () => { throw new Error('manifest fault') } })).rejects.toThrow(/manifest fault/)
-    expect(processed).toBe(false)
+    expect(processed).toBe(true)
     expect(readdirSync(join(knowledge, 'documents'))).toHaveLength(1)
   })
 

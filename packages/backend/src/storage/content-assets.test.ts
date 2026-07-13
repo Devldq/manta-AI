@@ -22,6 +22,28 @@ describe('backend content asset snapshots', () => {
     expect(readdirSync(join(volumeRoot, '.ash', 'objects', 'sha256', a.object.hash.slice(0, 2)))).toEqual([a.object.hash])
   })
 
+  it('resolves concurrent identical publication and rejects a conflicting immutable winner exactly', async () => {
+    const volumeRoot = mkdtempSync(join(tmpdir(), 'manta-content-race-')); const cache = join(volumeRoot, 'cache'); mkdirSync(cache)
+    const sameA = join(cache, 'same-a'); const sameB = join(cache, 'same-b'); writeFileSync(sameA, 'same'); writeFileSync(sameB, 'same')
+    let arrivals = 0; let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve })
+    const assets = createContentAssetService({ volumeRoot, trustedStagingRoot: cache, beforePublish: async () => { if (++arrivals === 2) release(); await gate } })
+    const identical = await Promise.all([
+      assets.snapshotDocument({ documentId: 'doc-race-same', source: sameA, name: 'same.txt' }),
+      assets.snapshotDocument({ documentId: 'doc-race-same', source: sameB, name: 'same.txt' }),
+    ])
+    expect(identical[0].manifest).toEqual(identical[1].manifest)
+
+    const first = join(cache, 'first'); const second = join(cache, 'second'); writeFileSync(first, 'first'); writeFileSync(second, 'second')
+    arrivals = 0; let releaseConflict!: () => void; const conflictGate = new Promise<void>((resolve) => { releaseConflict = resolve })
+    const conflicting = createContentAssetService({ volumeRoot, trustedStagingRoot: cache, beforePublish: async () => { if (++arrivals === 2) releaseConflict(); await conflictGate } })
+    const results = await Promise.allSettled([
+      conflicting.snapshotDocument({ documentId: 'doc-race-conflict', source: first, name: 'same.txt' }),
+      conflicting.snapshotDocument({ documentId: 'doc-race-conflict', source: second, name: 'same.txt' }),
+    ])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+  })
+
   it('snapshots immutable package trees with their logical ID and rejects internal or linked content', async () => {
     const volumeRoot = mkdtempSync(join(tmpdir(), 'manta-package-assets-'))
     const packageRoot = join(volumeRoot, 'incoming', 'demo'); mkdirSync(packageRoot, { recursive: true })

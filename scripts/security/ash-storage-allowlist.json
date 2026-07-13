@@ -937,7 +937,7 @@
     },
     {
       "file": "packages/backend/src/storage/rag-upload-storage.ts",
-      "line": 51,
+      "line": 52,
       "column": 39,
       "operation": "createWriteStream",
       "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
@@ -1046,11 +1046,7 @@
       "reason": "Reviewed atomic asset-manifest staging write below the verified per-volume metadata namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 28, "column": 121, "operation": "rename",
-      "reason": "Reviewed atomic commit of a validated asset manifest in the local volume metadata namespace."
-    },
-    {
-      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 28, "column": 180, "operation": "rm",
+      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 28, "column": 178, "operation": "rm",
       "reason": "Reviewed cleanup of an asset-manifest staging file owned by ASH."
     },
     {
@@ -1058,11 +1054,11 @@
       "reason": "Reviewed exact-revision manifest rollback below the validated per-volume asset namespace."
     },
     {
-      "file": "packages/backend/src/storage/content-assets.ts", "line": 142, "column": 17, "operation": "rename",
+      "file": "packages/backend/src/storage/content-assets.ts", "line": 159, "column": 17, "operation": "rename",
       "reason": "Reviewed retirement of a verified legacy knowledge document into its transaction-specific same-volume backup."
     },
     {
-      "file": "packages/backend/src/storage/content-assets.ts", "line": 145, "column": 53, "operation": "rename",
+      "file": "packages/backend/src/storage/content-assets.ts", "line": 162, "column": 53, "operation": "rename",
       "reason": "Reviewed rollback restoring a retired legacy document to its validated original knowledge path."
     },
     {

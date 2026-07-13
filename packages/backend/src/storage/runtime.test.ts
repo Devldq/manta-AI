@@ -23,6 +23,18 @@ function fakeStorage(root: string, events: string[] = []) {
 }
 
 describe('backend lifecycle', () => {
+  it('awaits storage recovery before building or listening on the application', async () => {
+    const events: string[] = []
+    const storage = Object.assign(fakeStorage(mkdtempSync(join(tmpdir(), 'manta-startup-recovery-')), events), {
+      async recoverStartup() { events.push('recover:start'); await Promise.resolve(); events.push('recover:end') },
+    })
+    const { startServer } = await import('../server')
+    const { buildApp } = await import('../app')
+    const handle = await startServer({ storage, port: 0, registerRoutes: false, startSchedulers: false, startup: false, appFactory: async (options) => { events.push('build'); return buildApp(options) } })
+    handles.push(handle)
+    expect(events.slice(0, 3)).toEqual(['recover:start', 'recover:end', 'build'])
+  })
+
   it('automatically recovers extension transactions at startup', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-runtime-extension-recover-')); const source = join(root, 'source'); const extensions = join(root, 'extensions'); const destination = join(extensions, 'plugins', 'demo')
     mkdirSync(source); writeFileSync(join(source, 'plugin.yaml'), 'new')

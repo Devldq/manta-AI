@@ -15,8 +15,8 @@ export interface ServerStartupHooks {
   initializeSkills(): void | Promise<void>
 }
 
-export type ManagedBackendStorage = Omit<BackendStorageRuntime, 'drivers' | 'diagnosticsWriter' | 'marketplaceScheduler' | 'processRegistry' | 'runInStorageContext' | 'legacyRecoveryWarnings'> &
-  Partial<Pick<BackendStorageRuntime, 'diagnosticsWriter' | 'marketplaceScheduler' | 'runInStorageContext'>>
+export type ManagedBackendStorage = Omit<BackendStorageRuntime, 'drivers' | 'diagnosticsWriter' | 'marketplaceScheduler' | 'processRegistry' | 'runInStorageContext' | 'legacyRecoveryWarnings' | 'recoverStartup'> &
+  Partial<Pick<BackendStorageRuntime, 'diagnosticsWriter' | 'marketplaceScheduler' | 'runInStorageContext' | 'recoverStartup'>>
 
 export interface StartServerOptions {
   storage: ManagedBackendStorage
@@ -48,6 +48,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
     ? options.storage.runInStorageContext(operation)
     : operation()
   try {
+    await runInStorageContext(() => options.storage.recoverStartup?.())
     app = await runInStorageContext(() => (options.appFactory ?? buildApp)({ storage: options.storage, registerRoutes: options.registerRoutes, storageApi: options.storageApi, frontendDist: options.frontendDist, isDev: options.isDev }))
     await app.listen({ port: options.port ?? 0, host: options.host ?? '127.0.0.1' })
     if (options.startSchedulers !== false) {

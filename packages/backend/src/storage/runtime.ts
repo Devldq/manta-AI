@@ -10,7 +10,8 @@ import { runWithStorageResolver } from './path-routing'
 import { createProcessRegistry, type ProcessRegistry } from '../core/engine/runner/process-registry'
 import { recoverExtensionTransactions } from './extension-transactions'
 import { createCrossGroupBundleResources, migrateLegacyAtomicJournals, type LegacyRecoveryWarning } from './cross-group-bundle'
-import { createRagUploadResources } from './rag-upload-storage'
+import { createRagUploadResources, recoverRagAssetTransactions } from './rag-upload-storage'
+import { matchesReadyRagDocument } from './rag-asset-transactions'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
 export interface StorageHealthResult { ok: boolean; status: 'healthy' | 'degraded' | 'unhealthy'; warnings: LegacyRecoveryWarning[]; error?: string }
@@ -20,6 +21,7 @@ export interface BackendStorageRuntime extends StorageResolver {
   readonly marketplaceScheduler: ClaudeMarketplaceRuntimeOwner
   readonly processRegistry: ProcessRegistry
   readonly legacyRecoveryWarnings: LegacyRecoveryWarning[]
+  recoverStartup(): Promise<void>
   runInStorageContext<T>(operation: () => T): T
   quiesce(): Promise<void>
   checkpoint(): Promise<void>
@@ -75,8 +77,14 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   }
   let quiesced = false
   let closed = false
+  let startupRecovery: Promise<void> | undefined
+  const recoverStartup = () => startupRecovery ??= recoverRagAssetTransactions(
+    { volumeRoot: join(storage.resolve('knowledge'), '..'), knowledgeRoot: storage.resolve('knowledge') },
+    { isPipelineCommitted: async (record) => matchesReadyRagDocument(record, await provider.getDocument(record.documentId)) },
+  )
   return {
     resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler, processRegistry, legacyRecoveryWarnings,
+    recoverStartup,
     runInStorageContext: (operation) => runWithStorageResolver(storage, () => runWithDiagnosticsOwner(diagnosticsWriter, operation)),
     async quiesce() {
       quiesced = true
@@ -108,6 +116,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
     async healthCheck() {
       if (closed) return { ok: false, status: 'unhealthy', warnings: [], error: 'closed' }
       if (quiesced) return { ok: false, status: 'unhealthy', warnings: [], error: 'quiesced' }
+      try { await recoverStartup() } catch (error) { return { ok: false, status: 'unhealthy', warnings: legacyRecoveryWarnings, error: String(error) } }
       const health = await provider.integrityCheck(); if (!health.ok) return { ok: false, status: 'unhealthy', warnings: legacyRecoveryWarnings, error: health.error }
       return { ok: true, status: legacyRecoveryWarnings.length ? 'degraded' : 'healthy', warnings: legacyRecoveryWarnings }
     },
