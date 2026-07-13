@@ -22,4 +22,18 @@ describe('RAG cache staging routes', () => {
     expect((await app.inject({ method: 'DELETE', url: `/api/storage/rag-staging/kb-a/${entry.id}` })).statusCode).toBe(204)
     await app.close()
   })
+
+  it('removes expired cache entries before listing them through the production route', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-route-expiry-'))
+    const app = Fastify()
+    await app.register(multipart)
+    await app.register(ragStagingRoutes, new RagStagingStore({ ttlMs: 1 }))
+    app.addHook('onRequest', (_request, _reply, done) => runWithStorageResolver({ resolve: (_group, ...segments) => join(root, ...segments) }, done))
+    const boundary = 'rag-staging-expiry-boundary'
+    const payload = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="a.txt"\r\nContent-Type: text/plain\r\n\r\ncache me\r\n--${boundary}--\r\n`)
+    expect((await app.inject({ method: 'POST', url: '/api/storage/rag-staging/kb-expiry', headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload })).statusCode).toBe(201)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect((await app.inject('/api/storage/rag-staging/kb-expiry')).json().data.entries).toEqual([])
+    await app.close()
+  })
 })

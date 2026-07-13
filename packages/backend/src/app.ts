@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
+import multipart from '@fastify/multipart'
 import type { StorageHealthResult, StorageResolver } from './storage/runtime'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -36,8 +37,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.get('/api/health/storage', async () => ({ success: true, data: options.storage.healthCheck ? await options.storage.healthCheck() : { ok: true, status: 'healthy', warnings: [] } }))
   if (options.storageApi) await app.register(storageRoutes, { ...options.storageApi, health: options.storageApi.health ?? options.storage.healthCheck })
   await app.register(storageClientStateRoutes, options.clientState ?? new ClientStateStore(() => options.storage.resolve('config')))
-  const multipart = await import('@fastify/multipart')
-  await app.register((multipart as any).default ?? multipart)
+  await app.register(multipart)
   await app.register(ragStagingRoutes, new RagStagingStore())
   if (!isDev) {
     const frontendDist = options.frontendDist ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../frontend/dist')

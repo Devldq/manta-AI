@@ -5,6 +5,14 @@ function message(error: unknown): string { return error instanceof Error ? error
 
 /** Renderer queue API: bytes are durable only after this cache-group endpoint succeeds. */
 export async function ragStagingRoutes(app: FastifyInstance, store: RagStagingStore): Promise<void> {
+  // Cache cleanup mutates the same files as list/read/claim.  Queue cleanup
+  // passes so concurrent production requests cannot race two expiry sweeps.
+  let cleanupTail: Promise<void> = Promise.resolve()
+  const cleanupExpired = (): Promise<void> => {
+    const next = cleanupTail.then(async () => { await store.cleanupExpired() })
+    cleanupTail = next.catch(() => undefined)
+    return next
+  }
   app.post<{ Params: { kbId: string } }>('/api/storage/rag-staging/:kbId', async (request, reply) => {
     try {
       const part = await request.file()
@@ -14,7 +22,7 @@ export async function ragStagingRoutes(app: FastifyInstance, store: RagStagingSt
     } catch (error) { return reply.status(400).send({ success: false, error: { code: 'RAG_STAGE_FAILED', message: message(error) } }) }
   })
   app.get<{ Params: { kbId: string } }>('/api/storage/rag-staging/:kbId', async (request, reply) => {
-    try { return { success: true, data: { entries: await store.list(request.params.kbId) } } }
+    try { await cleanupExpired(); return { success: true, data: { entries: await store.list(request.params.kbId) } } }
     catch (error) { return reply.status(400).send({ success: false, error: { code: 'RAG_STAGE_LIST_FAILED', message: message(error) } }) }
   })
   app.get<{ Params: { kbId: string; id: string } }>('/api/storage/rag-staging/:kbId/:id/content', async (request, reply) => {

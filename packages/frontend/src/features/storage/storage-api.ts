@@ -18,10 +18,12 @@ export interface StorageApiError extends Error { code: string; details?: unknown
 
 type Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
-function errorFrom(body: any, status: number): StorageApiError {
-  const error = new Error(body?.error?.message ?? `Storage request failed (${status})`) as StorageApiError
-  error.code = body?.error?.code ?? `HTTP_${status}`
-  error.details = body?.error?.details
+function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' }
+function errorFrom(body: unknown, status: number): StorageApiError {
+  const payload = isRecord(body) && isRecord(body.error) ? body.error : undefined
+  const error = new Error(typeof payload?.message === 'string' ? payload.message : `Storage request failed (${status})`) as StorageApiError
+  error.code = typeof payload?.code === 'string' ? payload.code : `HTTP_${status}`
+  error.details = payload?.details
   return error
 }
 
@@ -35,8 +37,9 @@ export function createStorageApi(fetchImpl: Fetch = fetch): {
   async function read<T>(path: string): Promise<T> {
     const response = await fetchImpl(path, { headers: { Accept: 'application/json' } })
     const body = await response.json().catch(() => undefined)
-    if (!response.ok || body?.success === false) throw errorFrom(body, response.status)
-    return body?.data as T
+    if (!response.ok || (isRecord(body) && body.success === false)) throw errorFrom(body, response.status)
+    if (!isRecord(body)) throw errorFrom(body, response.status)
+    return body.data as T
   }
   return {
     overview: () => read<StorageOverview>('/api/storage/overview'),

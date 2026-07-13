@@ -30,4 +30,53 @@ describe('ASH RAG staging client', () => {
     expect(restored).toHaveLength(1)
     expect(restored[0].id).toBe('local-retry')
   })
+
+  it('merges failed local uploads into a successful canonical refresh and retries them', async () => {
+    const canonicalId = 'b'.repeat(64)
+    const retryId = 'c'.repeat(64)
+    let online = false
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        if (!online) throw new Error('offline')
+        return response({ success: true, data: { entry: { id: retryId, kbId: 'merge-kb', name: 'retry.txt', size: 5, type: 'text/plain', sha256: retryId, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 1000).toISOString() } } }, 201)
+      }
+      if (String(url).endsWith('/content')) return new Response(new Blob(['canonical']))
+      return response({ success: true, data: { entries: [{ id: canonicalId, kbId: 'merge-kb', name: 'canonical.txt', size: 9, type: 'text/plain', sha256: canonicalId, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 1000).toISOString() }] } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    await expect(saveStagedFiles('merge-kb', [{ id: 'local-retry', file: new File(['retry'], 'retry.txt', { type: 'text/plain' }), name: 'retry.txt', size: 5, type: 'text/plain' }])).rejects.toThrow('offline')
+    online = true
+    const merged = await loadStagedFiles('merge-kb')
+    expect(merged.map((file) => file.id).sort()).toEqual([canonicalId, retryId].sort())
+    expect(fetcher).toHaveBeenCalledWith('/api/storage/rag-staging/merge-kb', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('retries a failed upload when an otherwise empty canonical list becomes reachable', async () => {
+    const id = 'e'.repeat(64)
+    let online = false
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        if (!online) throw new Error('offline')
+        return response({ success: true, data: { entry: { id, kbId: 'empty-kb', name: 'retry.txt', size: 5, type: 'text/plain', sha256: id, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 1000).toISOString() } } }, 201)
+      }
+      return response({ success: true, data: { entries: [] } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    await expect(saveStagedFiles('empty-kb', [{ id: 'local-empty-retry', file: new File(['retry'], 'retry.txt', { type: 'text/plain' }), name: 'retry.txt', size: 5, type: 'text/plain' }])).rejects.toThrow('offline')
+    online = true
+    expect((await loadStagedFiles('empty-kb')).map((file) => file.id)).toEqual([id])
+  })
+
+  it('keeps a canonical file visible when its remote delete fails', async () => {
+    const id = 'd'.repeat(64)
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return response({ success: false, error: { message: 'offline' } }, 503)
+      if (String(url).endsWith('/content')) return new Response(new Blob(['still-here']))
+      return response({ success: true, data: { entries: [{ id, kbId: 'delete-kb', name: 'keep.txt', size: 10, type: 'text/plain', sha256: id, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 1000).toISOString() }] } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    await expect(removeStagedFileById(id, 'delete-kb')).rejects.toThrow('503')
+    const reloaded = await loadStagedFiles('delete-kb')
+    expect(reloaded.map((file) => file.id)).toEqual([id])
+  })
 })

@@ -53,16 +53,29 @@ export class RagStagingStore {
     try { await rename(temporary, path) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') { await rm(temporary, { force: true }); throw error }; await rm(temporary, { force: true }) }
     const metadata = resolveStoragePath('cache', 'rag-staging', safeStorageSegment(kbId), safeStorageSegment(`${id}.json`))
     if (!existsSync(metadata)) await this.writeMeta(kbId, entry)
-    return this.read(kbId, id)
+    // Do not re-read through expiry enforcement during the same upload.  A
+    // deliberately tiny TTL is useful in tests and must not make a completed
+    // write appear to fail before its caller receives the acknowledgement.
+    return entry
   }
   async list(kbId: string): Promise<StagedRagFile[]> {
     this.assertKb(kbId); const root = this.rootFor(kbId); if (!existsSync(root)) return []
     const entries: StagedRagFile[] = []
-    for (const name of readdirSync(root)) if (name.endsWith('.json')) { try { const value = this.parse(readFileSync(join(root, name), 'utf8')); if (existsSync(this.pathFor(kbId, value.id))) entries.push(value) } catch { /* corrupted cache row is never returned */ } }
+    const now = new Date()
+    for (const name of readdirSync(root)) if (name.endsWith('.json')) {
+      try {
+        const value = this.parse(readFileSync(join(root, name), 'utf8'))
+        if (new Date(value.expiresAt) <= now) { await this.remove(kbId, value.id); continue }
+        if (existsSync(this.pathFor(kbId, value.id))) entries.push(value)
+      } catch { /* corrupted cache row is never returned */ }
+    }
     return entries.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
   async read(kbId: string, id: string): Promise<StagedRagFile> {
-    this.assertKb(kbId); this.assertId(id); return this.parse(await readFile(this.metaPath(kbId, id), 'utf8'))
+    this.assertKb(kbId); this.assertId(id)
+    const entry = this.parse(await readFile(this.metaPath(kbId, id), 'utf8'))
+    if (new Date(entry.expiresAt) <= new Date()) { await this.remove(kbId, id); throw new Error('Staged RAG file has expired') }
+    return entry
   }
   pathFor(kbId: string, id: string): string { this.assertKb(kbId); this.assertId(id); return join(this.rootFor(kbId), `${id}.bin`) }
   async claim(kbId: string, ids: string[], sessionId: string): Promise<StagedRagFile[]> {
@@ -71,7 +84,22 @@ export class RagStagingStore {
     return claimed
   }
   async remove(kbId: string, id: string): Promise<void> { this.assertKb(kbId); this.assertId(id); const content = resolveStoragePath('cache', 'rag-staging', safeStorageSegment(kbId), safeStorageSegment(`${id}.bin`)); const metadata = resolveStoragePath('cache', 'rag-staging', safeStorageSegment(kbId), safeStorageSegment(`${id}.json`)); await Promise.all([rm(content, { force: true }), rm(metadata, { force: true })]) }
-  async cleanupExpired(now = new Date()): Promise<string[]> { const root = this.baseRoot(); if (!existsSync(root)) return []; const removed: string[] = []; for (const kbId of readdirSync(root)) { try { for (const entry of await this.list(kbId)) if (new Date(entry.expiresAt) <= now) { await this.remove(kbId, entry.id); removed.push(entry.id) } } catch { /* isolate one corrupt cache directory */ } } return removed }
+  async cleanupExpired(now = new Date()): Promise<string[]> {
+    const root = this.baseRoot(); if (!existsSync(root)) return []
+    const removed: string[] = []
+    for (const kbId of readdirSync(root)) {
+      try {
+        const kbRoot = this.rootFor(kbId)
+        for (const name of readdirSync(kbRoot)) if (name.endsWith('.json')) {
+          try {
+            const entry = this.parse(readFileSync(join(kbRoot, name), 'utf8'))
+            if (new Date(entry.expiresAt) <= now) { await this.remove(kbId, entry.id); removed.push(entry.id) }
+          } catch { /* isolate a corrupt cache row */ }
+        }
+      } catch { /* isolate one corrupt cache directory */ }
+    }
+    return removed
+  }
   private rootFor(kbId: string): string { return join(this.baseRoot(), safeStorageSegment(kbId)) }
   private baseRoot(): string { return resolveStoragePath('cache', 'rag-staging') }
   private metaPath(kbId: string, id: string): string { return join(this.rootFor(kbId), `${id}.json`) }
