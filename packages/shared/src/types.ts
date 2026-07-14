@@ -787,6 +787,8 @@ export interface SkillDefinition {
   tools?: string[]
   /** 文件路径（磁盘存储时） */
   filePath?: string
+  /** Package directory relative to the extensions storage-group root. */
+  packagePath?: string
   /** 是否启用 */
   enabled: boolean
   /** 时间戳 */

@@ -114,6 +114,11 @@ export interface PreparedSkillWrite {
   filePath: string
 }
 
+/** Attach a managed package location to a prepared registry write. */
+export function bindPreparedSkillPackage(prepared: PreparedSkillWrite, packagePath: string): PreparedSkillWrite {
+  return { ...prepared, definition: { ...prepared.definition, packagePath } }
+}
+
 /** Build a new registry record without touching the filesystem. */
 export function prepareSkillCreation(input: CreateSkillInput): PreparedSkillWrite {
   const id = `skill-${shortId()}`
@@ -253,6 +258,23 @@ export function findSkillByName(name: string): SkillDefinition | null {
     }
   } catch {
     // 读取失败
+  }
+  return null
+}
+
+/** Find the registry owner of a root-relative managed package path. */
+export function findSkillByPackagePath(packagePath: string, excludeId?: string): SkillDefinition | null {
+  const wanted = process.platform === 'win32' ? packagePath.toLowerCase() : packagePath
+  try {
+    for (const file of fs.readdirSync(getDataDir())) {
+      if (!file.endsWith('.json')) continue
+      const skill = readJsonFile<SkillDefinition>(path.join(getDataDir(), file))
+      if (!skill?.packagePath || skill.id === excludeId) continue
+      const candidate = process.platform === 'win32' ? skill.packagePath.toLowerCase() : skill.packagePath
+      if (candidate === wanted) return skill
+    }
+  } catch {
+    // Missing or unreadable registry has no owner.
   }
   return null
 }
