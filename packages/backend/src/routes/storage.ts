@@ -1,4 +1,4 @@
-import type { AshBootstrap } from '@manta/shared'
+import type { AggregateStorageCapacityMetrics, AshBootstrap, StorageVolumeCapacityMetrics } from '@manta/shared'
 import { STORAGE_GROUP_IDS, type StorageGroupId } from '@manta/shared'
 import type { FastifyInstance } from 'fastify'
 
@@ -12,6 +12,7 @@ export interface StorageGitApi {
 export interface StorageApiContext {
   readBootstrap(): Promise<AshBootstrap | undefined>
   inventory(scope?: { volumeId?: string; groupId?: any }): Promise<{ files: number; bytes: number; entries: unknown[] }>
+  capacityMetrics?(): Promise<{ volumes: StorageVolumeCapacityMetrics[]; aggregate: AggregateStorageCapacityMetrics }>
   health?(): Promise<{ ok: boolean; status: string }>
   /** Desktop-owned cloud-folder state; distinct from backend database health. */
   volumeHealth?(): Promise<Record<string, { status: 'healthy' | 'offline' | 'unreadable' | 'conflict'; conflicts: string[]; checkedAt: string; reason?: string }>>
@@ -38,19 +39,22 @@ export async function storageRoutes(app: FastifyInstance, options: StorageApiCon
     const volumeInventories = await Promise.all(bootstrap.volumes.map((volume) => options.inventory({ volumeId: volume.id })))
     const totalBytes = volumeInventories.reduce((sum, item) => sum + item.bytes, 0)
     const totalFiles = volumeInventories.reduce((sum, item) => sum + item.files, 0)
+    const capacityMetrics = await options.capacityMetrics?.()
     const operations = (await options.listOperations?.() ?? []).sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''))
     const active = operations.find((operation) => operation.status === 'running' || operation.status === 'recovering')
-    return { success: true, data: { generation: bootstrap.generation, volumes: bootstrap.volumes, groups, logicalBytes, totalBytes, totalFiles, volumeHealth, operation: active ?? bootstrap.pendingMigration ?? operations[0], operations } }
+    return { success: true, data: { generation: bootstrap.generation, volumes: bootstrap.volumes, groups, logicalBytes, totalBytes, totalFiles, inventoryLogicalBytes: logicalBytes, inventoryTotalBytes: totalBytes, inventoryTotalFiles: totalFiles, capacity: capacityMetrics?.aggregate, volumeCapacity: capacityMetrics?.volumes ?? [], volumeHealth, operation: active ?? bootstrap.pendingMigration ?? operations[0], operations } }
   })
   app.get('/api/storage/volumes', async (_request, reply) => {
     const bootstrap = await options.readBootstrap(); if (!bootstrap) return reply.status(503).send({ success: false, error: { code: 'STORAGE_NOT_INITIALIZED', message: 'Storage is not initialized' } })
-    const volumes = await Promise.all(bootstrap.volumes.map(async (volume) => ({ ...volume, groups: Object.entries(bootstrap.groupAssignments).filter(([, id]) => id === volume.id).map(([id]) => id), inventory: await options.inventory({ volumeId: volume.id }) })))
+    const capacity = await options.capacityMetrics?.(); const byVolume = new Map(capacity?.volumes.map((item) => [item.volumeId, item]) ?? [])
+    const volumes = await Promise.all(bootstrap.volumes.map(async (volume) => ({ ...volume, groups: Object.entries(bootstrap.groupAssignments).filter(([, id]) => id === volume.id).map(([id]) => id), inventory: await options.inventory({ volumeId: volume.id }), capacity: byVolume.get(volume.id) })))
     return { success: true, data: { volumes } }
   })
   app.get<{ Params: { id: string } }>('/api/storage/volumes/:id', async (request, reply) => {
     const bootstrap = await options.readBootstrap(); const volume = bootstrap?.volumes.find((item) => item.id === request.params.id)
     if (!bootstrap || !volume) return reply.status(404).send({ success: false, error: { code: 'VOLUME_NOT_FOUND', message: 'Storage volume was not found' } })
-    return { success: true, data: { volume: { ...volume, groups: Object.entries(bootstrap.groupAssignments).filter(([, id]) => id === volume.id).map(([id]) => id), inventory: await options.inventory({ volumeId: volume.id }) } } }
+    const capacity = (await options.capacityMetrics?.())?.volumes.find((item) => item.volumeId === volume.id)
+    return { success: true, data: { volume: { ...volume, groups: Object.entries(bootstrap.groupAssignments).filter(([, id]) => id === volume.id).map(([id]) => id), inventory: await options.inventory({ volumeId: volume.id }), capacity } } }
   })
   app.get<{ Params: { id: string } }>('/api/storage/operations/:id', async (request, reply) => {
     const persisted = await options.getOperation?.(request.params.id); const pending = (await options.readBootstrap())?.pendingMigration

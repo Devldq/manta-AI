@@ -60,6 +60,18 @@ describe('backend lifecycle', () => {
     await composition.runtime.close()
   })
 
+  it('composes pending migration inspection into capacity metrics for source and target volumes', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'manta-capacity-composition-')); const source = join(base, 'source'); const target = join(base, 'target'); mkdirSync(source); mkdirSync(target)
+    const bootstrap = new BootstrapStore(join(base, 'bootstrap.json')); const now = new Date().toISOString(); const groups = ['config', 'secrets', 'extensions', 'knowledge', 'work', 'diagnostics', 'cache'] as StorageGroupId[]
+    const snapshot = { generation: 1, volumes: [{ id: 'source', name: 'Source', parentPath: source, createdAt: now, updatedAt: now }, { id: 'target', name: 'Target', parentPath: target, createdAt: now, updatedAt: now }], groupAssignments: Object.fromEntries(groups.map((id) => [id, 'source'])) as Record<StorageGroupId, string> }
+    await bootstrap.write({ schemaVersion: 1, ...snapshot, previous: snapshot, pendingMigration: { id: 'move', kind: 'group', sourceVolumeId: 'source', targetVolumeId: 'target', groups: ['work'], sourceGeneration: 1, targetGeneration: 2, phase: 'copying', filesCompleted: 0, filesTotal: 1, bytesCompleted: 0, bytesTotal: 1 } })
+    const { createBackendStorageComposition } = await import('./runtime'); const composition = await createBackendStorageComposition(bootstrap)
+    const metrics = await composition.hub.capacityMetrics()
+    expect(metrics.volumes).toEqual(expect.arrayContaining([expect.objectContaining({ volumeId: 'source', scanStatus: 'degraded', verifiedDedupSavedBytes: null }), expect.objectContaining({ volumeId: 'target', scanStatus: 'degraded', verifiedDedupSavedBytes: null })]))
+    expect(metrics.volumes.every((item) => item.blockers.some((blocker) => blocker.detail.includes('migration')))).toBe(true)
+    await composition.runtime.close()
+  })
+
   it('composes knowledge resources from routed ASH paths and can close them', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-runtime-'))
     const { createBackendStorageRuntime } = await import('./runtime')

@@ -1,7 +1,7 @@
 import type { StorageGroupId } from '@manta/shared'
 import { STORAGE_GROUP_IDS } from '@manta/shared'
 import { EmbeddingCacheManager, configureSQLiteVecProvider, resetSQLiteVecProvider } from '@manta/rag'
-import { BootstrapStore, createStorageHub, GitBindingStore, GitRunner, GitSyncService, ImportCoordinator, type StorageGroupDriver } from '@manta/storage-hub'
+import { BootstrapStore, createStorageHub, GitBindingStore, GitRunner, GitSyncService, ImportCoordinator, volumeRoot, type StorageGroupDriver } from '@manta/storage-hub'
 import { createClaudeInstallResource, createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner, type PluginMarketplaceCache } from '../core/storage/plugin/marketplace'
 import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } from './group-drivers'
 import { runWithDiagnosticsOwner, RuntimeDiagnosticsWriter } from './runtime-diagnostics'
@@ -12,6 +12,7 @@ import { recoverExtensionTransactions } from './extension-transactions'
 import { createCrossGroupBundleResources, migrateLegacyAtomicJournals, type LegacyRecoveryWarning } from './cross-group-bundle'
 import { createRagUploadResources, recoverRagAssetTransactions } from './rag-upload-storage'
 import { matchesReadyRagDocument } from './rag-asset-transactions'
+import { createVolumePendingInspector } from './content-references'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
 export interface StorageHealthResult { ok: boolean; status: 'healthy' | 'degraded' | 'unhealthy'; warnings: LegacyRecoveryWarning[]; error?: string }
@@ -126,16 +127,33 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
 export async function createBackendStorageComposition(bootstrap: BootstrapStore, options: { onProgress?: (progress: import('@manta/shared').StorageOperationProgress) => void } = {}) {
   const initialBootstrap = await bootstrap.read()
   let runtime: BackendStorageRuntime | undefined
+  let git: GitSyncService | undefined
   const hub = await createStorageHub({
     bootstrap,
     onProgress: options.onProgress,
+    capacityPending: async (volumeId, root) => {
+      if (!runtime || !git) throw new Error('Capacity pending inspectors are not composed')
+      const current = await bootstrap.read(); if (!current) throw new Error('Bootstrap does not exist')
+      const groups = STORAGE_GROUP_IDS.filter((group) => current.groupAssignments[group] === volumeId)
+      const migration = current.pendingMigration
+      const migrationBlocks = !!migration && (migration.sourceVolumeId === volumeId || migration.targetVolumeId === volumeId || (!!migration.targetParentPath && volumeRoot(migration.targetParentPath) === root))
+      const gitState = await git.inspectPending(volumeId)
+      return createVolumePendingInspector({
+        volumeRoot: root,
+        knowledgeRoot: groups.includes('knowledge') ? runtime.resolve('knowledge') : join(root, 'knowledge'),
+        extensionsRoot: groups.includes('extensions') ? runtime.resolve('extensions') : join(root, 'extensions'),
+        groupRoots: groups.map((group) => runtime!.resolve(group)),
+        migrationPending: () => migrationBlocks,
+        gitPending: () => gitState.pending,
+      })()
+    },
     createDrivers(storage) {
       runtime = createBackendStorageRuntime(storage)
       return runtime.drivers
     },
   })
   if (!runtime || !hub.migrations) throw new Error('Failed to compose Backend storage migration drivers')
-  const git = new GitSyncService({
+  git = new GitSyncService({
     runner: new GitRunner(),
     // Resolve this lazily so config-group relocation is reflected after the required relaunch.
     bindings: new GitBindingStore(() => runtime!.resolve('config')),

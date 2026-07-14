@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { STORAGE_GROUP_IDS } from '@manta/shared'
@@ -106,6 +106,24 @@ export class GitSyncService {
 
   async listBindings(): Promise<GitBinding[]> { return this.options.bindings.list() }
   async capability() { return this.options.runner.capability() }
+
+  async inspectPending(volumeId: string): Promise<{ pending: boolean; blockers: Array<{ code: string; detail: string }> }> {
+    const blockers: Array<{ code: string; detail: string }> = []
+    if ([...this.imports.values()].some((session) => session.volumeId === volumeId)) blockers.push({ code: 'git-import-pending', detail: 'An active Git import session exists' })
+    const stagingRoot = resolve(this.options.cachePath(volumeId), '.ash', 'sync', 'import-staging')
+    try {
+      const stat = await lstat(stagingRoot)
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Git import staging root is not an ordinary directory')
+      for (const name of await readdir(stagingRoot)) {
+        const entry = await lstat(resolve(stagingRoot, name))
+        if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error(`Unsafe Git import staging entry ${name}`)
+        blockers.push({ code: 'git-import-pending', detail: `Git import staging worktree ${name} exists` })
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') blockers.push({ code: 'git-import-unreadable', detail: error instanceof Error ? error.message : String(error) })
+    }
+    return { pending: blockers.length > 0, blockers }
+  }
 
   async status(volumeId: string): Promise<string> { const binding = await this.binding(volumeId); return (await this.options.runner.exec(['status', '--porcelain=v1'], { cwd: this.repositoryPath(binding.volumeId) })).stdout }
   async history(volumeId: string): Promise<string> { const binding = await this.binding(volumeId); return (await this.options.runner.exec(['log', '--format=%H%x09%s', '-n', '50'], { cwd: this.repositoryPath(binding.volumeId) })).stdout }

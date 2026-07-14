@@ -1,4 +1,4 @@
-import type { AshBootstrap, StorageGroupId } from '@manta/shared'
+import { aggregateStorageCapacityMetrics, type AshBootstrap, type StorageGroupId } from '@manta/shared'
 import { BootstrapStore } from '../bootstrap/bootstrap-store'
 import { volumeRoot } from '../domain/invariants'
 import { inventoryTree } from '../inventory/file-inventory'
@@ -7,6 +7,8 @@ import type { StorageGroupDriver } from '../migration/types'
 import { VolumeRegistry } from '../registry/volume-registry'
 import { StoragePathRouter } from '../router/path-router'
 import { StorageLeaseManager } from './lease-manager'
+import { measureVolumeCapacity, type CapacityAllocationEvidence } from '../content-store/capacity-metrics'
+import type { PendingContentReferences, VerifiedContentObject } from '../content-store/reference-scan'
 
 export interface StorageHubResolver {
   resolve(group: StorageGroupId, ...segments: string[]): string
@@ -15,6 +17,8 @@ export interface StorageHubResolver {
 export async function createStorageHub(options: {
   bootstrap: AshBootstrap | BootstrapStore
   createDrivers?: (storage: StorageHubResolver) => Map<StorageGroupId, StorageGroupDriver>
+  capacityPending?: (volumeId: string, volumeRoot: string) => Promise<PendingContentReferences & { complete: true }> | (PendingContentReferences & { complete: true })
+  capacityAllocation?: (object: VerifiedContentObject) => CapacityAllocationEvidence
 } & Partial<Omit<MigrationCoordinatorOptions, 'store' | 'leases' | 'drivers'>> & { drivers?: Map<StorageGroupId, StorageGroupDriver> }) {
   const value = options.bootstrap instanceof BootstrapStore ? await options.bootstrap.read() : options.bootstrap
   if (!value) throw new Error('Bootstrap does not exist')
@@ -33,6 +37,14 @@ export async function createStorageHub(options: {
       const volume = scope?.volumeId ? value.volumes.find((item) => item.id === scope.volumeId) : value.volumes[0]
       if (!volume) throw new Error('Volume not found')
       return inventoryTree(volumeRoot(volume.parentPath))
+    },
+    capacityMetrics: async () => {
+      if (typeof options.capacityPending !== 'function') throw new Error('Capacity metrics require mandatory pending-operation composition')
+      const volumes = await Promise.all(value.volumes.map((volume) => {
+        const root = volumeRoot(volume.parentPath)
+        return measureVolumeCapacity(root, { volumeId: volume.id, pending: () => options.capacityPending!(volume.id, root), allocation: options.capacityAllocation })
+      }))
+      return { volumes, aggregate: aggregateStorageCapacityMetrics(volumes) }
     },
     acquireRead: (group: StorageGroupId) => leases.acquireRead(group), acquireWrite: (group: StorageGroupId) => leases.acquireWrite(group), leases,
   }
