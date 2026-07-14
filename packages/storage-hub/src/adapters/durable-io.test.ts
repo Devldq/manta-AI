@@ -23,8 +23,8 @@ describe('adapter durable IO', () => {
   })
 
   it('exclusively claims, durably quarantines, and durably removes a create target', async () => {
-    const directory = await root(); const target = join(directory, 'created'); const quarantine = join(directory, '.quarantine'); const identity = await createExclusiveClaimDurable(target)
-    expect(identity).toMatch(/^[a-f0-9-]+$/); await expect(createExclusiveClaimDurable(target)).rejects.toThrow(); await writeFile(target, 'created'); await renameDurable(target, quarantine)
+    const directory = await root(); const target = join(directory, 'created'); const quarantine = join(directory, '.quarantine'); const identity = await createExclusiveClaimDurable(target, Buffer.from('nonce'))
+    expect(identity).toMatch(/^[a-f0-9-]+$/); await expect(createExclusiveClaimDurable(target, Buffer.from('other'))).rejects.toThrow(); await writeFile(target, 'created'); await renameDurable(target, quarantine)
     await expect(access(target)).rejects.toThrow(); expect(await readFile(quarantine, 'utf8')).toBe('created'); await unlinkDurable(quarantine); await expect(access(quarantine)).rejects.toThrow()
   })
 })

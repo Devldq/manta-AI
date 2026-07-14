@@ -47,10 +47,10 @@ export async function writeNewBytesDurable(target: string, bytes: Uint8Array, ob
   } catch (error) { await handle?.close(); if (handle) await rm(target, { force: true }); throw error }
 }
 
-export async function createExclusiveClaimDurable(target: string, observe?: DurableIoObserver): Promise<string> {
+export async function createExclusiveClaimDurable(target: string, bytes: Uint8Array, observe?: DurableIoObserver): Promise<string> {
   let handle
   try {
-    handle = await open(target, 'wx'); const stat = await handle.stat({ bigint: true }); await handle.sync(); observe?.('exclusive-file-fsynced'); await handle.close(); handle = undefined
+    handle = await open(target, 'wx'); await handle.writeFile(bytes); const stat = await handle.stat({ bigint: true }); await handle.sync(); observe?.('exclusive-file-fsynced'); await handle.close(); handle = undefined
     const synced = await syncDirectory(dirname(target)); observe?.(synced ? 'parent-directory-fsynced' : 'parent-directory-fsync-unsupported')
     return `${stat.dev.toString(16)}-${stat.ino.toString(16)}-${stat.birthtimeNs.toString(16)}`
   } catch (error) { await handle?.close(); if (handle) await rm(target, { force: true }); throw error }

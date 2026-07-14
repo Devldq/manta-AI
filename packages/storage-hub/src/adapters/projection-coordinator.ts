@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { lstat, open, readdir } from 'node:fs/promises'
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import { acquireMigrationFileLock } from '../migration/migration-lock'
@@ -18,7 +18,7 @@ import type {
   ProjectionPlan,
 } from './types'
 
-export type ProjectionFaultPoint = 'after-journal' | 'after-backup-entry' | 'before-apply' | 'after-create-claim' | 'after-create-quarantine-rename' | 'after-applied-journal'
+export type ProjectionFaultPoint = 'after-journal' | 'after-backup-entry' | 'before-apply' | 'after-create-claim-publish' | 'after-create-claim' | 'after-create-quarantine-rename' | 'after-applied-journal'
 
 export class SimulatedAdapterCrash extends Error {
   constructor(readonly point: string) { super(`Simulated adapter crash: ${point}`); this.name = 'SimulatedAdapterCrash' }
@@ -126,6 +126,7 @@ export class ProjectionCoordinator {
         try { await this.#validateBeforeStates(plan.operations) } catch (error) { await this.#abortPreApply(journal); throw error }
         journal = await this.#phase(journal, 'claiming')
         journal = await this.#createClaims(journal)
+        await this.#validateNonCreateBeforeStates(plan.operations)
         journal = await this.#phase(journal, 'applying')
         const adapterResult = await this.#registry.require(plan.adapterId).apply(freeze(clone(plan)))
         this.#validateAdapterResult(adapterResult, plan)
@@ -265,6 +266,14 @@ export class ProjectionCoordinator {
     const parent = await statOrAbsent(dirname(path)); if (!parent || !parent.isDirectory() || parent.isSymbolicLink()) throw new Error('Create operation requires an ordinary existing parent directory')
   }
 
+  async #validateNonCreateBeforeStates(operations: readonly PreviewFileOperation[]): Promise<void> {
+    for (const operation of operations) {
+      if (operation.kind === 'create') continue
+      const stat = await statOrAbsent(operation.nativePath); if (!stat || !stat.isFile() || stat.isSymbolicLink()) throw new Error('Native file changed after planning; adapter plan is stale')
+      const snapshot = await this.#readOrdinarySnapshot(operation.nativePath); if (digestBytes(snapshot.bytes) !== operation.expectedBeforeSha256 || snapshot.identity !== operation.expectedBeforeIdentity) throw new Error('Native file changed after planning; adapter plan is stale')
+    }
+  }
+
   #journal(plan: ApprovedAdapterPlan, phase: AdapterJournal['phase'], backupEntries: readonly AdapterBackupEntry[], result?: AdapterResult): AdapterJournal {
     const timestamp = this.#now().toISOString(); return freeze({ schemaVersion: 1, operationId: plan.approval.operationId, plan: clone(plan), phase, backupEntries: clone(backupEntries), startedAt: timestamp, updatedAt: timestamp, ...(result ? { result: clone(result) } : {}) })
   }
@@ -290,9 +299,13 @@ export class ProjectionCoordinator {
     for (const operation of journal.plan.operations.filter((candidate) => candidate.kind === 'create')) {
       const root = journal.plan.target.nativeRoots.find((candidate) => candidate.id === operation.rootId)!.path
       await this.#rejectLinkedPath(root, operation.nativePath); await this.#validateCreateParent(operation.nativePath)
-      const claimFileIdentity = await createExclusiveClaimDurable(operation.nativePath)
+      const nonce = randomBytes(32); const claimSha256 = digestBytes(nonce); const claimBytes = nonce.byteLength
+      let entries = journal.backupEntries.map((entry) => entry.operationEntryId === operation.id ? freeze({ ...entry, claimSha256, claimBytes }) : entry)
+      journal = freeze({ ...journal, backupEntries: freeze(entries), updatedAt: this.#now().toISOString() }); await this.#writeJournal(journal)
+      await createExclusiveClaimDurable(operation.nativePath, nonce); await this.#fault?.('after-create-claim-publish')
       await this.#rejectLinkedPath(root, operation.nativePath)
-      const entries = journal.backupEntries.map((entry) => entry.operationEntryId === operation.id ? freeze({ ...entry, claimFileIdentity }) : entry)
+      const snapshot = await this.#readOrdinarySnapshot(operation.nativePath); if (digestBytes(snapshot.bytes) !== claimSha256 || snapshot.bytes.byteLength !== claimBytes) throw new Error('Published create claim does not match prepared evidence')
+      entries = journal.backupEntries.map((entry) => entry.operationEntryId === operation.id ? freeze({ ...entry, claimFileIdentity: snapshot.identity }) : entry)
       journal = freeze({ ...journal, backupEntries: freeze(entries), updatedAt: this.#now().toISOString() }); await this.#writeJournal(journal); await this.#fault?.('after-create-claim')
     }
     return journal
@@ -342,7 +355,8 @@ export class ProjectionCoordinator {
     const requireFinalEvidence = input.phase === 'committed' || input.result?.status === 'committed'
     let journal = input.phase === 'aborting-claims' ? input : await this.#phase(input, claimsOnly ? 'aborting-claims' : 'rolling-back')
     const entries = [...journal.backupEntries].reverse(); const failures: unknown[] = []
-    for (const entry of entries) { try {
+    for (const originalEntry of entries) { try {
+      let entry = originalEntry
       const operation = journal.plan.operations.find((candidate) => candidate.id === entry.operationEntryId); if (!operation) throw new Error('Malformed adapter backup entry operation')
       const nativePath = this.#nativeFromEntry(journal.plan.target, entry); if (normalized(nativePath) !== normalized(operation.nativePath)) throw new Error('Malformed adapter backup target')
       await this.#rejectLinkedPath(journal.plan.target.nativeRoots.find((root) => root.id === entry.rootId)!.path, nativePath)
@@ -353,13 +367,30 @@ export class ProjectionCoordinator {
         const root = journal.plan.target.nativeRoots.find((candidate) => candidate.id === entry.rootId)!.path; await this.#writeNative(nativePath, bytes, root)
       } else {
         if (entry.backupRelativePath || entry.priorSha256 || entry.priorBytes !== undefined || entry.priorFileIdentity) throw new Error('Malformed absent-before backup marker')
-        if (!entry.claimFileIdentity) continue
+        if (!entry.claimSha256) continue
+        if (!entry.claimFileIdentity) {
+          const adopted = await this.#adoptPublishedClaim(journal, entry, nativePath); journal = adopted.journal; entry = adopted.entry
+          if (!entry.claimFileIdentity) continue
+        }
         await this.#removeCreateClaim(journal, entry, nativePath, requireFinalEvidence)
       }
     } catch (error) { if (error instanceof SimulatedAdapterCrash) throw error; failures.push(error) } }
     if (failures.length) throw new AggregateError(failures, 'Rollback could not prove safe completion')
     const rolled = this.#rolledResult(journal)
     journal = freeze({ ...journal, phase: 'rolled-back', result: freeze(rolled), updatedAt: this.#now().toISOString() }); await this.#writeJournal(journal)
+  }
+
+  async #adoptPublishedClaim(journal: AdapterJournal, entry: AdapterBackupEntry, nativePath: string): Promise<{ journal: AdapterJournal; entry: AdapterBackupEntry }> {
+    if (!entry.claimSha256 || entry.claimBytes === undefined) throw new Error('Claim adoption lacks prepared evidence')
+    const quarantine = join(dirname(nativePath), `.ash-rollback-${digest({ operationId: journal.operationId, operationEntryId: entry.operationEntryId })}`)
+    if (await statOrAbsent(quarantine)) throw new Error('Unidentified create claim has an unexpected rollback quarantine')
+    const stat = await statOrAbsent(nativePath); if (!stat) return { journal, entry }
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Published create claim is not an ordinary file')
+    const snapshot = await this.#readOrdinarySnapshot(nativePath)
+    if (digestBytes(snapshot.bytes) !== entry.claimSha256 || snapshot.bytes.byteLength !== entry.claimBytes) throw new Error('Published create claim does not match prepared ownership evidence')
+    const updatedEntries = journal.backupEntries.map((candidate) => candidate.operationEntryId === entry.operationEntryId ? freeze({ ...candidate, claimFileIdentity: snapshot.identity }) : candidate)
+    const updated = freeze({ ...journal, backupEntries: freeze(updatedEntries), updatedAt: this.#now().toISOString() }); await this.#writeJournal(updated)
+    return { journal: updated, entry: updatedEntries.find((candidate) => candidate.operationEntryId === entry.operationEntryId)! }
   }
 
   async #removeCreateClaim(journal: AdapterJournal, entry: AdapterBackupEntry, nativePath: string, requireFinalEvidence: boolean): Promise<void> {
@@ -412,7 +443,7 @@ export class ProjectionCoordinator {
       expectedKeys(journal, ['schemaVersion', 'operationId', 'plan', 'phase', 'backupEntries', 'startedAt', 'updatedAt', 'result'], 'Adapter journal')
       if (journal.schemaVersion !== 1 || journal.operationId !== operationId || !Array.isArray(journal.backupEntries) || !['journaled', 'backing-up', 'backed-up', 'claiming', 'aborting-claims', 'applying', 'applied', 'committed', 'rolling-back', 'rolled-back'].includes(journal.phase) || Number.isNaN(Date.parse(journal.startedAt)) || Number.isNaN(Date.parse(journal.updatedAt))) throw new Error('invalid fields')
       this.#validateApproval(journal.plan, false); await this.#validateOperations(journal.plan.target, journal.plan.operations)
-      for (const entry of journal.backupEntries) { expectedKeys(entry, ['operationId', 'operationEntryId', 'rootId', 'relativePath', 'priorState', 'backupRelativePath', 'priorSha256', 'priorBytes', 'priorFileIdentity', 'claimFileIdentity', 'finalSha256', 'finalBytes'], 'Adapter backup entry'); if (entry.operationId !== operationId || !SAFE_SEGMENT.test(entry.operationEntryId) || !SAFE_SEGMENT.test(entry.rootId) || !safeRelative(entry.relativePath) || (entry.priorState !== 'file' && entry.priorState !== 'absent') || (entry.backupRelativePath !== undefined && !safeRelative(entry.backupRelativePath))) throw new Error('invalid backup entry') }
+      for (const entry of journal.backupEntries) { expectedKeys(entry, ['operationId', 'operationEntryId', 'rootId', 'relativePath', 'priorState', 'backupRelativePath', 'priorSha256', 'priorBytes', 'priorFileIdentity', 'claimSha256', 'claimBytes', 'claimFileIdentity', 'finalSha256', 'finalBytes'], 'Adapter backup entry'); if (entry.operationId !== operationId || !SAFE_SEGMENT.test(entry.operationEntryId) || !SAFE_SEGMENT.test(entry.rootId) || !safeRelative(entry.relativePath) || (entry.priorState !== 'file' && entry.priorState !== 'absent') || (entry.backupRelativePath !== undefined && !safeRelative(entry.backupRelativePath))) throw new Error('invalid backup entry') }
       this.#validateJournalInvariants(journal)
       await this.#validateBackupEvidence(journal)
     } catch (error) { throw new Error(`Malformed adapter journal: ${operationId}`, { cause: error }) }
@@ -423,20 +454,21 @@ export class ProjectionCoordinator {
     const changes = journal.plan.operations.filter((operation) => WRITE_KINDS.has(operation.kind)); const entries = journal.backupEntries
     const complete = ['backed-up', 'claiming', 'aborting-claims', 'applying', 'applied', 'committed'].includes(journal.phase)
     if ((journal.phase === 'journaled' && entries.length !== 0) || (complete && entries.length !== changes.length) || entries.length > changes.length) throw new Error('Journal backup evidence is incomplete for its phase')
-    let missingClaimSeen = false; let missingFinalSeen = false
+    let missingPreparedSeen = false; let missingIdentitySeen = false; let missingFinalSeen = false
     for (const [index, entry] of entries.entries()) {
       const operation = changes[index]; if (!operation || entry.operationEntryId !== operation.id || entry.rootId !== operation.rootId || entry.relativePath !== this.#nativeRelative(journal.plan.target, operation)) throw new Error('Journal backup evidence does not match the approved operation')
       if (operation.kind === 'create') {
         if (entry.priorState !== 'absent' || entry.backupRelativePath !== undefined || entry.priorSha256 !== undefined || entry.priorBytes !== undefined || entry.priorFileIdentity !== undefined) throw new Error('Malformed absent-before evidence')
-        const hasClaim = entry.claimFileIdentity !== undefined; const hasAnyFinal = entry.finalSha256 !== undefined || entry.finalBytes !== undefined; const hasFinal = entry.finalSha256 !== undefined && entry.finalBytes !== undefined
-        if (hasClaim && !SAFE_SEGMENT.test(entry.claimFileIdentity!)) throw new Error('Malformed create-claim ownership evidence')
-        if (hasAnyFinal && (!hasFinal || !SHA256.test(entry.finalSha256!) || !Number.isSafeInteger(entry.finalBytes) || entry.finalBytes! < 0 || !hasClaim)) throw new Error('Malformed final create evidence')
-        if (['journaled', 'backing-up', 'backed-up'].includes(journal.phase) && (hasClaim || hasAnyFinal)) throw new Error('Pre-claim journal contains create ownership evidence')
-        if (journal.phase === 'claiming' && hasAnyFinal) throw new Error('Claiming journal contains final create evidence')
-        if (['applying', 'applied', 'committed'].includes(journal.phase) && !hasClaim) throw new Error('Post-claim journal lacks create ownership evidence')
+        const hasAnyPrepared = entry.claimSha256 !== undefined || entry.claimBytes !== undefined; const hasPrepared = entry.claimSha256 !== undefined && entry.claimBytes !== undefined; const hasIdentity = entry.claimFileIdentity !== undefined; const hasAnyFinal = entry.finalSha256 !== undefined || entry.finalBytes !== undefined; const hasFinal = entry.finalSha256 !== undefined && entry.finalBytes !== undefined
+        if (hasAnyPrepared && (!hasPrepared || !SHA256.test(entry.claimSha256!) || entry.claimBytes !== 32)) throw new Error('Malformed prepared create-claim evidence')
+        if (hasIdentity && (!hasPrepared || !SAFE_SEGMENT.test(entry.claimFileIdentity!))) throw new Error('Malformed create-claim ownership evidence')
+        if (hasAnyFinal && (!hasFinal || !SHA256.test(entry.finalSha256!) || !Number.isSafeInteger(entry.finalBytes) || entry.finalBytes! < 0 || !hasIdentity)) throw new Error('Malformed final create evidence')
+        if (['journaled', 'backing-up', 'backed-up'].includes(journal.phase) && (hasAnyPrepared || hasIdentity || hasAnyFinal)) throw new Error('Pre-claim journal contains create ownership evidence')
+        if (['claiming', 'aborting-claims'].includes(journal.phase) && hasAnyFinal) throw new Error('Claiming journal contains final create evidence')
+        if (['applying', 'applied', 'committed'].includes(journal.phase) && (!hasPrepared || !hasIdentity)) throw new Error('Post-claim journal lacks create ownership evidence')
         if (['applied', 'committed'].includes(journal.phase) && !hasFinal) throw new Error('Completed journal lacks final create evidence')
-        if (['claiming', 'aborting-claims', 'applying'].includes(journal.phase)) { if (!hasClaim) missingClaimSeen = true; else if (missingClaimSeen) throw new Error('Create claims are not a durable prefix'); if (!hasFinal) missingFinalSeen = true; else if (missingFinalSeen) throw new Error('Final create evidence is not a durable prefix') }
-      } else if (entry.priorState !== 'file' || entry.backupRelativePath !== `${index}.bin` || entry.priorSha256 !== operation.expectedBeforeSha256 || entry.priorFileIdentity !== operation.expectedBeforeIdentity || !Number.isSafeInteger(entry.priorBytes) || entry.priorBytes! < 0 || entry.claimFileIdentity !== undefined || entry.finalSha256 !== undefined || entry.finalBytes !== undefined) throw new Error('Malformed file backup evidence')
+        if (['claiming', 'aborting-claims', 'applying'].includes(journal.phase)) { if (!hasPrepared) missingPreparedSeen = true; else if (missingPreparedSeen) throw new Error('Prepared create claims are not a durable prefix'); if (!hasIdentity) missingIdentitySeen = true; else if (missingIdentitySeen) throw new Error('Create claim identities are not a durable prefix'); if (!hasFinal) missingFinalSeen = true; else if (missingFinalSeen) throw new Error('Final create evidence is not a durable prefix') }
+      } else if (entry.priorState !== 'file' || entry.backupRelativePath !== `${index}.bin` || entry.priorSha256 !== operation.expectedBeforeSha256 || entry.priorFileIdentity !== operation.expectedBeforeIdentity || !Number.isSafeInteger(entry.priorBytes) || entry.priorBytes! < 0 || entry.claimSha256 !== undefined || entry.claimBytes !== undefined || entry.claimFileIdentity !== undefined || entry.finalSha256 !== undefined || entry.finalBytes !== undefined) throw new Error('Malformed file backup evidence')
     }
     if (journal.phase === 'applied') { if (!journal.result) throw new Error('Applied journal requires a result'); this.#validateResult(journal.result, journal.plan, 'applied') }
     else if (journal.phase === 'committed') { if (!journal.result) throw new Error('Committed journal requires a result'); this.#validateResult(journal.result, journal.plan, 'committed') }

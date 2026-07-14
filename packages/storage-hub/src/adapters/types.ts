@@ -115,6 +115,8 @@ export interface AdapterBackupEntry {
   readonly priorSha256?: string
   readonly priorBytes?: number
   readonly priorFileIdentity?: string
+  readonly claimSha256?: string
+  readonly claimBytes?: number
   readonly claimFileIdentity?: string
   readonly finalSha256?: string
   readonly finalBytes?: number
@@ -134,8 +136,8 @@ export interface AdapterJournal {
 /**
  * Implemented only by trusted first-party built-in modules shipped with Manta.
  * This boundary does not execute untrusted adapter code or provide a plugin sandbox.
- * For create operations, apply receives a coordinator-owned empty ordinary-file claim.
- * The adapter must write or truncate that file in place and must never replace or rename it.
+ * For create operations, apply receives a coordinator-owned ordinary-file claim containing
+ * a random nonce. The adapter must truncate/write that file in place and never replace or rename it.
  */
 export interface AgentAdapter {
   readonly id: string
