@@ -1,10 +1,10 @@
 import { constants } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readFile, readdir, unlink } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { writeJsonAtomic } from '../bootstrap/atomic-json'
+import { lstat, open, readdir, unlink } from 'node:fs/promises'
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import { acquireMigrationFileLock } from '../migration/migration-lock'
 import { AdapterRegistry } from './adapter-registry'
+import { ensureDirectoryDurable, restoreBytesDurable, writeJsonDurable, writeNewBytesDurable } from './durable-io'
 import type {
   AdapterBackupEntry,
   AdapterJournal,
@@ -124,6 +124,7 @@ export class ProjectionCoordinator {
         journal = await this.#phase(journal, 'applying')
         const adapterResult = await this.#registry.require(plan.adapterId).apply(freeze(clone(plan)))
         this.#validateAdapterResult(adapterResult, plan)
+        journal = await this.#recordCreatedEvidence(journal)
         await this.#verifyApplied(plan.operations)
         const appliedResult = freeze(clone(adapterResult)); journal = await this.#phase(journal, 'applied', appliedResult)
         await this.#fault?.('after-applied-journal')
@@ -148,6 +149,7 @@ export class ProjectionCoordinator {
   async recoverPending(): Promise<void> {
     const directory = this.#journalDirectory(); let names: string[]
     try {
+      await this.#rejectLinkedControlPath(directory)
       const entries = await readdir(directory, { withFileTypes: true })
       if (entries.some((entry) => !entry.isFile() || !entry.name.endsWith('.json') || !SAFE_SEGMENT.test(entry.name.slice(0, -5)))) throw new Error('Unknown adapter journal directory entry')
       names = entries.map((entry) => entry.name).sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
@@ -200,14 +202,14 @@ export class ProjectionCoordinator {
   async #validateOperations(target: AgentInstallation, operations: readonly PreviewFileOperation[], requireBefore = true): Promise<void> {
     const roots = new Map(target.nativeRoots.map((root) => [root.id, root.path])); const paths = new Set<string>(); const ids = new Set<string>()
     for (const operation of operations) {
-      expectedKeys(operation, ['id', 'kind', 'rootId', 'nativePath', 'expectedBeforeSha256', 'expectedAfterSha256'], 'Preview file operation')
+      expectedKeys(operation, ['id', 'kind', 'rootId', 'nativePath', 'expectedBeforeSha256', 'expectedBeforeIdentity', 'expectedAfterSha256'], 'Preview file operation')
       const root = roots.get(operation.rootId)
       if (!SAFE_SEGMENT.test(operation.id) || ids.has(operation.id) || !['read', 'create', 'modify', 'delete'].includes(operation.kind) || !root) throw new Error('Malformed or duplicate preview operation')
       if (typeof operation.nativePath !== 'string' || operation.nativePath.includes('\0') || !isAbsolute(operation.nativePath) || resolve(operation.nativePath) !== operation.nativePath || !contains(root, operation.nativePath)) throw new Error('Operation path must be absolute and contained by its authorized root')
       if ((operation.kind === 'create' || operation.kind === 'modify') && !SHA256.test(operation.expectedAfterSha256 ?? '')) throw new Error('Create and modify operations require an expected SHA-256 digest')
       if ((operation.kind === 'read' || operation.kind === 'delete') && operation.expectedAfterSha256 !== undefined) throw new Error('Unexpected after digest for read/delete operation')
-      if (operation.kind === 'create' && operation.expectedBeforeSha256 !== undefined) throw new Error('Create operation cannot have a before digest')
-      if (operation.kind !== 'create' && ((requireBefore && !operation.expectedBeforeSha256) || (operation.expectedBeforeSha256 !== undefined && !SHA256.test(operation.expectedBeforeSha256)))) throw new Error('Existing-path operation requires an expected before SHA-256 digest')
+      if (operation.kind === 'create' && (operation.expectedBeforeSha256 !== undefined || operation.expectedBeforeIdentity !== undefined)) throw new Error('Create operation cannot have before evidence')
+      if (operation.kind !== 'create' && ((requireBefore && (!operation.expectedBeforeSha256 || !operation.expectedBeforeIdentity)) || (operation.expectedBeforeSha256 !== undefined && !SHA256.test(operation.expectedBeforeSha256)) || (operation.expectedBeforeIdentity !== undefined && !SAFE_SEGMENT.test(operation.expectedBeforeIdentity)))) throw new Error('Existing-path operation requires expected before digest and identity')
       const path = normalized(operation.nativePath); if (paths.has(path)) throw new Error('Duplicate or conflicting native operation path'); paths.add(path); ids.add(operation.id)
       await this.#rejectLinkedPath(root, operation.nativePath)
     }
@@ -219,7 +221,7 @@ export class ProjectionCoordinator {
       const stat = await statOrAbsent(operation.nativePath)
       if (operation.kind === 'create') { if (stat) throw new Error('Create target already exists during preview'); bound.push(clone(operation)); continue }
       if (!stat || !stat.isFile() || stat.isSymbolicLink()) throw new Error('Preview path is not an ordinary existing file')
-      bound.push({ ...clone(operation), expectedBeforeSha256: digestBytes(await this.#readOrdinary(operation.nativePath)) })
+      const snapshot = await this.#readOrdinarySnapshot(operation.nativePath); bound.push({ ...clone(operation), expectedBeforeSha256: digestBytes(snapshot.bytes), expectedBeforeIdentity: snapshot.identity })
     }
     return freeze(bound)
   }
@@ -249,7 +251,7 @@ export class ProjectionCoordinator {
     for (const operation of operations) {
       const stat = await statOrAbsent(operation.nativePath)
       if (operation.kind === 'create' && stat) throw new Error('Create target appeared after planning')
-      if (operation.kind !== 'create' && (!stat || !stat.isFile() || stat.isSymbolicLink() || digestBytes(await this.#readOrdinary(operation.nativePath)) !== operation.expectedBeforeSha256)) throw new Error('Native file changed after planning; adapter plan is stale')
+      if (operation.kind !== 'create') { if (!stat || !stat.isFile() || stat.isSymbolicLink()) throw new Error('Native file changed after planning; adapter plan is stale'); const snapshot = await this.#readOrdinarySnapshot(operation.nativePath); if (digestBytes(snapshot.bytes) !== operation.expectedBeforeSha256 || snapshot.identity !== operation.expectedBeforeIdentity) throw new Error('Native file changed after planning; adapter plan is stale') }
     }
   }
 
@@ -263,12 +265,24 @@ export class ProjectionCoordinator {
       let entry: AdapterBackupEntry
       if (operation.kind === 'create') entry = { operationId: journal.operationId, operationEntryId: operation.id, rootId: operation.rootId, relativePath: this.#nativeRelative(journal.plan.target, operation), priorState: 'absent' }
       else {
-        const backupRelativePath = `${index}.bin`; const bytes = await this.#readOrdinary(operation.nativePath); await this.#writeBackup(journal.operationId, backupRelativePath, bytes)
-        entry = { operationId: journal.operationId, operationEntryId: operation.id, rootId: operation.rootId, relativePath: this.#nativeRelative(journal.plan.target, operation), priorState: 'file', backupRelativePath, priorSha256: digestBytes(bytes), priorBytes: bytes.byteLength }
+        const backupRelativePath = `${index}.bin`; const snapshot = await this.#readOrdinarySnapshot(operation.nativePath)
+        if (digestBytes(snapshot.bytes) !== operation.expectedBeforeSha256 || snapshot.identity !== operation.expectedBeforeIdentity) throw new Error('Native file identity or bytes changed before backup; adapter plan is stale')
+        await this.#writeBackup(journal.operationId, backupRelativePath, snapshot.bytes)
+        entry = { operationId: journal.operationId, operationEntryId: operation.id, rootId: operation.rootId, relativePath: this.#nativeRelative(journal.plan.target, operation), priorState: 'file', backupRelativePath, priorSha256: digestBytes(snapshot.bytes), priorBytes: snapshot.bytes.byteLength, priorFileIdentity: snapshot.identity }
       }
       journal = freeze({ ...journal, backupEntries: freeze([...journal.backupEntries, freeze(entry)]), updatedAt: this.#now().toISOString() }); await this.#writeJournal(journal); await this.#fault?.('after-backup-entry')
     }
     return this.#phase(journal, 'backed-up')
+  }
+
+  async #recordCreatedEvidence(input: AdapterJournal): Promise<AdapterJournal> {
+    let journal = input
+    for (const operation of journal.plan.operations.filter((candidate) => candidate.kind === 'create')) {
+      const snapshot = await this.#readOrdinarySnapshot(operation.nativePath)
+      const entries = journal.backupEntries.map((entry) => entry.operationEntryId === operation.id ? freeze({ ...entry, createdSha256: digestBytes(snapshot.bytes), createdBytes: snapshot.bytes.byteLength, createdFileIdentity: snapshot.identity }) : entry)
+      journal = freeze({ ...journal, backupEntries: freeze(entries), updatedAt: this.#now().toISOString() }); await this.#writeJournal(journal)
+    }
+    return journal
   }
 
   async #verifyApplied(operations: readonly PreviewFileOperation[]): Promise<void> {
@@ -300,22 +314,24 @@ export class ProjectionCoordinator {
   async #rollbackJournal(input: AdapterJournal): Promise<void> {
     if (input.phase === 'rolled-back') return
     let journal = await this.#phase(input, 'rolling-back')
-    const entries = [...journal.backupEntries].reverse()
-    for (const entry of entries) {
+    const entries = [...journal.backupEntries].reverse(); const failures: unknown[] = []
+    for (const entry of entries) { try {
       const operation = journal.plan.operations.find((candidate) => candidate.id === entry.operationEntryId); if (!operation) throw new Error('Malformed adapter backup entry operation')
       const nativePath = this.#nativeFromEntry(journal.plan.target, entry); if (normalized(nativePath) !== normalized(operation.nativePath)) throw new Error('Malformed adapter backup target')
       await this.#rejectLinkedPath(journal.plan.target.nativeRoots.find((root) => root.id === entry.rootId)!.path, nativePath)
       if (entry.priorState === 'file') {
-        if (!entry.backupRelativePath || !safeRelative(entry.backupRelativePath) || !SHA256.test(entry.priorSha256 ?? '') || !Number.isSafeInteger(entry.priorBytes) || entry.priorBytes! < 0) throw new Error('Malformed adapter backup entry')
+        if (!entry.backupRelativePath || !safeRelative(entry.backupRelativePath) || !SHA256.test(entry.priorSha256 ?? '') || !Number.isSafeInteger(entry.priorBytes) || entry.priorBytes! < 0 || !entry.priorFileIdentity) throw new Error('Malformed adapter backup entry')
         const bytes = await this.#readBackup(journal.operationId, entry.backupRelativePath); if (bytes.byteLength !== entry.priorBytes || digestBytes(bytes) !== entry.priorSha256) throw new Error('Adapter backup verification failed')
-        await this.#writeNative(nativePath, bytes)
+        const root = journal.plan.target.nativeRoots.find((candidate) => candidate.id === entry.rootId)!.path; await this.#writeNative(nativePath, bytes, root)
       } else {
-        if (entry.backupRelativePath || entry.priorSha256 || entry.priorBytes !== undefined) throw new Error('Malformed absent-before backup marker')
+        if (entry.backupRelativePath || entry.priorSha256 || entry.priorBytes !== undefined || entry.priorFileIdentity) throw new Error('Malformed absent-before backup marker')
         const stat = await statOrAbsent(nativePath); if (!stat) continue
-        if (!stat.isFile() || stat.isSymbolicLink() || !operation.expectedAfterSha256 || digestBytes(await this.#readOrdinary(nativePath)) !== operation.expectedAfterSha256) throw new Error('Rollback cannot prove safe removal of an absent-before path')
+        if (!stat.isFile() || stat.isSymbolicLink() || !entry.createdFileIdentity || !entry.createdSha256 || entry.createdBytes === undefined) throw new Error('Rollback lacks durable ownership identity for an absent-before path')
+        const snapshot = await this.#readOrdinarySnapshot(nativePath); if (snapshot.identity !== entry.createdFileIdentity || digestBytes(snapshot.bytes) !== entry.createdSha256 || snapshot.bytes.byteLength !== entry.createdBytes) throw new Error('Rollback cannot prove safe ownership of an absent-before path')
         await unlink(nativePath)
       }
-    }
+    } catch (error) { failures.push(error) } }
+    if (failures.length) throw new AggregateError(failures, 'Rollback could not prove safe completion')
     const rolled: AdapterResult = { schemaVersion: 1, operationId: journal.operationId, planId: journal.plan.planId, adapterId: journal.plan.adapterId, installationId: journal.plan.target.id, status: 'rolled-back', verified: true, completedAt: this.#now().toISOString(), ...(journal.result?.secretReferenceIds ? { secretReferenceIds: journal.result.secretReferenceIds } : {}) }
     journal = freeze({ ...journal, phase: 'rolled-back', result: freeze(rolled), updatedAt: this.#now().toISOString() }); await this.#writeJournal(journal)
   }
@@ -324,25 +340,31 @@ export class ProjectionCoordinator {
   #nativeRelative(target: AgentInstallation, operation: PreviewFileOperation): string { const root = target.nativeRoots.find((item) => item.id === operation.rootId)!; const value = relative(root.path, operation.nativePath); if (!safeRelative(value)) throw new Error('Unsafe native backup-relative path'); return value.split(sep).join('/') }
   #nativeFromEntry(target: AgentInstallation, entry: AdapterBackupEntry): string { if (!safeRelative(entry.relativePath)) throw new Error('Malformed adapter backup relative path'); const root = target.nativeRoots.find((item) => item.id === entry.rootId); if (!root) throw new Error('Malformed adapter backup root id'); const path = resolve(root.path, ...entry.relativePath.split('/')); if (!contains(root.path, path)) throw new Error('Unsafe adapter backup target'); return path }
 
-  async #readOrdinary(path: string): Promise<Buffer> {
+  async #readOrdinarySnapshot(path: string): Promise<{ bytes: Buffer; identity: string }> {
     const flags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0); const handle = await open(path, flags)
-    try { const stat = await handle.stat(); if (!stat.isFile()) throw new Error('Adapter path is not an ordinary file'); return await handle.readFile() } finally { await handle.close() }
+    try {
+      const before = await handle.stat({ bigint: true }); if (!before.isFile()) throw new Error('Adapter path is not an ordinary file'); const bytes = await handle.readFile(); const after = await handle.stat({ bigint: true }); const identity = fileIdentity(before)
+      if (identity !== fileIdentity(after) || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) throw new Error('Adapter file changed while reading from its no-follow handle')
+      return { bytes, identity }
+    } finally { await handle.close() }
   }
-  async #writeBackup(operationId: string, relativePath: string, bytes: Buffer): Promise<void> { const path = this.#backupPath(operationId, relativePath); await mkdir(dirname(path), { recursive: true }); const handle = await open(path, 'wx'); try { await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() } }
-  async #readBackup(operationId: string, relativePath: string): Promise<Buffer> { if (!safeRelative(relativePath)) throw new Error('Unsafe adapter backup path'); const path = this.#backupPath(operationId, relativePath); await this.#rejectLinkedBackupPath(operationId, path); return this.#readOrdinary(path) }
-  async #writeNative(path: string, bytes: Buffer): Promise<void> { await mkdir(dirname(path), { recursive: true }); const handle = await open(path, 'w'); try { await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() } }
+  async #readOrdinary(path: string): Promise<Buffer> { return (await this.#readOrdinarySnapshot(path)).bytes }
+  async #writeBackup(operationId: string, relativePath: string, bytes: Buffer): Promise<void> { const path = this.#backupPath(operationId, relativePath); await this.#rejectLinkedControlPath(path); await writeNewBytesDurable(path, bytes); await this.#rejectLinkedControlPath(path) }
+  async #readBackup(operationId: string, relativePath: string): Promise<Buffer> { if (!safeRelative(relativePath)) throw new Error('Unsafe adapter backup path'); const path = this.#backupPath(operationId, relativePath); await this.#rejectLinkedControlPath(path); await this.#rejectLinkedBackupPath(operationId, path); return this.#readOrdinary(path) }
+  async #writeNative(path: string, bytes: Buffer, root: string): Promise<void> { await restoreBytesDurable(path, bytes, () => this.#rejectLinkedPath(root, path)) }
   async #rejectLinkedBackupPath(operationId: string, path: string): Promise<void> { const root = this.#backupDirectory(operationId); if (!contains(root, path)) throw new Error('Unsafe adapter backup path'); const rootStat = await statOrAbsent(root); if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Malformed adapter backup directory'); const stat = await statOrAbsent(path); if (!stat?.isFile() || stat.isSymbolicLink()) throw new Error('Malformed adapter backup file') }
 
   async #readJournal(operationId: string): Promise<AdapterJournal> {
     let value: unknown
-    try { value = JSON.parse(await readFile(this.#journalPath(operationId), 'utf8')) } catch (error) { throw new Error(`Malformed adapter journal: ${operationId}`, { cause: error }) }
+    try { const path = this.#journalPath(operationId); await this.#rejectLinkedControlPath(path); value = JSON.parse((await this.#readOrdinarySnapshot(path)).bytes.toString('utf8')) } catch (error) { throw new Error(`Malformed adapter journal: ${operationId}`, { cause: error }) }
     const journal = value as AdapterJournal
     try {
       expectedKeys(journal, ['schemaVersion', 'operationId', 'plan', 'phase', 'backupEntries', 'startedAt', 'updatedAt', 'result'], 'Adapter journal')
       if (journal.schemaVersion !== 1 || journal.operationId !== operationId || !Array.isArray(journal.backupEntries) || !['journaled', 'backing-up', 'backed-up', 'applying', 'applied', 'committed', 'rolling-back', 'rolled-back'].includes(journal.phase) || Number.isNaN(Date.parse(journal.startedAt)) || Number.isNaN(Date.parse(journal.updatedAt))) throw new Error('invalid fields')
       this.#validateApproval(journal.plan, false); await this.#validateOperations(journal.plan.target, journal.plan.operations)
-      for (const entry of journal.backupEntries) { expectedKeys(entry, ['operationId', 'operationEntryId', 'rootId', 'relativePath', 'priorState', 'backupRelativePath', 'priorSha256', 'priorBytes'], 'Adapter backup entry'); if (entry.operationId !== operationId || !SAFE_SEGMENT.test(entry.operationEntryId) || !SAFE_SEGMENT.test(entry.rootId) || !safeRelative(entry.relativePath) || (entry.priorState !== 'file' && entry.priorState !== 'absent') || (entry.backupRelativePath !== undefined && !safeRelative(entry.backupRelativePath))) throw new Error('invalid backup entry') }
+      for (const entry of journal.backupEntries) { expectedKeys(entry, ['operationId', 'operationEntryId', 'rootId', 'relativePath', 'priorState', 'backupRelativePath', 'priorSha256', 'priorBytes', 'priorFileIdentity', 'createdSha256', 'createdBytes', 'createdFileIdentity'], 'Adapter backup entry'); if (entry.operationId !== operationId || !SAFE_SEGMENT.test(entry.operationEntryId) || !SAFE_SEGMENT.test(entry.rootId) || !safeRelative(entry.relativePath) || (entry.priorState !== 'file' && entry.priorState !== 'absent') || (entry.backupRelativePath !== undefined && !safeRelative(entry.backupRelativePath))) throw new Error('invalid backup entry') }
       this.#validateJournalInvariants(journal)
+      await this.#validateBackupEvidence(journal)
     } catch (error) { throw new Error(`Malformed adapter journal: ${operationId}`, { cause: error }) }
     return freeze(journal)
   }
@@ -353,8 +375,12 @@ export class ProjectionCoordinator {
     if ((journal.phase === 'journaled' && entries.length !== 0) || (complete && entries.length !== changes.length) || entries.length > changes.length) throw new Error('Journal backup evidence is incomplete for its phase')
     for (const [index, entry] of entries.entries()) {
       const operation = changes[index]; if (!operation || entry.operationEntryId !== operation.id || entry.rootId !== operation.rootId || entry.relativePath !== this.#nativeRelative(journal.plan.target, operation)) throw new Error('Journal backup evidence does not match the approved operation')
-      if (operation.kind === 'create') { if (entry.priorState !== 'absent' || entry.backupRelativePath !== undefined || entry.priorSha256 !== undefined || entry.priorBytes !== undefined) throw new Error('Malformed absent-before evidence') }
-      else if (entry.priorState !== 'file' || entry.backupRelativePath !== `${index}.bin` || entry.priorSha256 !== operation.expectedBeforeSha256 || !Number.isSafeInteger(entry.priorBytes) || entry.priorBytes! < 0) throw new Error('Malformed file backup evidence')
+      if (operation.kind === 'create') {
+        if (entry.priorState !== 'absent' || entry.backupRelativePath !== undefined || entry.priorSha256 !== undefined || entry.priorBytes !== undefined || entry.priorFileIdentity !== undefined) throw new Error('Malformed absent-before evidence')
+        const hasCreated = entry.createdSha256 !== undefined || entry.createdBytes !== undefined || entry.createdFileIdentity !== undefined
+        if (hasCreated && (!SHA256.test(entry.createdSha256 ?? '') || !Number.isSafeInteger(entry.createdBytes) || entry.createdBytes! < 0 || !SAFE_SEGMENT.test(entry.createdFileIdentity ?? ''))) throw new Error('Malformed created-file ownership evidence')
+        if (['applied', 'committed'].includes(journal.phase) && !hasCreated) throw new Error('Completed journal lacks created-file ownership evidence')
+      } else if (entry.priorState !== 'file' || entry.backupRelativePath !== `${index}.bin` || entry.priorSha256 !== operation.expectedBeforeSha256 || entry.priorFileIdentity !== operation.expectedBeforeIdentity || !Number.isSafeInteger(entry.priorBytes) || entry.priorBytes! < 0 || entry.createdSha256 !== undefined || entry.createdBytes !== undefined || entry.createdFileIdentity !== undefined) throw new Error('Malformed file backup evidence')
     }
     if (journal.phase === 'applied') { if (!journal.result) throw new Error('Applied journal requires a result'); this.#validateResult(journal.result, journal.plan, 'applied') }
     else if (journal.phase === 'committed') { if (!journal.result) throw new Error('Committed journal requires a result'); this.#validateResult(journal.result, journal.plan, 'committed') }
@@ -363,7 +389,16 @@ export class ProjectionCoordinator {
     else if (journal.result) throw new Error('Journal phase cannot contain a result')
   }
 
-  async #writeJournal(journal: AdapterJournal): Promise<void> { await writeJsonAtomic(this.#journalPath(journal.operationId), journal) }
+  async #validateBackupEvidence(journal: AdapterJournal): Promise<void> {
+    const expected = journal.backupEntries.filter((entry) => entry.priorState === 'file').map((entry) => entry.backupRelativePath!).sort((left, right) => left < right ? -1 : left > right ? 1 : 0); const root = this.#backupDirectory(journal.operationId)
+    let entries
+    try { await this.#rejectLinkedControlPath(root); const stat = await lstat(root); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Malformed adapter backup evidence directory'); entries = await readdir(root, { withFileTypes: true }) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT' && expected.length === 0) return; throw error }
+    if (entries.some((entry) => !entry.isFile())) throw new Error('Unknown adapter backup evidence entry')
+    const actual = entries.map((entry) => entry.name).sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+    if (!same(actual, expected)) throw new Error('Unknown or incomplete adapter backup evidence')
+  }
+
+  async #writeJournal(journal: AdapterJournal): Promise<void> { const path = this.#journalPath(journal.operationId); await this.#rejectLinkedControlPath(path); await writeJsonDurable(path, journal); await this.#rejectLinkedControlPath(path) }
   #journalDirectory(): string { return join(this.#stateRoot, '.ash', 'adapters', 'journals') }
   #journalPath(operationId: string): string { if (!SAFE_SEGMENT.test(operationId)) throw new Error('Unsafe adapter operation id'); return join(this.#journalDirectory(), `${operationId}.json`) }
   #backupDirectory(operationId: string): string { if (!SAFE_SEGMENT.test(operationId)) throw new Error('Unsafe adapter operation id'); return join(this.#stateRoot, '.ash-backups', 'adapters', operationId) }
@@ -377,10 +412,20 @@ export class ProjectionCoordinator {
   async #withInstallationLock<T>(plan: ApprovedAdapterPlan, recovery: boolean, operation: () => Promise<T>): Promise<T> {
     const base = this.#installationLockBase(plan)
     return serialized(base, async () => {
-      await mkdir(dirname(base), { recursive: true }); const lock = await acquireMigrationFileLock(base, recovery)
+      await this.#rejectLinkedControlPath(base); await ensureDirectoryDurable(dirname(base)); await this.#rejectLinkedControlPath(base); const lock = await acquireMigrationFileLock(base, recovery)
       try { return await operation() } finally { await lock.release() }
     })
+  }
+
+  async #rejectLinkedControlPath(target: string): Promise<void> {
+    const absolute = resolve(target); const root = parse(absolute).root; let current = root
+    for (const part of absolute.slice(root.length).split(sep).filter(Boolean)) {
+      current = join(current, part); const stat = await statOrAbsent(current); if (!stat) break
+      if (stat.isSymbolicLink()) throw new Error('Adapter control path has a symbolic link or junction ancestor')
+      if (current !== absolute && !stat.isDirectory()) throw new Error('Adapter control path has a non-directory ancestor')
+    }
   }
 }
 
 function digestBytes(bytes: Uint8Array): string { return createHash('sha256').update(bytes).digest('hex') }
+function fileIdentity(stat: { dev: bigint; ino: bigint; birthtimeNs: bigint }): string { return `${stat.dev.toString(16)}-${stat.ino.toString(16)}-${stat.birthtimeNs.toString(16)}` }

@@ -41,6 +41,8 @@ export interface PreviewFileOperation {
   readonly nativePath: string
   /** Bound by the coordinator during preview for every existing path. */
   readonly expectedBeforeSha256?: string
+  /** Opaque same-file identity bound from the same no-follow preview handle. */
+  readonly expectedBeforeIdentity?: string
   /** Required for create/modify so verification and crash rollback are deterministic. */
   readonly expectedAfterSha256?: string
 }
@@ -110,6 +112,10 @@ export interface AdapterBackupEntry {
   readonly backupRelativePath?: string
   readonly priorSha256?: string
   readonly priorBytes?: number
+  readonly priorFileIdentity?: string
+  readonly createdSha256?: string
+  readonly createdBytes?: number
+  readonly createdFileIdentity?: string
 }
 
 export interface AdapterJournal {
