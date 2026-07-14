@@ -1096,32 +1096,48 @@
       "reason": "Reviewed cleanup of owned materialization staging files."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 303, "column": 15, "operation": "unlink",
-      "reason": "Reviewed rollback removal limited to an approved native create path that was durably recorded absent-before and whose current bytes still match the approved adapter output digest."
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 23, "column": 19, "operation": "mkdir",
+      "reason": "Reviewed one-level durable directory creation after every existing ancestor was checked as an ordinary directory below an injected ASH or approved external Agent root."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 315, "column": 90, "operation": "open",
-      "reason": "Reviewed no-follow read primitive restricted to an adapter plan path already contained by a detected installation's explicit authorized native root."
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 30, "column": 153, "operation": "open",
+      "reason": "Reviewed exclusive staging-file creation beside an approved adapter journal or native restore target after linked-ancestor validation."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 318, "column": 161, "operation": "mkdir",
-      "reason": "Reviewed adapter backup directory creation below the coordinator-owned injected ASH state root for one approved operation."
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 31, "column": 141, "operation": "rm",
+      "reason": "Reviewed failure cleanup restricted to the random exclusively-created adapter staging file."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 318, "column": 225, "operation": "open",
-      "reason": "Reviewed exclusive adapter backup creation below the coordinator-owned injected ASH backup root after validated root-relative path construction."
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 38, "column": 11, "operation": "rename",
+      "reason": "Reviewed atomic publication of a synced adapter journal staging file within its validated ASH state directory."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 320, "column": 74, "operation": "mkdir",
-      "reason": "Reviewed rollback restoration parent creation for an approved native path contained by the detected installation's explicit authorized root."
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 39, "column": 27, "operation": "rm",
+      "reason": "Reviewed failed-publication cleanup restricted to the random adapter staging file."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 320, "column": 138, "operation": "open",
-      "reason": "Reviewed rollback byte restoration restricted to a journaled and backed-up approved native path beneath an explicit authorized root."
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 45, "column": 20, "operation": "open",
+      "reason": "Reviewed exclusive no-overwrite backup creation below the validated operation-specific ASH backup directory."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 343, "column": 72, "operation": "mkdir",
-      "reason": "Reviewed durable adapter journal and coordinator lock directory creation below the caller-injected ASH state root."
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 47, "column": 62, "operation": "rm",
+      "reason": "Reviewed cleanup only when this call successfully created and still owns the exclusive adapter backup target."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 56, "column": 37, "operation": "rename",
+      "reason": "Reviewed atomic rollback restore from a synced sibling staging file after repeated approved-native-path validation."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 56, "column": 145, "operation": "rm",
+      "reason": "Reviewed rollback staging cleanup restricted to the random exclusively-created sibling file."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 331, "column": 15, "operation": "unlink",
+      "reason": "Reviewed rollback removal limited to a create path with durable matching file identity, hash, and byte count evidence."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 344, "column": 90, "operation": "open",
+      "reason": "Reviewed no-follow ordinary-file reads restricted to validated adapter native, journal, or backup paths."
     }
   ],
   "literals": [
