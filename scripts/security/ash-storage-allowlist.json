@@ -1022,7 +1022,7 @@
       "reason": "Reviewed Phase 2 verification orchestrator which launches fixed repository tests and the storage audit; it does not select application persistence paths."
     },
     {
-      "file": "scripts/verify/ash-phase3.ts", "line": 15, "column": 18, "operation": "spawnSync",
+      "file": "scripts/verify/ash-phase3.ts", "line": 18, "column": 18, "operation": "spawnSync",
       "reason": "Reviewed Phase 3 verification orchestrator which launches fixed repository tests, typechecks, and the storage audit; it does not select application persistence paths."
     },
     { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 17, "column": 3, "operation": "mkdirSync", "reason": "Reviewed volume-local CAS lease directory creation below the injected and validated ASH volume root." },
@@ -1033,12 +1033,12 @@
     { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 47, "column": 11, "operation": "mkdir", "reason": "Reviewed asynchronous volume-local CAS lease directory creation below the injected ASH volume root." },
     { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 51, "column": 28, "operation": "open", "reason": "Reviewed asynchronous exclusive CAS lock acquisition below the injected ASH volume root." },
     { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 57, "column": 47, "operation": "unlink", "reason": "Reviewed asynchronous release of only the current volume-local CAS lock file." },
-    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 82, "column": 139, "operation": "rm", "reason": "Reviewed removal of a relived quarantine candidate record below the locked volume-local CAS metadata root." },
-    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 91, "column": 17, "operation": "writeFile", "reason": "Reviewed durable staging write of a verified GC candidate record below the locked volume-local quarantine root." },
-    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 91, "column": 92, "operation": "rename", "reason": "Reviewed atomic publish of a verified GC candidate record within the locked volume-local quarantine root." },
-    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 93, "column": 95, "operation": "rm", "reason": "Reviewed cleanup of an owned GC candidate staging record after a failed atomic publish." },
-    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 112, "column": 15, "operation": "rm", "reason": "Reviewed removal of verified candidate metadata after unchanged object validation under the volume CAS lease." },
-    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 115, "column": 15, "operation": "unlink", "reason": "Reviewed deletion of a twice-scanned unchanged unreferenced CAS object under the volume CAS lease." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 65, "column": 139, "operation": "rm", "reason": "Reviewed removal of a relived quarantine candidate record below the locked volume-local CAS metadata root." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 74, "column": 17, "operation": "writeFile", "reason": "Reviewed durable staging write of a verified GC candidate record below the locked volume-local quarantine root." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 74, "column": 92, "operation": "rename", "reason": "Reviewed atomic publish of a verified GC candidate record within the locked volume-local quarantine root." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 76, "column": 95, "operation": "rm", "reason": "Reviewed cleanup of an owned GC candidate staging record after a failed atomic publish." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 95, "column": 15, "operation": "rm", "reason": "Reviewed removal of verified candidate metadata after unchanged object validation under the volume CAS lease." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 98, "column": 15, "operation": "unlink", "reason": "Reviewed deletion of a twice-scanned unchanged unreferenced CAS object under the volume CAS lease." },
     {
       "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 39, "column": 19, "operation": "mkdir",
       "reason": "Reviewed immutable CAS fanout directory under the explicit volume-local .ash object namespace."

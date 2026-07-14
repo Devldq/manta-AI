@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { lstat, open, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises'
+import { lstat, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { ensureSafeDirectory, hashFileHandleSha256 } from './object-store'
+import { ensureSafeDirectory } from './object-store'
 import { withVolumeContentStoreLease } from './content-store-lease'
 import { scanVolumeReferencesUnderLease, type PendingContentReferences, type ReferenceScanBlocker, type VerifiedContentObject } from './reference-scan'
+import { readGarbageCollectionCandidateStable, validateGarbageCandidateObject, type GarbageCollectionCandidate } from './garbage-candidate'
 
-interface Candidate { schemaVersion: 1; hash: string; size: number; identity: string; mtimeMs: number; quarantinedAt: string }
+type Candidate = GarbageCollectionCandidate
 export interface GarbageCollectionResult { status: 'complete' | 'degraded'; cleanableBytes: number | null; deletedBytes: number; quarantined: string[]; deleted: string[]; blockers: ReferenceScanBlocker[]; scannedAt: string }
 export interface VerifiedPendingContentReferences extends PendingContentReferences { complete: true }
 export interface GarbageCollectorOptions {
@@ -14,14 +15,6 @@ export interface GarbageCollectorOptions {
   beforeDeleteValidation?: (path: string) => void | Promise<void>
 }
 const HASH = /^[a-f0-9]{64}$/
-
-function parseCandidate(text: string, expectedHash: string): Candidate {
-  const value: unknown = JSON.parse(text)
-  if (!value || typeof value !== 'object') throw new Error('Candidate is not an object')
-  const item = value as Candidate
-  if (item.schemaVersion !== 1 || item.hash !== expectedHash || !HASH.test(item.hash) || !Number.isSafeInteger(item.size) || item.size < 0 || typeof item.identity !== 'string' || !item.identity || !Number.isFinite(item.mtimeMs) || Number.isNaN(Date.parse(item.quarantinedAt))) throw new Error('Candidate schema or identity is invalid')
-  return item
-}
 
 export class VolumeContentGarbageCollector {
   readonly volumeRoot: string
@@ -37,7 +30,7 @@ export class VolumeContentGarbageCollector {
     try {
       for (const name of await readdir(quarantineRoot)) {
         const hash = name.endsWith('.json') ? name.slice(0, -5) : ''
-        try { if (!HASH.test(hash)) throw new Error('Unexpected quarantine entry'); const stat = await lstat(resolve(quarantineRoot, name)); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Candidate must be an ordinary file'); candidateFiles.set(hash, parseCandidate(await readFile(resolve(quarantineRoot, name), 'utf8'), hash)) }
+        try { if (!HASH.test(hash)) throw new Error('Unexpected quarantine entry'); candidateFiles.set(hash, await readGarbageCollectionCandidateStable(resolve(quarantineRoot, name), hash)) }
         catch (error) { candidateBlockers.push({ code: 'object-integrity', path: `.ash/gc/quarantine/${name}`, detail: error instanceof Error ? error.message : String(error) }) }
       }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') candidateBlockers.push({ code: 'object-tree-unreadable', path: '.ash/gc/quarantine', detail: error instanceof Error ? error.message : String(error) }) }
@@ -58,17 +51,7 @@ export class VolumeContentGarbageCollector {
       const observed = this.options.allocation?.(object) ?? { allocatedBytes: object.allocatedBytes, evidence: object.allocationEvidence }
       return observed.evidence !== 'unavailable' && observed.allocatedBytes !== null && Number.isSafeInteger(observed.allocatedBytes) && observed.allocatedBytes >= 0 ? observed.allocatedBytes : null
     }
-    const validateCandidate = async (object: VerifiedContentObject, candidate: Candidate, invokeHook: boolean): Promise<void> => {
-      const handle = await open(object.path, 'r')
-      try {
-        const before = await handle.stat(); const digest = await hashFileHandleSha256(handle); const after = await handle.stat()
-        if (invokeHook) await this.options.beforeDeleteValidation?.(object.path)
-        const pathStat = await lstat(object.path); const identity = `${before.dev}:${before.ino}:${before.birthtimeMs}`; const pathIdentity = `${pathStat.dev}:${pathStat.ino}:${pathStat.birthtimeMs}`
-        const stableHandle = before.dev === after.dev && before.ino === after.ino && before.size === after.size && before.nlink === after.nlink && before.mtimeMs === after.mtimeMs
-        const stablePath = pathIdentity === identity && pathStat.size === after.size && pathStat.nlink === after.nlink && pathStat.mtimeMs === after.mtimeMs
-        if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size !== candidate.size || identity !== candidate.identity || before.mtimeMs !== candidate.mtimeMs || !stableHandle || !stablePath || digest.hash !== candidate.hash || digest.size !== candidate.size) throw new Error('CAS object identity changed during final deletion validation')
-      } finally { await handle.close() }
-    }
+    const validateCandidate = (object: VerifiedContentObject, candidate: Candidate, invokeHook: boolean): Promise<void> => validateGarbageCandidateObject(object, candidate, invokeHook ? this.options.beforeDeleteValidation : undefined)
     try {
       const verifiedAllocations = new Map<string, number>(); let prospectiveTotal = 0
       for (const object of scan.objects.filter((item) => !scan.liveHashes.has(item.hash) && item.links === 1)) {

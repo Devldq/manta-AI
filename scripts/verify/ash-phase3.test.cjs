@@ -1,0 +1,10 @@
+const assert = require('node:assert/strict')
+const { readFileSync } = require('node:fs')
+const { join } = require('node:path')
+
+const source = readFileSync(join(__dirname, 'ash-phase3.ts'), 'utf8')
+const sharedBuild = source.indexOf("['pnpm', '--filter', '@manta/shared', 'build']")
+const sharedTest = source.indexOf("['pnpm', '--filter', '@manta/shared', 'exec', 'vitest', 'run', 'src/storage-capacity.test.ts']")
+const storageTest = source.indexOf("['pnpm', '--filter', '@manta/storage-hub'")
+assert(sharedBuild >= 0 && sharedTest > sharedBuild && storageTest > sharedTest, 'Phase 3 must build and test shared capacity contracts before downstream packages')
+console.log('ok - Phase 3 builds and tests shared capacity contracts before downstream packages')

@@ -10,9 +10,9 @@ export function StorageOverview({ overview, onMove = () => {}, disabled = false 
       <span>Volumes: {overview.volumes.length}</span><span>Logical: {overview.logicalBytes ?? overview.groups.reduce((sum, group) => sum + group.bytes, 0)} B</span><span>Health: {groups.every((group) => group.health === 'healthy' || group.health === 'Not assigned') ? 'Healthy' : 'Needs attention'}</span>
     </div>
     {capacity && <section aria-label="Verified storage capacity" style={{ marginTop: 12, fontSize: 13 }}>
-      <div>Logical immutable: {capacity.logicalImmutableBytes} B</div>
+      <div>Logical immutable: {capacity.logicalImmutableBytes === null ? 'Unavailable' : `${capacity.logicalImmutableBytes} B`}</div>
       <div>Physical immutable: {capacity.physicalImmutableBytes === null ? 'Unavailable' : `${capacity.physicalImmutableBytes} B`}</div>
-      <div>Replica/cache: {capacity.replicaBytes} B</div>
+      <div>Replica/cache: {capacity.replicaBytes === null ? 'Unavailable' : `${capacity.replicaBytes} B`}</div>
       <div>Safely cleanable: {capacity.cleanableBytes === null ? 'Unavailable' : `${capacity.cleanableBytes} B`}</div>
       {capacity.scanStatus === 'complete' && capacity.verifiedDedupSavedBytes !== null
         ? <strong>Savings verified: {capacity.verifiedDedupSavedBytes} B</strong>

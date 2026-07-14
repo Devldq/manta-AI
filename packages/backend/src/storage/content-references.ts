@@ -29,7 +29,7 @@ export function inspectCrossGroupBlockers(groupRoots: string[]): ContentReferenc
 
 export function createVolumePendingInspector(options: {
   volumeRoot: string; knowledgeRoot: string; extensionsRoot: string; groupRoots: string[]
-  migrationPending: () => boolean | Promise<boolean>; gitPending: () => boolean | Promise<boolean>
+  migrationPending: () => boolean | Promise<boolean>; gitPending: () => boolean | { blockers: ContentReferenceBlocker[] } | Promise<boolean | { blockers: ContentReferenceBlocker[] }>
 }): () => Promise<VerifiedPendingContentReferences> {
   if (typeof options.migrationPending !== 'function' || typeof options.gitPending !== 'function') throw new Error('Migration and Git pending inspectors are required')
   return async () => {
@@ -37,7 +37,8 @@ export function createVolumePendingInspector(options: {
     const extension = inspectExtensionBlockers(options.extensionsRoot); const crossGroup = inspectCrossGroupBlockers(options.groupRoots)
     const blockers = [...rag.blockers, ...extension.blockers, ...crossGroup.blockers]
     if (await options.migrationPending()) blockers.push({ code: 'migration-pending', detail: 'A volume migration is pending' })
-    if (await options.gitPending()) blockers.push({ code: 'git-pending', detail: 'A Git sync/import operation is pending' })
+    const git = await options.gitPending()
+    if (typeof git === 'boolean') { if (git) blockers.push({ code: 'git-pending', detail: 'A Git sync/import operation is pending' }) } else blockers.push(...git.blockers)
     return { complete: true, liveHashes: rag.liveHashes, blockers }
   }
 }

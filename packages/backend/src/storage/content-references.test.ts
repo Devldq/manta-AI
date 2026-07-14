@@ -34,6 +34,12 @@ describe('pending content reference adapters', () => {
     expect(inspectCrossGroupBlockers([groupRoot]).blockers[0]?.code).toBe('cross-group-pending')
   })
 
+  it('preserves structured Git blocker codes and details', async () => {
+    const volumeRoot = await root()
+    const inspect = createVolumePendingInspector({ volumeRoot, knowledgeRoot: join(volumeRoot, 'knowledge'), extensionsRoot: join(volumeRoot, 'extensions'), groupRoots: [], migrationPending: () => false, gitPending: () => ({ liveHashes: [], blockers: [{ code: 'git-import-unreadable', detail: 'staging ACL denied' }] }) })
+    expect((await inspect()).blockers).toContainEqual({ code: 'git-import-unreadable', detail: 'staging ACL denied' })
+  })
+
   it('blocks unknown 2PC directory entries and incompletely shaped committed journals', async () => {
     const unknownRoot = await root(); await mkdir(join(unknownRoot, '.ash-2pc'), { recursive: true }); await writeFile(join(unknownRoot, '.ash-2pc', 'unexpected.tmp'), 'x')
     expect(inspectCrossGroupBlockers([unknownRoot]).blockers[0]?.code).toBe('cross-group-journal-invalid')

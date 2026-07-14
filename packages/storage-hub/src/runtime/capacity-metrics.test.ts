@@ -16,5 +16,5 @@ it('measures every volume with the mandatory pending runtime composition', async
     capacityAllocation: () => ({ allocatedBytes: 0, evidence: 'verified-test' }),
   })
   const result = await hub.capacityMetrics()
-  expect(inspected.sort()).toEqual(['v1', 'v2']); expect(result.volumes.map((item) => item.volumeId)).toEqual(['v1', 'v2']); expect(result.aggregate.scanStatus).toBe('complete')
+  expect(inspected.sort()).toEqual(['v1', 'v1', 'v2', 'v2']); expect(result.volumes.map((item) => item.volumeId)).toEqual(['v1', 'v2']); expect(result.aggregate.scanStatus).toBe('complete')
 })

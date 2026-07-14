@@ -17,4 +17,10 @@ describe('storage capacity DTOs', () => {
     expect(StorageCapacityMetricsSchema.safeParse({ ...complete('v1', 12, 8), scanStatus: 'degraded', physicalImmutableBytes: null, verifiedDedupSavedBytes: null, blockers: [{ code: 'allocation-unavailable', detail: 'allocation unavailable' }] }).success).toBe(true)
     expect(StorageCapacityMetricsSchema.safeParse({ ...complete('v1', 12, 8), scanStatus: 'degraded' }).success).toBe(false)
   })
+
+  it('degrades and propagates null instead of fabricating zero when aggregate totals overflow', () => {
+    const result = aggregateStorageCapacityMetrics([complete('v1', Number.MAX_SAFE_INTEGER, 1), complete('v2', Number.MAX_SAFE_INTEGER, 1)])
+    expect(result).toMatchObject({ scanStatus: 'degraded', logicalImmutableBytes: null, verifiedDedupSavedBytes: null })
+    expect(result.blockers).toContainEqual(expect.objectContaining({ code: 'capacity-overflow' }))
+  })
 })

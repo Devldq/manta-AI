@@ -144,7 +144,7 @@ export async function createBackendStorageComposition(bootstrap: BootstrapStore,
         extensionsRoot: groups.includes('extensions') ? runtime.resolve('extensions') : join(root, 'extensions'),
         groupRoots: groups.map((group) => runtime!.resolve(group)),
         migrationPending: () => migrationBlocks,
-        gitPending: () => gitState.pending,
+        gitPending: () => gitState,
       })()
     },
     createDrivers(storage) {

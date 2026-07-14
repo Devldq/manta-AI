@@ -14,12 +14,10 @@ export const StorageCapacityBlockerSchema = z.object({
 })
 export type StorageCapacityBlocker = z.infer<typeof StorageCapacityBlockerSchema>
 
-const CapacityFieldsSchema = z.object({
+const CapacityStatusFieldsSchema = z.object({
   scanStatus: z.enum(['complete', 'degraded', 'scanning']),
-  logicalImmutableBytes: z.number().int().nonnegative(),
   physicalImmutableBytes: z.number().int().nonnegative().nullable(),
   verifiedDedupSavedBytes: z.number().int().nonnegative().nullable(),
-  replicaBytes: z.number().int().nonnegative(),
   cleanableBytes: z.number().int().nonnegative().nullable(),
   scannedAt: TimestampSchema,
   blockers: z.array(StorageCapacityBlockerSchema),
@@ -29,8 +27,8 @@ const CapacityFieldsSchema = z.object({
   }
 })
 
-export const StorageCapacityMetricsSchema = CapacityFieldsSchema.safeExtend({ volumeId: z.string().min(1) })
-export const AggregateStorageCapacityMetricsSchema = CapacityFieldsSchema
+export const StorageCapacityMetricsSchema = CapacityStatusFieldsSchema.safeExtend({ volumeId: z.string().min(1), logicalImmutableBytes: z.number().int().nonnegative().nullable(), replicaBytes: z.number().int().nonnegative().nullable() })
+export const AggregateStorageCapacityMetricsSchema = CapacityStatusFieldsSchema.safeExtend({ logicalImmutableBytes: z.number().int().nonnegative().nullable(), replicaBytes: z.number().int().nonnegative().nullable() })
 export type StorageVolumeCapacityMetrics = z.infer<typeof StorageCapacityMetricsSchema>
 export type AggregateStorageCapacityMetrics = z.infer<typeof AggregateStorageCapacityMetricsSchema>
 
@@ -41,13 +39,17 @@ function capacitySum(values: number[]): number | null {
 }
 
 export function aggregateStorageCapacityMetrics(volumes: StorageVolumeCapacityMetrics[]): AggregateStorageCapacityMetrics {
-  const status = volumes.some((item) => item.scanStatus === 'scanning') ? 'scanning' : volumes.every((item) => item.scanStatus === 'complete') ? 'complete' : 'degraded'
-  const logical = capacitySum(volumes.map((item) => item.logicalImmutableBytes)) ?? 0
-  const replicas = capacitySum(volumes.map((item) => item.replicaBytes)) ?? 0
-  const physical = status === 'complete' && volumes.every((item) => item.physicalImmutableBytes !== null) ? capacitySum(volumes.map((item) => item.physicalImmutableBytes!)) : null
+  const requestedStatus = volumes.some((item) => item.scanStatus === 'scanning') ? 'scanning' : volumes.every((item) => item.scanStatus === 'complete') ? 'complete' : 'degraded'
+  const logicalKnown = volumes.every((item) => item.logicalImmutableBytes !== null); const logical = logicalKnown ? capacitySum(volumes.map((item) => item.logicalImmutableBytes!)) : null
+  const replicasKnown = volumes.every((item) => item.replicaBytes !== null); const replicas = replicasKnown ? capacitySum(volumes.map((item) => item.replicaBytes!)) : null
+  const physicalSum = requestedStatus === 'complete' && volumes.every((item) => item.physicalImmutableBytes !== null) ? capacitySum(volumes.map((item) => item.physicalImmutableBytes!)) : null
   const cleanable = volumes.every((item) => item.cleanableBytes !== null) ? capacitySum(volumes.map((item) => item.cleanableBytes!)) : null
+  const overflow = (logicalKnown && logical === null) || (replicasKnown && replicas === null) || (requestedStatus === 'complete' && physicalSum === null) || (volumes.every((item) => item.cleanableBytes !== null) && cleanable === null)
+  const unknown = !logicalKnown || !replicasKnown
+  const status = requestedStatus === 'scanning' && !overflow ? 'scanning' : overflow || unknown ? 'degraded' : requestedStatus
+  const physical = status === 'complete' ? physicalSum : null
   const scannedAt = volumes.map((item) => item.scannedAt).sort().at(-1) ?? new Date(0).toISOString()
-  return { scanStatus: status, logicalImmutableBytes: logical, physicalImmutableBytes: physical, verifiedDedupSavedBytes: status === 'complete' && physical !== null ? Math.max(0, logical - physical) : null, replicaBytes: replicas, cleanableBytes: cleanable, scannedAt, blockers: volumes.flatMap((item) => item.blockers) }
+  return { scanStatus: status, logicalImmutableBytes: logical, physicalImmutableBytes: physical, verifiedDedupSavedBytes: status === 'complete' && logical !== null && physical !== null ? Math.max(0, logical - physical) : null, replicaBytes: replicas, cleanableBytes: cleanable, scannedAt, blockers: [...volumes.flatMap((item) => item.blockers), ...(overflow ? [{ code: 'capacity-overflow', detail: 'Aggregate capacity exceeds the safe integer range' }] : [])] }
 }
 
 export interface StorageVolumeRecord {

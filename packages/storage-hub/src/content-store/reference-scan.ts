@@ -10,7 +10,13 @@ export interface ReferenceScanBlocker { code: ReferenceScanBlockerCode; path?: s
 export interface PendingContentReferences { liveHashes?: Iterable<string>; blockers?: Array<{ code?: string; detail: string }> }
 export interface VerifiedContentObject { hash: string; path: string; size: number; mtimeMs: number; allocatedBytes: number | null; allocationEvidence: 'posix-blocks' | 'unavailable'; identity: string; links: number }
 export interface VolumeReferenceScan {
-  volumeRoot: string; complete: boolean; logicalImmutableBytes: number; liveHashes: Set<string>; objects: VerifiedContentObject[]; blockers: ReferenceScanBlocker[]; scannedAt: string
+  volumeRoot: string; complete: boolean; logicalImmutableBytes: number | null; liveHashes: Set<string>; objects: VerifiedContentObject[]; blockers: ReferenceScanBlocker[]; scannedAt: string
+}
+
+export function sumLogicalReferenceBytes(values: Iterable<number>): { bytes: number | null; overflow: boolean } {
+  let bytes = 0
+  for (const value of values) { const next = bytes + value; if (!Number.isSafeInteger(next)) return { bytes: null, overflow: true }; bytes = next }
+  return { bytes, overflow: false }
 }
 
 function blocker(code: ReferenceScanBlockerCode, path: string | undefined, error: unknown): ReferenceScanBlocker {
@@ -18,7 +24,7 @@ function blocker(code: ReferenceScanBlockerCode, path: string | undefined, error
 }
 
 async function scanUnlocked(volumeRoot: string, pending: PendingContentReferences = {}): Promise<VolumeReferenceScan> {
-  const root = resolve(volumeRoot); const blockers: ReferenceScanBlocker[] = []; const liveHashes = new Set<string>(); let logicalImmutableBytes = 0
+  const root = resolve(volumeRoot); const blockers: ReferenceScanBlocker[] = []; const liveHashes = new Set<string>(); let logicalImmutableBytes: number | null = 0
   for (const hash of pending.liveHashes ?? []) { try { assertContentHash(hash); liveHashes.add(hash) } catch (error) { blockers.push(blocker('pending-operation', undefined, error)) } }
   for (const item of pending.blockers ?? []) blockers.push({ code: 'pending-operation', detail: `${item.code ? `${item.code}: ` : ''}${item.detail}` })
 
@@ -36,7 +42,10 @@ async function scanUnlocked(volumeRoot: string, pending: PendingContentReference
       const stat = await lstat(path); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Manifest must be an ordinary file')
       const assetId = name.slice(0, -5)
       const manifest = await new AssetManifestStore(root).readUnderLease(assetId)
-      for (const entry of manifest.entries) { logicalImmutableBytes += entry.size; liveHashes.add(entry.hash) }
+      for (const entry of manifest.entries) {
+        if (logicalImmutableBytes !== null) { const total = sumLogicalReferenceBytes([logicalImmutableBytes, entry.size]); logicalImmutableBytes = total.bytes; if (total.overflow) blockers.push(blocker('manifest-invalid', relative(root, path), new Error('Logical immutable byte total overflowed the safe integer range'))) }
+        liveHashes.add(entry.hash)
+      }
     } catch (error) { blockers.push(blocker((error as NodeJS.ErrnoException).code ? 'manifest-unreadable' : 'manifest-invalid', relative(root, path), error)) }
   }
 
@@ -69,3 +78,5 @@ export function scanVolumeReferences(volumeRoot: string, pending?: PendingConten
 
 /** Only for callers already holding the volume content-store lease. */
 export const scanVolumeReferencesUnderLease = scanUnlocked
+/** Pure read-only scan for optimistic measurement; callers must prove stability. */
+export const scanVolumeReferencesReadOnly = scanUnlocked

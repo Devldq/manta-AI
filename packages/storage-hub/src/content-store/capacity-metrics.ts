@@ -1,7 +1,8 @@
-import { lstat, readFile, readdir } from 'node:fs/promises'
+import { lstat, readdir } from 'node:fs/promises'
 import { relative, resolve } from 'node:path'
 import type { StorageCapacityBlocker, StorageVolumeCapacityMetrics } from '@manta/shared'
-import { scanVolumeReferences, type PendingContentReferences, type VerifiedContentObject } from './reference-scan'
+import { readGarbageCollectionCandidateStable, validateGarbageCandidateObject } from './garbage-candidate'
+import { scanVolumeReferencesReadOnly, type PendingContentReferences, type VerifiedContentObject, type VolumeReferenceScan } from './reference-scan'
 
 export interface CapacityAllocationEvidence { allocatedBytes: number | null; evidence: string }
 export interface VolumeCapacityOptions {
@@ -10,65 +11,84 @@ export interface VolumeCapacityOptions {
   allocation?: (object: VerifiedContentObject) => CapacityAllocationEvidence
 }
 
-function add(total: number, value: number): number {
+function add(total: number, value: number): number | null {
   const next = total + value
-  if (!Number.isSafeInteger(next)) throw new Error('Capacity byte total exceeds the safe integer range')
-  return next
+  return Number.isSafeInteger(next) ? next : null
 }
 
-async function replicaBytes(volumeRoot: string): Promise<{ bytes: number; blockers: StorageCapacityBlocker[] }> {
-  const root = resolve(volumeRoot, '.ash', 'sync'); let bytes = 0; const blockers: StorageCapacityBlocker[] = []
+async function replicaSnapshot(volumeRoot: string): Promise<{ bytes: number | null; fingerprint: string; blockers: StorageCapacityBlocker[] }> {
+  const root = resolve(volumeRoot, '.ash', 'sync'); let bytes: number | null = 0; const entries: string[] = []; const blockers: StorageCapacityBlocker[] = []
   async function walk(path: string): Promise<void> {
     const stat = await lstat(path)
     if (stat.isSymbolicLink()) throw new Error('Replica trees must not contain links or junctions')
-    if (stat.isFile()) { bytes = add(bytes, stat.size); return }
+    const item = `${relative(root, path)}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`; entries.push(item)
+    if (stat.isFile()) { if (bytes !== null) bytes = add(bytes, stat.size); if (bytes === null) throw new Error('Replica byte total overflowed the safe integer range'); return }
     if (!stat.isDirectory()) throw new Error('Replica entry is not an ordinary file or directory')
     for (const name of (await readdir(path)).sort()) await walk(resolve(path, name))
   }
   try { await walk(root) } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') blockers.push({ code: 'replica-unreadable', path: relative(volumeRoot, root), detail: error instanceof Error ? error.message : String(error) })
   }
-  return { bytes, blockers }
+  return { bytes, fingerprint: entries.sort().join('|'), blockers }
 }
 
-async function cleanableBytes(volumeRoot: string, objects: VerifiedContentObject[], allocation: (object: VerifiedContentObject) => CapacityAllocationEvidence): Promise<{ bytes: number | null; blockers: StorageCapacityBlocker[] }> {
-  const root = resolve(volumeRoot, '.ash', 'gc', 'quarantine'); const blockers: StorageCapacityBlocker[] = []; let bytes = 0
+async function cleanableSnapshot(volumeRoot: string, objects: VerifiedContentObject[], allocation: (object: VerifiedContentObject) => CapacityAllocationEvidence): Promise<{ bytes: number | null; fingerprint: string; blockers: StorageCapacityBlocker[] }> {
+  const root = resolve(volumeRoot, '.ash', 'gc', 'quarantine'); const blockers: StorageCapacityBlocker[] = []; const fingerprints: string[] = []; let bytes: number | null = 0
   try {
     const rootStat = await lstat(root); if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Quarantine root must be an ordinary directory')
     const byHash = new Map(objects.map((object) => [object.hash, object]))
     for (const name of (await readdir(root)).sort()) {
-      const path = resolve(root, name); const stat = await lstat(path)
-      if (!stat.isFile() || stat.isSymbolicLink() || !/^[a-f0-9]{64}\.json$/.test(name)) throw new Error(`Invalid quarantine entry ${name}`)
-      const candidate: unknown = JSON.parse(await readFile(path, 'utf8')); const hash = name.slice(0, -5); const record = candidate as Record<string, unknown>; const object = byHash.get(hash)
-      if (!object || record.schemaVersion !== 1 || record.hash !== hash || record.size !== object.size || record.identity !== object.identity || record.mtimeMs !== object.mtimeMs || object.links !== 1) throw new Error(`Quarantine candidate ${name} is not unchanged`)
+      if (!/^[a-f0-9]{64}\.json$/.test(name)) throw new Error(`Invalid quarantine entry ${name}`)
+      const hash = name.slice(0, -5); const object = byHash.get(hash); if (!object) throw new Error(`Quarantine candidate ${name} has no unchanged CAS object`)
+      const candidate = await readGarbageCollectionCandidateStable(resolve(root, name), hash)
+      if (candidate.size !== object.size || candidate.identity !== object.identity || candidate.mtimeMs !== object.mtimeMs || object.links !== 1) throw new Error(`Quarantine candidate ${name} is not unchanged`)
+      await validateGarbageCandidateObject(object, candidate)
       const observed = allocation(object)
       if (observed.allocatedBytes === null || observed.evidence === 'unavailable' || !Number.isSafeInteger(observed.allocatedBytes) || observed.allocatedBytes < 0) throw new Error(`Allocation unavailable for ${hash}`)
-      bytes = add(bytes, observed.allocatedBytes)
+      if (bytes !== null) bytes = add(bytes, observed.allocatedBytes); if (bytes === null) throw new Error('Cleanable byte total overflowed the safe integer range')
+      fingerprints.push(JSON.stringify(candidate))
     }
-    return { bytes, blockers }
+    return { bytes, fingerprint: fingerprints.join('|'), blockers }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { bytes: 0, blockers }
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { bytes: 0, fingerprint: '', blockers }
     blockers.push({ code: 'cleanable-unverified', path: relative(volumeRoot, root), detail: error instanceof Error ? error.message : String(error) })
-    return { bytes: null, blockers }
+    return { bytes: null, fingerprint: fingerprints.join('|'), blockers }
   }
+}
+
+function scanFingerprint(scan: VolumeReferenceScan): string {
+  return JSON.stringify({
+    logical: scan.logicalImmutableBytes,
+    live: [...scan.liveHashes].sort(),
+    objects: scan.objects.map((item) => [item.hash, item.size, item.mtimeMs, item.identity, item.links, item.allocatedBytes, item.allocationEvidence]).sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+    blockers: scan.blockers,
+  })
+}
+
+async function readSnapshot(volumeRoot: string, options: VolumeCapacityOptions, allocation: (object: VerifiedContentObject) => CapacityAllocationEvidence) {
+  const pending = await options.pending(); const scan = await scanVolumeReferencesReadOnly(volumeRoot, pending); const replicas = await replicaSnapshot(volumeRoot); const blockers: StorageCapacityBlocker[] = [...scan.blockers, ...replicas.blockers]
+  let physical: number | null = 0; const observedAllocations: Array<[string, number | null, string]> = []
+  for (const object of scan.objects) {
+    const observed = allocation(object); observedAllocations.push([object.hash, observed.allocatedBytes, observed.evidence])
+    if (observed.allocatedBytes === null || observed.evidence === 'unavailable' || !Number.isSafeInteger(observed.allocatedBytes) || observed.allocatedBytes < 0) { blockers.push({ code: 'allocation-unavailable', path: relative(volumeRoot, object.path), detail: 'Verified allocation evidence is unavailable' }); physical = null; break }
+    if (physical !== null) physical = add(physical, observed.allocatedBytes)
+    if (physical === null) { blockers.push({ code: 'allocation-unavailable', detail: 'Physical immutable byte total overflowed the safe integer range' }); break }
+  }
+  const cleanable = await cleanableSnapshot(volumeRoot, scan.objects, allocation); blockers.push(...cleanable.blockers)
+  const fingerprint = JSON.stringify({ scan: scanFingerprint(scan), replicas: [replicas.bytes, replicas.fingerprint], cleanable: [cleanable.bytes, cleanable.fingerprint], allocations: observedAllocations, blockers })
+  return { scan, replicas, physical, cleanable, blockers, fingerprint }
 }
 
 export async function measureVolumeCapacity(volumeRoot: string, options: VolumeCapacityOptions): Promise<StorageVolumeCapacityMetrics> {
   if (!options || typeof options.pending !== 'function') throw new Error('A mandatory pending-operation inspector is required')
-  let pending: PendingContentReferences & { complete: true }
-  try { pending = await options.pending() } catch (error) {
-    return { volumeId: options.volumeId, scanStatus: 'degraded', logicalImmutableBytes: 0, physicalImmutableBytes: null, verifiedDedupSavedBytes: null, replicaBytes: 0, cleanableBytes: null, scannedAt: new Date().toISOString(), blockers: [{ code: 'pending-operation', detail: error instanceof Error ? error.message : String(error) }] }
+  const allocation = options.allocation ?? ((object: VerifiedContentObject) => ({ allocatedBytes: object.allocatedBytes, evidence: object.allocationEvidence }))
+  try {
+    const first = await readSnapshot(volumeRoot, options, allocation); const second = await readSnapshot(volumeRoot, options, allocation)
+    const stable = first.fingerprint === second.fingerprint
+    const blockers = [...second.blockers, ...(!stable ? [{ code: 'concurrent-change', detail: 'Capacity inputs changed between read-only scans' }] : [])]
+    const complete = stable && second.scan.complete && second.scan.logicalImmutableBytes !== null && second.replicas.bytes !== null && second.physical !== null && blockers.length === 0
+    return { volumeId: options.volumeId, scanStatus: complete ? 'complete' : 'degraded', logicalImmutableBytes: stable ? second.scan.logicalImmutableBytes : null, physicalImmutableBytes: complete ? second.physical : null, verifiedDedupSavedBytes: complete ? Math.max(0, second.scan.logicalImmutableBytes! - second.physical!) : null, replicaBytes: stable ? second.replicas.bytes : null, cleanableBytes: stable ? second.cleanable.bytes : null, scannedAt: second.scan.scannedAt, blockers }
+  } catch (error) {
+    return { volumeId: options.volumeId, scanStatus: 'degraded', logicalImmutableBytes: null, physicalImmutableBytes: null, verifiedDedupSavedBytes: null, replicaBytes: null, cleanableBytes: null, scannedAt: new Date().toISOString(), blockers: [{ code: 'measurement-unavailable', detail: error instanceof Error ? error.message : String(error) }] }
   }
-  const scan = await scanVolumeReferences(volumeRoot, pending); const replicas = await replicaBytes(volumeRoot)
-  const allocation = options.allocation ?? ((object) => ({ allocatedBytes: object.allocatedBytes, evidence: object.allocationEvidence }))
-  const blockers: StorageCapacityBlocker[] = [...scan.blockers, ...replicas.blockers]
-  let physical = 0
-  for (const object of scan.objects) {
-    const observed = allocation(object)
-    if (observed.allocatedBytes === null || observed.evidence === 'unavailable' || !Number.isSafeInteger(observed.allocatedBytes) || observed.allocatedBytes < 0) { blockers.push({ code: 'allocation-unavailable', path: relative(volumeRoot, object.path), detail: 'Verified allocation evidence is unavailable' }); physical = -1; break }
-    try { physical = add(physical, observed.allocatedBytes) } catch (error) { blockers.push({ code: 'allocation-unavailable', detail: (error as Error).message }); physical = -1; break }
-  }
-  const cleanable = await cleanableBytes(volumeRoot, scan.objects, allocation); blockers.push(...cleanable.blockers)
-  const complete = scan.complete && replicas.blockers.length === 0 && cleanable.blockers.length === 0 && physical >= 0
-  return { volumeId: options.volumeId, scanStatus: complete ? 'complete' : 'degraded', logicalImmutableBytes: scan.logicalImmutableBytes, physicalImmutableBytes: complete ? physical : null, verifiedDedupSavedBytes: complete ? Math.max(0, scan.logicalImmutableBytes - physical) : null, replicaBytes: replicas.bytes, cleanableBytes: cleanable.bytes, scannedAt: scan.scannedAt, blockers }
 }

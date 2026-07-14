@@ -1,4 +1,5 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -53,6 +54,30 @@ describe('read-only volume capacity metrics', () => {
     const volumeRoot = await root(); await mkdir(join(volumeRoot, '.ash', 'gc', 'quarantine'), { recursive: true }); await writeFile(join(volumeRoot, '.ash', 'gc', 'quarantine', 'broken.json'), '{')
     const result = await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: allocated(1) })
     expect(result).toMatchObject({ scanStatus: 'degraded', cleanableBytes: null, verifiedDedupSavedBytes: null })
+  })
+
+  it('rejects a candidate missing quarantinedAt', async () => {
+    const volumeRoot = await root(); const object = await new VolumeObjectStore(volumeRoot).ingestBytes(Buffer.from('candidate')); await new VolumeContentGarbageCollector(volumeRoot, { pending, allocation: allocated(7) }).scan()
+    const candidatePath = join(volumeRoot, '.ash', 'gc', 'quarantine', `${object.hash}.json`); const record = JSON.parse(await import('node:fs/promises').then(({ readFile }) => readFile(candidatePath, 'utf8'))); delete record.quarantinedAt; await writeFile(candidatePath, JSON.stringify(record))
+    const result = await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: allocated(7) })
+    expect(result).toMatchObject({ scanStatus: 'degraded', cleanableBytes: null, verifiedDedupSavedBytes: null })
+  })
+
+  it('does not create or remove a content-store lock while measuring', async () => {
+    const volumeRoot = await root(); const ash = join(volumeRoot, '.ash'); const lock = join(ash, 'content-store.lock')
+    await expect(access(ash)).rejects.toMatchObject({ code: 'ENOENT' }); await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: allocated(0) }); await expect(access(lock)).rejects.toMatchObject({ code: 'ENOENT' }); await expect(access(ash)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('degrades when an object changes between optimistic read-only scans', async () => {
+    const volumeRoot = await root(); const object = await new VolumeObjectStore(volumeRoot).ingestBytes(Buffer.from('stable')); let changed = false
+    const result = await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: () => { if (!changed) { changed = true; writeFileSync(object.path, 'changed') } return { allocatedBytes: 1, evidence: 'verified-test' } } })
+    expect(result).toMatchObject({ scanStatus: 'degraded', physicalImmutableBytes: null, verifiedDedupSavedBytes: null })
+  })
+
+  it('degrades when a manifest changes between optimistic read-only scans', async () => {
+    const volumeRoot = await root(); const object = await new VolumeObjectStore(volumeRoot).ingestBytes(Buffer.from('manifest')); await new AssetManifestStore(volumeRoot).write({ assetId: 'a', entries: [{ path: 'one', hash: object.hash, size: object.size }] }); const manifestPath = join(volumeRoot, '.ash', 'assets', 'a.json'); let changed = false
+    const result = await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: () => { if (!changed) { changed = true; const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')); manifest.entries.push({ ...manifest.entries[0], path: 'two' }); writeFileSync(manifestPath, JSON.stringify(manifest)) } return { allocatedBytes: 1, evidence: 'verified-test' } } })
+    expect(result).toMatchObject({ scanStatus: 'degraded', logicalImmutableBytes: null, verifiedDedupSavedBytes: null })
   })
 
   it('labels replica trees separately and never subtracts them into savings', async () => {

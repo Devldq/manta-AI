@@ -5,12 +5,16 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { AssetManifestStore } from './manifest-store'
 import { VolumeObjectStore } from './object-store'
 import { scanVolumeReferences } from './reference-scan'
+import { sumLogicalReferenceBytes } from './reference-scan'
 
 const roots: string[] = []
 async function volume(): Promise<string> { const root = await mkdtemp(join(tmpdir(), 'ash-reference-scan-')); roots.push(root); return root }
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
 
 describe('volume reference scan', () => {
+  it('fails closed when repeated reference sizes overflow the safe integer range', () => {
+    expect(sumLogicalReferenceBytes([Number.MAX_SAFE_INTEGER, 1])).toEqual({ bytes: null, overflow: true })
+  })
   it('counts every manifest entry while verifying one volume-local physical object', async () => {
     const root = await volume(); const object = await new VolumeObjectStore(root).ingestBytes(Buffer.from('same'))
     await new AssetManifestStore(root).write({ assetId: 'one', entries: [{ path: 'a', hash: object.hash, size: object.size }, { path: 'b', hash: object.hash, size: object.size }] })
