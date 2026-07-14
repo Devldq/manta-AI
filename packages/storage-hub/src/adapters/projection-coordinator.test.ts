@@ -165,6 +165,19 @@ describe('ProjectionCoordinator transaction and rollback', () => {
     expect(await exists(join(nativeRoot, 'skills'))).toBe(false)
   })
 
+  it('rejects directory claims that are ordered after a descendant write', async () => {
+    const nativeRoot = await directory('ash-native-'); const child = join(nativeRoot, 'skill', 'SKILL.md')
+    const operations = [{ id: 'child', kind: 'create', rootId: 'home', nativePath: child, expectedAfterSha256: sha256('child') }, { id: 'parent', kind: 'create-directory', rootId: 'home', nativePath: dirname(child) }] as PreviewFileOperation[]
+    const target = installation(nativeRoot); const coordinator = makeCoordinator({ stateRoot: join(await directory(), 'state'), registry: new AdapterRegistry([fixtureAdapter(target, operations)]) })
+    await expect(coordinator.planProjection('fixture', selection, target)).rejects.toThrow(/directory.*before|topological|order/i)
+  })
+
+  it('rejects and cannot silently commit when an adapter replaces an owned directory claim', async () => {
+    const nativeRoot = await directory('ash-native-'); const claimed = join(nativeRoot, 'skill'); const operations = [{ id: 'directory', kind: 'create-directory', rootId: 'home', nativePath: claimed }] as PreviewFileOperation[]
+    const target = installation(nativeRoot); const stateRoot = join(await directory(), 'state'); const registry = new AdapterRegistry([fixtureAdapter(target, operations, async (plan) => { await rm(claimed, { recursive: true }); await mkdir(claimed); return result(plan) })]); const coordinator = makeCoordinator({ stateRoot, registry, now: () => new Date('2026-07-14T00:10:00.000Z') })
+    const approved = coordinator.approve(await coordinator.planProjection('fixture', selection, target)); await expect(coordinator.apply(approved)).rejects.toThrow(/directory.*claim|identity|safe/i); expect(await exists(claimed)).toBe(true)
+  })
+
   it.each(['after-directory-intent', 'after-directory-marker', 'after-directory-identity'] as const)('recovers a directory claim crash at %s without leaving ownership artifacts', async (point) => {
     const nativeRoot = await directory('ash-native-'); const targetDirectory = join(nativeRoot, 'skills')
     const operations = [{ id: 'skills-dir', kind: 'create-directory', rootId: 'home', nativePath: targetDirectory }] as PreviewFileOperation[]

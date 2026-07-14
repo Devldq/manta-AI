@@ -132,7 +132,7 @@ export class ProjectionCoordinator {
         const adapterResult = await this.#registry.require(plan.adapterId).apply(freeze(clone(plan)))
         this.#validateAdapterResult(adapterResult, plan)
         journal = await this.#recordFinalCreateEvidence(journal)
-        await this.#verifyApplied(plan.operations)
+        await this.#verifyApplied(plan.operations, journal.backupEntries)
         const appliedResult = freeze(clone(adapterResult)); journal = await this.#phase(journal, 'applied', appliedResult)
         await this.#fault?.('after-applied-journal')
         return await this.#commit(journal)
@@ -166,7 +166,7 @@ export class ProjectionCoordinator {
       await this.#withInstallationLock(pending.plan, true, async () => {
         const journal = await this.#readJournal(operationId)
         if (journal.phase === 'committed' || journal.phase === 'rolled-back') return
-        if (journal.phase === 'applied') { try { await this.#verifyApplied(journal.plan.operations); await this.#commit(journal) } catch { await this.#rollbackJournal(journal) }; return }
+        if (journal.phase === 'applied') { try { await this.#verifyApplied(journal.plan.operations, journal.backupEntries); await this.#commit(journal) } catch { await this.#rollbackJournal(journal) }; return }
         if (PRE_APPLY_PHASES.has(journal.phase)) { await this.#abortPreApply(journal); return }
         await this.#rollbackJournal(journal)
       })
@@ -220,6 +220,11 @@ export class ProjectionCoordinator {
       if (operation.kind !== 'create' && operation.kind !== 'create-directory' && ((requireBefore && (!operation.expectedBeforeSha256 || !operation.expectedBeforeIdentity)) || (operation.expectedBeforeSha256 !== undefined && !SHA256.test(operation.expectedBeforeSha256)) || (operation.expectedBeforeIdentity !== undefined && !SAFE_SEGMENT.test(operation.expectedBeforeIdentity)))) throw new Error('Existing-path operation requires expected before digest and identity')
       const path = normalized(operation.nativePath); if (paths.has(path)) throw new Error('Duplicate or conflicting native operation path'); paths.add(path); ids.add(operation.id)
       await this.#rejectLinkedPath(root, operation.nativePath, operation.kind === 'create-directory')
+    }
+    for (const [ancestorIndex, ancestor] of operations.entries()) for (const [descendantIndex, descendant] of operations.entries()) {
+      if (ancestorIndex === descendantIndex || normalized(ancestor.nativePath) === normalized(descendant.nativePath) || !contains(ancestor.nativePath, descendant.nativePath)) continue
+      if (ancestor.kind !== 'create-directory' || (descendant.kind !== 'create' && descendant.kind !== 'create-directory')) throw new Error('Only approved directory claims may overlap descendant create operations')
+      if (ancestorIndex > descendantIndex) throw new Error('Directory claims must be topologically ordered before descendant creates')
     }
   }
 
@@ -340,12 +345,12 @@ export class ProjectionCoordinator {
     return journal
   }
 
-  async #verifyApplied(operations: readonly PreviewFileOperation[]): Promise<void> {
+  async #verifyApplied(operations: readonly PreviewFileOperation[], entries: readonly AdapterBackupEntry[] = []): Promise<void> {
     for (const operation of operations) {
       if (operation.kind === 'read') continue
       const stat = await statOrAbsent(operation.nativePath)
       if (operation.kind === 'delete') { if (stat) throw new Error(`Adapter verification failed for ${operation.id}`); continue }
-      if (operation.kind === 'create-directory') { if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error(`Adapter verification failed for ${operation.id}`); continue }
+      if (operation.kind === 'create-directory') { const entry = entries.find((candidate) => candidate.operationEntryId === operation.id); const identity = stat?.isDirectory() && !stat.isSymbolicLink() ? fileIdentity(await lstat(operation.nativePath, { bigint: true })) : undefined; if (!entry?.claimFileIdentity || identity !== entry.claimFileIdentity) throw new Error(`Adapter replaced coordinator-owned directory claim for ${operation.id}`); continue }
       if (!stat || !stat.isFile() || stat.isSymbolicLink() || digestBytes(await this.#readOrdinary(operation.nativePath)) !== operation.expectedAfterSha256) throw new Error(`Adapter verification failed for ${operation.id}`)
     }
   }
