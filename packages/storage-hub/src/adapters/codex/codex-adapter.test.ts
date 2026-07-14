@@ -59,6 +59,11 @@ describe('Codex detection and inventory', () => {
     await expect(instance.inspect((await instance.detect())[0])).rejects.toThrow(/linked|symbolic|ordinary/i)
   })
 
+  it('fails closed instead of ignoring a linked SKILL.md manifest', async () => {
+    const home = await temporary(); const skill = join(home, '.agents', 'skills', 'linked-manifest'); const outside = join(home, 'outside-directory'); await mkdir(skill, { recursive: true }); await mkdir(outside); await mkdir(join(home, '.codex')); await symlink(outside, join(skill, 'SKILL.md'), 'junction')
+    const instance = adapter(home).adapter; await expect(instance.inspect((await instance.detect())[0])).rejects.toThrow(/manifest|SKILL|linked|ordinary/i)
+  })
+
   it('uses the same bounded deterministic asset id for a long skill name in inspect and import', async () => {
     const home = await temporary(); const name = `skill-${'x'.repeat(120)}`; const skill = join(home, '.agents', 'skills', name); await mkdir(skill, { recursive: true }); await mkdir(join(home, '.codex')); await writeFile(join(skill, 'SKILL.md'), 'long skill')
     const { adapter: instance, assets } = adapter(home); const target = (await instance.detect())[0]; const inventoryId = (await instance.inspect(target)).assets[0].id; expect(inventoryId.length).toBeLessThanOrEqual(128); expect(inventoryId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
@@ -111,6 +116,8 @@ describe('Codex MCP secret separation', () => {
     '[mcp_servers.bad]\ncommand = "tool"\nenv = { KEY = "one" }\n[mcp_servers.bad.env]\nOTHER = "two"\n',
     '[mcp_servers.bad]\ncommand = "tool"\nurl = "https://example.test"\n',
     '[mcp_servers.bad]\ncommand = "tool"\ncwd = 42\n',
+    '[mcp_servers.bad]\ncommand = "tool"\nhttp_headers = { Authorization = "literal" }\n',
+    '[mcp_servers.bad]\nurl = "https://example.test"\nenv = { TOKEN = "literal" }\n',
   ])('fails closed for incompatible or mistyped MCP metadata', (source) => { expect(() => parseMcpServers(source)).toThrow(/MCP|TOML|type|transport|redefined|unsupported/i) })
 })
 

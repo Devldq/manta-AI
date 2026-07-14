@@ -1,5 +1,6 @@
-import { lstat, readFile } from 'node:fs/promises'
+import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { readOrdinaryNoFollow } from './native-io'
 
 export async function activeInstructions(codexHome: string): Promise<{ nativePath: string; fileName: string; bytes: Uint8Array } | undefined> {
   for (const candidate of await instructionFiles(codexHome)) if (Buffer.from(candidate.bytes).toString().trim().length) return candidate
@@ -12,7 +13,7 @@ export async function instructionFiles(codexHome: string): Promise<{ nativePath:
     const nativePath = join(codexHome, fileName); let stat
     try { stat = await lstat(nativePath) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error }
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Codex global instructions must be an ordinary file')
-    const bytes = await readFile(nativePath); result.push({ nativePath, fileName, bytes })
+    const bytes = await readOrdinaryNoFollow(nativePath); result.push({ nativePath, fileName, bytes })
   }
   return result
 }
