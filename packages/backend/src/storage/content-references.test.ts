@@ -48,6 +48,17 @@ describe('pending content reference adapters', () => {
     expect(inspectCrossGroupBlockers([groupRoot]).blockers[0]?.code).toBe('cross-group-journal-invalid')
   })
 
+  it('blocks prepared 2PC changes with fields outside their exact write or delete schema', async () => {
+    for (const [id, change] of [
+      ['delete-extra', { path: 'record.json', delete: true, unexpected: true }],
+      ['write-extra', { path: 'record.json', content: '{}', hash: 'a'.repeat(64), unexpected: true }],
+    ] as const) {
+      const groupRoot = await root(); await mkdir(join(groupRoot, '.ash-2pc'), { recursive: true })
+      await writeFile(join(groupRoot, '.ash-2pc', `${id}.json`), JSON.stringify({ version: 1, id, generation: 1, phase: 'prepared', txId: 'tx', changes: [change] }))
+      expect(inspectCrossGroupBlockers([groupRoot]).blockers[0]?.code, id).toBe('cross-group-journal-invalid')
+    }
+  })
+
   it('blocks completed extension journals with missing or non-array registry state', async () => {
     for (const [name, registryWrites] of [['missing', undefined], ['wrong', {}]] as const) {
       const extensionsRoot = join(await root(), 'extensions'); await mkdir(join(extensionsRoot, '.ash-transactions'), { recursive: true })

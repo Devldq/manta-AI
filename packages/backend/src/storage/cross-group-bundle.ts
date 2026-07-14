@@ -69,8 +69,8 @@ function load(root: string, id: string): State | undefined {
     for (const item of state.changes) {
       if (!item || typeof item !== 'object' || typeof item.path !== 'string') throw new Error('Invalid cross-group prepared journal change')
       contained(root, item.path)
-      const write = typeof item.content === 'string' && typeof item.hash === 'string' && /^[a-f0-9]{64}$/.test(item.hash) && item.delete === undefined
-      const deletion = item.delete === true && item.content === undefined && item.hash === undefined
+      const write = exactKeys(item, ['path', 'content', 'hash']) && typeof item.content === 'string' && typeof item.hash === 'string' && /^[a-f0-9]{64}$/.test(item.hash)
+      const deletion = exactKeys(item, ['path', 'delete']) && item.delete === true
       if (!write && !deletion) throw new Error('Invalid cross-group prepared journal change payload')
     }
     if (state.previous !== undefined) validateCommittedState(root, state.previous, id)
