@@ -7,7 +7,7 @@ import type { ScannedSkill } from '../core/storage/skill/scanner'
 import { createSkill } from '../core/storage/skill/store'
 import { skillRoutes } from '../routes/skills'
 import { runWithStorageResolver } from './path-routing'
-import { importSkillPackage } from './skill-package-import'
+import { importSkillPackage, validateSkillPackagePath } from './skill-package-import'
 
 function scanned(filePath: string, name = 'Demo', version = '1.0.0'): ScannedSkill {
   return { name, description: `${name} skill`, version, type: 'tool', content: '# Demo', filePath, dirName: filePath.split(/[\\/]/).at(-2)! }
@@ -23,6 +23,13 @@ function packageDestination(extensionsRoot: string, skill: { packagePath?: strin
 }
 
 describe('immutable skill package import', () => {
+  it('uses platform case semantics when reserving Skill package containers', () => {
+    expect(() => validateSkillPackagePath('skills/IMPORTED', 'win32')).toThrow(/reserved|container/i)
+    expect(() => validateSkillPackagePath('SKILLS/imported', 'win32')).toThrow(/reserved|container/i)
+    expect(validateSkillPackagePath('skills/IMPORTED', 'linux')).toBe('skills/IMPORTED')
+    expect(() => validateSkillPackagePath('SKILLS/imported', 'linux')).toThrow(/packagePath|inside skills/i)
+  })
+
   it('installs an external package and snapshots only package files', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-skill-package-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'demo'); mkdirSync(source); const skillFile = join(source, 'SKILL.md'); writeFileSync(skillFile, 'shared-bytes')
     const resolve = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)

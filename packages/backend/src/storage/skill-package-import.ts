@@ -14,18 +14,18 @@ export interface ImportSkillPackageOptions {
   snapshotPackage?: ImmutableExtensionInstallOptions['snapshotPackage']
 }
 
-function validatePackagePath(packagePath: unknown): string {
+export function validateSkillPackagePath(packagePath: unknown, platform: NodeJS.Platform = process.platform): string {
   if (typeof packagePath !== 'string' || !packagePath || isAbsolute(packagePath) || packagePath.includes('\\')) throw new Error('Invalid Skill packagePath: expected a root-relative POSIX path')
   const segments = packagePath.split('/')
-  if (segments.length < 2 || segments[0] !== 'skills') throw new Error('Invalid Skill packagePath: package must be inside skills')
+  if (segments.length < 2 || comparisonPath(segments[0], platform) !== comparisonPath('skills', platform)) throw new Error('Invalid Skill packagePath: package must be inside skills')
   for (const segment of segments) safeStorageSegment(segment)
   const normalized = segments.join('/')
-  if (normalized === 'skills/imported') throw new Error('Reserved Skill package container cannot be claimed: skills/imported')
+  if (comparisonPath(normalized, platform) === comparisonPath('skills/imported', platform)) throw new Error('Reserved Skill package container cannot be claimed: skills/imported')
   return normalized
 }
 
-function comparisonPath(packagePath: string): string {
-  return process.platform === 'win32' ? packagePath.toLowerCase() : packagePath
+function comparisonPath(packagePath: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? packagePath.toLowerCase() : packagePath
 }
 
 function pathsOverlap(left: string, right: string): boolean {
@@ -36,14 +36,14 @@ function pathsOverlap(left: string, right: string): boolean {
 function assertUnclaimedPackageTree(packagePath: string, skillId: string, existing: boolean): void {
   for (const claim of listSkillPackageClaims()) {
     let claimedPath: string
-    try { claimedPath = validatePackagePath(claim.packagePath) } catch (error) { throw new Error(`Malformed persisted Skill packagePath for ${claim.id}: ${String(error)}`) }
+    try { claimedPath = validateSkillPackagePath(claim.packagePath) } catch (error) { throw new Error(`Malformed persisted Skill packagePath for ${claim.id}: ${String(error)}`) }
     if (existing && claim.id === skillId && claimedPath === packagePath) continue
     if (pathsOverlap(packagePath, claimedPath)) throw new Error(`Skill package claim overlaps ${claim.id}: ${claimedPath}`)
   }
 }
 
 function destinationFor(extensionsRoot: string, packagePath: string): string {
-  const validated = validatePackagePath(packagePath)
+  const validated = validateSkillPackagePath(packagePath)
   const destination = resolve(extensionsRoot, ...validated.split('/'))
   const rel = relative(resolve(extensionsRoot), destination)
   if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Skill packagePath resolves outside extensions')
@@ -55,7 +55,7 @@ function managedSourcePath(extensionsRoot: string, sourceRoot: string): string |
   const rel = relative(skillsRoot, resolve(sourceRoot))
   if (!rel) throw new Error('Reserved Skill package container cannot be claimed: skills')
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null
-  return validatePackagePath(['skills', ...rel.split(sep)].join('/'))
+  return validateSkillPackagePath(['skills', ...rel.split(sep)].join('/'))
 }
 
 function createInput(scanned: ScannedSkill): CreateSkillInput {
@@ -105,7 +105,7 @@ export async function importSkillPackage(options: ImportSkillPackageOptions): Pr
 
   let packagePath: string
   if (options.existing) {
-    if (basePrepared.definition.packagePath) packagePath = validatePackagePath(basePrepared.definition.packagePath)
+    if (basePrepared.definition.packagePath) packagePath = validateSkillPackagePath(basePrepared.definition.packagePath)
     else if (sourceClaim) packagePath = sourceClaim
     else throw new Error('Legacy Skill has no packagePath; external overwrite cannot guess its managed destination')
   } else {
