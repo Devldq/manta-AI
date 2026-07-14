@@ -1124,19 +1124,31 @@
       "reason": "Reviewed cleanup only when this call successfully created and still owns the exclusive adapter backup target."
     },
     {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 56, "column": 37, "operation": "rename",
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 53, "column": 20, "operation": "open",
+      "reason": "Reviewed exclusive creation of an empty coordinator-owned claim at an approved create target whose ordinary parent already exists."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 56, "column": 62, "operation": "rm",
+      "reason": "Reviewed failure cleanup restricted to a create claim while its exclusive creation handle remains owned by the coordinator."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 61, "column": 9, "operation": "rename",
+      "reason": "Reviewed same-directory atomic quarantine rename after the coordinator verified the approved create-claim file identity."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 65, "column": 9, "operation": "unlink",
+      "reason": "Reviewed removal of a quarantined create claim only after a no-follow handle revalidated its durable identity and required final evidence."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 74, "column": 37, "operation": "rename",
       "reason": "Reviewed atomic rollback restore from a synced sibling staging file after repeated approved-native-path validation."
     },
     {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 56, "column": 145, "operation": "rm",
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 74, "column": 145, "operation": "rm",
       "reason": "Reviewed rollback staging cleanup restricted to the random exclusively-created sibling file."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 331, "column": 15, "operation": "unlink",
-      "reason": "Reviewed rollback removal limited to a create path with durable matching file identity, hash, and byte count evidence."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 344, "column": 90, "operation": "open",
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 394, "column": 90, "operation": "open",
       "reason": "Reviewed no-follow ordinary-file reads restricted to validated adapter native, journal, or backup paths."
     }
   ],
