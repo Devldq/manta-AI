@@ -39,7 +39,7 @@ const WRITE_KINDS = new Set(['create', 'modify', 'delete'])
 function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
-  return `{${Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
+  return `{${Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
 }
 
 function digest(value: unknown): string { return createHash('sha256').update(canonical(value)).digest('hex') }
@@ -143,12 +143,19 @@ export class ProjectionCoordinator {
   async recoverPending(): Promise<void> {
     await serialized(this.#stateRoot, () => this.#withFileLock(true, async () => {
       const directory = this.#journalDirectory(); let names: string[]
-      try { names = (await readdir(directory)).filter((name) => name.endsWith('.json')).sort() } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
+      try {
+        const entries = await readdir(directory, { withFileTypes: true })
+        if (entries.some((entry) => !entry.isFile() || !entry.name.endsWith('.json') || !SAFE_SEGMENT.test(entry.name.slice(0, -5)))) throw new Error('Unknown adapter journal directory entry')
+        names = entries.map((entry) => entry.name).sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+      } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
       for (const name of names) {
         if (!SAFE_SEGMENT.test(name.slice(0, -5))) throw new Error('Malformed adapter journal filename')
         const journal = await this.#readJournal(name.slice(0, -5))
         if (journal.phase === 'committed' || journal.phase === 'rolled-back') continue
-        if (journal.phase === 'applied') { await this.#verifyApplied(journal.plan.operations); await this.#commit(journal); continue }
+        if (journal.phase === 'applied') {
+          try { await this.#verifyApplied(journal.plan.operations); await this.#commit(journal) } catch { await this.#rollbackJournal(journal) }
+          continue
+        }
         await this.#rollbackJournal(journal)
       }
     }))
@@ -272,8 +279,12 @@ export class ProjectionCoordinator {
   }
 
   #validateAdapterResult(value: AdapterResult, plan: ApprovedAdapterPlan): void {
+    this.#validateResult(value, plan, 'applied')
+  }
+
+  #validateResult(value: AdapterResult, plan: ApprovedAdapterPlan, status: AdapterResult['status']): void {
     expectedKeys(value, ['schemaVersion', 'operationId', 'planId', 'adapterId', 'installationId', 'status', 'verified', 'completedAt', 'secretReferenceIds'], 'Adapter result')
-    if (value.schemaVersion !== 1 || value.operationId !== plan.approval.operationId || value.planId !== plan.planId || value.adapterId !== plan.adapterId || value.installationId !== plan.target.id || value.status !== 'applied' || value.verified !== true || Number.isNaN(Date.parse(value.completedAt))) throw new Error('Adapter returned malformed or mismatched result')
+    if (value.schemaVersion !== 1 || value.operationId !== plan.approval.operationId || value.planId !== plan.planId || value.adapterId !== plan.adapterId || value.installationId !== plan.target.id || value.status !== status || value.verified !== true || Number.isNaN(Date.parse(value.completedAt))) throw new Error('Adapter returned malformed or mismatched result')
     this.#validateSecretReferences(value.secretReferenceIds)
   }
 
@@ -329,8 +340,25 @@ export class ProjectionCoordinator {
       if (journal.schemaVersion !== 1 || journal.operationId !== operationId || !Array.isArray(journal.backupEntries) || !['journaled', 'backing-up', 'backed-up', 'applying', 'applied', 'committed', 'rolling-back', 'rolled-back'].includes(journal.phase) || Number.isNaN(Date.parse(journal.startedAt)) || Number.isNaN(Date.parse(journal.updatedAt))) throw new Error('invalid fields')
       this.#validateApproval(journal.plan, false); await this.#validateOperations(journal.plan.target, journal.plan.operations)
       for (const entry of journal.backupEntries) { expectedKeys(entry, ['operationId', 'operationEntryId', 'rootId', 'relativePath', 'priorState', 'backupRelativePath', 'priorSha256', 'priorBytes'], 'Adapter backup entry'); if (entry.operationId !== operationId || !SAFE_SEGMENT.test(entry.operationEntryId) || !SAFE_SEGMENT.test(entry.rootId) || !safeRelative(entry.relativePath) || (entry.priorState !== 'file' && entry.priorState !== 'absent') || (entry.backupRelativePath !== undefined && !safeRelative(entry.backupRelativePath))) throw new Error('invalid backup entry') }
+      this.#validateJournalInvariants(journal)
     } catch (error) { throw new Error(`Malformed adapter journal: ${operationId}`, { cause: error }) }
     return freeze(journal)
+  }
+
+  #validateJournalInvariants(journal: AdapterJournal): void {
+    const changes = journal.plan.operations.filter((operation) => WRITE_KINDS.has(operation.kind)); const entries = journal.backupEntries
+    const complete = ['backed-up', 'applying', 'applied', 'committed'].includes(journal.phase)
+    if ((journal.phase === 'journaled' && entries.length !== 0) || (complete && entries.length !== changes.length) || entries.length > changes.length) throw new Error('Journal backup evidence is incomplete for its phase')
+    for (const [index, entry] of entries.entries()) {
+      const operation = changes[index]; if (!operation || entry.operationEntryId !== operation.id || entry.rootId !== operation.rootId || entry.relativePath !== this.#nativeRelative(journal.plan.target, operation)) throw new Error('Journal backup evidence does not match the approved operation')
+      if (operation.kind === 'create') { if (entry.priorState !== 'absent' || entry.backupRelativePath !== undefined || entry.priorSha256 !== undefined || entry.priorBytes !== undefined) throw new Error('Malformed absent-before evidence') }
+      else if (entry.priorState !== 'file' || entry.backupRelativePath !== `${index}.bin` || entry.priorSha256 !== operation.expectedBeforeSha256 || !Number.isSafeInteger(entry.priorBytes) || entry.priorBytes! < 0) throw new Error('Malformed file backup evidence')
+    }
+    if (journal.phase === 'applied') { if (!journal.result) throw new Error('Applied journal requires a result'); this.#validateResult(journal.result, journal.plan, 'applied') }
+    else if (journal.phase === 'committed') { if (!journal.result) throw new Error('Committed journal requires a result'); this.#validateResult(journal.result, journal.plan, 'committed') }
+    else if (journal.phase === 'rolled-back') { if (!journal.result) throw new Error('Rolled-back journal requires a result'); this.#validateResult(journal.result, journal.plan, 'rolled-back') }
+    else if (journal.phase === 'rolling-back') { if (journal.result) { if (journal.result.status !== 'applied' && journal.result.status !== 'committed') throw new Error('Rolling-back journal has an invalid result'); this.#validateResult(journal.result, journal.plan, journal.result.status) } }
+    else if (journal.result) throw new Error('Journal phase cannot contain a result')
   }
 
   async #writeJournal(journal: AdapterJournal): Promise<void> { await writeJsonAtomic(this.#journalPath(journal.operationId), journal) }

@@ -196,6 +196,31 @@ describe('ProjectionCoordinator crash recovery', () => {
     expect(await readFile(file, 'utf8')).toBe('new'); expect((await journalAt(stateRoot, approved.approval.operationId)).phase).toBe('committed')
   })
 
+  it('automatically rolls back when applied recovery verification fails', async () => {
+    const nativeRoot = await directory('ash-native-'); const file = join(nativeRoot, 'file'); await writeFile(file, 'old'); const operations: PreviewFileOperation[] = [{ id: 'modify', kind: 'modify', rootId: 'home', nativePath: file, expectedAfterSha256: sha256('new') }]
+    const target = installation(nativeRoot); const stateRoot = join(await directory(), 'state'); const registry = new AdapterRegistry([fixtureAdapter(target, operations, async (plan) => { await writeFile(file, 'new'); return result(plan) })]); const crashing = new ProjectionCoordinator({ stateRoot, registry, now: () => new Date('2026-07-14T00:10:00.000Z'), fault: async (point) => { if (point === 'after-applied-journal') throw new SimulatedAdapterCrash(point) } }); const approved = crashing.approve(await crashing.planProjection('fixture', selection, target)); await expect(crashing.apply(approved)).rejects.toBeInstanceOf(SimulatedAdapterCrash); await writeFile(file, 'corrupt')
+    await new ProjectionCoordinator({ stateRoot, registry }).recoverPending(); expect(await readFile(file, 'utf8')).toBe('old'); expect((await journalAt(stateRoot, approved.approval.operationId)).phase).toBe('rolled-back')
+  })
+
+  it('fails closed for phase-inconsistent, duplicate, incomplete, or mismatched journal evidence and result fields', async () => {
+    const nativeRoot = await directory('ash-native-'); const file = join(nativeRoot, 'file'); await writeFile(file, 'old'); const operations: PreviewFileOperation[] = [{ id: 'modify', kind: 'modify', rootId: 'home', nativePath: file, expectedAfterSha256: sha256('new') }]
+    const target = installation(nativeRoot); const stateRoot = join(await directory(), 'state'); const registry = new AdapterRegistry([fixtureAdapter(target, operations)]); const crashing = new ProjectionCoordinator({ stateRoot, registry, now: () => new Date('2026-07-14T00:10:00.000Z'), fault: async (point) => { if (point === 'before-apply') throw new SimulatedAdapterCrash(point) } }); const approved = crashing.approve(await crashing.planProjection('fixture', selection, target)); await expect(crashing.apply(approved)).rejects.toBeInstanceOf(SimulatedAdapterCrash)
+    const path = join(stateRoot, '.ash', 'adapters', 'journals', `${approved.approval.operationId}.json`); const original = await journalAt(stateRoot, approved.approval.operationId); const mutations: unknown[] = [
+      { ...original, phase: 'journaled' },
+      { ...original, phase: 'backed-up', backupEntries: [] },
+      { ...original, backupEntries: [original.backupEntries[0], original.backupEntries[0]] },
+      { ...original, backupEntries: [{ ...original.backupEntries[0], operationEntryId: 'other' }] },
+      { ...original, phase: 'applied', result: undefined },
+      { ...original, phase: 'applied', result: { ...result(approved), unexpected: 'secret-shaped-data' } },
+    ]
+    for (const mutation of mutations) { await writeFile(path, JSON.stringify(mutation)); await expect(new ProjectionCoordinator({ stateRoot, registry }).recoverPending()).rejects.toThrow(/malformed|journal|evidence|result/i); expect(await readFile(file, 'utf8')).toBe('old') }
+  })
+
+  it('fails closed when the journal directory contains any unknown entry', async () => {
+    const stateRoot = join(await directory(), 'state'); const journals = join(stateRoot, '.ash', 'adapters', 'journals'); await mkdir(journals, { recursive: true }); await writeFile(join(journals, 'README.txt'), 'unexpected')
+    await expect(new ProjectionCoordinator({ stateRoot, registry: new AdapterRegistry() }).recoverPending()).rejects.toThrow(/unknown|journal.*entry/i)
+  })
+
   it('fails closed for malformed journals and backup destinations', async () => {
     const nativeRoot = await directory('ash-native-'); const file = join(nativeRoot, 'file'); await writeFile(file, 'old'); const stateRoot = join(await directory(), 'state'); const journals = join(stateRoot, '.ash', 'adapters', 'journals'); await mkdir(journals, { recursive: true }); await writeFile(join(journals, 'malformed.json'), '{broken')
     const coordinator = new ProjectionCoordinator({ stateRoot, registry: new AdapterRegistry() }); await expect(coordinator.recoverPending()).rejects.toThrow(/malformed|journal/i); expect(await readFile(file, 'utf8')).toBe('old')
