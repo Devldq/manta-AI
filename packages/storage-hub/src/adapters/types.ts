@@ -39,6 +39,8 @@ export interface PreviewFileOperation {
   readonly kind: PreviewFileOperationKind
   readonly rootId: string
   readonly nativePath: string
+  /** Bound by the coordinator during preview for every existing path. */
+  readonly expectedBeforeSha256?: string
   /** Required for create/modify so verification and crash rollback are deterministic. */
   readonly expectedAfterSha256?: string
 }
@@ -67,6 +69,7 @@ export type AdapterPlan = ImportPlan | ProjectionPlan
 
 export interface PlanApproval {
   readonly schemaVersion: typeof ADAPTER_SCHEMA_VERSION
+  readonly operationId: string
   readonly approvedAt: string
   readonly planId: string
   readonly adapterId: string

@@ -1094,6 +1094,34 @@
     {
       "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 32, "column": 21, "operation": "rm",
       "reason": "Reviewed cleanup of owned materialization staging files."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 303, "column": 15, "operation": "unlink",
+      "reason": "Reviewed rollback removal limited to an approved native create path that was durably recorded absent-before and whose current bytes still match the approved adapter output digest."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 315, "column": 90, "operation": "open",
+      "reason": "Reviewed no-follow read primitive restricted to an adapter plan path already contained by a detected installation's explicit authorized native root."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 318, "column": 161, "operation": "mkdir",
+      "reason": "Reviewed adapter backup directory creation below the coordinator-owned injected ASH state root for one approved operation."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 318, "column": 225, "operation": "open",
+      "reason": "Reviewed exclusive adapter backup creation below the coordinator-owned injected ASH backup root after validated root-relative path construction."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 320, "column": 74, "operation": "mkdir",
+      "reason": "Reviewed rollback restoration parent creation for an approved native path contained by the detected installation's explicit authorized root."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 320, "column": 138, "operation": "open",
+      "reason": "Reviewed rollback byte restoration restricted to a journaled and backed-up approved native path beneath an explicit authorized root."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 343, "column": 72, "operation": "mkdir",
+      "reason": "Reviewed durable adapter journal and coordinator lock directory creation below the caller-injected ASH state root."
     }
   ],
   "literals": [
