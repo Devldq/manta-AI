@@ -27,6 +27,7 @@ import {
   bindAgents,
   getSkillsForAgent,
   createAndImportSkill,
+  findSkillByName,
 } from '../core/storage/skill/store'
 import {
   scanSkillFiles,
@@ -38,6 +39,8 @@ import {
 } from '../core/storage/skill/scanner'
 import { apiSuccess, apiError, Errors } from '../core/api/error-handler'
 import type { CreateSkillInput, UpdateSkillInput, SkillType, SkillMetadata } from '@manta/shared'
+import { resolveStoragePath } from '../storage/path-routing'
+import { importSkillPackage } from '../storage/skill-package-import'
 
 export async function skillRoutes(app: FastifyInstance) {
   // ═══════════════════════════════════════════════════════════
@@ -261,12 +264,13 @@ export async function skillRoutes(app: FastifyInstance) {
       const body = request.body as Record<string, any>
       const skillNames: string[] = body.names
       const overwrite = body.overwrite === true
+      const dir = typeof body.dir === 'string' && body.dir.trim() ? body.dir : undefined
 
       if (!Array.isArray(skillNames) || skillNames.length === 0) {
         throw Errors.VALIDATION_ERROR('names', '必须提供要导入的 Skill 名称列表')
       }
 
-      const scanned = scanSkillFiles()
+      const scanned = scanSkillFiles(dir)
       const scannedMap = new Map(scanned.map((s) => [s.name, s]))
 
       const imported: any[] = []
@@ -282,57 +286,24 @@ export async function skillRoutes(app: FastifyInstance) {
         }
 
         // 检查是否已存在
-        const allStored = listSkills()
-        const existing = allStored.find((s) => s.name === name)
+        const existing = findSkillByName(name)
 
         if (existing && !overwrite) {
           skipped.push(name)
           continue
         }
 
-        if (existing && overwrite) {
-          // 覆盖更新
-          const patch: UpdateSkillInput = {
-            metadata: {
-              description: scannedSkill.description,
-              version: scannedSkill.version || '1.0.0',
-              type: scannedSkill.type,
-              license: scannedSkill.license,
-              userInvocable: scannedSkill.userInvocable ?? true,
-              argumentHint: scannedSkill.argumentHint,
-            },
-            content: scannedSkill.content,
-            tools: scannedSkill.tools,
-          }
-          const updated = updateSkill(existing.id, patch)
-          if (updated) {
-            imported.push(updated)
-            overwritten.push(name)
-          } else {
-            errors.push({ name, error: '更新失败' })
-          }
-        } else {
-          // 新建
-          const input: CreateSkillInput = {
-            metadata: {
-              name: scannedSkill.name,
-              description: scannedSkill.description,
-              version: scannedSkill.version || '1.0.0',
-              type: scannedSkill.type as SkillType,
-              source: (scannedSkill.source as SkillMetadata['source']) || 'user',
-              license: scannedSkill.license,
-              userInvocable: scannedSkill.userInvocable ?? true,
-              argumentHint: scannedSkill.argumentHint,
-            },
-            content: scannedSkill.content,
-            tools: scannedSkill.tools,
-          }
-          try {
-            const created = createSkill(input)
-            imported.push(created)
-          } catch (e) {
-            errors.push({ name, error: String(e) })
-          }
+        try {
+          const installed = await importSkillPackage({
+            extensionsRoot: resolveStoragePath('extensions'),
+            scanned: scannedSkill,
+            existing,
+            overwrite,
+          })
+          imported.push(installed)
+          if (existing) overwritten.push(name)
+        } catch (e) {
+          errors.push({ name, error: String(e) })
         }
       }
 

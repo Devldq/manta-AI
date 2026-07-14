@@ -35,7 +35,7 @@ function getDataDir(): string {
   return resolveStoragePath('extensions', 'skill-registry')
 }
 
-function skillFilePath(skillId: string): string {
+export function getSkillRegistryFilePath(skillId: string): string {
   return path.join(getDataDir(), `${skillId}.json`)
 }
 
@@ -106,7 +106,62 @@ export function listSkills(search?: string): SkillSummary[] {
  * 获取单个 Skill 完整定义
  */
 export function getSkill(id: string): SkillDefinition | null {
-  return readJsonFile<SkillDefinition>(skillFilePath(id))
+  return readJsonFile<SkillDefinition>(getSkillRegistryFilePath(id))
+}
+
+export interface PreparedSkillWrite {
+  definition: SkillDefinition
+  filePath: string
+}
+
+/** Build a new registry record without touching the filesystem. */
+export function prepareSkillCreation(input: CreateSkillInput): PreparedSkillWrite {
+  const id = `skill-${shortId()}`
+  const now = new Date().toISOString()
+  const filePath = getSkillRegistryFilePath(id)
+  return {
+    filePath,
+    definition: {
+      id,
+      metadata: {
+        name: input.metadata.name,
+        description: input.metadata.description,
+        version: input.metadata.version || '1.0.0',
+        type: input.metadata.type,
+        source: input.metadata.source || 'user',
+        license: input.metadata.license,
+        userInvocable: input.metadata.userInvocable ?? true,
+        argumentHint: input.metadata.argumentHint,
+      },
+      content: input.content,
+      parameters: input.parameters || [],
+      boundAgents: [],
+      tools: input.tools || [],
+      filePath,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+  }
+}
+
+/** Build an updated registry record without writing it. */
+export function prepareSkillUpdate(id: string, input: UpdateSkillInput): PreparedSkillWrite | null {
+  const existing = getSkill(id)
+  if (!existing) return null
+  return {
+    filePath: getSkillRegistryFilePath(id),
+    definition: {
+      ...existing,
+      metadata: input.metadata ? { ...existing.metadata, ...input.metadata } : existing.metadata,
+      content: input.content ?? existing.content,
+      parameters: input.parameters ?? existing.parameters,
+      tools: input.tools ?? existing.tools,
+      enabled: input.enabled ?? existing.enabled,
+      id,
+      updatedAt: new Date().toISOString(),
+    },
+  }
 }
 
 /**
@@ -114,34 +169,9 @@ export function getSkill(id: string): SkillDefinition | null {
  */
 export function createSkill(input: CreateSkillInput): SkillDefinition {
   ensureDir(getDataDir())
-
-  const id = `skill-${shortId()}`
-  const now = new Date().toISOString()
-
-  const def: SkillDefinition = {
-    id,
-    metadata: {
-      name: input.metadata.name,
-      description: input.metadata.description,
-      version: input.metadata.version || '1.0.0',
-      type: input.metadata.type,
-      source: input.metadata.source || 'user',
-      license: input.metadata.license,
-      userInvocable: input.metadata.userInvocable ?? true,
-      argumentHint: input.metadata.argumentHint,
-    },
-    content: input.content,
-    parameters: input.parameters || [],
-    boundAgents: [],
-    tools: input.tools || [],
-    filePath: skillFilePath(id),
-    enabled: true,
-    createdAt: now,
-    updatedAt: now,
-  }
-
-  atomicWrite(skillFilePath(id), JSON.stringify(def, null, 2))
-  return def
+  const prepared = prepareSkillCreation(input)
+  atomicWrite(prepared.filePath, JSON.stringify(prepared.definition, null, 2))
+  return prepared.definition
 }
 
 /**
@@ -151,31 +181,17 @@ export function updateSkill(
   id: string,
   input: UpdateSkillInput,
 ): SkillDefinition | null {
-  const existing = getSkill(id)
-  if (!existing) return null
-
-  const updated: SkillDefinition = {
-    ...existing,
-    metadata: input.metadata
-      ? { ...existing.metadata, ...input.metadata }
-      : existing.metadata,
-    content: input.content ?? existing.content,
-    parameters: input.parameters ?? existing.parameters,
-    tools: input.tools ?? existing.tools,
-    enabled: input.enabled ?? existing.enabled,
-    id,
-    updatedAt: new Date().toISOString(),
-  }
-
-  atomicWrite(skillFilePath(id), JSON.stringify(updated, null, 2))
-  return updated
+  const prepared = prepareSkillUpdate(id, input)
+  if (!prepared) return null
+  atomicWrite(prepared.filePath, JSON.stringify(prepared.definition, null, 2))
+  return prepared.definition
 }
 
 /**
  * 删除 Skill
  */
 export function deleteSkill(id: string): boolean {
-  const fp = skillFilePath(id)
+  const fp = getSkillRegistryFilePath(id)
   try {
     if (fs.existsSync(fp)) {
       transactionalUninstallDirectory({ extensionsRoot: resolveStoragePath('extensions'), destination: fp })
@@ -211,7 +227,7 @@ export function bindAgents(
     updatedAt: new Date().toISOString(),
   }
 
-  atomicWrite(skillFilePath(skillId), JSON.stringify(updated, null, 2))
+  atomicWrite(getSkillRegistryFilePath(skillId), JSON.stringify(updated, null, 2))
   return updated
 }
 
