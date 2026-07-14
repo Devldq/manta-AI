@@ -1,10 +1,10 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AssetManifestStore } from './manifest-store'
 import { VolumeObjectStore } from './object-store'
-import { scanVolumeReferences } from './reference-scan'
+import { scanVolumeReferences, scanVolumeReferencesReadOnly } from './reference-scan'
 import { sumLogicalReferenceBytes } from './reference-scan'
 
 const roots: string[] = []
@@ -41,5 +41,22 @@ describe('volume reference scan', () => {
     const [a, b] = await Promise.all([scanVolumeReferences(first), scanVolumeReferences(second)])
     expect(a.volumeRoot).toBe(first); expect(b.volumeRoot).toBe(second)
     expect(a.objects).toHaveLength(1); expect(b.objects).toHaveLength(1)
+  })
+
+  it('fails closed when the canonical object path is replaced after handle hashing with an identical inode', async () => {
+    const root = await volume(); const object = await new VolumeObjectStore(root).ingestBytes(Buffer.from('same inode-sized bytes'))
+    const original = await stat(object.path); const replacement = join(root, 'replacement'); const displaced = join(root, 'displaced')
+    await writeFile(replacement, Buffer.from('same inode-sized bytes'))
+    await utimes(replacement, original.atime, original.mtime)
+    let replaced = false
+    const scan = await scanVolumeReferencesReadOnly(root, undefined, { beforeObjectCanonicalPathValidation: async (path) => {
+      if (replaced) return
+      replaced = true
+      await rename(path, displaced)
+      await rename(replacement, path)
+    } })
+    expect(scan.complete).toBe(false)
+    expect(scan.objects).toEqual([])
+    expect(scan.blockers).toContainEqual(expect.objectContaining({ code: 'object-integrity', detail: expect.stringMatching(/identity|changed|stable/i) }))
   })
 })

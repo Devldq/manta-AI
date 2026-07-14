@@ -1,7 +1,8 @@
-import { readdir, lstat } from 'node:fs/promises'
+import { readdir, lstat, open } from 'node:fs/promises'
+import type { Stats } from 'node:fs'
 import { resolve, relative } from 'node:path'
 import { AssetManifestStore } from './manifest-store'
-import { assertContentHash, hashFileSha256 } from './object-store'
+import { assertContentHash, hashFileHandleSha256 } from './object-store'
 import { withVolumeContentStoreLease } from './content-store-lease'
 import { posixAllocatedBytes } from '../inventory/file-inventory'
 
@@ -19,11 +20,27 @@ export function sumLogicalReferenceBytes(values: Iterable<number>): { bytes: num
   return { bytes, overflow: false }
 }
 
+export interface ReferenceObjectReadHooks { beforeObjectCanonicalPathValidation?: (path: string) => void | Promise<void> }
+
 function blocker(code: ReferenceScanBlockerCode, path: string | undefined, error: unknown): ReferenceScanBlocker {
   return { code, ...(path ? { path } : {}), detail: error instanceof Error ? error.message : String(error) }
 }
 
-async function scanUnlocked(volumeRoot: string, pending: PendingContentReferences = {}): Promise<VolumeReferenceScan> {
+const sameObjectStat = (left: Stats, right: Stats) => left.dev === right.dev && left.ino === right.ino && left.birthtimeMs === right.birthtimeMs && left.size === right.size && left.mtimeMs === right.mtimeMs && left.nlink === right.nlink
+
+async function readVerifiedContentObject(path: string, expectedHash: string, hooks: ReferenceObjectReadHooks = {}): Promise<VerifiedContentObject> {
+  const handle = await open(path, 'r')
+  try {
+    const before = await handle.stat(); const digest = await hashFileHandleSha256(handle); const after = await handle.stat()
+    await hooks.beforeObjectCanonicalPathValidation?.(path)
+    const canonical = await lstat(path)
+    if (!before.isFile() || before.isSymbolicLink() || !after.isFile() || after.isSymbolicLink() || !canonical.isFile() || canonical.isSymbolicLink() || !sameObjectStat(before, after) || !sameObjectStat(after, canonical) || digest.hash !== expectedHash || digest.size !== before.size) throw new Error('CAS object identity changed or failed stable hash verification')
+    const blocks = posixAllocatedBytes(before.blocks) ?? null
+    return { hash: expectedHash, path, size: before.size, mtimeMs: before.mtimeMs, allocatedBytes: process.platform === 'win32' ? null : blocks, allocationEvidence: process.platform === 'win32' || blocks === null ? 'unavailable' : 'posix-blocks', identity: `${before.dev}:${before.ino}:${before.birthtimeMs}`, links: before.nlink }
+  } finally { await handle.close() }
+}
+
+async function scanUnlocked(volumeRoot: string, pending: PendingContentReferences = {}, hooks: ReferenceObjectReadHooks = {}): Promise<VolumeReferenceScan> {
   const root = resolve(volumeRoot); const blockers: ReferenceScanBlocker[] = []; const liveHashes = new Set<string>(); let logicalImmutableBytes: number | null = 0
   for (const hash of pending.liveHashes ?? []) { try { assertContentHash(hash); liveHashes.add(hash) } catch (error) { blockers.push(blocker('pending-operation', undefined, error)) } }
   for (const item of pending.blockers ?? []) blockers.push({ code: 'pending-operation', detail: `${item.code ? `${item.code}: ` : ''}${item.detail}` })
@@ -60,11 +77,7 @@ async function scanUnlocked(volumeRoot: string, pending: PendingContentReference
         const path = resolve(prefixPath, hash)
         try {
           assertContentHash(hash); if (hash.slice(0, 2) !== prefix) throw new Error('Object hash is stored below the wrong prefix')
-          const before = await lstat(path); if (!before.isFile() || before.isSymbolicLink()) throw new Error('CAS object must be an ordinary file')
-          const digest = await hashFileSha256(path); const after = await lstat(path)
-          if (digest.hash !== hash || digest.size !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error('CAS object failed stable hash and size verification')
-          const blocks = posixAllocatedBytes(before.blocks) ?? null
-          objects.push({ hash, path, size: before.size, mtimeMs: before.mtimeMs, allocatedBytes: process.platform === 'win32' ? null : blocks, allocationEvidence: process.platform === 'win32' || blocks === null ? 'unavailable' : 'posix-blocks', identity: `${before.dev}:${before.ino}:${before.birthtimeMs}`, links: before.nlink })
+          objects.push(await readVerifiedContentObject(path, hash, hooks))
         } catch (error) { blockers.push(blocker('object-integrity', relative(root, path), error)) }
       }
     }

@@ -1,4 +1,4 @@
-import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -72,6 +72,18 @@ describe('read-only volume capacity metrics', () => {
     const volumeRoot = await root(); const object = await new VolumeObjectStore(volumeRoot).ingestBytes(Buffer.from('stable')); let changed = false
     const result = await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: () => { if (!changed) { changed = true; writeFileSync(object.path, 'changed') } return { allocatedBytes: 1, evidence: 'verified-test' } } })
     expect(result).toMatchObject({ scanStatus: 'degraded', physicalImmutableBytes: null, verifiedDedupSavedBytes: null })
+  })
+
+  it('degrades with null savings when an object path is replaced after handle hashing', async () => {
+    const volumeRoot = await root(); const object = await new VolumeObjectStore(volumeRoot).ingestBytes(Buffer.from('same inode-sized bytes')); const original = await stat(object.path)
+    const replacement = join(volumeRoot, 'replacement'); const displaced = join(volumeRoot, 'displaced'); await writeFile(replacement, Buffer.from('same inode-sized bytes')); await utimes(replacement, original.atime, original.mtime)
+    let replaced = false
+    const result = await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: allocated(1), referenceObjectReadHooks: { beforeObjectCanonicalPathValidation: async (path) => {
+      if (replaced) return
+      replaced = true; await rename(path, displaced); await rename(replacement, path)
+    } } })
+    expect(result).toMatchObject({ scanStatus: 'degraded', physicalImmutableBytes: null, verifiedDedupSavedBytes: null })
+    expect(result.blockers).toContainEqual(expect.objectContaining({ code: 'concurrent-change' }))
   })
 
   it('degrades when a manifest changes between optimistic read-only scans', async () => {
