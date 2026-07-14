@@ -30,4 +30,19 @@ describe('volume content-store lease', () => {
       expect(() => acquireVolumeContentStoreLeaseSync(root)).toThrow(/busy|lock/i)
     })
   })
+
+  it('invalidates inherited ownership before a detached child can reenter after release', async () => {
+    const root = await volume(); let releaseChild!: () => void; const childGate = new Promise<void>((resolve) => { releaseChild = resolve }); let childEntered = false
+    let detached!: Promise<void>
+    await withVolumeContentStoreLease(root, async () => {
+      detached = (async () => { await childGate; await withVolumeContentStoreLease(root, async () => { childEntered = true }) })()
+    })
+    let releaseSecond!: () => void; let secondEntered!: () => void
+    const entered = new Promise<void>((resolve) => { secondEntered = resolve }); const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve })
+    const second = withVolumeContentStoreLease(root, async () => { secondEntered(); await secondGate })
+    await entered
+    try { releaseChild(); await new Promise((resolve) => setTimeout(resolve, 30)); expect(childEntered).toBe(false) }
+    finally { releaseSecond(); await second }
+    await detached; expect(childEntered).toBe(true)
+  })
 })

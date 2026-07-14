@@ -57,6 +57,20 @@ describe('pending content reference adapters', () => {
     }
   })
 
+  it('blocks extension journals with unknown fields or invalid discriminated field combinations', async () => {
+    const fixtures = [
+      { id: 'unknown', version: 1, kind: 'file', phase: 'completed', destination: 'package/file', content: '{}', registryWrites: [], registryDeletes: [], unexpected: true },
+      { id: 'numeric-content', version: 1, kind: 'file', phase: 'completed', destination: 'package/file', content: 42, registryWrites: [], registryDeletes: [] },
+      { id: 'install-content', version: 1, kind: 'install', phase: 'completed', destination: 'package/install', stagingPath: '.ash-staging/install', content: '{}', registryWrites: [], registryDeletes: [] },
+      { id: 'install-no-stage', version: 1, kind: 'install', phase: 'completed', destination: 'package/install', registryWrites: [], registryDeletes: [] },
+    ]
+    for (const fixture of fixtures) {
+      const extensionsRoot = join(await root(), 'extensions'); await mkdir(join(extensionsRoot, '.ash-transactions'), { recursive: true })
+      await writeFile(join(extensionsRoot, '.ash-transactions', `${fixture.id}.json`), JSON.stringify(fixture))
+      expect(inspectExtensionBlockers(extensionsRoot).blockers[0]?.code, fixture.id).toBe('extension-journal-invalid')
+    }
+  })
+
   it('serializes prepared RAG journal creation with GC and preserves its referenced CAS object', async () => {
     const volumeRoot = await root(); const knowledgeRoot = join(volumeRoot, 'knowledge'); const extensionsRoot = join(volumeRoot, 'extensions')
     const bytes = Buffer.from('prepared'); const object = await new VolumeObjectStore(volumeRoot).ingestBytes(bytes)
@@ -72,10 +86,11 @@ describe('pending content reference adapters', () => {
   it('does not create a prepared RAG journal behind a GC scan that deletes its CAS object', async () => {
     const volumeRoot = await root(); const knowledgeRoot = join(volumeRoot, 'knowledge'); const bytes = Buffer.from('orphan'); const object = await new VolumeObjectStore(volumeRoot).ingestBytes(bytes)
     await mkdir(join(knowledgeRoot, 'documents'), { recursive: true }); await writeFile(join(knowledgeRoot, 'documents', object.hash), bytes)
-    const safe = { pending: async () => ({ complete: true as const }) }; await new VolumeContentGarbageCollector(volumeRoot, safe).scan()
+    const allocation = (candidate: { size: number }) => ({ allocatedBytes: candidate.size, evidence: 'verified-test' })
+    const safe = { pending: async () => ({ complete: true as const }), allocation }; await new VolumeContentGarbageCollector(volumeRoot, safe).scan()
     let releaseInspection!: () => void; let inspectionStarted!: () => void
     const started = new Promise<void>((resolve) => { inspectionStarted = resolve }); const release = new Promise<void>((resolve) => { releaseInspection = resolve })
-    const deleting = new VolumeContentGarbageCollector(volumeRoot, { pending: async () => { inspectionStarted(); await release; return { complete: true } } }).scan()
+    const deleting = new VolumeContentGarbageCollector(volumeRoot, { allocation, pending: async () => { inspectionStarted(); await release; return { complete: true } } }).scan()
     await started
     const transaction = beginRagAssetTransaction({ volumeRoot, knowledgeRoot, transactionId: '12345678-1234-4123-8123-123456789abd', documentId: 'late', safeName: 'late', hash: object.hash, size: object.size, source: join(knowledgeRoot, 'documents', object.hash) })
     releaseInspection(); await expect(deleting).resolves.toMatchObject({ deletedBytes: object.size })

@@ -112,6 +112,21 @@ function readJournal(root: string, file: string): ExtensionJournal {
   const decision = stored.snapshotDecision
   const snapshotRequired = stored.snapshotRequired
   const packageFingerprint = stored.packageFingerprint
+  const commonKeys = ['version', 'id', 'kind', 'phase', 'destination', 'registryWrites', 'registryDeletes']
+  const allowedKeys = version === 2
+    ? [...commonKeys, 'stagingPath', 'backupPath', 'packageFingerprint', 'snapshotRequired', 'snapshotDecision']
+    : stored.kind === 'install'
+      ? [...commonKeys, 'stagingPath', 'backupPath']
+      : stored.kind === 'uninstall'
+        ? [...commonKeys, 'backupPath']
+        : [...commonKeys, 'backupPath', 'content']
+  if (Object.keys(stored).some((key) => !allowedKeys.includes(key))) throw new Error(`Invalid extension transaction journal fields: ${file}`)
+  if (typeof stored.destination !== 'string') throw new Error(`Invalid extension transaction destination: ${file}`)
+  if (stored.kind === 'install' && typeof stored.stagingPath !== 'string') throw new Error(`Invalid extension transaction staging path: ${file}`)
+  if (stored.kind !== 'install' && stored.stagingPath !== undefined) throw new Error(`Invalid extension transaction staging field: ${file}`)
+  if (stored.backupPath !== undefined && typeof stored.backupPath !== 'string') throw new Error(`Invalid extension transaction backup path: ${file}`)
+  if (stored.kind === 'file') { if (typeof stored.content !== 'string') throw new Error(`Invalid extension transaction file content: ${file}`) }
+  else if (stored.content !== undefined) throw new Error(`Invalid extension transaction content field: ${file}`)
   if (version === 1) {
     if (phase === 'awaiting-snapshot' || snapshotRequired !== undefined || decision !== undefined || packageFingerprint !== undefined) throw new Error(`Invalid legacy extension transaction journal schema: ${file}`)
   } else {
@@ -139,7 +154,7 @@ function readJournal(root: string, file: string): ExtensionJournal {
     stagingPath: stored.stagingPath === undefined ? undefined : fromRelative(root, stored.stagingPath),
     backupPath: stored.backupPath === undefined ? undefined : fromRelative(root, stored.backupPath),
     content: typeof stored.content === 'string' ? stored.content : undefined,
-    registryWrites: writes.map((item) => { if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Invalid extension registry journal entry'); const value = item as Record<string, unknown>; if (typeof value.content !== 'string') throw new Error('Invalid extension registry journal entry'); return { path: fromRelative(root, value.path), content: value.content } }),
+    registryWrites: writes.map((item) => { if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Invalid extension registry journal entry'); const value = item as Record<string, unknown>; if (Object.keys(value).sort().join(',') !== 'content,path' || typeof value.content !== 'string') throw new Error('Invalid extension registry journal entry'); return { path: fromRelative(root, value.path), content: value.content } }),
     registryDeletes: deletes.map((item) => fromRelative(root, item)),
   }
 }
