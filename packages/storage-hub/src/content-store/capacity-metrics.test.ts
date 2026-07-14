@@ -49,6 +49,12 @@ describe('read-only volume capacity metrics', () => {
     expect(result.cleanableBytes).toBe(7); await expect(import('node:fs/promises').then(({ readFile }) => readFile(object.path, 'utf8'))).resolves.toBe('orphan')
   })
 
+  it('degrades when cleanable candidate completeness cannot be proven', async () => {
+    const volumeRoot = await root(); await mkdir(join(volumeRoot, '.ash', 'gc', 'quarantine'), { recursive: true }); await writeFile(join(volumeRoot, '.ash', 'gc', 'quarantine', 'broken.json'), '{')
+    const result = await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: allocated(1) })
+    expect(result).toMatchObject({ scanStatus: 'degraded', cleanableBytes: null, verifiedDedupSavedBytes: null })
+  })
+
   it('labels replica trees separately and never subtracts them into savings', async () => {
     const volumeRoot = await root(); await mkdir(join(volumeRoot, '.ash', 'sync'), { recursive: true }); await writeFile(join(volumeRoot, '.ash', 'sync', 'snapshot'), 'replica')
     const result = await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: allocated(1) })

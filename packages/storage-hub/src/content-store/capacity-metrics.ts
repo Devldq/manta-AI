@@ -69,6 +69,6 @@ export async function measureVolumeCapacity(volumeRoot: string, options: VolumeC
     try { physical = add(physical, observed.allocatedBytes) } catch (error) { blockers.push({ code: 'allocation-unavailable', detail: (error as Error).message }); physical = -1; break }
   }
   const cleanable = await cleanableBytes(volumeRoot, scan.objects, allocation); blockers.push(...cleanable.blockers)
-  const complete = scan.complete && replicas.blockers.length === 0 && physical >= 0
+  const complete = scan.complete && replicas.blockers.length === 0 && cleanable.blockers.length === 0 && physical >= 0
   return { volumeId: options.volumeId, scanStatus: complete ? 'complete' : 'degraded', logicalImmutableBytes: scan.logicalImmutableBytes, physicalImmutableBytes: complete ? physical : null, verifiedDedupSavedBytes: complete ? Math.max(0, scan.logicalImmutableBytes - physical) : null, replicaBytes: replicas.bytes, cleanableBytes: cleanable.bytes, scannedAt: scan.scannedAt, blockers }
 }

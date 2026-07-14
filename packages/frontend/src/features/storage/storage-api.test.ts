@@ -28,4 +28,10 @@ describe('storage API', () => {
     await expect(api.gitBindings()).resolves.toEqual([])
     expect(calls).toEqual(['/api/storage/git/capabilities', '/api/storage/git/bindings'])
   })
+
+  it('preserves nullable verified capacity fields from the backend', async () => {
+    const capacity = { scanStatus: 'degraded', logicalImmutableBytes: 12, physicalImmutableBytes: null, verifiedDedupSavedBytes: null, replicaBytes: 3, cleanableBytes: null, scannedAt: '2026-07-14T00:00:00.000Z', blockers: [{ code: 'allocation-unavailable', detail: 'Unavailable' }] }
+    const api = createStorageApi(async () => new Response(JSON.stringify({ success: true, data: { volumes: [], groups: [], capacity } }), { status: 200 }))
+    await expect(api.overview()).resolves.toMatchObject({ capacity: { physicalImmutableBytes: null, verifiedDedupSavedBytes: null } })
+  })
 })

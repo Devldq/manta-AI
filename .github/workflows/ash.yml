@@ -25,3 +25,5 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm verify:ash:phase1
+      - run: pnpm verify:ash:phase2
+      - run: pnpm verify:ash:phase3

@@ -16,56 +16,56 @@
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 233,
+      "line": 251,
       "column": 11,
       "operation": "mkdir",
       "reason": "Reviewed reconstruction of a disposable Git workspace under the injected ASH cache storage group after cache cleanup or migration."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 237,
+      "line": 255,
       "column": 45,
       "operation": "writeFile",
       "reason": "Reviewed missing Git ignore policy restoration under the injected ASH cache storage group for the disposable workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 295,
+      "line": 313,
       "column": 64,
       "operation": "rm",
       "reason": "Reviewed rollback cleanup limited to a Git ignore file in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 296,
+      "line": 314,
       "column": 18,
       "operation": "writeFile",
       "reason": "Reviewed rollback restoration of a prior Git ignore file in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 298,
+      "line": 316,
       "column": 76,
       "operation": "rm",
       "reason": "Reviewed rollback removal of a newly created Git metadata directory in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 149,
+      "line": 167,
       "column": 13,
       "operation": "mkdir",
       "reason": "Reviewed creation of a disposable remote-import Git worktree under the injected ASH cache group; it is never an active synchronized volume."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 163,
+      "line": 181,
       "column": 15,
       "operation": "rm",
       "reason": "Reviewed cleanup limited to a failed disposable remote-import worktree under the injected ASH cache group."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 275,
+      "line": 293,
       "column": 11,
       "operation": "rm",
       "reason": "Reviewed cleanup of an opaque user-confirmation import staging worktree under the injected ASH cache group."
@@ -769,49 +769,49 @@
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 36,
+      "line": 39,
       "column": 32,
       "operation": "mkdirSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 49,
+      "line": 99,
       "column": 24,
       "operation": "rmSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 67,
+      "line": 117,
       "column": 120,
       "operation": "rmSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 158,
+      "line": 211,
       "column": 43,
       "operation": "rmSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 161,
+      "line": 214,
       "column": 90,
       "operation": "mkdirSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 167,
+      "line": 220,
       "column": 80,
       "operation": "rmSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 168,
+      "line": 221,
       "column": 45,
       "operation": "rmSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
@@ -1022,31 +1022,49 @@
       "reason": "Reviewed Phase 2 verification orchestrator which launches fixed repository tests and the storage audit; it does not select application persistence paths."
     },
     {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 38, "column": 19, "operation": "mkdir",
+      "file": "scripts/verify/ash-phase3.ts", "line": 15, "column": 18, "operation": "spawnSync",
+      "reason": "Reviewed Phase 3 verification orchestrator which launches fixed repository tests, typechecks, and the storage audit; it does not select application persistence paths."
+    },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 17, "column": 3, "operation": "mkdirSync", "reason": "Reviewed volume-local CAS lease directory creation below the injected and validated ASH volume root." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 20, "column": 22, "operation": "openSync", "reason": "Reviewed exclusive volume-local CAS lease acquisition below the injected and validated ASH volume root." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 20, "column": 48, "operation": "writeFileSync", "reason": "Reviewed lease owner metadata write to the exclusively created volume-local CAS lock file." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 21, "column": 80, "operation": "unlinkSync", "reason": "Reviewed cleanup of only the current process volume-local CAS lock after failed acquisition setup." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 24, "column": 84, "operation": "unlinkSync", "reason": "Reviewed release of only the current process volume-local CAS lock after the protected operation." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 47, "column": 11, "operation": "mkdir", "reason": "Reviewed asynchronous volume-local CAS lease directory creation below the injected ASH volume root." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 51, "column": 28, "operation": "open", "reason": "Reviewed asynchronous exclusive CAS lock acquisition below the injected ASH volume root." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 57, "column": 47, "operation": "unlink", "reason": "Reviewed asynchronous release of only the current volume-local CAS lock file." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 82, "column": 139, "operation": "rm", "reason": "Reviewed removal of a relived quarantine candidate record below the locked volume-local CAS metadata root." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 91, "column": 17, "operation": "writeFile", "reason": "Reviewed durable staging write of a verified GC candidate record below the locked volume-local quarantine root." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 91, "column": 92, "operation": "rename", "reason": "Reviewed atomic publish of a verified GC candidate record within the locked volume-local quarantine root." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 93, "column": 95, "operation": "rm", "reason": "Reviewed cleanup of an owned GC candidate staging record after a failed atomic publish." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 112, "column": 15, "operation": "rm", "reason": "Reviewed removal of verified candidate metadata after unchanged object validation under the volume CAS lease." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 115, "column": 15, "operation": "unlink", "reason": "Reviewed deletion of a twice-scanned unchanged unreferenced CAS object under the volume CAS lease." },
+    {
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 39, "column": 19, "operation": "mkdir",
       "reason": "Reviewed immutable CAS fanout directory under the explicit volume-local .ash object namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 94, "column": 13, "operation": "copyFile",
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 101, "column": 13, "operation": "copyFile",
       "reason": "Reviewed atomic CAS ingestion staging copy under the verified volume-local object namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 101, "column": 23, "operation": "rm",
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 108, "column": 23, "operation": "rm",
       "reason": "Reviewed cleanup of a random CAS object staging file below the verified object namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 109, "column": 13, "operation": "writeFile",
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 120, "column": 13, "operation": "writeFile",
       "reason": "Reviewed atomic byte-ingest staging write below the verified volume-local CAS namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 113, "column": 23, "operation": "unlink",
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 124, "column": 23, "operation": "unlink",
       "reason": "Reviewed cleanup of a random CAS byte-ingest staging file."
     },
     {
-      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 28, "column": 17, "operation": "writeFile",
+      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 32, "column": 17, "operation": "writeFile",
       "reason": "Reviewed atomic asset-manifest staging write below the verified per-volume metadata namespace."
     },
     {
-      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 28, "column": 178, "operation": "rm",
+      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 32, "column": 178, "operation": "rm",
       "reason": "Reviewed cleanup of an asset-manifest staging file owned by ASH."
     },
     {

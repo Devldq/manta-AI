@@ -5,6 +5,16 @@ import { StorageGroupRow } from './StorageGroupRow'
 import { StorageVolumeCard } from './StorageVolumeCard'
 
 describe('storage settings presentation', () => {
+  it('shows verified capacity categories and a savings claim only for a complete scan', () => {
+    const html = renderToStaticMarkup(<StorageOverview overview={{ volumes: [], groups: [], capacity: { scanStatus: 'complete', logicalImmutableBytes: 100, physicalImmutableBytes: 60, verifiedDedupSavedBytes: 40, replicaBytes: 9, cleanableBytes: 3, scannedAt: '2026-07-14T00:00:00.000Z', blockers: [] } }} />)
+    for (const text of ['Logical immutable: 100 B', 'Physical immutable: 60 B', 'Replica/cache: 9 B', 'Safely cleanable: 3 B', 'Savings verified: 40 B']) expect(html).toContain(text)
+  })
+
+  it.each(['degraded', 'scanning'] as const)('never renders a numeric savings claim for %s capacity', (scanStatus) => {
+    const html = renderToStaticMarkup(<StorageOverview overview={{ volumes: [], groups: [], capacity: { scanStatus, logicalImmutableBytes: 100, physicalImmutableBytes: null, verifiedDedupSavedBytes: null, replicaBytes: 9, cleanableBytes: null, scannedAt: '2026-07-14T00:00:00.000Z', blockers: [{ code: 'allocation-unavailable', detail: 'Allocation evidence unavailable' }] } }} />)
+    expect(html).not.toContain('Savings verified'); expect(html).not.toContain('Savings: 0'); expect(html).toContain(scanStatus === 'scanning' ? 'Capacity scan pending' : 'Capacity unavailable'); expect(html).toContain('Allocation evidence unavailable')
+  })
+
   it('renders all seven ASH storage groups with their user-facing descriptions and health', () => {
     const html = renderToStaticMarkup(<StorageOverview overview={{ volumes: [], groups: [] }} />)
     for (const group of ['Extensions', 'Knowledge', 'Work data', 'Configuration', 'Secrets', 'Diagnostics', 'Cache']) expect(html).toContain(group)

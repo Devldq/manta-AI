@@ -1,6 +1,6 @@
-import type { StorageGroupId, StorageOperationProgress, StorageVolumeRecord } from '@manta/shared'
+import type { AggregateStorageCapacityMetrics, StorageGroupId, StorageOperationProgress, StorageVolumeCapacityMetrics, StorageVolumeRecord } from '@manta/shared'
 
-export interface StorageVolumeDetails extends StorageVolumeRecord { groups: StorageGroupId[]; inventory: { bytes: number; files: number } }
+export interface StorageVolumeDetails extends StorageVolumeRecord { groups: StorageGroupId[]; inventory: { bytes: number; files: number }; capacity?: StorageVolumeCapacityMetrics }
 export interface StorageGitCapability { available: boolean; version?: string; reason?: string }
 export interface StorageGitBinding { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; lastSyncedGroupHashes?: Partial<Record<StorageGroupId, string>>; lastSyncedAt?: string; lastSyncStatus?: 'succeeded'; createdAt: string; updatedAt: string }
 
@@ -10,6 +10,11 @@ export interface StorageOverview {
   logicalBytes?: number
   actualBytes?: number
   savingsBytes?: number
+  inventoryLogicalBytes?: number
+  inventoryTotalBytes?: number
+  inventoryTotalFiles?: number
+  capacity?: AggregateStorageCapacityMetrics
+  volumeCapacity?: StorageVolumeCapacityMetrics[]
   volumeHealth?: Record<string, { status: 'healthy' | 'offline' | 'unreadable' | 'conflict'; conflicts: string[]; checkedAt: string; reason?: string }>
   operation?: StorageOperation
   operations?: StorageOperation[]
