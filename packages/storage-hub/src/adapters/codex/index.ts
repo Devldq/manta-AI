@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
-import { constants } from 'node:fs'
-import { lstat, open, readFile } from 'node:fs/promises'
+import { lstat, type FileHandle } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import type { AdapterResult, AgentAdapter, AgentAsset, AgentAssetInventory, AgentInstallation, ApprovedAdapterPlan, AssetSelection, ImportPlan, PreviewFileOperation, ProjectionPlan } from '../types'
 import { detectCodex, type CodexEnvironment } from './detect'
 import { activeInstructions, instructionFilePaths, instructionFiles } from './instructions'
 import { appendMcpServers, parseMcpServers, renderMcpServer, type PortableMcpServer } from './mcp'
 import { discoverSkills, listSkillFilePaths } from './skills'
+import { readOrdinaryNoFollow, readOrdinarySnapshotNoFollow, withOrdinaryNoFollowWritable } from './native-io'
 
 export * from './detect'; export * from './instructions'; export * from './mcp'; export * from './skills'
 export type CodexPortableAssetKind = 'skill' | 'instructions' | 'mcp-server'
@@ -15,7 +15,7 @@ export interface CodexPortableAsset { readonly schemaVersion: 1; readonly id: st
 export interface CodexPortableAssetSummary { readonly schemaVersion: 1; readonly id: string; readonly kind: CodexPortableAssetKind }
 export interface CodexPortableAssetRepository { list(): Promise<readonly CodexPortableAssetSummary[]>; read(id: string): Promise<CodexPortableAsset>; import(asset: CodexPortableAsset): Promise<{ readonly id: string; readonly digest: string }> }
 export interface CodexSecretRepository { storeLiteral(input: { readonly value: string; readonly purpose: string }): Promise<string> }
-export interface CodexClaimMaterializer { cloneIntoClaim?(path: string, bytes: Uint8Array): Promise<void>; copyIntoClaim?(path: string, bytes: Uint8Array): Promise<void> }
+export interface CodexClaimMaterializer { cloneIntoClaim?(claim: FileHandle, bytes: Uint8Array): Promise<void>; copyIntoClaim?(claim: FileHandle, bytes: Uint8Array): Promise<void> }
 export interface CodexAdapterOptions { readonly environment: CodexEnvironment; readonly assets: CodexPortableAssetRepository; readonly secrets: CodexSecretRepository; readonly materializer?: CodexClaimMaterializer; readonly now?: () => Date }
 
 const hash = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex')
@@ -76,7 +76,7 @@ export class CodexAdapter implements AgentAdapter {
     } else {
       const selected = new Map<string, CodexPortableAsset>(); for (const id of plan.selection.assetIds) { const asset = await this.#assets.read(id); validatePortableAsset(asset, id); if (assetDigest(asset) !== plan.selection.assetDigests?.[id]) throw new Error(`Portable asset snapshot changed after planning: ${id}`); selected.set(id, asset) }
       let mcpOutput: Uint8Array | undefined
-      const mcpAssets = [...selected.values()].filter((asset) => asset.kind === 'mcp-server'); if (mcpAssets.length) { const operation = plan.operations.find((item) => item.id === 'project-mcp-config'); if (!operation) throw new Error('Approved MCP projection operation is missing'); const before = operation.kind === 'create' ? '' : await readFile(operation.nativePath, 'utf8'); mcpOutput = Buffer.from(appendMcpServers(before, mcpAssets.map((asset) => ({ name: asset.name, metadata: asset.metadata as PortableMcpServer })))) }
+      const mcpAssets = [...selected.values()].filter((asset) => asset.kind === 'mcp-server'); if (mcpAssets.length) { const operation = plan.operations.find((item) => item.id === 'project-mcp-config'); if (!operation) throw new Error('Approved MCP projection operation is missing'); const before = operation.kind === 'create' ? '' : (await readOrdinaryNoFollow(operation.nativePath)).toString('utf8'); mcpOutput = Buffer.from(appendMcpServers(before, mcpAssets.map((asset) => ({ name: asset.name, metadata: asset.metadata as PortableMcpServer })))) }
       for (const operation of plan.operations) { if (operation.kind !== 'create' && operation.kind !== 'modify') continue; let bytes: Uint8Array | undefined
         if (operation.id === 'project-mcp-config') bytes = mcpOutput
         else for (const asset of selected.values()) { const base = asset.kind === 'skill' ? join(root(plan.target, 'user-skills'), asset.name) : asset.kind === 'instructions' ? root(plan.target, 'codex-home') : undefined; if (!base) continue; const file = asset.files?.find((candidate) => resolve(base, ...candidate.relativePath.split('/')) === resolve(operation.nativePath)); if (file) { bytes = file.bytes; break } }
@@ -89,7 +89,7 @@ export class CodexAdapter implements AgentAdapter {
   #plan(kind: 'import' | 'projection', target: AgentInstallation, operations: readonly PreviewFileOperation[]): ImportPlan | ProjectionPlan { const createdAt = this.#now(); return { schemaVersion: 1, kind, planId: `codex-${kind}-${createdAt.getTime()}`, adapterId: this.id, target: structuredClone(target), ...(kind === 'projection' ? { selection: { schemaVersion: 1, assetIds: [] } } : {}), operations, createdAt: createdAt.toISOString(), expiresAt: new Date(createdAt.getTime() + 60 * 60 * 1000).toISOString(), digest: '' } as ImportPlan | ProjectionPlan }
 }
 
-async function copyIntoClaim(path: string, bytes: Uint8Array): Promise<void> { const handle = await open(path, 'r+'); try { await handle.truncate(0); await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() } }
+async function copyIntoClaim(handle: FileHandle, bytes: Uint8Array): Promise<void> { await handle.truncate(0); await handle.writeFile(bytes) }
 function assetDigest(asset: CodexPortableAsset): string { return hash(JSON.stringify(asset, (_key, value) => value instanceof Uint8Array ? [...value] : value)) }
 function validatePortableAsset(asset: CodexPortableAsset, expectedId: string): void {
   if (!asset || asset.schemaVersion !== 1 || asset.id !== expectedId || !safe(asset.id) || !safe(asset.name) || !['skill', 'instructions', 'mcp-server'].includes(asset.kind)) throw new Error('Malformed portable Codex asset identity or kind')
@@ -101,8 +101,8 @@ function validatePortableAsset(asset: CodexPortableAsset, expectedId: string): v
   parseMcpServers(renderMcpServer(asset.name, metadata))
 }
 function safeRelativeAssetPath(path: string): boolean { return typeof path === 'string' && path.length > 0 && path.split('/').every((part) => safe(part)) }
-async function approvedRead(operation: PreviewFileOperation): Promise<Buffer> { const handle = await open(operation.nativePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); try { const stat = await handle.stat({ bigint: true }); if (!stat.isFile()) throw new Error('Approved Codex import path is not an ordinary file'); const identity = `${stat.dev.toString(16)}-${stat.ino.toString(16)}-${stat.birthtimeNs.toString(16)}`; const bytes = await handle.readFile(); if (identity !== operation.expectedBeforeIdentity || hash(bytes) !== operation.expectedBeforeSha256) throw new Error('Approved Codex import path changed before read'); return bytes } finally { await handle.close() } }
-async function readOrdinaryNative(path: string): Promise<Buffer> { const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); try { const stat = await handle.stat(); if (!stat.isFile()) throw new Error('Codex native asset is not an ordinary file'); return await handle.readFile() } finally { await handle.close() } }
+async function approvedRead(operation: PreviewFileOperation): Promise<Buffer> { const snapshot = await readOrdinarySnapshotNoFollow(operation.nativePath); if (snapshot.identity !== operation.expectedBeforeIdentity || hash(snapshot.bytes) !== operation.expectedBeforeSha256) throw new Error('Approved Codex import path changed before read'); return snapshot.bytes }
+const readOrdinaryNative = readOrdinaryNoFollow
 function projectionSafeMetadata(name: string, metadata: PortableMcpServer, bindings: readonly { field: string; secretReferenceId: string }[]): PortableMcpServer {
   const result: PortableMcpServer = structuredClone({ ...metadata, ...(bindings.length ? { secretBindings: bindings } : {}) })
   if (result.transport === 'stdio') { const env = bindings.filter((item) => item.field.startsWith('env.')).map((item) => item.field.slice(4)); return { ...result, ...(env.length ? { envVars: [...new Set([...(result.envVars ?? []), ...env])].sort() } : {}) } }
@@ -110,9 +110,5 @@ function projectionSafeMetadata(name: string, metadata: PortableMcpServer, bindi
   return { ...result, ...(Object.keys(headers).length ? { envHttpHeaders: headers } : {}) }
 }
 async function materializeClaim(path: string, bytes: Uint8Array, materializer: CodexClaimMaterializer): Promise<'clone' | 'copy'> {
-  const beforeHandle = await open(path, 'r+'); const before = await beforeHandle.stat({ bigint: true }); await beforeHandle.close(); if (!before.isFile()) throw new Error('Codex projection claim is not an ordinary file')
-  let strategy: 'clone' | 'copy' = 'copy'
-  if (materializer.cloneIntoClaim) { try { await materializer.cloneIntoClaim(path, bytes); strategy = 'clone' } catch (error) { if (!['ENOTSUP', 'EXDEV', 'EINVAL'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; await (materializer.copyIntoClaim ?? copyIntoClaim)(path, bytes) } } else await (materializer.copyIntoClaim ?? copyIntoClaim)(path, bytes)
-  const afterHandle = await open(path, 'r+'); try { await afterHandle.sync(); const after = await afterHandle.stat({ bigint: true }); if (before.dev !== after.dev || before.ino !== after.ino || before.birthtimeNs !== after.birthtimeNs) throw new Error('Codex projection replaced its coordinator claim') } finally { await afterHandle.close() }
-  return strategy
+  return withOrdinaryNoFollowWritable(path, async (handle) => { let strategy: 'clone' | 'copy' = 'copy'; if (materializer.cloneIntoClaim) { try { await materializer.cloneIntoClaim(handle, bytes); strategy = 'clone' } catch (error) { if (!['ENOTSUP', 'EXDEV', 'EINVAL'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; await (materializer.copyIntoClaim ?? copyIntoClaim)(handle, bytes) } } else await (materializer.copyIntoClaim ?? copyIntoClaim)(handle, bytes); return strategy })
 }

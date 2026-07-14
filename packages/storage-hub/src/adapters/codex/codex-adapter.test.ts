@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -162,7 +163,7 @@ describe('Codex projection', () => {
 
   it('falls back from clone to copy in place, reports the strategy, and preserves the coordinator claim identity', async () => {
     const home = await temporary(); await mkdir(join(home, '.codex')); await mkdir(join(home, '.agents', 'skills'), { recursive: true }); const assets = new Assets(); const secrets = new Secrets(); assets.values.set('portable-skill', { schemaVersion: 1, id: 'portable-skill', kind: 'skill', name: 'portable', files: [{ relativePath: 'SKILL.md', bytes: new TextEncoder().encode('portable'), sha256: sha256('portable') }] })
-    const instance = new CodexAdapter({ environment: { homeDirectory: home, env: {} }, assets, secrets, now: () => new Date('2026-07-15T00:00:00.000Z'), materializer: { cloneIntoClaim: async () => { throw Object.assign(new Error('unsupported'), { code: 'ENOTSUP' }) }, copyIntoClaim: async (path: string, bytes: Uint8Array) => { const handle = await import('node:fs/promises').then((fs) => fs.open(path, 'r+')); try { await handle.truncate(0); await handle.writeFile(bytes) } finally { await handle.close() } } } } as never)
+    const instance = new CodexAdapter({ environment: { homeDirectory: home, env: {} }, assets, secrets, now: () => new Date('2026-07-15T00:00:00.000Z'), materializer: { cloneIntoClaim: async () => { throw Object.assign(new Error('unsupported'), { code: 'ENOTSUP' }) }, copyIntoClaim: async (handle: FileHandle, bytes: Uint8Array) => { await handle.truncate(0); await handle.writeFile(bytes) } } } as never)
     const target = (await instance.detect())[0]; const state = join(await temporary(), 'state'); const coordinator = new ProjectionCoordinator({ stateRoot: state, coordinationRoot: state, registry: new AdapterRegistry([instance]), now: () => new Date('2026-07-15T00:01:00.000Z') }); const result = await coordinator.apply(coordinator.approve(await coordinator.planProjection('codex', { schemaVersion: 1, assetIds: ['portable-skill'] }, target)))
     expect(result.materializationStrategies).toEqual([{ operationId: expect.stringMatching(/^file-/), strategy: 'copy' }])
   })
