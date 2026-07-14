@@ -7,6 +7,49 @@ export type { StorageGroupId } from './constants'
 const TimestampSchema = z.iso.datetime()
 export const StorageGroupIdSchema = z.enum(STORAGE_GROUP_IDS)
 
+export const StorageCapacityBlockerSchema = z.object({
+  code: z.string().min(1),
+  path: z.string().min(1).optional(),
+  detail: z.string().min(1),
+})
+export type StorageCapacityBlocker = z.infer<typeof StorageCapacityBlockerSchema>
+
+const CapacityFieldsSchema = z.object({
+  scanStatus: z.enum(['complete', 'degraded', 'scanning']),
+  logicalImmutableBytes: z.number().int().nonnegative(),
+  physicalImmutableBytes: z.number().int().nonnegative().nullable(),
+  verifiedDedupSavedBytes: z.number().int().nonnegative().nullable(),
+  replicaBytes: z.number().int().nonnegative(),
+  cleanableBytes: z.number().int().nonnegative().nullable(),
+  scannedAt: TimestampSchema,
+  blockers: z.array(StorageCapacityBlockerSchema),
+}).superRefine((value, context) => {
+  if (value.scanStatus !== 'complete' && (value.physicalImmutableBytes !== null || value.verifiedDedupSavedBytes !== null)) {
+    context.addIssue({ code: 'custom', message: 'Unverified scans cannot report physical bytes or savings' })
+  }
+})
+
+export const StorageCapacityMetricsSchema = CapacityFieldsSchema.safeExtend({ volumeId: z.string().min(1) })
+export const AggregateStorageCapacityMetricsSchema = CapacityFieldsSchema
+export type StorageVolumeCapacityMetrics = z.infer<typeof StorageCapacityMetricsSchema>
+export type AggregateStorageCapacityMetrics = z.infer<typeof AggregateStorageCapacityMetricsSchema>
+
+function capacitySum(values: number[]): number | null {
+  let total = 0
+  for (const value of values) { total += value; if (!Number.isSafeInteger(total)) return null }
+  return total
+}
+
+export function aggregateStorageCapacityMetrics(volumes: StorageVolumeCapacityMetrics[]): AggregateStorageCapacityMetrics {
+  const status = volumes.some((item) => item.scanStatus === 'scanning') ? 'scanning' : volumes.every((item) => item.scanStatus === 'complete') ? 'complete' : 'degraded'
+  const logical = capacitySum(volumes.map((item) => item.logicalImmutableBytes)) ?? 0
+  const replicas = capacitySum(volumes.map((item) => item.replicaBytes)) ?? 0
+  const physical = status === 'complete' && volumes.every((item) => item.physicalImmutableBytes !== null) ? capacitySum(volumes.map((item) => item.physicalImmutableBytes!)) : null
+  const cleanable = volumes.every((item) => item.cleanableBytes !== null) ? capacitySum(volumes.map((item) => item.cleanableBytes!)) : null
+  const scannedAt = volumes.map((item) => item.scannedAt).sort().at(-1) ?? new Date(0).toISOString()
+  return { scanStatus: status, logicalImmutableBytes: logical, physicalImmutableBytes: physical, verifiedDedupSavedBytes: status === 'complete' && physical !== null ? Math.max(0, logical - physical) : null, replicaBytes: replicas, cleanableBytes: cleanable, scannedAt, blockers: volumes.flatMap((item) => item.blockers) }
+}
+
 export interface StorageVolumeRecord {
   id: string
   name: string

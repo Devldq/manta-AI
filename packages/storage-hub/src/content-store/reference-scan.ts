@@ -8,7 +8,7 @@ import { posixAllocatedBytes } from '../inventory/file-inventory'
 export type ReferenceScanBlockerCode = 'manifest-invalid' | 'manifest-unreadable' | 'object-tree-unreadable' | 'object-integrity' | 'pending-operation'
 export interface ReferenceScanBlocker { code: ReferenceScanBlockerCode; path?: string; detail: string }
 export interface PendingContentReferences { liveHashes?: Iterable<string>; blockers?: Array<{ code?: string; detail: string }> }
-export interface VerifiedContentObject { hash: string; path: string; size: number; allocatedBytes: number | null; allocationEvidence: 'posix-blocks' | 'unavailable'; identity: string; links: number }
+export interface VerifiedContentObject { hash: string; path: string; size: number; mtimeMs: number; allocatedBytes: number | null; allocationEvidence: 'posix-blocks' | 'unavailable'; identity: string; links: number }
 export interface VolumeReferenceScan {
   volumeRoot: string; complete: boolean; logicalImmutableBytes: number; liveHashes: Set<string>; objects: VerifiedContentObject[]; blockers: ReferenceScanBlocker[]; scannedAt: string
 }
@@ -55,7 +55,7 @@ async function scanUnlocked(volumeRoot: string, pending: PendingContentReference
           const digest = await hashFileSha256(path); const after = await lstat(path)
           if (digest.hash !== hash || digest.size !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error('CAS object failed stable hash and size verification')
           const blocks = posixAllocatedBytes(before.blocks) ?? null
-          objects.push({ hash, path, size: before.size, allocatedBytes: process.platform === 'win32' ? null : blocks, allocationEvidence: process.platform === 'win32' || blocks === null ? 'unavailable' : 'posix-blocks', identity: `${before.dev}:${before.ino}:${before.birthtimeMs}`, links: before.nlink })
+          objects.push({ hash, path, size: before.size, mtimeMs: before.mtimeMs, allocatedBytes: process.platform === 'win32' ? null : blocks, allocationEvidence: process.platform === 'win32' || blocks === null ? 'unavailable' : 'posix-blocks', identity: `${before.dev}:${before.ino}:${before.birthtimeMs}`, links: before.nlink })
         } catch (error) { blockers.push(blocker('object-integrity', relative(root, path), error)) }
       }
     }
