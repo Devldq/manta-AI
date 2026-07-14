@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { restoreBytesDurable, writeJsonDurable, writeNewBytesDurable } from './durable-io'
+import { createExclusiveClaimDurable, renameDurable, restoreBytesDurable, unlinkDurable, writeJsonDurable, writeNewBytesDurable } from './durable-io'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
@@ -20,5 +20,11 @@ describe('adapter durable IO', () => {
     const directory = await root(); const target = join(directory, 'native.txt'); await writeFile(target, 'current'); let validations = 0
     await expect(restoreBytesDurable(target, Buffer.from('prior'), async () => { validations += 1; if (validations === 2) throw new Error('path changed') })).rejects.toThrow('path changed')
     expect(await readFile(target, 'utf8')).toBe('current'); expect(await readdir(directory)).toEqual(['native.txt'])
+  })
+
+  it('exclusively claims, durably quarantines, and durably removes a create target', async () => {
+    const directory = await root(); const target = join(directory, 'created'); const quarantine = join(directory, '.quarantine'); const identity = await createExclusiveClaimDurable(target)
+    expect(identity).toMatch(/^[a-f0-9-]+$/); await expect(createExclusiveClaimDurable(target)).rejects.toThrow(); await writeFile(target, 'created'); await renameDurable(target, quarantine)
+    await expect(access(target)).rejects.toThrow(); expect(await readFile(quarantine, 'utf8')).toBe('created'); await unlinkDurable(quarantine); await expect(access(quarantine)).rejects.toThrow()
   })
 })
