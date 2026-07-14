@@ -26,6 +26,8 @@ export class SimulatedAdapterCrash extends Error {
 
 export interface ProjectionCoordinatorOptions {
   readonly stateRoot: string
+  /** Shared by every state root that can address the same native installation. */
+  readonly coordinationRoot: string
   readonly registry: AdapterRegistry
   readonly now?: () => Date
   readonly fault?: (point: ProjectionFaultPoint) => Promise<void>
@@ -72,13 +74,15 @@ async function serialized<T>(key: string, operation: () => Promise<T>): Promise<
 
 export class ProjectionCoordinator {
   readonly #stateRoot: string
+  readonly #coordinationRoot: string
   readonly #registry: AdapterRegistry
   readonly #now: () => Date
   readonly #fault?: ProjectionCoordinatorOptions['fault']
 
   constructor(options: ProjectionCoordinatorOptions) {
     if (!isAbsolute(options.stateRoot) || options.stateRoot.includes('\0')) throw new Error('Adapter state root must be an absolute safe path')
-    this.#stateRoot = resolve(options.stateRoot); this.#registry = options.registry; this.#now = options.now ?? (() => new Date()); this.#fault = options.fault
+    if (!isAbsolute(options.coordinationRoot) || options.coordinationRoot.includes('\0')) throw new Error('Adapter coordination root must be an absolute safe path')
+    this.#stateRoot = resolve(options.stateRoot); this.#coordinationRoot = resolve(options.coordinationRoot); this.#registry = options.registry; this.#now = options.now ?? (() => new Date()); this.#fault = options.fault
   }
 
   async detect(adapterId: string): Promise<readonly AgentInstallation[]> {
@@ -110,7 +114,7 @@ export class ProjectionCoordinator {
     this.#validateApproval(plan)
     await this.#validateOperations(plan.target, plan.operations)
     await this.#validateBeforeStates(plan.operations)
-    return serialized(this.#stateRoot, () => this.#withFileLock(false, async () => {
+    return this.#withInstallationLock(plan, false, async () => {
       this.#validateApproval(plan); await this.#validateOperations(plan.target, plan.operations); await this.#validateBeforeStates(plan.operations)
       let journal: AdapterJournal = this.#journal(plan, 'journaled', [])
       await this.#writeJournal(journal); await this.#fault?.('after-journal')
@@ -129,36 +133,34 @@ export class ProjectionCoordinator {
         try { await this.#rollbackJournal(await this.#readJournal(plan.approval.operationId)) } catch (rollbackError) { throw new AggregateError([error, rollbackError], 'Adapter apply failed and rollback could not prove safe completion', { cause: error }) }
         throw error
       }
-    }))
+    })
   }
 
   async rollback(operationId: string): Promise<void> {
     if (!SAFE_SEGMENT.test(operationId)) throw new Error('Unsafe adapter operation id')
-    await serialized(this.#stateRoot, () => this.#withFileLock(false, async () => {
+    const pending = await this.#readJournal(operationId)
+    await this.#withInstallationLock(pending.plan, false, async () => {
       const journal = await this.#readJournal(operationId); if (journal.phase === 'rolled-back') return; if (journal.phase !== 'committed' && journal.phase !== 'rolling-back') throw new Error('Only a committed adapter operation can be explicitly rolled back')
       await this.#rollbackJournal(journal)
-    }))
+    })
   }
 
   async recoverPending(): Promise<void> {
-    await serialized(this.#stateRoot, () => this.#withFileLock(true, async () => {
-      const directory = this.#journalDirectory(); let names: string[]
-      try {
-        const entries = await readdir(directory, { withFileTypes: true })
-        if (entries.some((entry) => !entry.isFile() || !entry.name.endsWith('.json') || !SAFE_SEGMENT.test(entry.name.slice(0, -5)))) throw new Error('Unknown adapter journal directory entry')
-        names = entries.map((entry) => entry.name).sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
-      } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
-      for (const name of names) {
-        if (!SAFE_SEGMENT.test(name.slice(0, -5))) throw new Error('Malformed adapter journal filename')
-        const journal = await this.#readJournal(name.slice(0, -5))
-        if (journal.phase === 'committed' || journal.phase === 'rolled-back') continue
-        if (journal.phase === 'applied') {
-          try { await this.#verifyApplied(journal.plan.operations); await this.#commit(journal) } catch { await this.#rollbackJournal(journal) }
-          continue
-        }
+    const directory = this.#journalDirectory(); let names: string[]
+    try {
+      const entries = await readdir(directory, { withFileTypes: true })
+      if (entries.some((entry) => !entry.isFile() || !entry.name.endsWith('.json') || !SAFE_SEGMENT.test(entry.name.slice(0, -5)))) throw new Error('Unknown adapter journal directory entry')
+      names = entries.map((entry) => entry.name).sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+    } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
+    for (const name of names) {
+      const operationId = name.slice(0, -5); const pending = await this.#readJournal(operationId)
+      await this.#withInstallationLock(pending.plan, true, async () => {
+        const journal = await this.#readJournal(operationId)
+        if (journal.phase === 'committed' || journal.phase === 'rolled-back') return
+        if (journal.phase === 'applied') { try { await this.#verifyApplied(journal.plan.operations); await this.#commit(journal) } catch { await this.#rollbackJournal(journal) }; return }
         await this.#rollbackJournal(journal)
-      }
-    }))
+      })
+    }
   }
 
   async #preparePlan(plan: AdapterPlan, adapterId: string, target: AgentInstallation): Promise<AdapterPlan> {
@@ -367,9 +369,17 @@ export class ProjectionCoordinator {
   #backupDirectory(operationId: string): string { if (!SAFE_SEGMENT.test(operationId)) throw new Error('Unsafe adapter operation id'); return join(this.#stateRoot, '.ash-backups', 'adapters', operationId) }
   #backupPath(operationId: string, relativePath: string): string { if (!safeRelative(relativePath)) throw new Error('Unsafe adapter backup path'); const root = this.#backupDirectory(operationId); const path = resolve(root, relativePath); if (!contains(root, path)) throw new Error('Unsafe adapter backup path'); return path }
 
-  async #withFileLock<T>(recovery: boolean, operation: () => Promise<T>): Promise<T> {
-    const directory = join(this.#stateRoot, '.ash', 'adapters'); await mkdir(directory, { recursive: true }); const lock = await acquireMigrationFileLock(join(directory, 'coordinator'), recovery)
-    try { return await operation() } finally { await lock.release() }
+  #installationLockBase(plan: ApprovedAdapterPlan): string {
+    const roots = plan.target.nativeRoots.map((root) => ({ id: root.id, path: normalized(root.path) })).sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+    const key = digest({ adapterId: plan.adapterId, installationId: plan.target.id, roots }); return join(this.#coordinationRoot, '.ash', 'adapters', 'locks', key)
+  }
+
+  async #withInstallationLock<T>(plan: ApprovedAdapterPlan, recovery: boolean, operation: () => Promise<T>): Promise<T> {
+    const base = this.#installationLockBase(plan)
+    return serialized(base, async () => {
+      await mkdir(dirname(base), { recursive: true }); const lock = await acquireMigrationFileLock(base, recovery)
+      try { return await operation() } finally { await lock.release() }
+    })
   }
 }
 
