@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import Fastify from 'fastify'
 import { describe, expect, it } from 'vitest'
 import type { ScannedSkill } from '../core/storage/skill/scanner'
+import { createSkill } from '../core/storage/skill/store'
 import { skillRoutes } from '../routes/skills'
 import { runWithStorageResolver } from './path-routing'
 import { importSkillPackage } from './skill-package-import'
@@ -104,5 +105,34 @@ describe('immutable skill package import', () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-skill-junction-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); mkdirSync(source); const file = join(source, 'SKILL.md'); writeFileSync(file, 'v1'); const resolvePath = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
     const installed = await runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(file, 'Alpha') })); const outside = join(root, 'outside'); mkdirSync(outside); const junction = join(extensionsRoot, 'skills', 'jump'); symlinkSync(outside, junction, 'junction'); const forged = { ...installed, packagePath: 'skills/jump/alpha' }; writeFileSync(join(extensionsRoot, 'skill-registry', `${installed.id}.json`), JSON.stringify(forged))
     await expect(runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(file, 'Alpha'), existing: forged, overwrite: true }))).rejects.toThrow(/link|reparse|outside/i)
+  })
+
+  it('rejects an external child claim when its parent package is already owned', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-skill-parent-first-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const parent = join(extensionsRoot, 'skills', 'team'); mkdirSync(parent, { recursive: true }); writeFileSync(join(parent, 'SKILL.md'), 'parent'); const external = join(root, 'external'); mkdirSync(external); const externalFile = join(external, 'SKILL.md'); writeFileSync(externalFile, 'child'); const resolvePath = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
+    await runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(join(parent, 'SKILL.md'), 'Parent') })); const child = await runWithStorageResolver({ resolve: resolvePath }, () => createSkill({ metadata: { name: 'Child', description: 'child', type: 'tool' }, content: 'child' })); const claimedChild = { ...child, packagePath: 'skills/team/child' }; writeFileSync(join(extensionsRoot, 'skill-registry', `${child.id}.json`), JSON.stringify(claimedChild))
+    await expect(runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(externalFile, 'Child'), existing: claimedChild, overwrite: true }))).rejects.toThrow(/overlap|ancestor|claim|owned/i)
+  })
+
+  it('rejects a parent claim when a child package is already owned', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-skill-child-first-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const parent = join(extensionsRoot, 'skills', 'team'); const child = join(parent, 'child'); mkdirSync(child, { recursive: true }); writeFileSync(join(child, 'SKILL.md'), 'child'); writeFileSync(join(parent, 'SKILL.md'), 'parent'); const resolvePath = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
+    await runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(join(child, 'SKILL.md'), 'Child') })); await expect(runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(join(parent, 'SKILL.md'), 'Parent') }))).rejects.toThrow(/overlap|ancestor|claim|owned/i)
+  })
+
+  it('allows sibling package names that only share a lexical prefix', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-skill-prefix-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const resolvePath = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
+    for (const [dir, name] of [['team', 'Team'], ['team-child', 'TeamChild']]) { const active = join(extensionsRoot, 'skills', dir); mkdirSync(active, { recursive: true }); writeFileSync(join(active, 'SKILL.md'), name); await runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(join(active, 'SKILL.md'), name) })) }
+    expect(readdirSync(join(extensionsRoot, 'skill-registry'))).toHaveLength(2)
+  })
+
+  it('allows the same owner to overwrite its exact package claim', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-skill-same-owner-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); mkdirSync(source); const file = join(source, 'SKILL.md'); writeFileSync(file, 'v1'); const resolvePath = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
+    const first = await runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(file, 'Alpha') })); writeFileSync(file, 'v2'); const updated = await runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(file, 'Alpha', '2'), existing: first, overwrite: true })); expect(updated.packagePath).toBe(first.packagePath); expect(readFileSync(join(packageDestination(extensionsRoot, updated), 'SKILL.md'), 'utf8')).toBe('v2')
+  })
+
+  it('fails safe on malformed persisted claims and reserves package container directories', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-skill-malformed-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); mkdirSync(source); const file = join(source, 'SKILL.md'); writeFileSync(file, 'new'); const resolvePath = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
+    const legacy = await runWithStorageResolver({ resolve: resolvePath }, () => createSkill({ metadata: { name: 'Legacy', description: 'legacy', type: 'tool' }, content: 'legacy' })); writeFileSync(join(extensionsRoot, 'skill-registry', `${legacy.id}.json`), JSON.stringify({ ...legacy, packagePath: 'skills/../escape' })); await expect(runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(file, 'New') }))).rejects.toThrow(/malformed|invalid|packagePath|unsafe/i)
+    writeFileSync(join(extensionsRoot, 'skill-registry', `${legacy.id}.json`), JSON.stringify(legacy)); const skillsRoot = join(extensionsRoot, 'skills'); mkdirSync(skillsRoot, { recursive: true }); writeFileSync(join(skillsRoot, 'SKILL.md'), 'root'); await expect(runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(join(skillsRoot, 'SKILL.md'), 'Root') }))).rejects.toThrow(/reserved|container|packagePath/i)
+    const importedRoot = join(skillsRoot, 'imported'); mkdirSync(importedRoot, { recursive: true }); writeFileSync(join(importedRoot, 'SKILL.md'), 'container'); await expect(runWithStorageResolver({ resolve: resolvePath }, () => importSkillPackage({ extensionsRoot, scanned: scanned(join(importedRoot, 'SKILL.md'), 'Container') }))).rejects.toThrow(/reserved|container|packagePath/i)
   })
 })

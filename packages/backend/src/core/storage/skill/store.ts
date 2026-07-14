@@ -262,21 +262,26 @@ export function findSkillByName(name: string): SkillDefinition | null {
   return null
 }
 
-/** Find the registry owner of a root-relative managed package path. */
-export function findSkillByPackagePath(packagePath: string, excludeId?: string): SkillDefinition | null {
-  const wanted = process.platform === 'win32' ? packagePath.toLowerCase() : packagePath
+export interface PersistedSkillPackageClaim { id: string; packagePath: unknown }
+
+/** Read persisted package claims without creating or changing the registry. */
+export function listSkillPackageClaims(): PersistedSkillPackageClaim[] {
+  const claims: PersistedSkillPackageClaim[] = []
   try {
     for (const file of fs.readdirSync(getDataDir())) {
       if (!file.endsWith('.json')) continue
-      const skill = readJsonFile<SkillDefinition>(path.join(getDataDir(), file))
-      if (!skill?.packagePath || skill.id === excludeId) continue
-      const candidate = process.platform === 'win32' ? skill.packagePath.toLowerCase() : skill.packagePath
-      if (candidate === wanted) return skill
+      let skill: Record<string, unknown>
+      try { skill = JSON.parse(fs.readFileSync(path.join(getDataDir(), file), 'utf8')) as Record<string, unknown> } catch (error) { throw new Error(`Malformed Skill registry ${file}: ${String(error)}`) }
+      if (Object.prototype.hasOwnProperty.call(skill, 'packagePath')) {
+        if (typeof skill.id !== 'string' || !skill.id) throw new Error(`Malformed Skill package claim in ${file}: missing id`)
+        claims.push({ id: skill.id, packagePath: skill.packagePath })
+      }
     }
-  } catch {
-    // Missing or unreadable registry has no owner.
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return claims
+    throw error
   }
-  return null
+  return claims
 }
 
 /**
