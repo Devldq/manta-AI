@@ -1,3 +1,6 @@
 export * from './object-store'
 export * from './manifest-store'
 export * from './materialize'
+export * from './content-store-lease'
+export * from './reference-scan'
+export * from './garbage-collector'

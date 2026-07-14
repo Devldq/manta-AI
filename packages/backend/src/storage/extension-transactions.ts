@@ -6,7 +6,7 @@ import { durableAtomicWrite, durableMkdir, durableRecursiveCopy, durableRemove, 
 
 interface ExtensionTransactionOptions { extensionsRoot: string; destination: string; fault?: (phase: string) => void }
 interface InstallOptions extends ExtensionTransactionOptions { source: string; validate?: (stagedPath: string) => void; registryWrites?: Map<string, string> }
-interface ExtensionJournal {
+export interface ExtensionJournal {
   version: 1 | 2
   id: string; kind: 'install' | 'uninstall' | 'file'; phase: 'staged' | 'backed-up' | 'package-committed' | 'awaiting-snapshot' | 'completed'
   snapshotRequired?: boolean
@@ -14,6 +14,17 @@ interface ExtensionJournal {
   packageFingerprint?: string
   destination: string; stagingPath?: string; backupPath?: string; content?: string
   registryWrites: Array<{ path: string; content: string }>; registryDeletes: string[]
+}
+
+/** Strict, read-only journal inspection for GC safety checks. */
+export function inspectExtensionTransactionJournals(extensionsRoot: string): ExtensionJournal[] {
+  const root = resolve(extensionsRoot); const directory = transactionsDir(root)
+  if (!existsSync(directory)) return []
+  ensureSafeInternalDirectory(root, directory)
+  return readdirSync(directory).sort().map((name) => {
+    if (!name.endsWith('.json')) throw new Error(`Invalid extension transaction journal filename: ${name}`)
+    return readJournal(root, join(directory, name))
+  })
 }
 
 const transactionsDir = (root: string) => join(root, '.ash-transactions')

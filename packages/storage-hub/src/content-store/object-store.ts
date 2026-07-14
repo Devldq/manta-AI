@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { copyFile, link, lstat, mkdir, open, rm, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
+import { withVolumeContentStoreLease } from './content-store-lease'
 
 const HASH = /^[a-f0-9]{64}$/
 const MUTABLE_GROUPS = new Set(['config', 'secrets', 'work', 'diagnostics', 'cache'])
@@ -69,7 +70,7 @@ export class VolumeObjectStore {
 
   async ingestFile(source: string): Promise<ContentObject> {
     this.assertIngestible(source)
-    return this.ingestVerifiedFile(source)
+    return withVolumeContentStoreLease(this.volumeRoot, () => this.ingestVerifiedFile(source))
   }
 
   async ingestStagedFile(source: string, trustedStagingRoot: string): Promise<ContentObject> {
@@ -77,7 +78,7 @@ export class VolumeObjectStore {
     const parts = relative(this.volumeRoot, stagingRoot).split(/[\\/]/).filter(Boolean)
     if (parts[0] !== 'cache' || !isContainedPath(stagingRoot, absolute) || absolute === stagingRoot) throw new Error('Trusted CAS staging file must be below a cache staging root in this volume')
     await ensureSafeDirectory(this.volumeRoot, dirname(absolute))
-    return this.ingestVerifiedFile(absolute)
+    return withVolumeContentStoreLease(this.volumeRoot, () => this.ingestVerifiedFile(absolute))
   }
 
   private async ingestVerifiedFile(source: string): Promise<ContentObject> {
@@ -102,6 +103,10 @@ export class VolumeObjectStore {
   }
 
   async ingestBytes(value: Uint8Array): Promise<ContentObject> {
+    return withVolumeContentStoreLease(this.volumeRoot, () => this.ingestBytesUnderLease(value))
+  }
+
+  private async ingestBytesUnderLease(value: Uint8Array): Promise<ContentObject> {
     const hash = createHash('sha256').update(value).digest('hex'); const target = await this.pathFor(hash); await ensureSafeDirectory(this.volumeRoot, dirname(target))
     try { const existing = await fileDigest(target); if (existing.hash !== hash || existing.size !== value.byteLength) throw new Error('Existing CAS object failed integrity verification'); return { hash, size: value.byteLength, path: target } } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
     const temporary = resolve(dirname(target), `.${hash}.${randomUUID()}.tmp`)

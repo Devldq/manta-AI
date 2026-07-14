@@ -11,6 +11,8 @@ interface CommittedState { version: 1; id: string; generation: number; phase: 'c
 interface PreparedState { version: 1; id: string; generation: number; phase: 'prepared'; txId: string; changes: Change[]; previous?: CommittedState }
 type State = CommittedState | PreparedState
 
+export interface CrossGroupJournalInspection { id: string; phase: 'prepared' | 'committed' }
+
 const stateDir = (root: string) => join(root, '.ash-2pc')
 const statePath = (root: string, id: string) => join(stateDir(root), `${id}.json`)
 const hash = (content: string) => createHash('sha256').update(content).digest('hex')
@@ -41,6 +43,16 @@ function load(root: string, id: string): State | undefined {
   if (state.version !== 1 || state.id !== id || !Number.isInteger(state.generation) || !['prepared', 'committed'].includes(state.phase)) throw new Error('Invalid cross-group journal schema')
   if (state.phase === 'prepared') for (const item of state.changes) contained(root, item.path)
   return state
+}
+
+/** Strict, read-only journal inspection for GC safety checks. */
+export function inspectCrossGroupJournals(root: string): CrossGroupJournalInspection[] {
+  const directory = stateDir(root); if (!existsSync(directory)) return []
+  return readdirSync(directory).filter((name) => name.endsWith('.json')).sort().map((name) => {
+    const id = name.slice(0, -5); assertId(id); const state = load(root, id)
+    if (!state) throw new Error('Cross-group journal disappeared during inspection')
+    return { id: state.id, phase: state.phase }
+  })
 }
 function persist(root: string, state: State): void { atomicWrite(statePath(root, state.id), JSON.stringify(state, null, 2)) }
 function apply(root: string, state: PreparedState): void {

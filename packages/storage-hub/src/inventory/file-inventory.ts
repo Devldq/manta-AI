@@ -6,7 +6,8 @@ import { inspectWindowsLinks } from './windows-link-type'
 
 export type InventoryKind = 'file' | 'directory' | 'symlink'
 export type LinkType = 'file' | 'directory' | 'junction' | 'unknown'
-export interface FileInventoryEntry { relativePath: string; kind: InventoryKind; size: number; sha256?: string; linkTarget?: string; linkType?: LinkType }
+export type AllocationEvidence = 'posix-blocks' | 'windows-compressed-size' | 'unavailable'
+export interface FileInventoryEntry { relativePath: string; kind: InventoryKind; size: number; allocatedBytes?: number; allocationEvidence?: AllocationEvidence; sha256?: string; linkTarget?: string; linkType?: LinkType }
 export interface StorageInventory { root: string; entries: FileInventoryEntry[]; files: number; bytes: number }
 
 async function digest(filePath: string): Promise<string> {
@@ -27,7 +28,10 @@ export async function inventoryTree(root: string): Promise<StorageInventory> {
         const entry: FileInventoryEntry = { relativePath, kind: 'symlink', size: stats.size, linkTarget, linkType: target }; entries.push(entry); if (process.platform === 'win32') windowsLinks.push({ id: relativePath, path: absolute, entry })
       }
       else if (stats.isDirectory()) { entries.push({ relativePath, kind: 'directory', size: 0 }); await walk(absolute, relativePath) }
-      else if (stats.isFile()) entries.push({ relativePath, kind: 'file', size: stats.size, sha256: await digest(absolute) })
+      else if (stats.isFile()) {
+        const blocks = process.platform !== 'win32' && typeof stats.blocks === 'number' && Number.isSafeInteger(stats.blocks) && Number.isSafeInteger(stats.blocks * 512) ? stats.blocks * 512 : undefined
+        entries.push({ relativePath, kind: 'file', size: stats.size, ...(blocks === undefined ? { allocationEvidence: 'unavailable' as const } : { allocatedBytes: blocks, allocationEvidence: 'posix-blocks' as const }), sha256: await digest(absolute) })
+      }
     }
   }
   await walk(root, '')
