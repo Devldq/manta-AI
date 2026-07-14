@@ -511,8 +511,10 @@ export async function pluginRoutes(app: FastifyInstance) {
 
         // 注册
         try {
-          const { registerPlugin } = await import('../core/storage/plugin/store')
-          const result = registerPlugin(scannedPlugin.manifest, scannedPlugin.dirPath)
+          const result = await installPluginPackage({
+            extensionsRoot: resolveStoragePath('extensions'), source: scannedPlugin.dirPath, destination: scannedPlugin.dirPath, manifest: scannedPlugin.manifest,
+            validate: (staged) => { if (!fs.existsSync(path.join(staged, 'plugin.yaml'))) throw new Error('Staged plugin manifest is missing') },
+          })
           registered.push(result)
         } catch (e) {
           errors.push({ id: pluginId, error: String(e) })

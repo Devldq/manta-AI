@@ -4,6 +4,11 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { seedBundledExtensions } from './extension-seeds'
 import { initializeBundledExtensionsForStartup } from '../server'
+import { createContentAssetService } from './content-assets'
+
+function filesUnder(root: string): string[] {
+  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? filesUnder(join(root, entry.name)) : [join(root, entry.name)])
+}
 
 describe('bundled extension seeds', () => {
   it('seeds an empty volume, is idempotent, upgrades unchanged assets, and preserves user edits', async () => {
@@ -33,7 +38,7 @@ describe('bundled extension seeds', () => {
     const assetFiles = readdirSync(join(root, '.ash', 'assets')).filter((name) => name.endsWith('.json')); expect(assetFiles).toHaveLength(2)
     const manifests = assetFiles.map((name) => JSON.parse(readFileSync(join(root, '.ash', 'assets', name), 'utf8')))
     expect(manifests.flatMap((manifest) => manifest.entries.map((entry: { path: string }) => entry.path)).every((path: string) => !/registry|marketplace|seed-manifest|cache/.test(path))).toBe(true)
-    const objectFiles = readdirSync(join(root, '.ash', 'objects')).flatMap((prefix) => readdirSync(join(root, '.ash', 'objects', prefix))); expect(objectFiles).toHaveLength(1)
+    const objectFiles = filesUnder(join(root, '.ash', 'objects')); expect(objectFiles).toHaveLength(1); expect(objectFiles[0].split(/[\\/]/).at(-1)).toMatch(/^[a-f0-9]{64}$/)
   })
 
   it('rolls back a package and leaves the seed manifest unchanged when snapshot publication fails', async () => {
@@ -55,5 +60,17 @@ describe('bundled extension seeds', () => {
     })
     await Promise.resolve(); expect(events).toEqual(['seed:start']); releaseSeed(); await startup
     expect(events).toEqual(['seed:start', 'seed:end', 'runtime:load', 'plugins:scan', 'plugins:register', 'skills:scan'])
+  })
+
+  it('retries a multi-package partial failure without republishing the winner or overwriting later user edits', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-seed-retry-')); const seedRoot = join(root, 'bundle'); const extensionsRoot = join(root, 'extensions'); const firstSource = join(seedRoot, 'plugins', 'first', 'plugin.txt'); const secondSource = join(seedRoot, 'plugins', 'second', 'plugin.txt')
+    mkdirSync(join(seedRoot, 'plugins', 'first'), { recursive: true }); mkdirSync(join(seedRoot, 'plugins', 'second'), { recursive: true }); writeFileSync(firstSource, 'first-v1'); writeFileSync(secondSource, 'second-v1'); await seedBundledExtensions({ extensionsRoot, seedRoot, version: '1' })
+    writeFileSync(firstSource, 'first-v2'); writeFileSync(secondSource, 'second-v2'); const snapshot = createContentAssetService({ volumeRoot: root }).snapshotPackage; let calls = 0
+    await expect(seedBundledExtensions({ extensionsRoot, seedRoot, version: '2', snapshotPackage: async (input) => { if (++calls === 2) throw new Error('second snapshot failed'); return snapshot(input) } })).rejects.toThrow(/second snapshot failed/)
+    expect(JSON.parse(readFileSync(join(extensionsRoot, '.ash', 'seed-manifest.json'), 'utf8')).version).toBe('1'); const assetsAfterFailure = readdirSync(join(root, '.ash', 'assets')).length; const objectsAfterFailure = filesUnder(join(root, '.ash', 'objects')).length
+    const firstInstalled = join(extensionsRoot, 'plugins', 'first', 'plugin.txt'); writeFileSync(firstInstalled, 'user-edit-after-partial-success')
+    await seedBundledExtensions({ extensionsRoot, seedRoot, version: '2' })
+    expect(readFileSync(firstInstalled, 'utf8')).toBe('user-edit-after-partial-success'); expect(readFileSync(join(extensionsRoot, 'plugins', 'second', 'plugin.txt'), 'utf8')).toBe('second-v2'); expect(JSON.parse(readFileSync(join(extensionsRoot, '.ash', 'seed-manifest.json'), 'utf8')).version).toBe('2')
+    expect(readdirSync(join(root, '.ash', 'assets')).length).toBe(assetsAfterFailure + 1); expect(filesUnder(join(root, '.ash', 'objects')).length).toBe(objectsAfterFailure + 1)
   })
 })
