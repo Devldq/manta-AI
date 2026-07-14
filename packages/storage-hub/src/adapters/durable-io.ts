@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, rename, rm, unlink } from 'node:fs/promises'
+import { lstat, mkdir, open, rename, rm, rmdir, unlink } from 'node:fs/promises'
 import { basename, dirname, join, parse, resolve, sep } from 'node:path'
 
 export type DurableIoEvent = 'staging-file-fsynced' | 'exclusive-file-fsynced' | 'atomic-rename-complete' | 'parent-directory-fsynced' | 'parent-directory-fsync-unsupported'
@@ -54,6 +54,14 @@ export async function createExclusiveClaimDurable(target: string, bytes: Uint8Ar
     const synced = await syncDirectory(dirname(target)); observe?.(synced ? 'parent-directory-fsynced' : 'parent-directory-fsync-unsupported')
     return `${stat.dev.toString(16)}-${stat.ino.toString(16)}-${stat.birthtimeNs.toString(16)}`
   } catch (error) { await handle?.close(); if (handle) await rm(target, { force: true }); throw error }
+}
+
+export async function createExclusiveDirectoryDurable(target: string): Promise<void> {
+  await mkdir(target); await syncDirectory(dirname(target)); await syncDirectory(target)
+}
+
+export async function removeEmptyDirectoryDurable(target: string): Promise<void> {
+  await rmdir(target); await syncDirectory(dirname(target))
 }
 
 export async function renameDurable(source: string, target: string): Promise<void> {

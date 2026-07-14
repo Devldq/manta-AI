@@ -4,7 +4,7 @@ import { lstat, open, readdir } from 'node:fs/promises'
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import { acquireMigrationFileLock } from '../migration/migration-lock'
 import { AdapterRegistry } from './adapter-registry'
-import { createExclusiveClaimDurable, ensureDirectoryDurable, renameDurable, restoreBytesDurable, unlinkDurable, writeJsonDurable, writeNewBytesDurable } from './durable-io'
+import { createExclusiveClaimDurable, createExclusiveDirectoryDurable, ensureDirectoryDurable, removeEmptyDirectoryDurable, renameDurable, restoreBytesDurable, unlinkDurable, writeJsonDurable, writeNewBytesDurable } from './durable-io'
 import type {
   AdapterBackupEntry,
   AdapterJournal,
@@ -18,7 +18,7 @@ import type {
   ProjectionPlan,
 } from './types'
 
-export type ProjectionFaultPoint = 'after-journal' | 'after-backup-entry' | 'before-apply' | 'after-create-claim-publish' | 'after-create-claim' | 'after-create-quarantine-rename' | 'after-applied-journal'
+export type ProjectionFaultPoint = 'after-journal' | 'after-backup-entry' | 'before-apply' | 'after-directory-intent' | 'after-directory-mkdir' | 'after-directory-marker' | 'after-directory-identity' | 'after-create-claim-publish' | 'after-create-claim' | 'after-create-quarantine-rename' | 'after-applied-journal'
 
 export class SimulatedAdapterCrash extends Error {
   constructor(readonly point: string) { super(`Simulated adapter crash: ${point}`); this.name = 'SimulatedAdapterCrash' }
@@ -36,8 +36,9 @@ export interface ProjectionCoordinatorOptions {
 const queues = new Map<string, Promise<void>>()
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const SHA256 = /^[a-f0-9]{64}$/
-const WRITE_KINDS = new Set(['create', 'modify', 'delete'])
+const WRITE_KINDS = new Set(['create-directory', 'create', 'modify', 'delete'])
 const PRE_APPLY_PHASES = new Set<AdapterJournal['phase']>(['journaled', 'backing-up', 'backed-up'])
+const DIRECTORY_CLAIM_MARKER = '.ash-directory-claim'
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
@@ -211,36 +212,37 @@ export class ProjectionCoordinator {
     for (const operation of operations) {
       expectedKeys(operation, ['id', 'kind', 'rootId', 'nativePath', 'expectedBeforeSha256', 'expectedBeforeIdentity', 'expectedAfterSha256'], 'Preview file operation')
       const root = roots.get(operation.rootId)
-      if (!SAFE_SEGMENT.test(operation.id) || ids.has(operation.id) || !['read', 'create', 'modify', 'delete'].includes(operation.kind) || !root) throw new Error('Malformed or duplicate preview operation')
+      if (!SAFE_SEGMENT.test(operation.id) || ids.has(operation.id) || !['read', 'create-directory', 'create', 'modify', 'delete'].includes(operation.kind) || !root) throw new Error('Malformed or duplicate preview operation')
       if (typeof operation.nativePath !== 'string' || operation.nativePath.includes('\0') || !isAbsolute(operation.nativePath) || resolve(operation.nativePath) !== operation.nativePath || !contains(root, operation.nativePath)) throw new Error('Operation path must be absolute and contained by its authorized root')
       if ((operation.kind === 'create' || operation.kind === 'modify') && !SHA256.test(operation.expectedAfterSha256 ?? '')) throw new Error('Create and modify operations require an expected SHA-256 digest')
-      if ((operation.kind === 'read' || operation.kind === 'delete') && operation.expectedAfterSha256 !== undefined) throw new Error('Unexpected after digest for read/delete operation')
-      if (operation.kind === 'create' && (operation.expectedBeforeSha256 !== undefined || operation.expectedBeforeIdentity !== undefined)) throw new Error('Create operation cannot have before evidence')
-      if (operation.kind !== 'create' && ((requireBefore && (!operation.expectedBeforeSha256 || !operation.expectedBeforeIdentity)) || (operation.expectedBeforeSha256 !== undefined && !SHA256.test(operation.expectedBeforeSha256)) || (operation.expectedBeforeIdentity !== undefined && !SAFE_SEGMENT.test(operation.expectedBeforeIdentity)))) throw new Error('Existing-path operation requires expected before digest and identity')
+      if ((operation.kind === 'read' || operation.kind === 'delete' || operation.kind === 'create-directory') && operation.expectedAfterSha256 !== undefined) throw new Error('Unexpected after digest for read/delete/directory operation')
+      if ((operation.kind === 'create' || operation.kind === 'create-directory') && (operation.expectedBeforeSha256 !== undefined || operation.expectedBeforeIdentity !== undefined)) throw new Error('Create operation cannot have before evidence')
+      if (operation.kind !== 'create' && operation.kind !== 'create-directory' && ((requireBefore && (!operation.expectedBeforeSha256 || !operation.expectedBeforeIdentity)) || (operation.expectedBeforeSha256 !== undefined && !SHA256.test(operation.expectedBeforeSha256)) || (operation.expectedBeforeIdentity !== undefined && !SAFE_SEGMENT.test(operation.expectedBeforeIdentity)))) throw new Error('Existing-path operation requires expected before digest and identity')
       const path = normalized(operation.nativePath); if (paths.has(path)) throw new Error('Duplicate or conflicting native operation path'); paths.add(path); ids.add(operation.id)
-      await this.#rejectLinkedPath(root, operation.nativePath)
+      await this.#rejectLinkedPath(root, operation.nativePath, operation.kind === 'create-directory')
     }
   }
 
   async #bindBeforeState(operations: readonly PreviewFileOperation[]): Promise<readonly PreviewFileOperation[]> {
     const bound: PreviewFileOperation[] = []
+    const plannedDirectories = new Set(operations.filter((item) => item.kind === 'create-directory').map((item) => normalized(item.nativePath)))
     for (const operation of operations) {
       const stat = await statOrAbsent(operation.nativePath)
-      if (operation.kind === 'create') { if (stat) throw new Error('Create target already exists during preview'); await this.#validateCreateParent(operation.nativePath); bound.push(clone(operation)); continue }
+      if (operation.kind === 'create' || operation.kind === 'create-directory') { if (stat) throw new Error('Create target already exists during preview'); await this.#validateCreateParent(operation.nativePath, plannedDirectories); bound.push(clone(operation)); continue }
       if (!stat || !stat.isFile() || stat.isSymbolicLink()) throw new Error('Preview path is not an ordinary existing file')
       const snapshot = await this.#readOrdinarySnapshot(operation.nativePath); bound.push({ ...clone(operation), expectedBeforeSha256: digestBytes(snapshot.bytes), expectedBeforeIdentity: snapshot.identity })
     }
     return freeze(bound)
   }
 
-  async #rejectLinkedPath(root: string, target: string): Promise<void> {
+  async #rejectLinkedPath(root: string, target: string, allowDirectoryTarget = false): Promise<void> {
     const rootStat = await statOrAbsent(root); if (!rootStat || !rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Authorized native root is missing, linked, or not a directory')
     const rel = relative(root, target); const parts = rel.split(sep); let current = root
     for (const part of parts) {
       current = join(current, part); const stat = await statOrAbsent(current); if (!stat) break
       if (stat.isSymbolicLink()) throw new Error('Operation path has a symbolic link or junction ancestor')
       if (current !== target && !stat.isDirectory()) throw new Error('Operation path has a non-directory ancestor')
-      if (current === target && !stat.isFile()) throw new Error('Operation path is not an ordinary file')
+      if (current === target && !(stat.isFile() || (allowDirectoryTarget && stat.isDirectory()))) throw new Error('Operation path is not an ordinary expected entry')
     }
   }
 
@@ -257,18 +259,19 @@ export class ProjectionCoordinator {
   async #validateBeforeStates(operations: readonly PreviewFileOperation[]): Promise<void> {
     for (const operation of operations) {
       const stat = await statOrAbsent(operation.nativePath)
-      if (operation.kind === 'create') { if (stat) throw new Error('Create target appeared after planning'); await this.#validateCreateParent(operation.nativePath) }
-      if (operation.kind !== 'create') { if (!stat || !stat.isFile() || stat.isSymbolicLink()) throw new Error('Native file changed after planning; adapter plan is stale'); const snapshot = await this.#readOrdinarySnapshot(operation.nativePath); if (digestBytes(snapshot.bytes) !== operation.expectedBeforeSha256 || snapshot.identity !== operation.expectedBeforeIdentity) throw new Error('Native file changed after planning; adapter plan is stale') }
+      if (operation.kind === 'create' || operation.kind === 'create-directory') { if (stat) throw new Error('Create target appeared after planning') }
+      if (operation.kind !== 'create' && operation.kind !== 'create-directory') { if (!stat || !stat.isFile() || stat.isSymbolicLink()) throw new Error('Native file changed after planning; adapter plan is stale'); const snapshot = await this.#readOrdinarySnapshot(operation.nativePath); if (digestBytes(snapshot.bytes) !== operation.expectedBeforeSha256 || snapshot.identity !== operation.expectedBeforeIdentity) throw new Error('Native file changed after planning; adapter plan is stale') }
     }
   }
 
-  async #validateCreateParent(path: string): Promise<void> {
-    const parent = await statOrAbsent(dirname(path)); if (!parent || !parent.isDirectory() || parent.isSymbolicLink()) throw new Error('Create operation requires an ordinary existing parent directory')
+  async #validateCreateParent(path: string, plannedDirectories = new Set<string>()): Promise<void> {
+    const parent = await statOrAbsent(dirname(path)); if ((!parent && plannedDirectories.has(normalized(dirname(path))))) return
+    if (!parent || !parent.isDirectory() || parent.isSymbolicLink()) throw new Error('Create operation requires an ordinary existing or approved parent directory')
   }
 
   async #validateNonCreateBeforeStates(operations: readonly PreviewFileOperation[]): Promise<void> {
     for (const operation of operations) {
-      if (operation.kind === 'create') continue
+      if (operation.kind === 'create' || operation.kind === 'create-directory') continue
       const stat = await statOrAbsent(operation.nativePath); if (!stat || !stat.isFile() || stat.isSymbolicLink()) throw new Error('Native file changed after planning; adapter plan is stale')
       const snapshot = await this.#readOrdinarySnapshot(operation.nativePath); if (digestBytes(snapshot.bytes) !== operation.expectedBeforeSha256 || snapshot.identity !== operation.expectedBeforeIdentity) throw new Error('Native file changed after planning; adapter plan is stale')
     }
@@ -282,7 +285,7 @@ export class ProjectionCoordinator {
     let journal = await this.#phase(initial, 'backing-up'); const changes = journal.plan.operations.filter((operation) => WRITE_KINDS.has(operation.kind))
     for (const [index, operation] of changes.entries()) {
       let entry: AdapterBackupEntry
-      if (operation.kind === 'create') entry = { operationId: journal.operationId, operationEntryId: operation.id, rootId: operation.rootId, relativePath: this.#nativeRelative(journal.plan.target, operation), priorState: 'absent' }
+      if (operation.kind === 'create' || operation.kind === 'create-directory') entry = { operationId: journal.operationId, operationEntryId: operation.id, rootId: operation.rootId, relativePath: this.#nativeRelative(journal.plan.target, operation), priorState: 'absent' }
       else {
         const backupRelativePath = `${index}.bin`; const snapshot = await this.#readOrdinarySnapshot(operation.nativePath)
         if (digestBytes(snapshot.bytes) !== operation.expectedBeforeSha256 || snapshot.identity !== operation.expectedBeforeIdentity) throw new Error('Native file identity or bytes changed before backup; adapter plan is stale')
@@ -296,6 +299,20 @@ export class ProjectionCoordinator {
 
   async #createClaims(input: AdapterJournal): Promise<AdapterJournal> {
     let journal = input
+    for (const operation of journal.plan.operations.filter((candidate) => candidate.kind === 'create-directory')) {
+      const root = journal.plan.target.nativeRoots.find((candidate) => candidate.id === operation.rootId)!.path
+      await this.#rejectLinkedPath(root, operation.nativePath); await this.#validateCreateParent(operation.nativePath)
+      const nonce = randomBytes(32); const claimSha256 = digestBytes(nonce); const claimBytes = nonce.byteLength
+      let entries = journal.backupEntries.map((entry) => entry.operationEntryId === operation.id ? freeze({ ...entry, claimSha256, claimBytes }) : entry)
+      journal = freeze({ ...journal, backupEntries: freeze(entries), updatedAt: this.#now().toISOString() }); await this.#writeJournal(journal); await this.#fault?.('after-directory-intent')
+      await createExclusiveDirectoryDurable(operation.nativePath); await this.#fault?.('after-directory-mkdir')
+      await writeNewBytesDurable(join(operation.nativePath, DIRECTORY_CLAIM_MARKER), nonce); await this.#fault?.('after-directory-marker')
+      const stat = await lstat(operation.nativePath, { bigint: true }); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Published directory claim is not an ordinary directory')
+      const identity = fileIdentity(stat)
+      entries = journal.backupEntries.map((entry) => entry.operationEntryId === operation.id ? freeze({ ...entry, claimFileIdentity: identity }) : entry)
+      journal = freeze({ ...journal, backupEntries: freeze(entries), updatedAt: this.#now().toISOString() }); await this.#writeJournal(journal); await this.#fault?.('after-directory-identity')
+      await unlinkDurable(join(operation.nativePath, DIRECTORY_CLAIM_MARKER))
+    }
     for (const operation of journal.plan.operations.filter((candidate) => candidate.kind === 'create')) {
       const root = journal.plan.target.nativeRoots.find((candidate) => candidate.id === operation.rootId)!.path
       await this.#rejectLinkedPath(root, operation.nativePath); await this.#validateCreateParent(operation.nativePath)
@@ -328,6 +345,7 @@ export class ProjectionCoordinator {
       if (operation.kind === 'read') continue
       const stat = await statOrAbsent(operation.nativePath)
       if (operation.kind === 'delete') { if (stat) throw new Error(`Adapter verification failed for ${operation.id}`); continue }
+      if (operation.kind === 'create-directory') { if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error(`Adapter verification failed for ${operation.id}`); continue }
       if (!stat || !stat.isFile() || stat.isSymbolicLink() || digestBytes(await this.#readOrdinary(operation.nativePath)) !== operation.expectedAfterSha256) throw new Error(`Adapter verification failed for ${operation.id}`)
     }
   }
@@ -359,7 +377,7 @@ export class ProjectionCoordinator {
       let entry = originalEntry
       const operation = journal.plan.operations.find((candidate) => candidate.id === entry.operationEntryId); if (!operation) throw new Error('Malformed adapter backup entry operation')
       const nativePath = this.#nativeFromEntry(journal.plan.target, entry); if (normalized(nativePath) !== normalized(operation.nativePath)) throw new Error('Malformed adapter backup target')
-      await this.#rejectLinkedPath(journal.plan.target.nativeRoots.find((root) => root.id === entry.rootId)!.path, nativePath)
+      await this.#rejectLinkedPath(journal.plan.target.nativeRoots.find((root) => root.id === entry.rootId)!.path, nativePath, operation.kind === 'create-directory')
       if (entry.priorState === 'file') {
         if (claimsOnly) continue
         if (!entry.backupRelativePath || !safeRelative(entry.backupRelativePath) || !SHA256.test(entry.priorSha256 ?? '') || !Number.isSafeInteger(entry.priorBytes) || entry.priorBytes! < 0 || !entry.priorFileIdentity) throw new Error('Malformed adapter backup entry')
@@ -367,6 +385,21 @@ export class ProjectionCoordinator {
         const root = journal.plan.target.nativeRoots.find((candidate) => candidate.id === entry.rootId)!.path; await this.#writeNative(nativePath, bytes, root)
       } else {
         if (entry.backupRelativePath || entry.priorSha256 || entry.priorBytes !== undefined || entry.priorFileIdentity) throw new Error('Malformed absent-before backup marker')
+        if (operation.kind === 'create-directory') {
+          const stat = await statOrAbsent(nativePath); if (!stat) continue
+          if (!stat.isDirectory() || stat.isSymbolicLink() || !entry.claimSha256 || entry.claimBytes === undefined) throw new Error('Rollback lacks directory ownership evidence')
+          const marker = join(nativePath, DIRECTORY_CLAIM_MARKER); const markerStat = await statOrAbsent(marker)
+          if (!entry.claimFileIdentity) {
+            if (!markerStat?.isFile() || markerStat.isSymbolicLink()) throw new Error('Rollback cannot prove safe directory ownership without its marker')
+            const markerBytes = await this.#readOrdinary(marker); if (markerBytes.byteLength !== entry.claimBytes || digestBytes(markerBytes) !== entry.claimSha256) throw new Error('Directory ownership marker does not match prepared intent')
+            const identityStat = await lstat(nativePath, { bigint: true }); const identity = fileIdentity(identityStat)
+            const updatedEntries = journal.backupEntries.map((candidate) => candidate.operationEntryId === entry.operationEntryId ? freeze({ ...candidate, claimFileIdentity: identity }) : candidate)
+            journal = freeze({ ...journal, backupEntries: freeze(updatedEntries), updatedAt: this.#now().toISOString() }); await this.#writeJournal(journal); entry = updatedEntries.find((candidate) => candidate.operationEntryId === entry.operationEntryId)!
+          }
+          const identityStat = await lstat(nativePath, { bigint: true }); if (fileIdentity(identityStat) !== entry.claimFileIdentity) throw new Error('Rollback cannot prove safe ownership of an absent-before directory')
+          if (markerStat) { const markerBytes = await this.#readOrdinary(marker); if (markerBytes.byteLength !== entry.claimBytes || digestBytes(markerBytes) !== entry.claimSha256) throw new Error('Directory ownership marker changed'); await unlinkDurable(marker) }
+          await removeEmptyDirectoryDurable(nativePath); continue
+        }
         if (!entry.claimSha256) continue
         if (!entry.claimFileIdentity) {
           const adopted = await this.#adoptPublishedClaim(journal, entry, nativePath); journal = adopted.journal; entry = adopted.entry
@@ -457,7 +490,15 @@ export class ProjectionCoordinator {
     let missingPreparedSeen = false; let missingIdentitySeen = false; let missingFinalSeen = false
     for (const [index, entry] of entries.entries()) {
       const operation = changes[index]; if (!operation || entry.operationEntryId !== operation.id || entry.rootId !== operation.rootId || entry.relativePath !== this.#nativeRelative(journal.plan.target, operation)) throw new Error('Journal backup evidence does not match the approved operation')
-      if (operation.kind === 'create') {
+      if (operation.kind === 'create-directory') {
+        if (entry.priorState !== 'absent' || entry.backupRelativePath !== undefined || entry.priorSha256 !== undefined || entry.priorBytes !== undefined || entry.priorFileIdentity !== undefined || entry.finalSha256 !== undefined || entry.finalBytes !== undefined) throw new Error('Malformed absent-before directory evidence')
+        const hasAnyPrepared = entry.claimSha256 !== undefined || entry.claimBytes !== undefined; const hasPrepared = entry.claimSha256 !== undefined && entry.claimBytes !== undefined; const hasIdentity = entry.claimFileIdentity !== undefined
+        if (hasAnyPrepared && (!hasPrepared || !SHA256.test(entry.claimSha256!) || entry.claimBytes !== 32)) throw new Error('Malformed prepared directory-claim evidence')
+        if (hasIdentity && (!hasPrepared || !SAFE_SEGMENT.test(entry.claimFileIdentity!))) throw new Error('Malformed directory-claim ownership evidence')
+        if (['journaled', 'backing-up', 'backed-up'].includes(journal.phase) && (hasAnyPrepared || hasIdentity)) throw new Error('Pre-claim journal contains directory ownership evidence')
+        if (['applying', 'applied', 'committed'].includes(journal.phase) && (!hasPrepared || !hasIdentity)) throw new Error('Post-claim journal lacks directory ownership evidence')
+        if (['claiming', 'aborting-claims', 'applying'].includes(journal.phase)) { if (!hasPrepared) missingPreparedSeen = true; else if (missingPreparedSeen) throw new Error('Prepared directory claims are not a durable prefix'); if (!hasIdentity) missingIdentitySeen = true; else if (missingIdentitySeen) throw new Error('Directory claim identities are not a durable prefix') }
+      } else if (operation.kind === 'create') {
         if (entry.priorState !== 'absent' || entry.backupRelativePath !== undefined || entry.priorSha256 !== undefined || entry.priorBytes !== undefined || entry.priorFileIdentity !== undefined) throw new Error('Malformed absent-before evidence')
         const hasAnyPrepared = entry.claimSha256 !== undefined || entry.claimBytes !== undefined; const hasPrepared = entry.claimSha256 !== undefined && entry.claimBytes !== undefined; const hasIdentity = entry.claimFileIdentity !== undefined; const hasAnyFinal = entry.finalSha256 !== undefined || entry.finalBytes !== undefined; const hasFinal = entry.finalSha256 !== undefined && entry.finalBytes !== undefined
         if (hasAnyPrepared && (!hasPrepared || !SHA256.test(entry.claimSha256!) || entry.claimBytes !== 32)) throw new Error('Malformed prepared create-claim evidence')

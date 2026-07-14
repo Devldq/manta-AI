@@ -149,6 +149,44 @@ describe('ProjectionCoordinator path authorization', () => {
 })
 
 describe('ProjectionCoordinator transaction and rollback', () => {
+  it('creates approved directory claims before nested file claims and removes only empty owned directories on rollback', async () => {
+    const nativeRoot = await directory('ash-native-'); const skillDirectory = join(nativeRoot, 'skills', 'portable'); const skillFile = join(skillDirectory, 'SKILL.md')
+    const operations = [
+      { id: 'skills-dir', kind: 'create-directory', rootId: 'home', nativePath: join(nativeRoot, 'skills') },
+      { id: 'skill-dir', kind: 'create-directory', rootId: 'home', nativePath: skillDirectory },
+      { id: 'skill-file', kind: 'create', rootId: 'home', nativePath: skillFile, expectedAfterSha256: sha256('portable') },
+    ] as unknown as PreviewFileOperation[]
+    const target = installation(nativeRoot); const stateRoot = join(await directory(), 'state')
+    const registry = new AdapterRegistry([fixtureAdapter(target, operations, async (plan) => { await writeFile(skillFile, 'portable'); return result(plan) })])
+    const coordinator = makeCoordinator({ stateRoot, registry, now: () => new Date('2026-07-14T00:10:00.000Z') })
+    const committed = await coordinator.apply(coordinator.approve(await coordinator.planProjection('fixture', selection, target)))
+    expect(await readFile(skillFile, 'utf8')).toBe('portable')
+    await coordinator.rollback(committed.operationId)
+    expect(await exists(join(nativeRoot, 'skills'))).toBe(false)
+  })
+
+  it.each(['after-directory-intent', 'after-directory-marker', 'after-directory-identity'] as const)('recovers a directory claim crash at %s without leaving ownership artifacts', async (point) => {
+    const nativeRoot = await directory('ash-native-'); const targetDirectory = join(nativeRoot, 'skills')
+    const operations = [{ id: 'skills-dir', kind: 'create-directory', rootId: 'home', nativePath: targetDirectory }] as PreviewFileOperation[]
+    const target = installation(nativeRoot); const stateRoot = join(await directory(), 'state'); const registry = new AdapterRegistry([fixtureAdapter(target, operations)])
+    const coordinator = makeCoordinator({ stateRoot, registry, now: () => new Date('2026-07-14T00:10:00.000Z'), fault: async (candidate) => { if (candidate === point) throw new SimulatedAdapterCrash(point) } })
+    const approved = coordinator.approve(await coordinator.planProjection('fixture', selection, target))
+    await expect(coordinator.apply(approved)).rejects.toBeInstanceOf(SimulatedAdapterCrash)
+    await makeCoordinator({ stateRoot, registry }).recoverPending(); await makeCoordinator({ stateRoot, registry }).recoverPending()
+    expect(await exists(targetDirectory)).toBe(false)
+    expect(await readdir(nativeRoot)).toEqual([])
+  })
+
+  it('fails closed and preserves an empty directory after a crash between exclusive mkdir and ownership marker', async () => {
+    const nativeRoot = await directory('ash-native-'); const targetDirectory = join(nativeRoot, 'skills')
+    const operations = [{ id: 'skills-dir', kind: 'create-directory', rootId: 'home', nativePath: targetDirectory }] as PreviewFileOperation[]
+    const target = installation(nativeRoot); const stateRoot = join(await directory(), 'state'); const registry = new AdapterRegistry([fixtureAdapter(target, operations)])
+    const coordinator = makeCoordinator({ stateRoot, registry, now: () => new Date('2026-07-14T00:10:00.000Z'), fault: async (point) => { if (point === 'after-directory-mkdir') throw new SimulatedAdapterCrash(point) } })
+    const approved = coordinator.approve(await coordinator.planProjection('fixture', selection, target)); await expect(coordinator.apply(approved)).rejects.toBeInstanceOf(SimulatedAdapterCrash)
+    await expect(makeCoordinator({ stateRoot, registry }).recoverPending()).rejects.toThrow(/directory.*ownership|marker|safe/i)
+    expect(await readdir(targetDirectory)).toEqual([])
+  })
+
   it('revalidates digest and file identity from the same no-follow backup handle before calling the adapter', async () => {
     const nativeRoot = await directory('ash-native-'); const file = join(nativeRoot, 'file'); await writeFile(file, 'old'); const operations: PreviewFileOperation[] = [{ id: 'modify', kind: 'modify', rootId: 'home', nativePath: file, expectedAfterSha256: sha256('new') }]; let applyCalls = 0
     const target = installation(nativeRoot); const stateRoot = join(await directory(), 'state'); const registry = new AdapterRegistry([fixtureAdapter(target, operations, async (plan) => { applyCalls += 1; await writeFile(file, 'new'); return result(plan) })]); const coordinator = makeCoordinator({ stateRoot, registry, now: () => new Date('2026-07-14T00:10:00.000Z'), fault: async (point) => { if (point === 'after-journal') { await rm(file); await writeFile(file, 'old') } } }); const approved = coordinator.approve(await coordinator.planProjection('fixture', selection, target))

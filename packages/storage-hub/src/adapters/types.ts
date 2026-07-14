@@ -32,7 +32,7 @@ export interface AssetSelection {
   readonly secretReferenceIds?: readonly string[]
 }
 
-export type PreviewFileOperationKind = 'read' | 'create' | 'modify' | 'delete'
+export type PreviewFileOperationKind = 'read' | 'create-directory' | 'create' | 'modify' | 'delete'
 
 export interface PreviewFileOperation {
   readonly id: string
