@@ -1125,7 +1125,7 @@
     },
     {
       "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 53, "column": 20, "operation": "open",
-      "reason": "Reviewed exclusive creation of an empty coordinator-owned claim at an approved create target whose ordinary parent already exists."
+      "reason": "Reviewed exclusive publication of a random nonce claim at an approved create target after its digest and fixed byte count were durably journaled."
     },
     {
       "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 56, "column": 62, "operation": "rm",
@@ -1148,7 +1148,7 @@
       "reason": "Reviewed rollback staging cleanup restricted to the random exclusively-created sibling file."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 394, "column": 90, "operation": "open",
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 425, "column": 90, "operation": "open",
       "reason": "Reviewed no-follow ordinary-file reads restricted to validated adapter native, journal, or backup paths."
     }
   ],
