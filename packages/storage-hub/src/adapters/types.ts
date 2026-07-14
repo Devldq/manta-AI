@@ -18,6 +18,7 @@ export interface AgentAsset {
   readonly kind: string
   readonly nativePath: string
   readonly secretReferenceIds?: readonly string[]
+  readonly metadata?: Readonly<Record<string, unknown>>
 }
 
 export interface AgentAssetInventory {
@@ -30,6 +31,7 @@ export interface AssetSelection {
   readonly schemaVersion: typeof ADAPTER_SCHEMA_VERSION
   readonly assetIds: readonly string[]
   readonly secretReferenceIds?: readonly string[]
+  readonly assetDigests?: Readonly<Record<string, string>>
 }
 
 export type PreviewFileOperationKind = 'read' | 'create-directory' | 'create' | 'modify' | 'delete'
@@ -91,6 +93,7 @@ export interface AdapterResult {
   readonly verified: boolean
   readonly completedAt: string
   readonly secretReferenceIds?: readonly string[]
+  readonly materializationStrategies?: readonly { readonly operationId: string; readonly strategy: 'clone' | 'copy' }[]
 }
 
 export type AdapterJournalPhase =

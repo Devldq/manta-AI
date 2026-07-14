@@ -194,9 +194,10 @@ export class ProjectionCoordinator {
   }
 
   #validateSelection(value: AssetSelection): void {
-    expectedKeys(value, ['schemaVersion', 'assetIds', 'secretReferenceIds'], 'Asset selection')
+    expectedKeys(value, ['schemaVersion', 'assetIds', 'secretReferenceIds', 'assetDigests'], 'Asset selection')
     if (value.schemaVersion !== 1 || !Array.isArray(value.assetIds) || value.assetIds.some((id) => !SAFE_SEGMENT.test(id)) || new Set(value.assetIds).size !== value.assetIds.length) throw new Error('Malformed asset selection')
     this.#validateSecretReferences(value.secretReferenceIds)
+    if (value.assetDigests !== undefined) { expectedKeys(value.assetDigests, value.assetIds, 'Asset digest snapshot'); if (Object.keys(value.assetDigests).length !== value.assetIds.length || Object.values(value.assetDigests).some((value) => !SHA256.test(value))) throw new Error('Malformed asset digest snapshot') }
   }
 
   #validatePlanShape(plan: AdapterPlan, allowApproval = false): void {
@@ -360,9 +361,10 @@ export class ProjectionCoordinator {
   }
 
   #validateResult(value: AdapterResult, plan: ApprovedAdapterPlan, status: AdapterResult['status']): void {
-    expectedKeys(value, ['schemaVersion', 'operationId', 'planId', 'adapterId', 'installationId', 'status', 'verified', 'completedAt', 'secretReferenceIds'], 'Adapter result')
+    expectedKeys(value, ['schemaVersion', 'operationId', 'planId', 'adapterId', 'installationId', 'status', 'verified', 'completedAt', 'secretReferenceIds', 'materializationStrategies'], 'Adapter result')
     if (value.schemaVersion !== 1 || value.operationId !== plan.approval.operationId || value.planId !== plan.planId || value.adapterId !== plan.adapterId || value.installationId !== plan.target.id || value.status !== status || value.verified !== true || Number.isNaN(Date.parse(value.completedAt))) throw new Error('Adapter returned malformed or mismatched result')
     this.#validateSecretReferences(value.secretReferenceIds)
+    if (value.materializationStrategies !== undefined) { const ids = new Set<string>(); for (const item of value.materializationStrategies) { expectedKeys(item, ['operationId', 'strategy'], 'Materialization strategy'); const operation = plan.operations.find((candidate) => candidate.id === item.operationId); if (!operation || (operation.kind !== 'create' && operation.kind !== 'modify') || ids.has(item.operationId) || (item.strategy !== 'clone' && item.strategy !== 'copy')) throw new Error('Malformed materialization strategy evidence'); ids.add(item.operationId) } }
   }
 
   #validateSecretReferences(value?: readonly string[]): void { if (value !== undefined && (!Array.isArray(value) || value.some((id) => !SAFE_SEGMENT.test(id)))) throw new Error('Malformed secret reference id') }
@@ -453,7 +455,7 @@ export class ProjectionCoordinator {
     await this.#writeJournal(freeze({ ...journal, phase: 'rolled-back', result: freeze(this.#rolledResult(journal)), updatedAt: this.#now().toISOString() }))
   }
 
-  #rolledResult(journal: AdapterJournal): AdapterResult { return { schemaVersion: 1, operationId: journal.operationId, planId: journal.plan.planId, adapterId: journal.plan.adapterId, installationId: journal.plan.target.id, status: 'rolled-back', verified: true, completedAt: this.#now().toISOString(), ...(journal.result?.secretReferenceIds ? { secretReferenceIds: journal.result.secretReferenceIds } : {}) } }
+  #rolledResult(journal: AdapterJournal): AdapterResult { return { schemaVersion: 1, operationId: journal.operationId, planId: journal.plan.planId, adapterId: journal.plan.adapterId, installationId: journal.plan.target.id, status: 'rolled-back', verified: true, completedAt: this.#now().toISOString(), ...(journal.result?.secretReferenceIds ? { secretReferenceIds: journal.result.secretReferenceIds } : {}), ...(journal.result?.materializationStrategies ? { materializationStrategies: journal.result.materializationStrategies } : {}) } }
 
   async #phase(journal: AdapterJournal, phase: AdapterJournal['phase'], result = journal.result): Promise<AdapterJournal> { const next = freeze({ ...journal, phase, updatedAt: this.#now().toISOString(), ...(result ? { result } : {}) }); await this.#writeJournal(next); return next }
   #nativeRelative(target: AgentInstallation, operation: PreviewFileOperation): string { const root = target.nativeRoots.find((item) => item.id === operation.rootId)!; const value = relative(root.path, operation.nativePath); if (!safeRelative(value)) throw new Error('Unsafe native backup-relative path'); return value.split(sep).join('/') }
