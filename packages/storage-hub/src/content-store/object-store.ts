@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, link, lstat, mkdir, open, rm, unlink, writeFile } from 'node:fs/promises'
+import { copyFile, link, lstat, mkdir, open, rm, unlink, writeFile, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { withVolumeContentStoreLease } from './content-store-lease'
 
@@ -50,6 +50,12 @@ async function fileDigest(path: string): Promise<{ hash: string; size: number }>
     while (true) { const { bytesRead } = await handle.read(buffer, 0, buffer.length, null); if (!bytesRead) break; digest.update(buffer.subarray(0, bytesRead)); size += bytesRead }
     return { hash: digest.digest('hex'), size }
   } finally { await handle.close() }
+}
+
+export async function hashFileHandleSha256(handle: FileHandle): Promise<{ hash: string; size: number }> {
+  const digest = createHash('sha256'); let size = 0; const buffer = Buffer.allocUnsafe(64 * 1024)
+  while (true) { const { bytesRead } = await handle.read(buffer, 0, buffer.length, size); if (!bytesRead) break; digest.update(buffer.subarray(0, bytesRead)); size += bytesRead }
+  return { hash: digest.digest('hex'), size }
 }
 
 /** Immutable, volume-local SHA-256 object store. It deliberately has no API for mutable application state. */

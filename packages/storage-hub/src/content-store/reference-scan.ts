@@ -3,6 +3,7 @@ import { resolve, relative } from 'node:path'
 import { AssetManifestStore } from './manifest-store'
 import { assertContentHash, hashFileSha256 } from './object-store'
 import { withVolumeContentStoreLease } from './content-store-lease'
+import { posixAllocatedBytes } from '../inventory/file-inventory'
 
 export type ReferenceScanBlockerCode = 'manifest-invalid' | 'manifest-unreadable' | 'object-tree-unreadable' | 'object-integrity' | 'pending-operation'
 export interface ReferenceScanBlocker { code: ReferenceScanBlockerCode; path?: string; detail: string }
@@ -53,8 +54,8 @@ async function scanUnlocked(volumeRoot: string, pending: PendingContentReference
           const before = await lstat(path); if (!before.isFile() || before.isSymbolicLink()) throw new Error('CAS object must be an ordinary file')
           const digest = await hashFileSha256(path); const after = await lstat(path)
           if (digest.hash !== hash || digest.size !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error('CAS object failed stable hash and size verification')
-          const blocks = typeof before.blocks === 'number' && Number.isSafeInteger(before.blocks) ? before.blocks * 512 : null
-          objects.push({ hash, path, size: before.size, allocatedBytes: process.platform === 'win32' ? null : blocks, allocationEvidence: process.platform === 'win32' ? 'unavailable' : 'posix-blocks', identity: `${before.dev}:${before.ino}:${before.birthtimeMs}`, links: before.nlink })
+          const blocks = posixAllocatedBytes(before.blocks) ?? null
+          objects.push({ hash, path, size: before.size, allocatedBytes: process.platform === 'win32' ? null : blocks, allocationEvidence: process.platform === 'win32' || blocks === null ? 'unavailable' : 'posix-blocks', identity: `${before.dev}:${before.ino}:${before.birthtimeMs}`, links: before.nlink })
         } catch (error) { blockers.push(blocker('object-integrity', relative(root, path), error)) }
       }
     }

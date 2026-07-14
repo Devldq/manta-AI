@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
-import { VolumeObjectStore } from '@manta/storage-hub'
+import { VolumeObjectStore, withVolumeContentStoreLease } from '@manta/storage-hub'
 import { durableAtomicWrite, durableMkdir, durableRemove } from './durable-atomic'
 import { createContentAssetService } from './content-assets'
 import { acquireStorageFileLock } from './file-lock'
@@ -136,9 +136,12 @@ function writeRecord(path: string, record: RagAssetTransactionRecord): void {
 }
 
 export async function beginRagAssetTransaction(input: RagAssetTransactionRoots & { transactionId: string; documentId: string; safeName: string; hash: string; size: number; source: string }): Promise<RagAssetTransactionRecord> {
-  const roots = normalizeRoots(input)
-  if (!TRANSACTION_ID.test(input.transactionId) || !DOCUMENT_ID.test(input.documentId) || !HASH.test(input.hash) || !Number.isSafeInteger(input.size) || input.size < 0) throw new Error('RAG asset transaction input is invalid')
-  return withRagHashLock(roots.knowledgeRoot, input.hash, () => {
+  return withVolumeContentStoreLease(input.volumeRoot, async () => {
+    const roots = normalizeRoots(input)
+    if (!TRANSACTION_ID.test(input.transactionId) || !DOCUMENT_ID.test(input.documentId) || !HASH.test(input.hash) || !Number.isSafeInteger(input.size) || input.size < 0) throw new Error('RAG asset transaction input is invalid')
+    const object = await new VolumeObjectStore(roots.volumeRoot).verify(input.hash)
+    if (object.size !== input.size) throw new Error('RAG asset transaction CAS object size is invalid')
+    return withRagHashLock(roots.knowledgeRoot, input.hash, () => {
     assertSafeDirectory(roots.volumeRoot, roots.journalRoot, true)
     const expectedSource = resolve(roots.knowledgeRoot, 'documents', input.hash)
     if (resolve(input.source) !== expectedSource) throw new Error('RAG asset transaction source must be the ordinary knowledge object')
@@ -152,27 +155,32 @@ export async function beginRagAssetTransaction(input: RagAssetTransactionRoots &
     }
     writeRecord(journalPath(roots.journalRoot, record.transactionId), record)
     return record
+    })
   })
 }
 
 export async function markRagAssetPipelineCommitted(input: RagAssetTransactionRoots, transactionId: string): Promise<RagAssetTransactionRecord> {
-  const roots = normalizeRoots(input); assertSafeDirectory(roots.volumeRoot, roots.journalRoot, false)
-  const path = journalPath(roots.journalRoot, transactionId); const observed = readRecord(path, transactionId, roots)
-  return withRagHashLock(roots.knowledgeRoot, observed.hash, () => {
+  return withVolumeContentStoreLease(input.volumeRoot, () => {
+    const roots = normalizeRoots(input); assertSafeDirectory(roots.volumeRoot, roots.journalRoot, false)
+    const path = journalPath(roots.journalRoot, transactionId); const observed = readRecord(path, transactionId, roots)
+    return withRagHashLock(roots.knowledgeRoot, observed.hash, () => {
     const current = readRecord(path, transactionId, roots)
     if (current.phase === 'pipeline-committed') return current
     const committed: RagAssetTransactionRecord = { ...current, phase: 'pipeline-committed' }
     writeRecord(path, committed); return committed
+    })
   })
 }
 
 export async function abortPreparedRagAssetTransaction(input: RagAssetTransactionRoots, transactionId: string): Promise<void> {
-  const roots = normalizeRoots(input); assertSafeDirectory(roots.volumeRoot, roots.journalRoot, false)
-  const path = journalPath(roots.journalRoot, transactionId); const observed = readRecord(path, transactionId, roots)
-  await withRagHashLock(roots.knowledgeRoot, observed.hash, () => {
+  await withVolumeContentStoreLease(input.volumeRoot, async () => {
+    const roots = normalizeRoots(input); assertSafeDirectory(roots.volumeRoot, roots.journalRoot, false)
+    const path = journalPath(roots.journalRoot, transactionId); const observed = readRecord(path, transactionId, roots)
+    await withRagHashLock(roots.knowledgeRoot, observed.hash, () => {
     const current = readRecord(path, transactionId, roots)
     if (current.phase !== 'prepared') throw new Error('Only a prepared RAG asset transaction can be aborted')
     durableRemove(path)
+    })
   })
 }
 
@@ -196,10 +204,12 @@ function cleanupRecordLocked(roots: ReturnType<typeof normalizeRoots>, record: R
 }
 
 export async function cleanupRagAssetTransaction(input: RagAssetTransactionRoots, transactionId: string): Promise<void> {
-  const roots = normalizeRoots(input); assertSafeDirectory(roots.volumeRoot, roots.journalRoot, false)
-  const record = readRecord(journalPath(roots.journalRoot, transactionId), transactionId, roots)
-  if (record.phase !== 'pipeline-committed') throw new Error('Prepared RAG asset transaction cannot be cleaned')
-  await withRagHashLock(roots.knowledgeRoot, record.hash, () => cleanupRecordLocked(roots, record))
+  await withVolumeContentStoreLease(input.volumeRoot, async () => {
+    const roots = normalizeRoots(input); assertSafeDirectory(roots.volumeRoot, roots.journalRoot, false)
+    const record = readRecord(journalPath(roots.journalRoot, transactionId), transactionId, roots)
+    if (record.phase !== 'pipeline-committed') throw new Error('Prepared RAG asset transaction cannot be cleaned')
+    await withRagHashLock(roots.knowledgeRoot, record.hash, () => cleanupRecordLocked(roots, record))
+  })
 }
 
 export async function recoverRagAssetTransactions(input: RagAssetTransactionRoots, options: { isPipelineCommitted?: (record: RagAssetTransactionRecord) => boolean | Promise<boolean> } = {}): Promise<void> {

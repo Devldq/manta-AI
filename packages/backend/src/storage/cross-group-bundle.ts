@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } f
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { acquireStorageFileLock } from './file-lock'
 import { durableAtomicWrite, durableCopy, durableRemove, durableRename } from './durable-atomic'
+import { acquireVolumeContentStoreLeaseSync } from '@manta/storage-hub'
 
 export interface CrossGroupParticipant { name: string; root: string }
 export type CrossGroupFaultPhase = 'after-first-prepare' | 'after-prepare' | 'after-first-apply' | 'after-apply' | 'after-first-commit'
@@ -37,18 +38,55 @@ function atomicWrite(file: string, content: string): void {
 function acquire(root: string): () => void {
   contained(root, '.ash-2pc'); mkdirSync(stateDir(root), { recursive: true }); contained(root, '.ash-2pc'); return acquireStorageFileLock(join(stateDir(root), 'global.lock'))
 }
+function exactKeys(value: object, allowed: string[]): boolean { return Object.keys(value).sort().join('\0') === [...allowed].sort().join('\0') }
+function validateTargets(root: string, targets: unknown): void {
+  if (!targets || typeof targets !== 'object' || Array.isArray(targets)) throw new Error('Invalid cross-group committed journal targets')
+  for (const [logical, expected] of Object.entries(targets)) {
+    contained(root, logical)
+    if (!expected || typeof expected !== 'object' || Array.isArray(expected)) throw new Error('Invalid cross-group committed journal target')
+    const keys = Object.keys(expected).sort().join(',')
+    if (keys === 'absent') { if ((expected as { absent?: unknown }).absent !== true) throw new Error('Invalid cross-group committed tombstone') }
+    else if (keys === 'hash,present') { const value = expected as { present?: unknown; hash?: unknown }; if (value.present !== true || typeof value.hash !== 'string' || !/^[a-f0-9]{64}$/.test(value.hash)) throw new Error('Invalid cross-group committed target hash') }
+    else throw new Error('Invalid cross-group committed journal target shape')
+  }
+}
+function validateCommittedState(root: string, value: unknown, expectedId: string): asserts value is CommittedState {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid previous committed cross-group state')
+  const state = value as CommittedState
+  if (!exactKeys(state, ['version', 'id', 'generation', 'phase', 'txId', 'targets']) || state.version !== 1 || state.id !== expectedId || !Number.isInteger(state.generation) || state.generation < 0 || state.phase !== 'committed' || typeof state.txId !== 'string' || !state.txId) throw new Error('Invalid previous committed cross-group state')
+  validateTargets(root, state.targets)
+}
 function load(root: string, id: string): State | undefined {
   const file = statePath(root, id); if (!existsSync(file)) return undefined
-  const state = JSON.parse(readFileSync(file, 'utf8')) as State
-  if (state.version !== 1 || state.id !== id || !Number.isInteger(state.generation) || !['prepared', 'committed'].includes(state.phase)) throw new Error('Invalid cross-group journal schema')
-  if (state.phase === 'prepared') for (const item of state.changes) contained(root, item.path)
+  const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid cross-group journal schema')
+  const state = parsed as State
+  if (state.version !== 1 || state.id !== id || !Number.isInteger(state.generation) || state.generation < 0 || !['prepared', 'committed'].includes(state.phase) || typeof state.txId !== 'string' || !state.txId) throw new Error('Invalid cross-group journal schema')
+  if (state.phase === 'prepared') {
+    const keys = ['version', 'id', 'generation', 'phase', 'txId', 'changes', ...(state.previous === undefined ? [] : ['previous'])]
+    if (!exactKeys(state, keys)) throw new Error('Invalid cross-group prepared journal schema')
+    if (!Array.isArray(state.changes)) throw new Error('Invalid cross-group prepared journal changes')
+    for (const item of state.changes) {
+      if (!item || typeof item !== 'object' || typeof item.path !== 'string') throw new Error('Invalid cross-group prepared journal change')
+      contained(root, item.path)
+      const write = typeof item.content === 'string' && typeof item.hash === 'string' && /^[a-f0-9]{64}$/.test(item.hash) && item.delete === undefined
+      const deletion = item.delete === true && item.content === undefined && item.hash === undefined
+      if (!write && !deletion) throw new Error('Invalid cross-group prepared journal change payload')
+    }
+    if (state.previous !== undefined) validateCommittedState(root, state.previous, id)
+  } else {
+    if (!exactKeys(state, ['version', 'id', 'generation', 'phase', 'txId', 'targets'])) throw new Error('Invalid cross-group committed journal schema')
+    validateTargets(root, state.targets)
+  }
   return state
 }
 
 /** Strict, read-only journal inspection for GC safety checks. */
 export function inspectCrossGroupJournals(root: string): CrossGroupJournalInspection[] {
   const directory = stateDir(root); if (!existsSync(directory)) return []
-  return readdirSync(directory).filter((name) => name.endsWith('.json')).sort().map((name) => {
+  const names = readdirSync(directory).sort()
+  if (names.some((name) => !name.endsWith('.json'))) throw new Error('Unknown entry in cross-group journal directory')
+  return names.map((name) => {
     const id = name.slice(0, -5); assertId(id); const state = load(root, id)
     if (!state) throw new Error('Cross-group journal disappeared during inspection')
     return { id: state.id, phase: state.phase }
@@ -93,7 +131,10 @@ function recoverLocked(participants: CrossGroupParticipant[], id: string): State
 }
 function locked<T>(participants: CrossGroupParticipant[], operation: () => T): T {
   const ordered = [...participants].sort((a, b) => resolve(a.root).localeCompare(resolve(b.root))); const releases: Array<() => void> = []
-  try { for (const participant of ordered) releases.push(acquire(participant.root)); return operation() } finally { for (const release of releases.reverse()) release() }
+  const byKey = new Map<string, string>()
+  for (const participant of ordered) { const root = dirname(resolve(participant.root)); byKey.set(process.platform === 'win32' ? root.toLowerCase() : root, root) }
+  const volumeRoots = [...byKey.values()].sort((a, b) => a.localeCompare(b))
+  try { for (const root of volumeRoots) releases.push(acquireVolumeContentStoreLeaseSync(root)); for (const participant of ordered) releases.push(acquire(participant.root)); return operation() } finally { for (const release of releases.reverse()) release() }
 }
 
 export interface CrossGroupView { read(participant: string, path: string): string | undefined }

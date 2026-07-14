@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { inventoryTree } from './file-inventory'
+import { inventoryTree, posixAllocatedBytes } from './file-inventory'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
@@ -15,4 +15,11 @@ it('reports allocation only with explicit platform evidence and never substitute
   } else {
     expect(entry.allocatedBytes).toBeTypeOf('number'); expect(entry.allocationEvidence).toBe('posix-blocks')
   }
+})
+
+it('accepts POSIX block evidence only when blocks times 512 is a nonnegative safe integer', () => {
+  expect(posixAllocatedBytes(4)).toBe(2048)
+  expect(posixAllocatedBytes(-1)).toBeUndefined()
+  expect(posixAllocatedBytes(Number.MAX_SAFE_INTEGER)).toBeUndefined()
+  expect(posixAllocatedBytes(1.5)).toBeUndefined()
 })

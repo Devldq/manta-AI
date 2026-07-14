@@ -10,6 +10,12 @@ export type AllocationEvidence = 'posix-blocks' | 'windows-compressed-size' | 'u
 export interface FileInventoryEntry { relativePath: string; kind: InventoryKind; size: number; allocatedBytes?: number; allocationEvidence?: AllocationEvidence; sha256?: string; linkTarget?: string; linkType?: LinkType }
 export interface StorageInventory { root: string; entries: FileInventoryEntry[]; files: number; bytes: number }
 
+export function posixAllocatedBytes(blocks: unknown): number | undefined {
+  if (typeof blocks !== 'number' || !Number.isSafeInteger(blocks) || blocks < 0) return undefined
+  const bytes = blocks * 512
+  return Number.isSafeInteger(bytes) ? bytes : undefined
+}
+
 async function digest(filePath: string): Promise<string> {
   const hash = createHash('sha256')
   await new Promise<void>((resolve, reject) => createReadStream(filePath).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('end', resolve))
@@ -29,7 +35,7 @@ export async function inventoryTree(root: string): Promise<StorageInventory> {
       }
       else if (stats.isDirectory()) { entries.push({ relativePath, kind: 'directory', size: 0 }); await walk(absolute, relativePath) }
       else if (stats.isFile()) {
-        const blocks = process.platform !== 'win32' && typeof stats.blocks === 'number' && Number.isSafeInteger(stats.blocks) && Number.isSafeInteger(stats.blocks * 512) ? stats.blocks * 512 : undefined
+        const blocks = process.platform !== 'win32' ? posixAllocatedBytes(stats.blocks) : undefined
         entries.push({ relativePath, kind: 'file', size: stats.size, ...(blocks === undefined ? { allocationEvidence: 'unavailable' as const } : { allocatedBytes: blocks, allocationEvidence: 'posix-blocks' as const }), sha256: await digest(absolute) })
       }
     }

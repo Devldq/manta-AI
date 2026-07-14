@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { createHash, randomUUID } from 'node:crypto'
 import { acquireStorageFileLock } from './file-lock'
 import { durableAtomicWrite, durableMkdir, durableRecursiveCopy, durableRemove, durableRename } from './durable-atomic'
+import { acquireVolumeContentStoreLeaseSync, withVolumeContentStoreLease } from '@manta/storage-hub'
 
 interface ExtensionTransactionOptions { extensionsRoot: string; destination: string; fault?: (phase: string) => void }
 interface InstallOptions extends ExtensionTransactionOptions { source: string; validate?: (stagedPath: string) => void; registryWrites?: Map<string, string> }
@@ -126,8 +127,9 @@ function readJournal(root: string, file: string): ExtensionJournal {
       : phase !== 'awaiting-snapshot' && decision === undefined
     if (!validSnapshotState) throw new Error(`Invalid extension transaction snapshot state: ${file}`)
   }
-  const writes = Array.isArray(stored.registryWrites) ? stored.registryWrites : []
-  const deletes = Array.isArray(stored.registryDeletes) ? stored.registryDeletes : []
+  if (!Array.isArray(stored.registryWrites) || !Array.isArray(stored.registryDeletes)) throw new Error(`Invalid extension transaction registry state: ${file}`)
+  const writes = stored.registryWrites
+  const deletes = stored.registryDeletes
   return {
     version, id: stored.id, kind: stored.kind as ExtensionJournal['kind'], phase,
     snapshotRequired: snapshotRequired as ExtensionJournal['snapshotRequired'],
@@ -137,14 +139,18 @@ function readJournal(root: string, file: string): ExtensionJournal {
     stagingPath: stored.stagingPath === undefined ? undefined : fromRelative(root, stored.stagingPath),
     backupPath: stored.backupPath === undefined ? undefined : fromRelative(root, stored.backupPath),
     content: typeof stored.content === 'string' ? stored.content : undefined,
-    registryWrites: writes.map((item) => { const value = item as Record<string, unknown>; if (typeof value.content !== 'string') throw new Error('Invalid extension registry journal entry'); return { path: fromRelative(root, value.path), content: value.content } }),
+    registryWrites: writes.map((item) => { if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Invalid extension registry journal entry'); const value = item as Record<string, unknown>; if (typeof value.content !== 'string') throw new Error('Invalid extension registry journal entry'); return { path: fromRelative(root, value.path), content: value.content } }),
     registryDeletes: deletes.map((item) => fromRelative(root, item)),
   }
 }
 
+function acquireTransactionLock(root: string): () => void {
+  const path = lockPath(root); ensureSafeInternalDirectory(root, dirname(path)); return acquireStorageFileLock(path)
+}
 function acquire(root: string): () => void {
-  const path = lockPath(root); ensureSafeInternalDirectory(root, dirname(path))
-  return acquireStorageFileLock(path)
+  const releaseContent = acquireVolumeContentStoreLeaseSync(dirname(resolve(root)))
+  try { const releaseTransaction = acquireTransactionLock(root); return () => { releaseTransaction(); releaseContent() } }
+  catch (error) { releaseContent(); throw error }
 }
 
 function assertDestination(options: ExtensionTransactionOptions): void {
@@ -374,19 +380,16 @@ export function rollbackCompletedExtensionInstall(receipt: CompletedExtensionIns
 }
 
 export async function withLeasedExtensionInstall<T>(options: InstallOptions, decide: (receipt: CompletedExtensionInstall) => Promise<T>): Promise<T> {
-  validateInstallOptions(options); const release = acquire(options.extensionsRoot)
-  let receipt: CompletedExtensionInstall | undefined
-  try {
-    receipt = installDirectoryUnlocked(options, true); activeInstallReceipts.add(receipt)
-    let result: T
-    try { result = await decide(receipt) } catch (error) { rollbackCompletedExtensionInstall(receipt); throw error }
-    options.fault?.('after-snapshot-publish')
-    keepCompletedExtensionInstallUnlocked(receipt)
-    return result
-  } finally {
-    if (receipt) activeInstallReceipts.delete(receipt)
-    release()
-  }
+  validateInstallOptions(options)
+  return withVolumeContentStoreLease(dirname(resolve(options.extensionsRoot)), async () => {
+    const release = acquireTransactionLock(options.extensionsRoot); let receipt: CompletedExtensionInstall | undefined
+    try {
+      receipt = installDirectoryUnlocked(options, true); activeInstallReceipts.add(receipt)
+      let result: T
+      try { result = await decide(receipt) } catch (error) { rollbackCompletedExtensionInstall(receipt); throw error }
+      options.fault?.('after-snapshot-publish'); keepCompletedExtensionInstallUnlocked(receipt); return result
+    } finally { if (receipt) activeInstallReceipts.delete(receipt); release() }
+  })
 }
 
 export function transactionalUninstallDirectory(options: ExtensionTransactionOptions & { registryDeletes?: string[] }): string | undefined {
