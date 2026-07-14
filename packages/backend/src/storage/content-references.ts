@@ -3,7 +3,7 @@ import { inspectExtensionTransactionJournals } from './extension-transactions'
 import { inspectCrossGroupJournals } from './cross-group-bundle'
 import type { VerifiedPendingContentReferences } from '@manta/storage-hub'
 
-export interface ContentReferenceBlocker { code: string; detail: string }
+export interface ContentReferenceBlocker { code: string; path?: string; detail: string }
 export interface ContentReferenceInspection { liveHashes: string[]; blockers: ContentReferenceBlocker[] }
 
 export function inspectRagReferences(roots: RagAssetTransactionRoots): ContentReferenceInspection {

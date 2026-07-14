@@ -72,6 +72,19 @@ describe('backend lifecycle', () => {
     await composition.runtime.close()
   })
 
+  it('preserves an unreadable Git staging blocker through the pending inspector and capacity DTO', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'manta-capacity-git-blocker-')); const parent = join(base, 'volume'); mkdirSync(parent)
+    const bootstrap = new BootstrapStore(join(base, 'bootstrap.json')); const now = new Date().toISOString(); const groups = ['config', 'secrets', 'extensions', 'knowledge', 'work', 'diagnostics', 'cache'] as StorageGroupId[]
+    await bootstrap.write({ schemaVersion: 1, generation: 1, volumes: [{ id: 'default', name: 'Default', parentPath: parent, createdAt: now, updatedAt: now }], groupAssignments: Object.fromEntries(groups.map((id) => [id, 'default'])) as Record<StorageGroupId, string> })
+    const stagingRoot = join(parent, '.manta-ai', 'cache', 'git-sync', 'default', '.ash', 'sync', 'import-staging')
+    mkdirSync(join(stagingRoot, '..'), { recursive: true }); writeFileSync(stagingRoot, 'not a directory')
+    const { createBackendStorageComposition } = await import('./runtime'); const composition = await createBackendStorageComposition(bootstrap)
+    const metrics = await composition.hub.capacityMetrics(); const result = metrics.volumes.find((item) => item.volumeId === 'default')
+    expect(result).toMatchObject({ scanStatus: 'degraded', physicalImmutableBytes: null, verifiedDedupSavedBytes: null })
+    expect(result?.blockers).toContainEqual({ code: 'git-import-unreadable', path: stagingRoot, detail: 'Git import staging root is not an ordinary directory' })
+    await composition.runtime.close()
+  })
+
   it('composes knowledge resources from routed ASH paths and can close them', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-runtime-'))
     const { createBackendStorageRuntime } = await import('./runtime')

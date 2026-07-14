@@ -78,7 +78,7 @@ describe('read-only volume capacity metrics', () => {
     const volumeRoot = await root(); const object = await new VolumeObjectStore(volumeRoot).ingestBytes(Buffer.from('same inode-sized bytes')); const original = await stat(object.path)
     const replacement = join(volumeRoot, 'replacement'); const displaced = join(volumeRoot, 'displaced'); await writeFile(replacement, Buffer.from('same inode-sized bytes')); await utimes(replacement, original.atime, original.mtime)
     let replaced = false
-    const result = await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: allocated(1), referenceObjectReadHooks: { beforeObjectCanonicalPathValidation: async (path) => {
+    const result = await measureVolumeCapacity(volumeRoot, { volumeId: 'v1', pending, allocation: allocated(1), stableObjectReadTestHook: { afterHandleHashBeforeCanonicalPathValidation: async (path) => {
       if (replaced) return
       replaced = true; await rename(path, displaced); await rename(replacement, path)
     } } })

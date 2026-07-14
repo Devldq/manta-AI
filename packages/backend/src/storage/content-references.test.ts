@@ -36,8 +36,8 @@ describe('pending content reference adapters', () => {
 
   it('preserves structured Git blocker codes and details', async () => {
     const volumeRoot = await root()
-    const inspect = createVolumePendingInspector({ volumeRoot, knowledgeRoot: join(volumeRoot, 'knowledge'), extensionsRoot: join(volumeRoot, 'extensions'), groupRoots: [], migrationPending: () => false, gitPending: () => ({ liveHashes: [], blockers: [{ code: 'git-import-unreadable', detail: 'staging ACL denied' }] }) })
-    expect((await inspect()).blockers).toContainEqual({ code: 'git-import-unreadable', detail: 'staging ACL denied' })
+    const inspect = createVolumePendingInspector({ volumeRoot, knowledgeRoot: join(volumeRoot, 'knowledge'), extensionsRoot: join(volumeRoot, 'extensions'), groupRoots: [], migrationPending: () => false, gitPending: () => ({ liveHashes: [], blockers: [{ code: 'git-import-unreadable', path: 'cache/git-staging', detail: 'staging ACL denied' }] }) })
+    expect((await inspect()).blockers).toContainEqual({ code: 'git-import-unreadable', path: 'cache/git-staging', detail: 'staging ACL denied' })
   })
 
   it('blocks unknown 2PC directory entries and incompletely shaped committed journals', async () => {

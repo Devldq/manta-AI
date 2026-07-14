@@ -6,9 +6,9 @@ import { assertContentHash, hashFileHandleSha256 } from './object-store'
 import { withVolumeContentStoreLease } from './content-store-lease'
 import { posixAllocatedBytes } from '../inventory/file-inventory'
 
-export type ReferenceScanBlockerCode = 'manifest-invalid' | 'manifest-unreadable' | 'object-tree-unreadable' | 'object-integrity' | 'pending-operation'
+export type ReferenceScanBlockerCode = 'manifest-invalid' | 'manifest-unreadable' | 'object-tree-unreadable' | 'object-integrity' | 'pending-operation' | (string & {})
 export interface ReferenceScanBlocker { code: ReferenceScanBlockerCode; path?: string; detail: string }
-export interface PendingContentReferences { liveHashes?: Iterable<string>; blockers?: Array<{ code?: string; detail: string }> }
+export interface PendingContentReferences { liveHashes?: Iterable<string>; blockers?: ReferenceScanBlocker[] }
 export interface VerifiedContentObject { hash: string; path: string; size: number; mtimeMs: number; allocatedBytes: number | null; allocationEvidence: 'posix-blocks' | 'unavailable'; identity: string; links: number }
 export interface VolumeReferenceScan {
   volumeRoot: string; complete: boolean; logicalImmutableBytes: number | null; liveHashes: Set<string>; objects: VerifiedContentObject[]; blockers: ReferenceScanBlocker[]; scannedAt: string
@@ -20,7 +20,8 @@ export function sumLogicalReferenceBytes(values: Iterable<number>): { bytes: num
   return { bytes, overflow: false }
 }
 
-export interface ReferenceObjectReadHooks { beforeObjectCanonicalPathValidation?: (path: string) => void | Promise<void> }
+/** Narrow deterministic race injection for stable-object regression tests only. */
+export interface StableObjectReadTestHook { afterHandleHashBeforeCanonicalPathValidation?: (path: string) => void | Promise<void> }
 
 function blocker(code: ReferenceScanBlockerCode, path: string | undefined, error: unknown): ReferenceScanBlocker {
   return { code, ...(path ? { path } : {}), detail: error instanceof Error ? error.message : String(error) }
@@ -28,11 +29,11 @@ function blocker(code: ReferenceScanBlockerCode, path: string | undefined, error
 
 const sameObjectStat = (left: Stats, right: Stats) => left.dev === right.dev && left.ino === right.ino && left.birthtimeMs === right.birthtimeMs && left.size === right.size && left.mtimeMs === right.mtimeMs && left.nlink === right.nlink
 
-async function readVerifiedContentObject(path: string, expectedHash: string, hooks: ReferenceObjectReadHooks = {}): Promise<VerifiedContentObject> {
+async function readVerifiedContentObject(path: string, expectedHash: string, testHook: StableObjectReadTestHook = {}): Promise<VerifiedContentObject> {
   const handle = await open(path, 'r')
   try {
     const before = await handle.stat(); const digest = await hashFileHandleSha256(handle); const after = await handle.stat()
-    await hooks.beforeObjectCanonicalPathValidation?.(path)
+    await testHook.afterHandleHashBeforeCanonicalPathValidation?.(path)
     const canonical = await lstat(path)
     if (!before.isFile() || before.isSymbolicLink() || !after.isFile() || after.isSymbolicLink() || !canonical.isFile() || canonical.isSymbolicLink() || !sameObjectStat(before, after) || !sameObjectStat(after, canonical) || digest.hash !== expectedHash || digest.size !== before.size) throw new Error('CAS object identity changed or failed stable hash verification')
     const blocks = posixAllocatedBytes(before.blocks) ?? null
@@ -40,10 +41,10 @@ async function readVerifiedContentObject(path: string, expectedHash: string, hoo
   } finally { await handle.close() }
 }
 
-async function scanUnlocked(volumeRoot: string, pending: PendingContentReferences = {}, hooks: ReferenceObjectReadHooks = {}): Promise<VolumeReferenceScan> {
+async function scanUnlocked(volumeRoot: string, pending: PendingContentReferences = {}, testHook: StableObjectReadTestHook = {}): Promise<VolumeReferenceScan> {
   const root = resolve(volumeRoot); const blockers: ReferenceScanBlocker[] = []; const liveHashes = new Set<string>(); let logicalImmutableBytes: number | null = 0
   for (const hash of pending.liveHashes ?? []) { try { assertContentHash(hash); liveHashes.add(hash) } catch (error) { blockers.push(blocker('pending-operation', undefined, error)) } }
-  for (const item of pending.blockers ?? []) blockers.push({ code: 'pending-operation', detail: `${item.code ? `${item.code}: ` : ''}${item.detail}` })
+  for (const item of pending.blockers ?? []) blockers.push({ ...item })
 
   const assetsRoot = resolve(root, '.ash', 'assets')
   let manifests: string[] = []
@@ -77,7 +78,7 @@ async function scanUnlocked(volumeRoot: string, pending: PendingContentReference
         const path = resolve(prefixPath, hash)
         try {
           assertContentHash(hash); if (hash.slice(0, 2) !== prefix) throw new Error('Object hash is stored below the wrong prefix')
-          objects.push(await readVerifiedContentObject(path, hash, hooks))
+          objects.push(await readVerifiedContentObject(path, hash, testHook))
         } catch (error) { blockers.push(blocker('object-integrity', relative(root, path), error)) }
       }
     }

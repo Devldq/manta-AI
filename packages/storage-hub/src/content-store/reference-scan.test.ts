@@ -49,7 +49,7 @@ describe('volume reference scan', () => {
     await writeFile(replacement, Buffer.from('same inode-sized bytes'))
     await utimes(replacement, original.atime, original.mtime)
     let replaced = false
-    const scan = await scanVolumeReferencesReadOnly(root, undefined, { beforeObjectCanonicalPathValidation: async (path) => {
+    const scan = await scanVolumeReferencesReadOnly(root, undefined, { afterHandleHashBeforeCanonicalPathValidation: async (path) => {
       if (replaced) return
       replaced = true
       await rename(path, displaced)

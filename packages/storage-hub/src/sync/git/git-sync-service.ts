@@ -107,8 +107,8 @@ export class GitSyncService {
   async listBindings(): Promise<GitBinding[]> { return this.options.bindings.list() }
   async capability() { return this.options.runner.capability() }
 
-  async inspectPending(volumeId: string): Promise<{ pending: boolean; blockers: Array<{ code: string; detail: string }> }> {
-    const blockers: Array<{ code: string; detail: string }> = []
+  async inspectPending(volumeId: string): Promise<{ pending: boolean; blockers: Array<{ code: string; path?: string; detail: string }> }> {
+    const blockers: Array<{ code: string; path?: string; detail: string }> = []
     if ([...this.imports.values()].some((session) => session.volumeId === volumeId)) blockers.push({ code: 'git-import-pending', detail: 'An active Git import session exists' })
     const stagingRoot = resolve(this.options.cachePath(volumeId), '.ash', 'sync', 'import-staging')
     try {
@@ -120,7 +120,7 @@ export class GitSyncService {
         blockers.push({ code: 'git-import-pending', detail: `Git import staging worktree ${name} exists` })
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') blockers.push({ code: 'git-import-unreadable', detail: error instanceof Error ? error.message : String(error) })
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') blockers.push({ code: 'git-import-unreadable', path: stagingRoot, detail: error instanceof Error ? error.message : String(error) })
     }
     return { pending: blockers.length > 0, blockers }
   }

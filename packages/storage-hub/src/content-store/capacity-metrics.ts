@@ -2,14 +2,15 @@ import { lstat, readdir } from 'node:fs/promises'
 import { relative, resolve } from 'node:path'
 import type { StorageCapacityBlocker, StorageVolumeCapacityMetrics } from '@manta/shared'
 import { readGarbageCollectionCandidateStable, validateGarbageCandidateObject } from './garbage-candidate'
-import { scanVolumeReferencesReadOnly, type PendingContentReferences, type ReferenceObjectReadHooks, type VerifiedContentObject, type VolumeReferenceScan } from './reference-scan'
+import { scanVolumeReferencesReadOnly, type PendingContentReferences, type StableObjectReadTestHook, type VerifiedContentObject, type VolumeReferenceScan } from './reference-scan'
 
 export interface CapacityAllocationEvidence { allocatedBytes: number | null; evidence: string }
 export interface VolumeCapacityOptions {
   volumeId: string
   pending: () => Promise<PendingContentReferences & { complete: true }> | (PendingContentReferences & { complete: true })
   allocation?: (object: VerifiedContentObject) => CapacityAllocationEvidence
-  referenceObjectReadHooks?: ReferenceObjectReadHooks
+  /** Narrow deterministic race injection for stable-object regression tests only. */
+  stableObjectReadTestHook?: StableObjectReadTestHook
 }
 
 function add(total: number, value: number): number | null {
@@ -67,7 +68,7 @@ function scanFingerprint(scan: VolumeReferenceScan): string {
 }
 
 async function readSnapshot(volumeRoot: string, options: VolumeCapacityOptions, allocation: (object: VerifiedContentObject) => CapacityAllocationEvidence) {
-  const pending = await options.pending(); const scan = await scanVolumeReferencesReadOnly(volumeRoot, pending, options.referenceObjectReadHooks); const replicas = await replicaSnapshot(volumeRoot); const blockers: StorageCapacityBlocker[] = [...scan.blockers, ...replicas.blockers]
+  const pending = await options.pending(); const scan = await scanVolumeReferencesReadOnly(volumeRoot, pending, options.stableObjectReadTestHook); const replicas = await replicaSnapshot(volumeRoot); const blockers: StorageCapacityBlocker[] = [...scan.blockers, ...replicas.blockers]
   let physical: number | null = 0; const observedAllocations: Array<[string, number | null, string]> = []
   for (const object of scan.objects) {
     const observed = allocation(object); observedAllocations.push([object.hash, observed.allocatedBytes, observed.evidence])
