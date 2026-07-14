@@ -10,6 +10,8 @@ export class AdapterRegistry {
   }
 
   register(adapter: AgentAdapter): void {
+    // Registration is an internal composition boundary for trusted first-party
+    // built-ins; accepting dynamically supplied executable adapters is unsupported.
     if (!SAFE_ADAPTER_ID.test(adapter.id) || adapter.id.includes('\0')) throw new Error(`Unsafe adapter id: ${JSON.stringify(adapter.id)}`)
     if (this.#adapters.has(adapter.id)) throw new Error(`Duplicate adapter id: ${adapter.id}`)
     this.#adapters.set(adapter.id, adapter)
@@ -22,6 +24,6 @@ export class AdapterRegistry {
   }
 
   list(): readonly AgentAdapter[] {
-    return Object.freeze([...this.#adapters.values()].sort((left, right) => left.id.localeCompare(right.id)))
+    return Object.freeze([...this.#adapters.values()].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
   }
 }

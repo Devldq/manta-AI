@@ -33,4 +33,10 @@ describe('AdapterRegistry', () => {
     expect(() => (registry.list() as AgentAdapter[]).push(adapter('later'))).toThrow()
     expect(registry.list().map(({ id }) => id)).toEqual(['alpha', 'zeta'])
   })
+
+  it('uses locale-independent code-unit ordering', () => {
+    const original = String.prototype.localeCompare
+    String.prototype.localeCompare = () => { throw new Error('locale-dependent ordering used') }
+    try { expect(new AdapterRegistry([adapter('zeta'), adapter('alpha')]).list().map(({ id }) => id)).toEqual(['alpha', 'zeta']) } finally { String.prototype.localeCompare = original }
+  })
 })

@@ -123,6 +123,10 @@ export interface AdapterJournal {
   readonly result?: AdapterResult
 }
 
+/**
+ * Implemented only by trusted first-party built-in modules shipped with Manta.
+ * This boundary does not execute untrusted adapter code or provide a plugin sandbox.
+ */
 export interface AgentAdapter {
   readonly id: string
   readonly displayName: string

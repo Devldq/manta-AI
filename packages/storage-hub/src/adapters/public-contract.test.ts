@@ -8,5 +8,6 @@ describe('adapter public contract', () => {
     expect(new AdapterRegistry().list()).toEqual([])
     const source = await readFile(new URL('./types.ts', import.meta.url), 'utf8')
     expect(source).not.toMatch(/codex|harness|model execution/i)
+    expect(source).toMatch(/trusted first-party built-in/i)
   })
 })
