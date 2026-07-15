@@ -1132,24 +1132,40 @@
       "reason": "Reviewed failure cleanup restricted to a create claim while its exclusive creation handle remains owned by the coordinator."
     },
     {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 61, "column": 9, "operation": "rename",
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 69, "column": 9, "operation": "rename",
       "reason": "Reviewed same-directory atomic quarantine rename after the coordinator verified the approved create-claim file identity."
     },
     {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 65, "column": 9, "operation": "unlink",
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 73, "column": 9, "operation": "unlink",
       "reason": "Reviewed removal of a quarantined create claim only after a no-follow handle revalidated its durable identity and required final evidence."
     },
     {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 74, "column": 37, "operation": "rename",
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 82, "column": 37, "operation": "rename",
       "reason": "Reviewed atomic rollback restore from a synced sibling staging file after repeated approved-native-path validation."
     },
     {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 74, "column": 145, "operation": "rm",
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 82, "column": 145, "operation": "rm",
       "reason": "Reviewed rollback staging cleanup restricted to the random exclusively-created sibling file."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 425, "column": 90, "operation": "open",
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 465, "column": 90, "operation": "open",
       "reason": "Reviewed no-follow ordinary-file reads restricted to validated adapter native, journal, or backup paths."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 60, "column": 9, "operation": "mkdir",
+      "reason": "Reviewed exclusive empty directory-claim creation after prepared ownership evidence was durably journaled for an approved external Agent target."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 64, "column": 9, "operation": "rmdir",
+      "reason": "Reviewed empty-only removal of an approved external Agent directory claim after its durable marker and file identity were revalidated."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/codex/native-io.ts", "line": 7, "column": 24, "operation": "open",
+      "reason": "Reviewed read-only no-follow access to a file inside the detected and approved Codex home or user-skills native root."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/codex/native-io.ts", "line": 14, "column": 24, "operation": "open",
+      "reason": "Reviewed no-follow writable handle access restricted to a coordinator-owned approved Codex projection claim with before-and-after identity verification."
     }
   ],
   "literals": [
