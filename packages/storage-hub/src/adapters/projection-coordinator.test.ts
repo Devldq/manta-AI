@@ -112,6 +112,17 @@ describe('ProjectionCoordinator preview and approval', () => {
 })
 
 describe('ProjectionCoordinator path authorization', () => {
+  it('allows configured control roots beneath a trusted linked platform prefix', async () => {
+    const parent = await directory('ash-linked-prefix-'); const physical = join(parent, 'physical'); const alias = join(parent, 'alias'); await mkdir(physical); await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const nativeRoot = await directory('ash-native-'); const file = join(nativeRoot, 'file'); await writeFile(file, 'old'); const target = installation(nativeRoot)
+    const operations: PreviewFileOperation[] = [{ id: 'modify', kind: 'modify', rootId: 'home', nativePath: file, expectedAfterSha256: sha256('new') }]
+    const registry = new AdapterRegistry([fixtureAdapter(target, operations, async (plan) => { await writeFile(file, 'new'); return result(plan) })])
+    const coordinator = makeCoordinator({ stateRoot: join(alias, 'state'), coordinationRoot: join(alias, 'coordination'), registry, now: () => new Date('2026-07-14T00:10:00.000Z') })
+
+    await expect(coordinator.apply(coordinator.approve(await coordinator.planProjection('fixture', selection, target)))).resolves.toMatchObject({ status: 'committed' })
+    await expect(readFile(file, 'utf8')).resolves.toBe('new')
+  })
+
   it.each([
     ['relative', (_root: string) => 'relative/file'],
     ['escape', (root: string) => join(root, '..', 'escape.txt')],

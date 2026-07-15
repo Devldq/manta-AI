@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, open, rename, rm, rmdir, unlink } from 'node:fs/promises'
-import { basename, dirname, join, parse, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 export type DurableIoEvent = 'staging-file-fsynced' | 'exclusive-file-fsynced' | 'atomic-rename-complete' | 'parent-directory-fsynced' | 'parent-directory-fsync-unsupported'
 export type DurableIoObserver = (event: DurableIoEvent) => void
@@ -14,9 +14,17 @@ async function syncDirectory(path: string): Promise<boolean> {
   } finally { await handle?.close() }
 }
 
-export async function ensureDirectoryDurable(path: string): Promise<void> {
-  const absolute = resolve(path); const filesystemRoot = parse(absolute).root; let current = filesystemRoot
-  for (const part of absolute.slice(filesystemRoot.length).split(sep).filter(Boolean)) {
+export async function ensureDirectoryDurable(path: string, trustedRoot: string): Promise<void> {
+  const absolute = resolve(path); const boundary = resolve(trustedRoot); const rel = relative(boundary, absolute)
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Durable adapter directory escapes its trusted root')
+  let boundaryStat
+  try { boundaryStat = await lstat(boundary) } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    await mkdir(boundary, { recursive: true }); boundaryStat = await lstat(boundary); await syncDirectory(dirname(boundary)); await syncDirectory(boundary)
+  }
+  if (!boundaryStat.isDirectory() || boundaryStat.isSymbolicLink()) throw new Error('Durable adapter trusted root is linked or not a directory')
+  let current = boundary
+  for (const part of rel.split(sep).filter(Boolean)) {
     const next = join(current, part); let created = false
     try { const stat = await lstat(next); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Durable adapter directory path contains a link or non-directory') } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -26,21 +34,21 @@ export async function ensureDirectoryDurable(path: string): Promise<void> {
   }
 }
 
-async function stagingWrite(target: string, bytes: Uint8Array, observe?: DurableIoObserver): Promise<string> {
-  await ensureDirectoryDurable(dirname(target)); const staging = join(dirname(target), `${basename(target)}.${randomUUID()}.tmp`); const handle = await open(staging, 'wx')
+async function stagingWrite(target: string, bytes: Uint8Array, trustedRoot: string, observe?: DurableIoObserver): Promise<string> {
+  await ensureDirectoryDurable(dirname(target), trustedRoot); const staging = join(dirname(target), `${basename(target)}.${randomUUID()}.tmp`); const handle = await open(staging, 'wx')
   try { await handle.writeFile(bytes); await handle.sync(); observe?.('staging-file-fsynced') } catch (error) { await handle.close(); await rm(staging, { force: true }); throw error }
   await handle.close(); return staging
 }
 
-async function publish(target: string, bytes: Uint8Array, observe?: DurableIoObserver): Promise<void> {
-  const staging = await stagingWrite(target, bytes, observe)
+async function publish(target: string, bytes: Uint8Array, trustedRoot: string, observe?: DurableIoObserver): Promise<void> {
+  const staging = await stagingWrite(target, bytes, trustedRoot, observe)
   try {
     await rename(staging, target); observe?.('atomic-rename-complete'); const synced = await syncDirectory(dirname(target)); observe?.(synced ? 'parent-directory-fsynced' : 'parent-directory-fsync-unsupported')
   } catch (error) { await rm(staging, { force: true }); throw error }
 }
 
-export async function writeNewBytesDurable(target: string, bytes: Uint8Array, observe?: DurableIoObserver): Promise<void> {
-  await ensureDirectoryDurable(dirname(target)); let handle
+export async function writeNewBytesDurable(target: string, bytes: Uint8Array, trustedRoot: string, observe?: DurableIoObserver): Promise<void> {
+  await ensureDirectoryDurable(dirname(target), trustedRoot); let handle
   try {
     handle = await open(target, 'wx'); await handle.writeFile(bytes); await handle.sync(); observe?.('exclusive-file-fsynced'); await handle.close(); handle = undefined
     const synced = await syncDirectory(dirname(target)); observe?.(synced ? 'parent-directory-fsynced' : 'parent-directory-fsync-unsupported')
@@ -73,11 +81,11 @@ export async function unlinkDurable(target: string): Promise<void> {
   await unlink(target); await syncDirectory(dirname(target))
 }
 
-export async function writeJsonDurable(target: string, value: unknown, observe?: DurableIoObserver): Promise<void> {
-  await publish(target, Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8'), observe)
+export async function writeJsonDurable(target: string, value: unknown, trustedRoot: string, observe?: DurableIoObserver): Promise<void> {
+  await publish(target, Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8'), trustedRoot, observe)
 }
 
-export async function restoreBytesDurable(target: string, bytes: Uint8Array, validatePath: () => Promise<void>): Promise<void> {
-  await validatePath(); const staging = await stagingWrite(target, bytes)
+export async function restoreBytesDurable(target: string, bytes: Uint8Array, trustedRoot: string, validatePath: () => Promise<void>): Promise<void> {
+  await validatePath(); const staging = await stagingWrite(target, bytes, trustedRoot)
   try { await validatePath(); await rename(staging, target); await syncDirectory(dirname(target)); await validatePath() } catch (error) { await rm(staging, { force: true }); throw error }
 }

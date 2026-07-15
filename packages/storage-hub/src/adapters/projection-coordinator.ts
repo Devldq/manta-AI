@@ -1,7 +1,7 @@
 import { constants } from 'node:fs'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { lstat, open, readdir } from 'node:fs/promises'
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { acquireMigrationFileLock } from '../migration/migration-lock'
 import { AdapterRegistry } from './adapter-registry'
 import { createExclusiveClaimDurable, createExclusiveDirectoryDurable, ensureDirectoryDurable, removeEmptyDirectoryDurable, renameDurable, restoreBytesDurable, unlinkDurable, writeJsonDurable, writeNewBytesDurable } from './durable-io'
@@ -367,7 +367,7 @@ export class ProjectionCoordinator {
       let entries = journal.backupEntries.map((entry) => entry.operationEntryId === operation.id ? freeze({ ...entry, claimSha256, claimBytes }) : entry)
       journal = freeze({ ...journal, backupEntries: freeze(entries), updatedAt: this.#now().toISOString() }); await this.#writeJournal(journal); await this.#fault?.('after-directory-intent')
       await createExclusiveDirectoryDurable(operation.nativePath); await this.#fault?.('after-directory-mkdir')
-      await writeNewBytesDurable(join(operation.nativePath, DIRECTORY_CLAIM_MARKER), nonce); await this.#fault?.('after-directory-marker')
+      await writeNewBytesDurable(join(operation.nativePath, DIRECTORY_CLAIM_MARKER), nonce, root); await this.#fault?.('after-directory-marker')
       const stat = await lstat(operation.nativePath, { bigint: true }); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Published directory claim is not an ordinary directory')
       const identity = fileIdentity(stat)
       entries = journal.backupEntries.map((entry) => entry.operationEntryId === operation.id ? freeze({ ...entry, claimFileIdentity: identity }) : entry)
@@ -525,9 +525,9 @@ export class ProjectionCoordinator {
     } finally { await handle.close() }
   }
   async #readOrdinary(path: string): Promise<Buffer> { return (await this.#readOrdinarySnapshot(path)).bytes }
-  async #writeBackup(operationId: string, relativePath: string, bytes: Buffer): Promise<void> { const path = this.#backupPath(operationId, relativePath); await this.#rejectLinkedControlPath(path); await writeNewBytesDurable(path, bytes); await this.#rejectLinkedControlPath(path) }
+  async #writeBackup(operationId: string, relativePath: string, bytes: Buffer): Promise<void> { const path = this.#backupPath(operationId, relativePath); await this.#rejectLinkedControlPath(path); await writeNewBytesDurable(path, bytes, this.#stateRoot); await this.#rejectLinkedControlPath(path) }
   async #readBackup(operationId: string, relativePath: string): Promise<Buffer> { if (!safeRelative(relativePath)) throw new Error('Unsafe adapter backup path'); const path = this.#backupPath(operationId, relativePath); await this.#rejectLinkedControlPath(path); await this.#rejectLinkedBackupPath(operationId, path); return this.#readOrdinary(path) }
-  async #writeNative(path: string, bytes: Buffer, root: string): Promise<void> { await restoreBytesDurable(path, bytes, () => this.#rejectLinkedPath(root, path)) }
+  async #writeNative(path: string, bytes: Buffer, root: string): Promise<void> { await restoreBytesDurable(path, bytes, root, () => this.#rejectLinkedPath(root, path)) }
   async #rejectLinkedBackupPath(operationId: string, path: string): Promise<void> { const root = this.#backupDirectory(operationId); if (!contains(root, path)) throw new Error('Unsafe adapter backup path'); const rootStat = await statOrAbsent(root); if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Malformed adapter backup directory'); const stat = await statOrAbsent(path); if (!stat?.isFile() || stat.isSymbolicLink()) throw new Error('Malformed adapter backup file') }
 
   async #readJournal(operationId: string): Promise<AdapterJournal> {
@@ -589,7 +589,7 @@ export class ProjectionCoordinator {
     if (!same(actual, expected)) throw new Error('Unknown or incomplete adapter backup evidence')
   }
 
-  async #writeJournal(journal: AdapterJournal): Promise<void> { const path = this.#journalPath(journal.operationId); await this.#rejectLinkedControlPath(path); await writeJsonDurable(path, journal); await this.#rejectLinkedControlPath(path) }
+  async #writeJournal(journal: AdapterJournal): Promise<void> { const path = this.#journalPath(journal.operationId); await this.#rejectLinkedControlPath(path); await writeJsonDurable(path, journal, this.#stateRoot); await this.#rejectLinkedControlPath(path) }
   #journalDirectory(): string { return join(this.#stateRoot, '.ash', 'adapters', 'journals') }
   #journalPath(operationId: string): string { if (!SAFE_SEGMENT.test(operationId)) throw new Error('Unsafe adapter operation id'); return join(this.#journalDirectory(), `${operationId}.json`) }
   #backupDirectory(operationId: string): string { if (!SAFE_SEGMENT.test(operationId)) throw new Error('Unsafe adapter operation id'); return join(this.#stateRoot, '.ash-backups', 'adapters', operationId) }
@@ -603,14 +603,19 @@ export class ProjectionCoordinator {
   async #withInstallationLock<T>(plan: ApprovedAdapterPlan, recovery: boolean, operation: () => Promise<T>): Promise<T> {
     const base = this.#installationLockBase(plan)
     return serialized(base, async () => {
-      await this.#rejectLinkedControlPath(base); await ensureDirectoryDurable(dirname(base)); await this.#rejectLinkedControlPath(base); const lock = await acquireMigrationFileLock(base, recovery)
+      await this.#rejectLinkedControlPath(base); await ensureDirectoryDurable(dirname(base), this.#coordinationRoot); await this.#rejectLinkedControlPath(base); const lock = await acquireMigrationFileLock(base, recovery)
       try { return await operation() } finally { await lock.release() }
     })
   }
 
   async #rejectLinkedControlPath(target: string): Promise<void> {
-    const absolute = resolve(target); const root = parse(absolute).root; let current = root
-    for (const part of absolute.slice(root.length).split(sep).filter(Boolean)) {
+    const absolute = resolve(target); const boundary = contains(this.#stateRoot, absolute) ? this.#stateRoot : contains(this.#coordinationRoot, absolute) ? this.#coordinationRoot : undefined
+    if (!boundary) throw new Error('Adapter control path escapes its trusted root')
+    const boundaryStat = await statOrAbsent(boundary)
+    if (!boundaryStat) return
+    if (!boundaryStat.isDirectory() || boundaryStat.isSymbolicLink()) throw new Error('Adapter control root is linked or not a directory')
+    let current = boundary
+    for (const part of relative(boundary, absolute).split(sep).filter(Boolean)) {
       current = join(current, part); const stat = await statOrAbsent(current); if (!stat) break
       if (stat.isSymbolicLink()) throw new Error('Adapter control path has a symbolic link or junction ancestor')
       if (current !== absolute && !stat.isDirectory()) throw new Error('Adapter control path has a non-directory ancestor')
