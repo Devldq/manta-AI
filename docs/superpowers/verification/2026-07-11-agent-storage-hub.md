@@ -66,3 +66,28 @@ The root `test` script sets Turbo concurrency to one so the required literal `pn
 - Bounded the empty-conversation fallback to one request per mounted sidebar. Hidden packaged-renderer inspection exposed the former successful-empty-response loop at 100% renderer CPU; the focused regression, full suite, rebuilt frontend, and packaged smoke now pass.
 
 Generated release directories, coverage, package staging, command logs, Turbo logs, runtime volumes, credentials, caches, and migration fixtures are excluded from the intended commit.
+
+## Final independent-review addendum (2026-07-16)
+
+The final broad review identified and closed five release blockers after the original Task 20 record:
+
+- Git import replacement now uses a durable import journal, one exclusive lease, deterministic staging/backups, and all-old/all-new crash recovery.
+- Bootstrap creation and relocation now share a serialized cross-process update lock; concurrent volume creation and post-commit lock-release failures preserve the committed catalog.
+- Git bindings persist the discovered remote branch. Existing `main`/`trunk` repositories, empty remotes, cache rebuilds, and a transient branch-discovery failure are covered with real bare-repository tests. A failed `ls-remote` now rolls back without persisting the local fallback branch.
+- Secrets remain excluded from Git by default. Enabling them requires an expiring, one-use native confirmation grant bound to sender, frame, origin, and volume; disabling immediately removes cached/indexed copies without deleting live ASH secrets.
+- The Storage UI exposes the high-risk Secrets option and warning only for an established Git binding; renderer input cannot add the policy through ordinary Git configuration.
+
+An independent re-review of `e41fe1a..3cb92fa` found no remaining Critical or Important issue. Fresh latest-HEAD gates then passed:
+
+| Command | Result |
+|---|---|
+| `pnpm install --frozen-lockfile` | Pass |
+| `pnpm storage:audit` | Pass; 338 production source files scanned |
+| `pnpm test` | Pass; 14/14 Turbo tasks |
+| `pnpm typecheck` | Pass; 12/12 tasks |
+| `pnpm build` | Pass; 7/7 tasks |
+| `pnpm verify:ash:phase1` through `phase4` | Pass |
+| `pnpm --filter @manta/desktop test:e2e:ash` | Pass; 3 files / 4 tests |
+| `pnpm --filter @manta/desktop package:dir` | Pass; packaged runtime, providers, server, routed APIs, and actual main verified |
+
+The packaged Storage screen had already received a hidden rendered inspection for layout, health, capacity, migration, Git, and Agent Connection behavior. The later Secrets control is additionally covered by static-render UI assertions and privileged native-confirmation IPC tests. No release or inspection process remained running after verification.
