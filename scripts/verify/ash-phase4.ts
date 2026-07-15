@@ -4,14 +4,23 @@ const { readFileSync } = require('node:fs')
 
 const agentSurface = [
   'packages/backend/src/storage/agent-storage.ts',
+  'packages/backend/src/storage/runtime.ts',
   'packages/backend/src/routes/storage.ts',
+  'packages/desktop/src/desktop-runtime.ts',
   'packages/desktop/src/ipc/registerStorageIpc.ts',
+  'packages/desktop/src/preload/main-preload.ts',
+  'packages/frontend/src/features/storage/desktop-storage-bridge.ts',
+  'packages/frontend/src/features/storage/storage-api.ts',
   'packages/frontend/src/features/storage/AgentConnectionsSection.tsx',
   'packages/shared/src/storage.ts',
 ]
 const source = agentSurface.map((path) => readFileSync(path, 'utf8')).join('\n')
 for (const forbidden of [/Agent Harness/i, /child_process/, /\bspawn(?:Sync)?\s*\(/, /\bexec(?:File|Sync)?\s*\(/, /model[- ]loop/i, /arbitrary filesystem/i]) {
   if (forbidden.test(source)) { process.stderr.write(`Forbidden Agent surface capability: ${forbidden}\n`); process.exit(1) }
+}
+const rendererSurface = ['packages/desktop/src/preload/main-preload.ts', 'packages/frontend/src/features/storage/desktop-storage-bridge.ts', 'packages/frontend/src/features/storage/storage-api.ts', 'packages/frontend/src/features/storage/AgentConnectionsSection.tsx', 'packages/shared/src/storage.ts'].map((path) => readFileSync(path, 'utf8')).join('\n')
+for (const forbidden of [/\b(?:secret|credential|token)(?:Value|Literal)\b/i, /node:(?:fs|child_process)/]) {
+  if (forbidden.test(rendererSurface)) { process.stderr.write(`Forbidden raw secret or filesystem capability in renderer Agent surface: ${forbidden}\n`); process.exit(1) }
 }
 
 const checks = [

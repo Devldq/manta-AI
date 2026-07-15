@@ -135,7 +135,25 @@ describe('Agent storage composition', () => {
     await expect(restarted.mutations.rollback(projected.operationId)).resolves.toEqual(expect.objectContaining({ status: 'rolled-back', verified: true }))
     await expect(access(nativeSkill)).rejects.toThrow()
     expect(progress).toEqual(expect.arrayContaining([expect.objectContaining({ operationId: projected.operationId, phase: 'completed', status: 'completed' })]))
-    expect(await composition.readModel.reuse()).toEqual(expect.objectContaining({ scanStatus: 'complete', portableAssetCount: 1, logicalImmutableBytes: 14, uniqueVerifiedObjectBytes: 14, verifiedSavedBytes: 0 }))
+    expect(await restarted.readModel.reuse()).toEqual(expect.objectContaining({ scanStatus: 'complete', evidenceStatus: 'verified', portableAssetCount: 1, logicalImmutableBytes: 14, uniqueVerifiedObjectBytes: 14, verifiedSavedBytes: 0, materializationStrategies: { clone: 0, copy: 1 } }))
+  })
+
+  it('serves sanitized nonterminal journals, degrades incomplete reuse evidence, and emits failed rollback progress', async () => {
+    const { volume, extensions, secrets } = await roots(); const home = join(volume, 'home'); const nativeSkill = join(home, '.agents', 'skills', 'demo'); await mkdir(join(home, '.codex'), { recursive: true }); await mkdir(nativeSkill, { recursive: true }); await writeFile(join(nativeSkill, 'SKILL.md'), 'portable skill')
+    const progress: any[] = []; const resolveGroup = (group: any, ...segments: string[]) => join(group === 'extensions' ? extensions : group === 'secrets' ? secrets : join(volume, group), ...segments)
+    const composition = await createAgentStorageComposition({ resolve: resolveGroup, homeDirectory: home, environment: {}, onProgress: (value) => progress.push(value) })
+    const imported = await composition.mutations.apply((await composition.mutations.previewImport('codex', 'codex-user', ['codex-skill-demo'], 'sender')).planSessionId, 'sender'); await rm(nativeSkill, { recursive: true })
+    const projected = await composition.mutations.apply((await composition.mutations.previewProjection('codex', 'codex-user', ['codex-skill-demo'], 'sender')).planSessionId, 'sender')
+    const journalPath = join(volume, 'config', 'agent-coordination', 'state', '.ash', 'adapters', 'journals', `${projected.operationId}.json`); const journal = JSON.parse(await readFile(journalPath, 'utf8'))
+    await writeFile(journalPath, JSON.stringify({ ...journal, phase: 'applying', result: undefined }))
+    await expect(composition.readModel.operation(projected.operationId)).resolves.toEqual(expect.objectContaining({ phase: 'applying', status: 'running', verified: false }))
+    expect((await composition.readModel.agents()).operations).toContainEqual(expect.objectContaining({ operationId: projected.operationId, phase: 'applying' }))
+    await writeFile(journalPath, JSON.stringify({ ...journal, result: { ...journal.result, materializationStrategies: undefined } }))
+    await expect(composition.readModel.reuse()).resolves.toEqual(expect.objectContaining({ evidenceStatus: 'unavailable', materializationStrategies: null, blockers: [expect.objectContaining({ code: 'agent-materialization-evidence-incomplete' })] }))
+    await writeFile(journalPath, JSON.stringify(journal)); await writeFile(join(nativeSkill, 'SKILL.md'), 'foreign change')
+    await expect(composition.mutations.rollback(projected.operationId)).rejects.toThrow(/ownership|changed|digest|safe/i)
+    expect(progress.at(-1)).toEqual({ operationId: projected.operationId, phase: 'failed', status: 'failed', operationsCompleted: 0, operationsTotal: journal.plan.operations.length })
+    expect(imported.result.status).toBe('committed')
   })
 
   it('does not let a foreign sender consume a session and caps expiry to the configured TTL', async () => {

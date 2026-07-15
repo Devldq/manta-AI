@@ -20,5 +20,6 @@ describe('Agent connections presentation', () => {
   it('renders structured progress and an error retry card while disabling mutation controls', () => {
     const html = renderToStaticMarkup(<AgentConnectionsView connection={connection} assets={assets} nativeSelected={new Set(['skill'])} portableSelected={new Set(['portable-skill'])} progress={{ operationId: 'operation-1', phase: 'applying', status: 'running', operationsCompleted: 1, operationsTotal: 3 }} error={new Error('Detection unavailable')} busy onToggleNative={() => {}} onTogglePortable={() => {}} onPreviewImport={() => {}} onPreviewProjection={() => {}} onRetry={() => {}} />)
     expect(html).toContain('Status: error'); expect(html).toContain('applying: 1/3'); expect(html).toContain('Detection unavailable'); expect(html).toContain('Retry'); expect(html).toContain('disabled=""')
+    expect(html).toContain('/home/.agents/skills/demo'); expect(html).toContain('portable-skill')
   })
 })

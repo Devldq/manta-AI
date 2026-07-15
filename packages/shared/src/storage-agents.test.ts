@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AgentStorageProgressSchema, StorageIpcRequestSchema, StorageIpcResponseSchema } from './storage'
+import { AgentOperationReadSummarySchema, AgentOperationSummarySchema, AgentStorageProgressSchema, StorageIpcRequestSchema, StorageIpcResponseSchema } from './storage'
 
 describe('Agent storage shared contracts', () => {
   it('accepts only opaque identifiers in strict privileged requests', () => {
@@ -19,5 +19,8 @@ describe('Agent storage shared contracts', () => {
     expect(StorageIpcResponseSchema.parse(preview)).toEqual(preview)
     expect(StorageIpcResponseSchema.safeParse({ ...preview, plan: { ...preview.plan, approval: { digest: 'x' } } }).success).toBe(false)
     expect(AgentStorageProgressSchema.parse({ operationId: 'operation-1', phase: 'applying', status: 'running', operationsCompleted: 0, operationsTotal: 2 })).toEqual({ operationId: 'operation-1', phase: 'applying', status: 'running', operationsCompleted: 0, operationsTotal: 2 })
+    const running = { operationId: 'operation-1', adapterId: 'codex', installationId: 'codex-user', kind: 'projection' as const, phase: 'applying' as const, status: 'running' as const, verified: false, startedAt: '2026-07-15T00:00:00.000Z', updatedAt: '2026-07-15T00:00:01.000Z', operationCount: 2 }
+    expect(AgentOperationReadSummarySchema.parse(running)).toEqual(running)
+    expect(AgentOperationSummarySchema.safeParse(running).success).toBe(false)
   })
 })

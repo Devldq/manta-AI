@@ -43,6 +43,8 @@ export interface AdapterOperationSummary {
   readonly updatedAt: string
   readonly verified: boolean
   readonly operationCount: number
+  readonly materializedOperationCount: number
+  readonly strategyEvidenceComplete: boolean
   readonly materializationStrategies?: Readonly<{ clone: number; copy: number }>
 }
 
@@ -221,7 +223,9 @@ export class ProjectionCoordinator {
 
   #operationSummary(journal: AdapterJournal): AdapterOperationSummary {
     const strategies = journal.result?.materializationStrategies?.reduce((counts, item) => { counts[item.strategy]++; return counts }, { clone: 0, copy: 0 })
-    return freeze({ operationId: journal.operationId, adapterId: journal.plan.adapterId, installationId: journal.plan.target.id, kind: journal.plan.kind, phase: journal.phase, startedAt: journal.startedAt, updatedAt: journal.updatedAt, verified: journal.result?.verified === true && (journal.phase === 'committed' || journal.phase === 'rolled-back'), operationCount: journal.plan.operations.length, ...(strategies ? { materializationStrategies: strategies } : {}) })
+    const materializedOperationCount = journal.plan.kind === 'projection' ? journal.plan.operations.filter((operation) => operation.kind === 'create' || operation.kind === 'modify').length : 0
+    const strategyEvidenceComplete = journal.plan.kind !== 'projection' || (strategies?.clone ?? 0) + (strategies?.copy ?? 0) === materializedOperationCount
+    return freeze({ operationId: journal.operationId, adapterId: journal.plan.adapterId, installationId: journal.plan.target.id, kind: journal.plan.kind, phase: journal.phase, startedAt: journal.startedAt, updatedAt: journal.updatedAt, verified: journal.result?.verified === true && (journal.phase === 'committed' || journal.phase === 'rolled-back'), operationCount: journal.plan.operations.length, materializedOperationCount, strategyEvidenceComplete, ...(strategies ? { materializationStrategies: strategies } : {}) })
   }
 
   async #preparePlan(plan: AdapterPlan, adapterId: string, target: AgentInstallation): Promise<AdapterPlan> {

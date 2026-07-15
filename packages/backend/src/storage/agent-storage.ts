@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { constants } from 'node:fs'
 import { chmod, lstat, mkdir, open, readFile, readdir } from 'node:fs/promises'
 import { dirname, join, parse, resolve } from 'node:path'
-import { AdapterRegistry, AssetManifestStore, CodexAdapter, ProjectionCoordinator, VolumeObjectStore, type AdapterPlan, type AdapterResult, type AgentInstallation, type CodexPortableAsset, type CodexPortableAssetKind, type CodexPortableAssetRepository, type CodexPortableAssetSummary, type CodexSecretRepository, type PreviewFileOperation } from '@manta/storage-hub'
+import { AdapterRegistry, AssetManifestStore, CodexAdapter, ProjectionCoordinator, VolumeObjectStore, type AdapterJournalPhase, type AdapterPlan, type AdapterResult, type AgentInstallation, type CodexPortableAsset, type CodexPortableAssetKind, type CodexPortableAssetRepository, type CodexPortableAssetSummary, type CodexSecretRepository, type PreviewFileOperation } from '@manta/storage-hub'
 import type { StorageGroupId } from '@manta/shared'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
@@ -214,6 +214,19 @@ export interface AgentOperationSummary {
   operationCount: number
   materializationStrategies?: { clone: number; copy: number }
 }
+export interface AgentOperationReadSummary {
+  operationId: string
+  adapterId: string
+  installationId: string
+  kind: 'import' | 'projection'
+  phase: AdapterJournalPhase
+  status: 'running' | 'recovering' | 'committed' | 'rolled-back'
+  verified: boolean
+  startedAt: string
+  updatedAt: string
+  operationCount: number
+  materializationStrategies?: { clone: number; copy: number }
+}
 
 interface PlanSession { senderId: string; plan: AdapterPlan; expiresAt: number }
 export interface AgentStorageOptions {
@@ -234,6 +247,10 @@ function resultSummary(plan: AdapterPlan, result: AdapterResult): AgentOperation
 function durableResultSummary(value: Awaited<ReturnType<ProjectionCoordinator['getOperationSummary']>>): AgentOperationSummary {
   if (!value || (value.phase !== 'committed' && value.phase !== 'rolled-back')) throw new Error('Agent operation does not have terminal verified evidence')
   return { operationId: value.operationId, adapterId: value.adapterId, installationId: value.installationId, kind: value.kind, phase: value.phase, status: value.phase, verified: value.verified, completedAt: value.updatedAt, operationCount: value.operationCount, ...(value.materializationStrategies ? { materializationStrategies: value.materializationStrategies } : {}) }
+}
+function durableOperationSummary(value: NonNullable<Awaited<ReturnType<ProjectionCoordinator['getOperationSummary']>>>): AgentOperationReadSummary {
+  const status = value.phase === 'committed' || value.phase === 'rolled-back' ? value.phase : value.phase === 'rolling-back' || value.phase === 'aborting-claims' ? 'recovering' : 'running'
+  return { operationId: value.operationId, adapterId: value.adapterId, installationId: value.installationId, kind: value.kind, phase: value.phase, status, verified: value.verified, startedAt: value.startedAt, updatedAt: value.updatedAt, operationCount: value.operationCount, ...(value.materializationStrategies ? { materializationStrategies: value.materializationStrategies } : {}) }
 }
 
 /** One Backend-owned composition shared by read-only routes and trusted Desktop IPC. */
@@ -258,7 +275,7 @@ export async function createAgentStorageComposition(options: AgentStorageOptions
   }
   const readModel = {
     async agents() {
-      const operations = (await coordinator.listOperationSummaries()).filter((value) => value.phase === 'committed' || value.phase === 'rolled-back').map((value) => durableResultSummary(value))
+      const operations = (await coordinator.listOperationSummaries()).map(durableOperationSummary)
       try { const installations = await coordinator.detect(adapter.id); return { adapters: [{ id: adapter.id, displayName: adapter.displayName, status: installations.length ? 'detected' as const : 'not-detected' as const, installations: installations.map(publicInstallation) }], operations } }
       catch { return { adapters: [{ id: adapter.id, displayName: adapter.displayName, status: 'error' as const, installations: [], error: { code: 'AGENT_DETECTION_FAILED', message: 'Codex storage detection is unavailable' } }], operations } }
     },
@@ -266,8 +283,8 @@ export async function createAgentStorageComposition(options: AgentStorageOptions
       const target = await installation(adapterId, installationId)
       return { inventory: await coordinator.inspect(adapterId, target), portableAssets: await assets.list() }
     },
-    async reuse() { try { return { scanStatus: 'complete' as const, evidenceStatus: 'verified' as const, ...await assets.reuseMetrics() } } catch (error) { return { scanStatus: 'degraded' as const, evidenceStatus: 'unavailable' as const, portableAssetCount: 0, logicalImmutableBytes: null, uniqueVerifiedObjectBytes: null, verifiedSavedBytes: null, blockers: [{ code: 'agent-asset-verification-failed', detail: (error as Error).message }] } } },
-    async operation(operationId: string) { const value = await coordinator.getOperationSummary(operationId); if (!value) throw Object.assign(new Error('Agent operation was not found'), { code: 'AGENT_OPERATION_NOT_FOUND' }); return durableResultSummary(value) },
+    async reuse() { try { const metrics = await assets.reuseMetrics(); const terminal = (await coordinator.listOperationSummaries()).filter((value) => value.kind === 'projection' && (value.phase === 'committed' || value.phase === 'rolled-back')); const complete = terminal.every((value) => value.verified && value.strategyEvidenceComplete); const materializationStrategies = terminal.reduce((counts, value) => { counts.clone += value.materializationStrategies?.clone ?? 0; counts.copy += value.materializationStrategies?.copy ?? 0; return counts }, { clone: 0, copy: 0 }); return { scanStatus: 'complete' as const, evidenceStatus: complete ? 'verified' as const : 'unavailable' as const, ...metrics, materializationStrategies: complete ? materializationStrategies : null, ...(!complete ? { blockers: [{ code: 'agent-materialization-evidence-incomplete', detail: 'A durable projection journal lacks complete clone/copy strategy evidence' }] } : {}) } } catch (error) { return { scanStatus: 'degraded' as const, evidenceStatus: 'unavailable' as const, portableAssetCount: 0, logicalImmutableBytes: null, uniqueVerifiedObjectBytes: null, verifiedSavedBytes: null, materializationStrategies: null, blockers: [{ code: 'agent-asset-verification-failed', detail: (error as Error).message }] } } },
+    async operation(operationId: string) { const value = await coordinator.getOperationSummary(operationId); if (!value) throw Object.assign(new Error('Agent operation was not found'), { code: 'AGENT_OPERATION_NOT_FOUND' }); return durableOperationSummary(value) },
   }
   const mutations = {
     async previewImport(adapterId: string, installationId: string, assetIds: readonly string[], senderId: string) { return preview(await coordinator.planImport(adapterId, { schemaVersion: 1, assetIds: [...assetIds] }, await installation(adapterId, installationId)), senderId) },
@@ -286,8 +303,9 @@ export async function createAgentStorageComposition(options: AgentStorageOptions
     },
     async rollback(operationId: string) {
       const prior = await coordinator.getOperationSummary(operationId); if (!prior || prior.phase !== 'committed') throw Object.assign(new Error('Agent operation was not found or is not rollback eligible'), { code: 'AGENT_OPERATION_NOT_FOUND' })
-      options.onProgress?.({ operationId, phase: 'rolling-back', status: 'running', operationsCompleted: 0, operationsTotal: prior.operationCount }); await coordinator.rollback(operationId)
-      const summary = durableResultSummary(await coordinator.getOperationSummary(operationId)); options.onProgress?.({ operationId, phase: 'rolled-back', status: 'completed', operationsCompleted: prior.operationCount, operationsTotal: prior.operationCount }); return summary
+      options.onProgress?.({ operationId, phase: 'rolling-back', status: 'running', operationsCompleted: 0, operationsTotal: prior.operationCount })
+      try { await coordinator.rollback(operationId); const summary = durableResultSummary(await coordinator.getOperationSummary(operationId)); options.onProgress?.({ operationId, phase: 'rolled-back', status: 'completed', operationsCompleted: prior.operationCount, operationsTotal: prior.operationCount }); return summary }
+      catch (error) { options.onProgress?.({ operationId, phase: 'failed', status: 'failed', operationsCompleted: 0, operationsTotal: prior.operationCount }); throw error }
     },
   }
   return { readModel, mutations, coordinator, assets, secrets }

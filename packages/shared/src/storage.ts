@@ -246,6 +246,19 @@ export const AgentOperationSummarySchema = z.object({
   operationCount: z.number().int().nonnegative(),
   materializationStrategies: z.object({ clone: z.number().int().nonnegative(), copy: z.number().int().nonnegative() }).strict().optional(),
 }).strict()
+export const AgentOperationReadSummarySchema = z.object({
+  operationId: AgentOpaqueIdSchema,
+  adapterId: AgentOpaqueIdSchema,
+  installationId: AgentOpaqueIdSchema,
+  kind: z.enum(['import', 'projection']),
+  phase: z.enum(['journaled', 'backing-up', 'backed-up', 'claiming', 'aborting-claims', 'applying', 'applied', 'committed', 'rolling-back', 'rolled-back']),
+  status: z.enum(['running', 'recovering', 'committed', 'rolled-back']),
+  verified: z.boolean(),
+  startedAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  operationCount: z.number().int().nonnegative(),
+  materializationStrategies: z.object({ clone: z.number().int().nonnegative(), copy: z.number().int().nonnegative() }).strict().optional(),
+}).strict()
 export const AgentStorageProgressSchema = z.object({
   operationId: AgentOpaqueIdSchema,
   phase: z.enum(['applying', 'completed', 'rolling-back', 'rolled-back', 'failed']),
@@ -256,6 +269,7 @@ export const AgentStorageProgressSchema = z.object({
 
 export type AgentPlanPreview = z.infer<typeof AgentPlanPreviewSchema>
 export type AgentOperationSummary = z.infer<typeof AgentOperationSummarySchema>
+export type AgentOperationReadSummary = z.infer<typeof AgentOperationReadSummarySchema>
 export type AgentStorageProgress = z.infer<typeof AgentStorageProgressSchema>
 
 export const StorageIpcRequestSchema = z.union([

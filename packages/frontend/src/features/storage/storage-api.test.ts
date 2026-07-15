@@ -36,8 +36,8 @@ describe('storage API', () => {
   })
 
   it('reads Agent connections, inventories, reuse evidence, and sanitized operations', async () => {
-    const calls: string[] = []; const api = createStorageApi(async (input) => { const path = String(input); calls.push(path); const data = path.endsWith('/assets') ? { inventory: { schemaVersion: 1, installationId: 'codex-user', assets: [] }, portableAssets: [] } : path.endsWith('/reuse') ? { scanStatus: 'complete', verifiedSavedBytes: 4 } : path.includes('/operations/') ? { operation: { operationId: 'operation-1', status: 'committed' } } : { adapters: [], operations: [] }; return new Response(JSON.stringify({ success: true, data }), { status: 200 }) })
-    await api.agents(); await api.agentAssets('codex', 'codex-user'); await api.agentReuse(); await api.agentOperation('operation-1')
+    const calls: string[] = []; const api = createStorageApi(async (input) => { const path = String(input); calls.push(path); const data = path.endsWith('/assets') ? { inventory: { schemaVersion: 1, installationId: 'codex-user', assets: [] }, portableAssets: [] } : path.endsWith('/reuse') ? { scanStatus: 'complete', verifiedSavedBytes: 4, materializationStrategies: { clone: 1, copy: 2 } } : path.includes('/operations/') ? { operation: { operationId: 'operation-1', phase: 'applying', status: 'running', verified: false } } : { adapters: [], operations: [{ operationId: 'operation-1', phase: 'applying', status: 'running' }] }; return new Response(JSON.stringify({ success: true, data }), { status: 200 }) })
+    await expect(api.agents()).resolves.toMatchObject({ operations: [{ phase: 'applying', status: 'running' }] }); await api.agentAssets('codex', 'codex-user'); await expect(api.agentReuse()).resolves.toMatchObject({ materializationStrategies: { clone: 1, copy: 2 } }); await expect(api.agentOperation('operation-1')).resolves.toMatchObject({ phase: 'applying', status: 'running' })
     expect(calls).toEqual(['/api/storage/agents', '/api/storage/agents/codex/installations/codex-user/assets', '/api/storage/agents/reuse', '/api/storage/agents/operations/operation-1'])
   })
 })
