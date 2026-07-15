@@ -142,6 +142,7 @@ async function bundleBackendForElectron(appDir) {
   // supplies bundledSeedRoot/frontendDist before those fallbacks are read.
   const backendDir = join(appDir, 'node_modules', '@manta', 'backend')
   const output = join(backendDir, 'dist', 'server.cjs')
+  const backendDist = join(repositoryDir, 'packages', 'backend', 'dist')
   await bundle({
     entryPoints: [join(repositoryDir, 'packages', 'backend', 'dist', 'server.js')],
     outfile: output,
@@ -149,7 +150,23 @@ async function bundleBackendForElectron(appDir) {
     platform: 'node',
     format: 'cjs',
     target: 'node22',
-    external: ['better-sqlite3', '@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core', '@langchain/core/messages'],
+    // TypeScript preserves the Backend's internal path aliases in dist.  If
+    // esbuild applies the source tsconfig to those specifiers, a package mixes
+    // dist modules with a second copy from src (including a second
+    // AsyncLocalStorage-backed ASH resolver).  Pin every internal alias to the
+    // compiled tree so request hooks and route handlers share one runtime.
+    alias: {
+      '@core': join(backendDist, 'core'),
+      '@engine': join(backendDist, 'core', 'engine'),
+      '@context': join(backendDist, 'core', 'context'),
+      '@storage': join(backendDist, 'core', 'storage'),
+      '@tools': join(backendDist, 'core', 'tools'),
+      '@observability': join(backendDist, 'core', 'observability'),
+      '@security': join(backendDist, 'core', 'security'),
+      '@llm': join(backendDist, 'core', 'llm'),
+      '@routes': join(backendDist, 'routes'),
+    },
+    external: ['better-sqlite3', '@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core', '@langchain/core/messages', '@manta/shared', '@manta/storage-hub'],
     define: { 'import.meta.url': 'undefined' },
   })
   const backendManifestPath = join(backendDir, 'package.json')
@@ -220,8 +237,8 @@ async function main() {
     let mainMarker
     try { mainMarker = rawMarker && JSON.parse(rawMarker) } catch { throw new Error(`Packaged main wrote an invalid smoke marker: ${rawMarker ?? 'missing'}`) }
     const providersLoaded = mainMarker?.providers && Object.values(mainMarker.providers).every(Boolean)
-    if (mainMarker?.status !== 'ok' || !mainMarker.actualEntry || !/([\\/])dist\1main\.js$/.test(mainMarker.entryFile ?? '') || !mainMarker.backend || !mainMarker.nativeSqlite || !providersLoaded || !output.includes('MANTA_PACKAGE_SMOKE_OK')) throw new Error(`Packaged dist/main.js did not complete smoke mode: ${rawMarker ?? 'missing'}; output: ${output}`)
-    console.log(`Verified ${required.length} packaged runtime resources, ${providerPackages.length} provider packages, and actual packaged dist/main.js`)
+    if (mainMarker?.status !== 'ok' || !mainMarker.actualEntry || !/([\\/])dist\1main\.js$/.test(mainMarker.entryFile ?? '') || !mainMarker.backend || !mainMarker.composition || !mainMarker.server || !mainMarker.routedApis || !mainMarker.nativeSqlite || !providersLoaded || !output.includes('MANTA_PACKAGE_SMOKE_OK')) throw new Error(`Packaged dist/main.js did not complete smoke mode: ${rawMarker ?? 'missing'}; output: ${output}`)
+    console.log(`Verified ${required.length} packaged runtime resources, ${providerPackages.length} provider packages, packaged storage composition/server/routed APIs, and actual packaged dist/main.js`)
   } catch (error) { primary = error } finally {
     if (markerRoot) await rm(markerRoot, { recursive: true, force: true }).catch(() => {})
     if (!process.argv.includes('--prepared')) await rm(join(projectDir, '.package-staging'), { recursive: true, force: true }).catch(() => {})

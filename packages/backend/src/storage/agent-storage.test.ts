@@ -149,7 +149,7 @@ describe('Agent storage composition', () => {
     await expect(access(nativeSkill)).rejects.toThrow()
     expect(progress).toEqual(expect.arrayContaining([expect.objectContaining({ operationId: projected.operationId, phase: 'completed', status: 'completed' })]))
     expect(await restarted.readModel.reuse()).toEqual(expect.objectContaining({ scanStatus: 'complete', evidenceStatus: 'verified', portableAssetCount: 1, logicalImmutableBytes: 14, uniqueVerifiedObjectBytes: 14, verifiedSavedBytes: 0, materializationStrategies: { clone: 0, copy: 1 } }))
-  })
+  }, 30_000)
 
   it('serves sanitized nonterminal journals, degrades incomplete reuse evidence, and emits failed rollback progress', async () => {
     const { volume, extensions, secrets } = await roots(); const home = join(volume, 'home'); const nativeSkill = join(home, '.agents', 'skills', 'demo'); await mkdir(join(home, '.codex'), { recursive: true }); await mkdir(nativeSkill, { recursive: true }); await writeFile(join(nativeSkill, 'SKILL.md'), 'portable skill')

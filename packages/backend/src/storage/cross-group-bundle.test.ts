@@ -43,6 +43,16 @@ describe('cross-group versioned 2PC', () => {
     expect(readFileSync(join(next, 'record.json'), 'utf8')).toBe('newer'); expect(readFileSync(join(base, 'config', 'record.json'), 'utf8')).toBe('new')
   })
 
+  it('does not recover another participant cohort journal from a shared secrets root', () => {
+    const base = mkdtempSync(join(tmpdir(), 'manta-2pc-shared-'))
+    const secrets = join(base, 'secrets')
+    const configParticipants: CrossGroupParticipant[] = [{ name: 'metadata', root: join(base, 'config') }, { name: 'secret', root: secrets }]
+    const knowledgeParticipants: CrossGroupParticipant[] = [{ name: 'metadata', root: join(base, 'knowledge') }, { name: 'secret', root: secrets }]
+    transactCrossGroupBundle(configParticipants, 'llm-profiles', (tx) => { tx.write('metadata', 'llm-profiles.json', '{}'); tx.write('secret', 'llm-profile-api-keys.json', '{}') })
+    expect(() => createCrossGroupBundleResources(knowledgeParticipants)).not.toThrow()
+    expect(() => createCrossGroupBundleResources(configParticipants)).not.toThrow()
+  })
+
   it('rejects committed split brain and tombstone resurrection', () => {
     const base = mkdtempSync(join(tmpdir(), 'manta-2pc-split-')); const participants = roots(base)
     transactCrossGroupBundle(participants, 'record', (tx) => { tx.write('metadata', 'record.json', 'x'); tx.write('secret', 'record.json', 's') })

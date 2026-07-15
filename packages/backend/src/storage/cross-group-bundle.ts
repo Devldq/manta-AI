@@ -172,10 +172,13 @@ export function transactCrossGroupBundle<T>(participants: CrossGroupParticipant[
 
 function transactionIds(participants: CrossGroupParticipant[]): string[] {
   const ids = new Set<string>()
-  for (const participant of participants) {
-    const directory = stateDir(participant.root); if (!existsSync(directory)) continue
-    for (const name of readdirSync(directory)) if (name.endsWith('.json')) ids.add(name.slice(0, -5))
-  }
+  // Persist always starts with participant zero, including the earliest fault
+  // boundary.  It is therefore the authoritative recovery index.  Later
+  // participants may be shared by independent cohorts (for example Secrets is
+  // paired with both Config and Knowledge), so unioning their journals can
+  // misclassify another cohort's committed transaction as a partial write.
+  const directory = participants[0] && stateDir(participants[0].root)
+  if (directory && existsSync(directory)) for (const name of readdirSync(directory)) if (name.endsWith('.json')) ids.add(name.slice(0, -5))
   return [...ids].sort()
 }
 

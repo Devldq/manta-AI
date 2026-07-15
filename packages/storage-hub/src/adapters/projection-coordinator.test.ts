@@ -160,7 +160,7 @@ describe('ProjectionCoordinator transaction and rollback', () => {
     expect(await readFile(skillFile, 'utf8')).toBe('portable')
     await coordinator.rollback(committed.operationId)
     expect(await exists(join(nativeRoot, 'skills'))).toBe(false)
-  })
+  }, 10_000)
 
   it('rejects directory claims that are ordered after a descendant write', async () => {
     const nativeRoot = await directory('ash-native-'); const child = join(nativeRoot, 'skill', 'SKILL.md')

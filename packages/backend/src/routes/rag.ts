@@ -117,20 +117,6 @@ function tryFallbackToLocalOllama(): { model: string; baseUrl: string; dimension
 // ─── 注册插件 ─────────────────────────────────────────────────
 
 export async function ragRoutes(app: FastifyInstance) {
-  // 注册 multipart 支持
-  try {
-    const multipartPlugin = await import('@fastify/multipart')
-    const plugin = (multipartPlugin as any).default || multipartPlugin
-    await app.register(plugin, {
-      limits: {
-        fileSize: 50 * 1024 * 1024,
-        files: 50,
-      },
-    })
-  } catch {
-    // 可能已注册
-  }
-
   // ═══════════════════════════════════════════════════════════
   //  知识库 CRUD
   // ═══════════════════════════════════════════════════════════

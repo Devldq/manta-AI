@@ -133,6 +133,12 @@ describe('Codex MCP secret separation', () => {
     expect(parsed[0].literals.map((item) => item.field)).toEqual(['http_headers.Authorization', 'url.userinfo', 'url.query.token'])
   })
 
+  it('parses TOML literal strings used by Codex MCP commands and nested environments', () => {
+    const parsed = parseMcpServers("[mcp_servers.browser]\ncommand = 'C:\\Program Files\\browser-tool.exe'\n[mcp_servers.browser.env]\nPIPE_DIRECTORY = 'C:\\Users\\fixture\\pipe'\n")
+    expect(parsed[0].metadata).toMatchObject({ transport: 'stdio', command: 'C:\\Program Files\\browser-tool.exe' })
+    expect(parsed[0].literals).toEqual([{ field: 'env.PIPE_DIRECTORY', value: 'C:\\Users\\fixture\\pipe' }])
+  })
+
   it('preserves documented non-sensitive cwd, timeout, required, enabled, and tool policy fields deterministically', () => {
     const metadata = parseMcpServers('[mcp_servers.tool]\ncommand = "runner"\ncwd = "/portable/work"\nstartup_timeout_sec = 12\ntool_timeout_sec = 3.5\nenabled = true\nrequired = false\nenabled_tools = ["read", "write"]\ndisabled_tools = ["delete"]\n')[0].metadata
     expect(metadata.options).toEqual({ cwd: '/portable/work', disabled_tools: ['delete'], enabled: true, enabled_tools: ['read', 'write'], required: false, startup_timeout_sec: 12, tool_timeout_sec: 3.5 })

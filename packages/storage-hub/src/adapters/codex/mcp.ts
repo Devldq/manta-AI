@@ -17,7 +17,11 @@ const MCP_HEADER = /^mcp_servers\.(?:"([A-Za-z0-9][A-Za-z0-9_-]{0,127})"|([A-Za-
 const KEY = /^\s*([A-Za-z0-9_-]+)\s*=\s*(.*?)\s*$/
 const SAFE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
-function string(value: string): string { if (!/^"(?:[^"\\]|\\.)*"$/.test(value)) throw new Error('Unsupported MCP TOML string'); return JSON.parse(value) }
+function string(value: string): string {
+  if (/^'(?:[^'\r\n])*'$/.test(value)) return value.slice(1, -1)
+  if (!/^"(?:[^"\\]|\\.)*"$/.test(value)) throw new Error('Unsupported MCP TOML string')
+  return JSON.parse(value)
+}
 function strings(value: string): string[] { if (!/^\[.*]$/.test(value)) throw new Error('Unsupported MCP TOML array'); const body = value.slice(1, -1).trim(); return body ? body.split(',').map((item) => string(item.trim())) : [] }
 function inline(value: string): Record<string, string> {
   if (!/^\{.*}$/.test(value)) throw new Error('Unsupported MCP TOML inline table'); const body = value.slice(1, -1).trim(); const result: Record<string, string> = {}
@@ -36,7 +40,7 @@ export function parseMcpServers(source: string): ParsedServer[] {
     const match = line.trimEnd().match(KEY); if (!match) throw new Error('Unsupported MCP TOML assignment')
     const table = raw.get(`${current.server}:${current.child ?? ''}`)!; if (Object.hasOwn(table, match[1])) throw new Error('Duplicate MCP TOML key')
     const allowed = current.child ? [] : ['command', 'args', 'env', 'env_vars', 'url', 'bearer_token_env_var', 'http_headers', 'env_http_headers', 'cwd', 'startup_timeout_sec', 'tool_timeout_sec', 'enabled', 'required', 'enabled_tools', 'disabled_tools', 'oauth_resource', 'oauth_resource_metadata_url']; if (!current.child && !allowed.includes(match[1])) throw new Error(`Unsupported MCP TOML key: ${match[1]}`)
-    const value = match[2]; table[match[1]] = value.startsWith('"') ? string(value) : value.startsWith('[') ? strings(value) : value.startsWith('{') ? inline(value) : value === 'true' ? true : value === 'false' ? false : /^-?(?:\d+|\d+\.\d+)$/.test(value) ? Number(value) : (() => { throw new Error('Unsupported MCP TOML value') })()
+    const value = match[2]; table[match[1]] = value.startsWith('"') || value.startsWith("'") ? string(value) : value.startsWith('[') ? strings(value) : value.startsWith('{') ? inline(value) : value === 'true' ? true : value === 'false' ? false : /^-?(?:\d+|\d+\.\d+)$/.test(value) ? Number(value) : (() => { throw new Error('Unsupported MCP TOML value') })()
   }
   const names = [...new Set([...raw.keys()].map((key) => key.split(':')[0]))].sort()
   return names.map((name) => {

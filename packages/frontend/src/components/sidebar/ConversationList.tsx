@@ -1,10 +1,16 @@
 /* ConversationList — 任务分组列表（独立会话，无工作空间归属）*/
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Plus, ChevronRight, Trash2 } from 'lucide-react'
 import { useConversationStore } from '@/stores/conversation-store'
 import { useSidebarStore } from '@/stores/sidebar-store'
+
+export function claimConversationFallback(itemsLength: number, loading: boolean, requested: { current: boolean }): boolean {
+  if (requested.current || itemsLength > 0 || loading) return false
+  requested.current = true
+  return true
+}
 
 export function ConversationList() {
   const navigate = useNavigate()
@@ -17,12 +23,11 @@ export function ConversationList() {
   const setActiveId = useConversationStore((s) => s.setActiveId)
   const searchQuery = useSidebarStore((s) => s.searchQuery)
   const [collapsed, setCollapsed] = useState(false)
+  const fallbackRequested = useRef(false)
 
   // SidebarNav 已在顶层预触发 fetchList，这里作为 fallback 确保数据加载
   useEffect(() => {
-    if (items.length === 0 && !loading) {
-      fetchList()
-    }
+    if (claimConversationFallback(items.length, loading, fallbackRequested)) void fetchList()
   }, [fetchList, items.length, loading])
 
   // 同步 URL 中的 convId 到 activeId

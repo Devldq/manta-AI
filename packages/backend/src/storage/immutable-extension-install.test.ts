@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { acquireVolumeContentStoreLeaseSync } from '@manta/storage-hub'
 import { installImmutableExtensionPackage } from './immutable-extension-install'
 
 describe('immutable extension installation', () => {
@@ -35,13 +36,14 @@ describe('immutable extension installation', () => {
     let entered!: () => void; const snapshotEntered = new Promise<void>((resolve) => { entered = resolve })
     let rejectSnapshot!: (error: Error) => void; const decision = new Promise<never>((_resolve, reject) => { rejectSnapshot = reject })
     const installA = installImmutableExtensionPackage({ extensionsRoot, source: sourceA, destination, kind: 'plugin', logicalId: 'plugin-a', version: '1', snapshotPackage: async () => { entered(); return decision } })
-    const rejectedA = expect(installA).rejects.toThrow(/snapshot failed/)
+    const outcomeA = installA.then(() => undefined, (error: unknown) => error)
     await snapshotEntered
-    await expect(installImmutableExtensionPackage({ extensionsRoot, source: sourceB, destination, kind: 'plugin', logicalId: 'plugin-b', version: '1' })).rejects.toThrow(/lock|busy/i)
+    expect(() => acquireVolumeContentStoreLeaseSync(volumeRoot)).toThrow(/lock|busy/i)
+    const installB = installImmutableExtensionPackage({ extensionsRoot, source: sourceB, destination, kind: 'plugin', logicalId: 'plugin-b', version: '1' })
     expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('a')
-    rejectSnapshot(new Error('snapshot failed')); await rejectedA
+    rejectSnapshot(new Error('snapshot failed')); expect(await outcomeA).toEqual(expect.objectContaining({ message: 'snapshot failed' }))
     expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('old')
-    await installImmutableExtensionPackage({ extensionsRoot, source: sourceB, destination, kind: 'plugin', logicalId: 'plugin-b', version: '1' })
+    await installB
     expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('b')
   })
 })

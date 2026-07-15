@@ -357,11 +357,11 @@
     { "file": "packages/desktop/src/desktop-runtime.ts", "line": 85, "column": 598, "operation": "rm", "reason": "Reviewed explicit user-requested backup deletion constrained by a Bootstrap-derived validated backup ID." },
     { "file": "packages/desktop/scripts/build-win.cjs", "line": 8, "column": 16, "operation": "spawnSync", "reason": "Reviewed official electron-builder directory packaging process boundary, limited to its production artifact output." },
     {
-      "file": "packages/desktop/scripts/copy-assets.cjs", "line": 5, "column": 1, "operation": "mkdirSync",
+      "file": "packages/desktop/scripts/copy-assets.cjs", "line": 8, "column": 3, "operation": "mkdirSync",
       "reason": "Reviewed repository build helper creating only the Desktop distribution onboarding artifact directory during an explicit build."
     },
     {
-      "file": "packages/desktop/scripts/copy-assets.cjs", "line": 6, "column": 1, "operation": "copyFileSync",
+      "file": "packages/desktop/scripts/copy-assets.cjs", "line": 9, "column": 3, "operation": "copyFileSync",
       "reason": "Reviewed repository build helper copying one read-only onboarding HTML asset into the Desktop distribution during an explicit build."
     },
     {
@@ -790,28 +790,28 @@
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 211,
+      "line": 214,
       "column": 43,
       "operation": "rmSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 214,
+      "line": 217,
       "column": 90,
       "operation": "mkdirSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 220,
+      "line": 223,
       "column": 80,
       "operation": "rmSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
     },
     {
       "file": "packages/backend/src/storage/cross-group-bundle.ts",
-      "line": 221,
+      "line": 224,
       "column": 45,
       "operation": "rmSync",
       "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
@@ -969,22 +969,23 @@
     { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 109, "column": 9, "operation": "mkdir", "reason": "Reviewed release smoke creation of the explicit win-unpacked build artifact directory." },
     { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 112, "column": 11, "operation": "cp", "reason": "Reviewed release smoke Electron runtime copy into the explicit win-unpacked build artifact directory." },
     { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 122, "column": 9, "operation": "rename", "reason": "Reviewed release smoke executable rename inside the explicit win-unpacked build artifact directory." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 160, "column": 9, "operation": "writeFile", "reason": "Reviewed release smoke staged backend manifest rewrite inside an ephemeral package staging tree." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 168, "column": 11, "operation": "rm", "reason": "Reviewed release smoke cleanup limited to the explicit Desktop release build artifact directory." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 171, "column": 11, "operation": "rm", "reason": "Reviewed release smoke cleanup limited to its ephemeral package staging tree." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 172, "column": 11, "operation": "mkdir", "reason": "Reviewed release smoke creation of its ephemeral package staging tree." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 174, "column": 7, "operation": "cp", "reason": "Reviewed release smoke copy of compiled Desktop artifacts into its ephemeral package staging tree." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 175, "column": 7, "operation": "cp", "reason": "Reviewed release smoke copy of the Desktop manifest into its ephemeral package staging tree." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 184, "column": 11, "operation": "mkdir", "reason": "Reviewed release smoke creation of the packaged resources directory under win-unpacked only." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 186, "column": 7, "operation": "cp", "reason": "Reviewed release smoke frontend artifact copy into the explicit packaged resources directory." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 187, "column": 7, "operation": "cp", "reason": "Reviewed release smoke backend artifact copy into the explicit packaged resources directory." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 188, "column": 7, "operation": "cp", "reason": "Reviewed release smoke storage-hub artifact copy into the explicit packaged resources directory." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 189, "column": 7, "operation": "cp", "reason": "Reviewed release smoke RAG artifact copy into the explicit packaged resources directory." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 190, "column": 7, "operation": "cp", "reason": "Reviewed release smoke read-only bundled extension seed copy into the explicit packaged resources artifact." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 213, "column": 24, "operation": "mkdtemp", "reason": "Reviewed release smoke marker directory creation under the operating system temporary directory." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 226, "column": 27, "operation": "rm", "reason": "Reviewed release smoke marker cleanup restricted to its operating-system temporary directory." },
-    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 227, "column": 53, "operation": "rm", "reason": "Reviewed release smoke final cleanup restricted to its ephemeral package staging tree." },
-    { "file": "packages/desktop/src/main.ts", "line": 49, "column": 25, "operation": "writeFile", "reason": "Reviewed package-smoke marker write to the test harness temporary file passed only through MANTA_PACKAGE_SMOKE_FILE." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 177, "column": 9, "operation": "writeFile", "reason": "Reviewed release smoke staged backend manifest rewrite inside an ephemeral package staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 185, "column": 11, "operation": "rm", "reason": "Reviewed release smoke cleanup limited to the explicit Desktop release build artifact directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 188, "column": 11, "operation": "rm", "reason": "Reviewed release smoke cleanup limited to its ephemeral package staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 189, "column": 11, "operation": "mkdir", "reason": "Reviewed release smoke creation of its ephemeral package staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 191, "column": 7, "operation": "cp", "reason": "Reviewed release smoke copy of compiled Desktop artifacts into its ephemeral package staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 192, "column": 7, "operation": "cp", "reason": "Reviewed release smoke copy of the Desktop manifest into its ephemeral package staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 201, "column": 11, "operation": "mkdir", "reason": "Reviewed release smoke creation of the packaged resources directory under win-unpacked only." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 203, "column": 7, "operation": "cp", "reason": "Reviewed release smoke frontend artifact copy into the explicit packaged resources directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 204, "column": 7, "operation": "cp", "reason": "Reviewed release smoke backend artifact copy into the explicit packaged resources directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 205, "column": 7, "operation": "cp", "reason": "Reviewed release smoke storage-hub artifact copy into the explicit packaged resources directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 206, "column": 7, "operation": "cp", "reason": "Reviewed release smoke RAG artifact copy into the explicit packaged resources directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 207, "column": 7, "operation": "cp", "reason": "Reviewed release smoke read-only bundled extension seed copy into the explicit packaged resources artifact." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 230, "column": 24, "operation": "mkdtemp", "reason": "Reviewed release smoke marker directory creation under the operating system temporary directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 243, "column": 27, "operation": "rm", "reason": "Reviewed release smoke marker cleanup restricted to its operating-system temporary directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 244, "column": 53, "operation": "rm", "reason": "Reviewed release smoke final cleanup restricted to its ephemeral package staging tree." },
+    { "file": "packages/desktop/src/main.ts", "line": 32, "column": 27, "operation": "writeFile", "reason": "Reviewed package-smoke marker write to the test harness temporary file passed only through MANTA_PACKAGE_SMOKE_FILE." },
+    { "file": "packages/desktop/src/main.ts", "line": 43, "column": 61, "operation": "mkdir", "reason": "Reviewed package-smoke composition fixture creation below the harness-owned operating-system temporary marker directory." },
     {
       "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 43, "column": 129, "operation": "mkdir",
       "reason": "Reviewed ASH cache staging directory creation under the resolver-owned cache group with every Agent-controlled knowledge-base segment validated."
@@ -1026,11 +1027,23 @@
       "reason": "Reviewed Phase 3 verification orchestrator which launches fixed repository tests, typechecks, and the storage audit; it does not select application persistence paths."
     },
     {
-      "file": "scripts/verify/ash-phase4.ts", "line": 26, "column": 18, "operation": "spawnSync",
+      "file": "scripts/verify/ash-phase4.ts", "line": 40, "column": 18, "operation": "spawnSync",
       "reason": "Reviewed Phase 4 verification orchestrator which launches only fixed repository acceptance commands and does not execute an Agent harness or select application persistence paths."
     },
     {
-      "file": "packages/backend/src/storage/agent-storage.ts", "line": 41, "column": 24, "operation": "open",
+      "file": "packages/backend/src/storage/agent-storage.ts", "line": 59, "column": 15, "operation": "mkdir",
+      "reason": "Reviewed ordinary-directory creation below injected routed extensions or secrets group roots after snapshotting and revalidating every ancestor identity."
+    },
+    {
+      "file": "packages/backend/src/storage/agent-storage.ts", "line": 66, "column": 24, "operation": "open",
+      "reason": "Reviewed no-follow ordinary-file read below injected routed extensions or secrets group roots after snapshotting and revalidating every ancestor identity."
+    },
+    {
+      "file": "packages/backend/src/storage/agent-storage.ts", "line": 79, "column": 24, "operation": "open",
+      "reason": "Reviewed no-follow parent-directory handle used to durably create ordinary files below injected routed extensions or secrets group roots."
+    },
+    {
+      "file": "packages/backend/src/storage/agent-storage.ts", "line": 82, "column": 26, "operation": "open",
       "reason": "Reviewed exclusive durable ordinary-file creation and parent fsync below injected routed extensions or secrets group roots using validated fixed namespaces and opaque IDs."
     },
     { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 17, "column": 3, "operation": "mkdirSync", "reason": "Reviewed volume-local CAS lease directory creation below the injected and validated ASH volume root." },
@@ -1156,7 +1169,7 @@
       "reason": "Reviewed rollback staging cleanup restricted to the random exclusively-created sibling file."
     },
     {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 498, "column": 90, "operation": "open",
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 520, "column": 90, "operation": "open",
       "reason": "Reviewed no-follow ordinary-file reads restricted to validated adapter native, journal, or backup paths."
     },
     {
@@ -1207,14 +1220,14 @@
     },
     {
       "file": "packages/desktop/scripts/package-smoke.cjs",
-      "line": 190,
+      "line": 207,
       "column": 30,
       "operation": "repository runtime root",
       "reason": "Reviewed release smoke read-only bundled extension seed source copied only into the explicit packaged resources artifact."
     },
     {
       "file": "packages/desktop/scripts/package-smoke.cjs",
-      "line": 190,
+      "line": 207,
       "column": 57,
       "operation": "repository runtime root",
       "reason": "Reviewed release smoke read-only bundled extension seed source copied only into the explicit packaged resources artifact."

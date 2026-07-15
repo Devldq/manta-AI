@@ -1,5 +1,6 @@
 appId: com.manta.desktop
 productName: Manta
+copyright: Copyright © 2026 Manta AI
 directories:
   # Never package the workspace directly: this is the identical flattened CJS
   # backend/native/provider closure inspected by package:dir.

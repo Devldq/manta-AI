@@ -142,7 +142,7 @@ export async function runDesktop(): Promise<void> {
   if (!app.requestSingleInstanceLock()) { app.quit(); return }
   app.on('second-instance', () => { if (activeWindow?.isMinimized()) activeWindow.restore(); (activeWindow ?? onboardingWindow)?.focus() })
   await app.whenReady(); let result = await controller.start()
-  while (!result.ok) { const choice = await dialog.showMessageBox({ type: 'error', title: 'Manta AI 启动失败', message: `${result.error.code}: ${result.error.message}`, buttons: ['重试', '退出'], defaultId: 0, cancelId: 1 }); if (choice.response !== 0) { app.quit(); break } result = await controller.retry() }
+  while (!result.ok) { process.stderr.write(`MANTA_STARTUP_ERROR ${result.error.code}: ${result.error.message}\n`); const choice = await dialog.showMessageBox({ type: 'error', title: 'Manta AI 启动失败', message: `${result.error.code}: ${result.error.message}`, buttons: ['重试', '退出'], defaultId: 0, cancelId: 1 }); if (choice.response !== 0) { app.quit(); break } result = await controller.retry() }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) void controller.retry() })
   app.on('before-quit', (event) => { if (quitting) return; event.preventDefault(); quitting = true; void controller.shutdown().catch((error) => dialog.showErrorBox('关闭失败', (error as Error).message)).finally(() => { disposeStorageIpc?.(); disposeLegacyIpc?.(); disposeOnboarding?.(); app.exit() }) })
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
