@@ -38,10 +38,13 @@ function jsonMetadata(value: unknown): Readonly<Record<string, unknown>> | undef
   return parsed as Readonly<Record<string, unknown>>
 }
 
-export interface AgentStorageIoHooks { afterAncestorSnapshot?(operation: 'descriptor-read' | 'descriptor-write' | 'secret-write', path: string): Promise<void> }
+export interface AgentStorageIoHooks {
+  afterAncestorSnapshot?(operation: 'descriptor-read' | 'descriptor-write' | 'secret-write', path: string): Promise<void>
+  afterLeafOpen?(operation: 'descriptor-write' | 'secret-write', path: string): Promise<void>
+}
 interface DirectoryIdentity { path: string; identity: string }
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0
-function statIdentity(value: { dev: number | bigint; ino: number | bigint }): string { return `${value.dev}:${value.ino}` }
+function statIdentity(value: { dev: number | bigint; ino: number | bigint; birthtimeNs?: bigint }): string { return `${value.dev}:${value.ino}:${value.birthtimeNs ?? ''}` }
 function ancestorPaths(path: string): string[] { const absolute = resolve(path); const root = parse(absolute).root; const relative = absolute.slice(root.length).split(/[\\/]/).filter(Boolean); const paths = [root]; for (const part of relative) paths.push(join(paths.at(-1)!, part)); return paths }
 async function snapshotDirectoryChain(path: string): Promise<readonly DirectoryIdentity[]> {
   const result: DirectoryIdentity[] = []
@@ -73,11 +76,19 @@ async function readDirectoryNamesStable(path: string, hooks?: AgentStorageIoHook
 }
 async function writeExclusiveDurable(path: string, bytes: string, mode = 0o600, operation: 'descriptor-write' | 'secret-write' = 'descriptor-write', hooks?: AgentStorageIoHooks): Promise<void> {
   const ancestors = await snapshotDirectoryChain(dirname(path)); await hooks?.afterAncestorSnapshot?.(operation, path); await assertDirectoryChain(ancestors)
-  const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW, mode)
-  try { const opened = await handle.stat({ bigint: true }); if (!opened.isFile()) throw new Error('Storage leaf is not an ordinary file'); await handle.writeFile(bytes, 'utf8'); await handle.sync(); const leaf = await lstat(path, { bigint: true }); if (!leaf.isFile() || leaf.isSymbolicLink() || statIdentity(leaf) !== statIdentity(opened)) throw new Error('Storage leaf identity changed'); await assertDirectoryChain(ancestors) } finally { await handle.close() }
   const parent = await open(dirname(path), constants.O_RDONLY | NO_FOLLOW)
-  try { await parent.sync() } catch (error) { if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM') throw error } finally { await parent.close() }
-  await assertDirectoryChain(ancestors)
+  try {
+    const openedParent = await parent.stat({ bigint: true }); if (!openedParent.isDirectory() || statIdentity(openedParent) !== ancestors.at(-1)?.identity) throw new Error('Storage parent identity changed')
+    const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW, mode)
+    try {
+      const opened = await handle.stat({ bigint: true }); if (!opened.isFile() || opened.size !== 0n) throw new Error('Storage leaf is not a new empty ordinary file')
+      await hooks?.afterLeafOpen?.(operation, path)
+      await assertDirectoryChain(ancestors); const parentBeforeWrite = await parent.stat({ bigint: true }); if (statIdentity(parentBeforeWrite) !== statIdentity(openedParent)) throw new Error('Storage parent identity changed before write'); const leafBeforeWrite = await lstat(path, { bigint: true }); if (!leafBeforeWrite.isFile() || leafBeforeWrite.isSymbolicLink() || statIdentity(leafBeforeWrite) !== statIdentity(opened)) throw new Error('Storage leaf identity changed before write')
+      await handle.writeFile(bytes, 'utf8'); await handle.sync()
+      const leaf = await lstat(path, { bigint: true }); if (!leaf.isFile() || leaf.isSymbolicLink() || statIdentity(leaf) !== statIdentity(opened)) throw new Error('Storage leaf identity changed'); await assertDirectoryChain(ancestors); const parentAfterWrite = await parent.stat({ bigint: true }); if (statIdentity(parentAfterWrite) !== statIdentity(openedParent)) throw new Error('Storage parent identity changed after write')
+    } finally { await handle.close() }
+    try { await parent.sync() } catch (error) { if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM') throw error }
+  } finally { await parent.close() }
 }
 
 /** Immutable Codex assets whose bytes are backed by the extensions volume's verified CAS. */
@@ -283,7 +294,7 @@ export async function createAgentStorageComposition(options: AgentStorageOptions
       const target = await installation(adapterId, installationId)
       return { inventory: await coordinator.inspect(adapterId, target), portableAssets: await assets.list() }
     },
-    async reuse() { try { const metrics = await assets.reuseMetrics(); const terminal = (await coordinator.listOperationSummaries()).filter((value) => value.kind === 'projection' && (value.phase === 'committed' || value.phase === 'rolled-back')); const complete = terminal.every((value) => value.verified && value.strategyEvidenceComplete); const materializationStrategies = terminal.reduce((counts, value) => { counts.clone += value.materializationStrategies?.clone ?? 0; counts.copy += value.materializationStrategies?.copy ?? 0; return counts }, { clone: 0, copy: 0 }); return { scanStatus: 'complete' as const, evidenceStatus: complete ? 'verified' as const : 'unavailable' as const, ...metrics, materializationStrategies: complete ? materializationStrategies : null, ...(!complete ? { blockers: [{ code: 'agent-materialization-evidence-incomplete', detail: 'A durable projection journal lacks complete clone/copy strategy evidence' }] } : {}) } } catch (error) { return { scanStatus: 'degraded' as const, evidenceStatus: 'unavailable' as const, portableAssetCount: 0, logicalImmutableBytes: null, uniqueVerifiedObjectBytes: null, verifiedSavedBytes: null, materializationStrategies: null, blockers: [{ code: 'agent-asset-verification-failed', detail: (error as Error).message }] } } },
+    async reuse() { try { const metrics = await assets.reuseMetrics(); const terminal = (await coordinator.listOperationSummaries()).filter((value) => value.kind === 'projection' && (value.phase === 'committed' || value.phase === 'rolled-back')); const complete = terminal.length > 0 && terminal.every((value) => value.verified && value.strategyEvidenceComplete); const materializationStrategies = terminal.reduce((counts, value) => { counts.clone += value.materializationStrategies?.clone ?? 0; counts.copy += value.materializationStrategies?.copy ?? 0; return counts }, { clone: 0, copy: 0 }); return { scanStatus: 'complete' as const, evidenceStatus: complete ? 'verified' as const : 'unavailable' as const, ...metrics, materializationStrategies: complete ? materializationStrategies : null, ...(!complete ? { blockers: [{ code: 'agent-materialization-evidence-incomplete', detail: terminal.length ? 'A durable projection journal lacks complete clone/copy strategy evidence' : 'No durable projection journal provides clone/copy strategy evidence' }] } : {}) } } catch (error) { return { scanStatus: 'degraded' as const, evidenceStatus: 'unavailable' as const, portableAssetCount: 0, logicalImmutableBytes: null, uniqueVerifiedObjectBytes: null, verifiedSavedBytes: null, materializationStrategies: null, blockers: [{ code: 'agent-asset-verification-failed', detail: (error as Error).message }] } } },
     async operation(operationId: string) { const value = await coordinator.getOperationSummary(operationId); if (!value) throw Object.assign(new Error('Agent operation was not found'), { code: 'AGENT_OPERATION_NOT_FOUND' }); return durableOperationSummary(value) },
   }
   const mutations = {

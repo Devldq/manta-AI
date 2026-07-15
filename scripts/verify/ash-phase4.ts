@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const { spawnSync } = require('node:child_process')
 const { readFileSync } = require('node:fs')
+const { literalMcpCredentialGuard } = require('./ash-phase4-guard.ts')
 
 const agentSurface = [
   'packages/backend/src/storage/agent-storage.ts',
@@ -22,9 +23,13 @@ const rendererSurface = ['packages/desktop/src/preload/main-preload.ts', 'packag
 for (const forbidden of [/\b(?:secret|credential|token)(?:Value|Literal)\b/i, /node:(?:fs|child_process)/]) {
   if (forbidden.test(rendererSurface)) { process.stderr.write(`Forbidden raw secret or filesystem capability in renderer Agent surface: ${forbidden}\n`); process.exit(1) }
 }
+const backendAgentSource = readFileSync('packages/backend/src/storage/agent-storage.ts', 'utf8')
+const backendProjectionDtoSurface = `${backendAgentSource.match(/export interface AgentPlanPreview[\s\S]*?interface PlanSession/)?.[0] ?? ''}\n${backendAgentSource.match(/function publicOperations[^\n]*/)?.[0] ?? ''}`
+const projectionDtoSurface = `${backendProjectionDtoSurface}\n${['packages/desktop/src/ipc/registerStorageIpc.ts', 'packages/desktop/src/preload/main-preload.ts', 'packages/frontend/src/features/storage/desktop-storage-bridge.ts', 'packages/frontend/src/features/storage/storage-api.ts', 'packages/shared/src/storage.ts'].map((path) => readFileSync(path, 'utf8')).join('\n')}`
+if (literalMcpCredentialGuard.test(projectionDtoSurface)) { process.stderr.write('Forbidden literal MCP credential field or credential-bearing URL in Agent projection DTO surface\n'); process.exit(1) }
 
 const checks = [
-  { title: 'shared Agent contracts', command: ['pnpm', '--filter', '@manta/shared', 'exec', 'vitest', 'run', 'src/storage-agents.test.ts'] },
+  { title: 'shared Agent contracts and projection DTO credential guard', command: ['pnpm', '--filter', '@manta/shared', 'exec', 'vitest', 'run', 'src/storage-agents.test.ts', 'src/ash-phase4-guard.test.ts'] },
   { title: 'trusted Codex adapter and durable coordinator regression', command: ['pnpm', '--filter', '@manta/storage-hub', 'exec', 'vitest', 'run', 'src/adapters/codex/codex-adapter.test.ts', 'src/adapters/projection-coordinator.test.ts'] },
   { title: 'Backend CAS repositories, service, composition, and read routes', command: ['pnpm', '--filter', '@manta/backend', 'exec', 'vitest', 'run', 'src/storage/agent-storage.test.ts', 'src/storage/runtime.test.ts', 'src/routes/storage.test.ts'] },
   { title: 'privileged Desktop IPC', command: ['pnpm', '--filter', '@manta/desktop', 'exec', 'vitest', 'run', 'src/ipc/registerStorageIpc.test.ts', 'src/preload/main-preload.test.ts'] },

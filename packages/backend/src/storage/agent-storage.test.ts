@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { mkdtemp } from 'node:fs/promises'
@@ -104,9 +104,22 @@ describe('ASH Codex secret repository', () => {
     await expect(repository.storeLiteral({ value: 'secret', purpose: 'race' })).rejects.toThrow(/ancestor|identity|changed/i)
     if (process.platform !== 'win32') expect((await stat(moved)).mode & 0o777).toBe(0o700)
   })
+
+  it('creates only an empty leaf when the secret parent is replaced after leaf open but before pre-write validation', async () => {
+    const { secrets } = await roots(); const directory = join(secrets, 'agent-secrets'); const moved = join(secrets, 'agent-secrets-moved'); let raced = false
+    const repository = new AshCodexSecretRepository(secrets, { afterLeafOpen: async (operation) => { if (operation !== 'secret-write' || raced) return; raced = true; await rename(directory, moved); await mkdir(directory) } })
+    await expect(repository.storeLiteral({ value: 'must-not-leak', purpose: 'race' })).rejects.toThrow(/ancestor|identity|changed|EPERM|operation not permitted/i)
+    const leafRoot = await access(moved).then(() => moved, () => directory); const leaves = await readdir(leafRoot); expect(leaves).toHaveLength(1); expect((await stat(join(leafRoot, leaves[0]!))).size).toBe(0); expect(await readFile(join(leafRoot, leaves[0]!), 'utf8')).toBe('')
+  })
 })
 
 describe('Agent storage composition', () => {
+  it('keeps CAS byte metrics independent while withholding materialization strategy evidence when no durable projection journal exists', async () => {
+    const { volume, extensions, secrets } = await roots(); const home = join(volume, 'home'); await mkdir(join(home, '.codex'), { recursive: true }); await mkdir(join(home, '.agents', 'skills'), { recursive: true })
+    const composition = await createAgentStorageComposition({ resolve: (group, ...segments) => join(group === 'extensions' ? extensions : group === 'secrets' ? secrets : join(volume, group), ...segments), homeDirectory: home, environment: {} })
+    await expect(composition.readModel.reuse()).resolves.toEqual(expect.objectContaining({ scanStatus: 'complete', evidenceStatus: 'unavailable', portableAssetCount: 0, logicalImmutableBytes: 0, uniqueVerifiedObjectBytes: 0, verifiedSavedBytes: 0, materializationStrategies: null }))
+  })
+
   it('detects, previews one-use import/projection, applies through the coordinator, and rolls back', async () => {
     const { volume, extensions, secrets } = await roots(); const home = join(volume, 'home')
     const codexHome = join(home, '.codex'); const skillRoot = join(home, '.agents', 'skills'); const nativeSkill = join(skillRoot, 'demo')
