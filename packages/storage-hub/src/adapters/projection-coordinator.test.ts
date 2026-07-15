@@ -280,6 +280,17 @@ describe('ProjectionCoordinator transaction and rollback', () => {
 })
 
 describe('ProjectionCoordinator crash recovery', () => {
+  it('rebuilds sanitized operation summaries from validated durable journals after restart', async () => {
+    const nativeRoot = await directory('ash-native-'); const created = join(nativeRoot, 'created'); const operations: PreviewFileOperation[] = [{ id: 'create', kind: 'create', rootId: 'home', nativePath: created, expectedAfterSha256: sha256('created') }]
+    const target = installation(nativeRoot); const stateRoot = join(await directory(), 'state'); const registry = new AdapterRegistry([fixtureAdapter(target, operations, async (plan) => { await writeFile(created, 'created'); return { ...result(plan), materializationStrategies: [{ operationId: 'create', strategy: 'copy' }] } })]); const first = makeCoordinator({ stateRoot, registry, now: () => new Date('2026-07-14T00:10:00.000Z') })
+    const committed = await first.apply(first.approve(await first.planProjection('fixture', selection, target))); const restarted = makeCoordinator({ stateRoot, registry })
+    await expect(restarted.getOperationSummary('unknown-operation')).resolves.toBeUndefined()
+    const summary = await restarted.getOperationSummary(committed.operationId)
+    expect(summary).toEqual(expect.objectContaining({ operationId: committed.operationId, adapterId: 'fixture', installationId: 'target', kind: 'projection', phase: 'committed', verified: true, operationCount: 1, materializationStrategies: { clone: 0, copy: 1 } }))
+    expect(JSON.stringify(summary)).not.toContain(nativeRoot); expect(JSON.stringify(summary)).not.toContain('backupRelativePath'); expect(await restarted.listOperationSummaries()).toEqual([summary])
+    await restarted.rollback(committed.operationId); expect(await restarted.getOperationSummary(committed.operationId)).toEqual(expect.objectContaining({ phase: 'rolled-back', verified: true }))
+  })
+
   it('recovers a durably published claim whose identity journal write never happened', async () => {
     const nativeRoot = await directory('ash-native-'); const created = join(nativeRoot, 'created'); const operations: PreviewFileOperation[] = [{ id: 'create', kind: 'create', rootId: 'home', nativePath: created, expectedAfterSha256: sha256('created') }]; const target = installation(nativeRoot); const stateRoot = join(await directory(), 'state'); const registry = new AdapterRegistry([fixtureAdapter(target, operations)]); const coordinator = makeCoordinator({ stateRoot, registry, now: () => new Date('2026-07-14T00:10:00.000Z'), fault: async (point) => { if (point === 'after-create-claim-publish') throw new SimulatedAdapterCrash(point) } }); const approved = coordinator.approve(await coordinator.planProjection('fixture', selection, target))
     await expect(coordinator.apply(approved)).rejects.toBeInstanceOf(SimulatedAdapterCrash); const pending = await journalAt(stateRoot, approved.approval.operationId); expect(pending.backupEntries[0].claimFileIdentity).toBeUndefined(); expect(await exists(created)).toBe(true)

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { open, readFile, readdir } from 'node:fs/promises'
+import { lstat, open, readFile, readdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { AdapterRegistry, AssetManifestStore, CodexAdapter, ProjectionCoordinator, VolumeObjectStore, type AdapterPlan, type AdapterResult, type AgentInstallation, type CodexPortableAsset, type CodexPortableAssetKind, type CodexPortableAssetRepository, type CodexPortableAssetSummary, type CodexSecretRepository, type PreviewFileOperation } from '@manta/storage-hub'
 import type { StorageGroupId } from '@manta/shared'
@@ -40,6 +40,8 @@ function jsonMetadata(value: unknown): Readonly<Record<string, unknown>> | undef
 async function writeExclusiveDurable(path: string, bytes: string, mode = 0o600): Promise<void> {
   const handle = await open(path, 'wx', mode)
   try { await handle.writeFile(bytes, 'utf8'); await handle.sync() } finally { await handle.close() }
+  const parent = await open(dirname(path), 'r')
+  try { await parent.sync() } catch (error) { if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM') throw error } finally { await parent.close() }
 }
 
 /** Immutable Codex assets whose bytes are backed by the extensions volume's verified CAS. */
@@ -55,19 +57,22 @@ export class AshCodexPortableAssetRepository implements CodexPortableAssetReposi
   }
 
   #descriptorPath(id: string): string { assertId(id, 'Portable asset id'); return join(this.#extensionsRoot, 'agent-assets', `${id}${DESCRIPTOR_SUFFIX}`) }
-  #manifestId(id: string): string { return `codex-portable-${id}` }
+  #manifestId(id: string): string { return `codex-${createHash('sha256').update(id).digest('hex')}` }
+
+  async #assertDirectory(): Promise<void> { const stat = await lstat(join(this.#extensionsRoot, 'agent-assets')); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Portable asset repository directory is linked or not an ordinary directory') }
+  async #readDescriptor(id: string): Promise<unknown> { await this.#assertDirectory(); const path = this.#descriptorPath(id); const stat = await lstat(path); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Portable asset descriptor is linked or not an ordinary file'); return JSON.parse(await readFile(path, 'utf8')) }
 
   async list(): Promise<readonly CodexPortableAssetSummary[]> {
     const directory = join(this.#extensionsRoot, 'agent-assets')
     let names: string[]
-    try { names = await readdir(directory) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
+    try { await this.#assertDirectory(); names = await readdir(directory) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
     const ids = names.map((name) => { if (!name.endsWith(DESCRIPTOR_SUFFIX)) throw new Error('Unknown portable asset repository entry'); const id = name.slice(0, -DESCRIPTOR_SUFFIX.length); assertId(id, 'Portable asset id'); return id }).sort()
     const assets = await Promise.all(ids.map((id) => this.read(id)))
     return assets.map(({ id, kind }) => ({ schemaVersion: 1, id, kind }))
   }
 
   async read(id: string): Promise<CodexPortableAsset> {
-    const raw: unknown = JSON.parse(await readFile(this.#descriptorPath(id), 'utf8'))
+    const raw = await this.#readDescriptor(id)
     const descriptor = this.#validateDescriptor(raw, id)
     const manifest = await this.#manifests.read(this.#manifestId(id))
     const entries = new Map(manifest.entries.map((entry) => [entry.path, entry]))
@@ -95,7 +100,10 @@ export class AshCodexPortableAssetRepository implements CodexPortableAssetReposi
     const entries = []
     for (const file of asset.files ?? []) { const object = await this.#objects.ingestBytes(file.bytes); if (object.hash !== file.sha256) throw new Error('Portable asset file digest is invalid'); entries.push({ path: `files/${file.relativePath}`, hash: object.hash, size: object.size }) }
     const descriptor: PortableAssetDescriptor = { schemaVersion: 1, id: asset.id, kind: asset.kind, name: asset.name, ...(entries.length ? { files: entries.map((entry, index) => ({ relativePath: asset.files![index]!.relativePath, hash: entry.hash, size: entry.size })) } : {}), ...(asset.metadata ? { metadata: jsonMetadata(asset.metadata) } : {}), ...(asset.secretReferenceIds?.length ? { secretReferenceIds: [...asset.secretReferenceIds] } : {}), digest: assetDigest }
-    await this.#manifests.write({ assetId: this.#manifestId(asset.id), entries })
+    try { await this.#manifests.write({ assetId: this.#manifestId(asset.id), entries }) } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      const manifest = await this.#manifests.read(this.#manifestId(asset.id)); if (canonical(manifest.entries) !== canonical(entries)) throw new Error('Portable asset id collision with different immutable content')
+    }
     const path = this.#descriptorPath(asset.id)
     await import('node:fs/promises').then(({ mkdir }) => mkdir(dirname(path), { recursive: true }))
     try { await writeExclusiveDurable(path, `${JSON.stringify(descriptor, null, 2)}\n`) } catch (error) {
@@ -136,6 +144,7 @@ export class AshCodexSecretRepository implements CodexSecretRepository {
     if (!input.value || !input.purpose || input.purpose.includes('\0')) throw new Error('Secret input is invalid')
     const reference = `secret-${randomUUID()}`; const directory = join(this.#secretsRoot, 'agent-secrets')
     await import('node:fs/promises').then(({ mkdir }) => mkdir(directory, { recursive: true, mode: 0o700 }))
+    const directoryStat = await lstat(directory); if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) throw new Error('Secret directory is linked or not an ordinary directory')
     await writeExclusiveDurable(join(directory, `${reference}.json`), `${JSON.stringify({ schemaVersion: 1, purpose: input.purpose, value: input.value })}\n`)
     return reference
   }
@@ -185,6 +194,10 @@ function resultSummary(plan: AdapterPlan, result: AdapterResult): AgentOperation
   const strategies = result.materializationStrategies?.reduce((counts, item) => { counts[item.strategy]++; return counts }, { clone: 0, copy: 0 })
   return { operationId: result.operationId, adapterId: result.adapterId, installationId: result.installationId, kind: plan.kind, phase: result.status === 'rolled-back' ? 'rolled-back' : 'committed', status: result.status === 'rolled-back' ? 'rolled-back' : 'committed', verified: result.verified, completedAt: result.completedAt, operationCount: plan.operations.length, ...(strategies ? { materializationStrategies: strategies } : {}) }
 }
+function durableResultSummary(value: Awaited<ReturnType<ProjectionCoordinator['getOperationSummary']>>): AgentOperationSummary {
+  if (!value || (value.phase !== 'committed' && value.phase !== 'rolled-back')) throw new Error('Agent operation does not have terminal verified evidence')
+  return { operationId: value.operationId, adapterId: value.adapterId, installationId: value.installationId, kind: value.kind, phase: value.phase, status: value.phase, verified: value.verified, completedAt: value.updatedAt, operationCount: value.operationCount, ...(value.materializationStrategies ? { materializationStrategies: value.materializationStrategies } : {}) }
+}
 
 /** One Backend-owned composition shared by read-only routes and trusted Desktop IPC. */
 export async function createAgentStorageComposition(options: AgentStorageOptions) {
@@ -194,7 +207,7 @@ export async function createAgentStorageComposition(options: AgentStorageOptions
   const registry = new AdapterRegistry([adapter])
   const coordinator = new ProjectionCoordinator({ stateRoot: options.resolve('config', 'agent-coordination', 'state'), coordinationRoot: options.resolve('config', 'agent-coordination', 'locks'), registry, now })
   await coordinator.recoverPending()
-  const sessions = new Map<string, PlanSession>(); const operations = new Map<string, AgentOperationSummary>(); const operationPlans = new Map<string, AdapterPlan>()
+  const sessions = new Map<string, PlanSession>()
   const installation = async (adapterId: string, installationId: string) => {
     if (adapterId !== adapter.id) throw Object.assign(new Error('Agent adapter was not found'), { code: 'AGENT_ADAPTER_NOT_FOUND' })
     const found = (await coordinator.detect(adapterId)).find((item) => item.id === installationId)
@@ -202,36 +215,40 @@ export async function createAgentStorageComposition(options: AgentStorageOptions
     return found
   }
   const preview = (plan: AdapterPlan, senderId: string): AgentPlanPreview => {
-    const planSessionId = randomUUID(); sessions.set(planSessionId, { senderId, plan, expiresAt: Date.parse(plan.expiresAt) })
-    return { planSessionId, kind: plan.kind, expiresAt: plan.expiresAt, operations: publicOperations(plan) }
+    const planSessionId = randomUUID(); const expiresAt = Math.min(Date.parse(plan.expiresAt), now().getTime() + (options.sessionTtlMs ?? 5 * 60_000)); sessions.set(planSessionId, { senderId, plan, expiresAt })
+    return { planSessionId, kind: plan.kind, expiresAt: new Date(expiresAt).toISOString(), operations: publicOperations(plan) }
   }
   const readModel = {
     async agents() {
-      const installations = await coordinator.detect(adapter.id)
-      return { adapters: [{ id: adapter.id, displayName: adapter.displayName, status: installations.length ? 'detected' as const : 'not-detected' as const, installations: installations.map(publicInstallation) }], operations: [...operations.values()] }
+      const operations = (await coordinator.listOperationSummaries()).filter((value) => value.phase === 'committed' || value.phase === 'rolled-back').map((value) => durableResultSummary(value))
+      try { const installations = await coordinator.detect(adapter.id); return { adapters: [{ id: adapter.id, displayName: adapter.displayName, status: installations.length ? 'detected' as const : 'not-detected' as const, installations: installations.map(publicInstallation) }], operations } }
+      catch { return { adapters: [{ id: adapter.id, displayName: adapter.displayName, status: 'error' as const, installations: [], error: { code: 'AGENT_DETECTION_FAILED', message: 'Codex storage detection is unavailable' } }], operations } }
     },
     async assets(adapterId: string, installationId: string) {
       const target = await installation(adapterId, installationId)
       return { inventory: await coordinator.inspect(adapterId, target), portableAssets: await assets.list() }
     },
     async reuse() { try { return { scanStatus: 'complete' as const, evidenceStatus: 'verified' as const, ...await assets.reuseMetrics() } } catch (error) { return { scanStatus: 'degraded' as const, evidenceStatus: 'unavailable' as const, portableAssetCount: 0, logicalImmutableBytes: null, uniqueVerifiedObjectBytes: null, verifiedSavedBytes: null, blockers: [{ code: 'agent-asset-verification-failed', detail: (error as Error).message }] } } },
-    async operation(operationId: string) { const value = operations.get(operationId); if (!value) throw Object.assign(new Error('Agent operation was not found'), { code: 'AGENT_OPERATION_NOT_FOUND' }); return value },
+    async operation(operationId: string) { const value = await coordinator.getOperationSummary(operationId); if (!value) throw Object.assign(new Error('Agent operation was not found'), { code: 'AGENT_OPERATION_NOT_FOUND' }); return durableResultSummary(value) },
   }
   const mutations = {
     async previewImport(adapterId: string, installationId: string, senderId: string) { return preview(await coordinator.planImport(adapterId, await installation(adapterId, installationId)), senderId) },
     async previewProjection(adapterId: string, installationId: string, assetIds: readonly string[], senderId: string) { return preview(await coordinator.planProjection(adapterId, { schemaVersion: 1, assetIds: [...assetIds] }, await installation(adapterId, installationId)), senderId) },
     async apply(planSessionId: string, senderId: string) {
-      const session = sessions.get(planSessionId); sessions.delete(planSessionId)
-      if (!session || session.senderId !== senderId || session.expiresAt <= now().getTime()) throw Object.assign(new Error('Plan session is unknown, foreign, reused, or expired'), { code: 'AGENT_PLAN_SESSION_INVALID' })
+      const session = sessions.get(planSessionId)
+      if (!session) throw Object.assign(new Error('Plan session is unknown or reused'), { code: 'AGENT_PLAN_SESSION_INVALID' })
+      if (session.senderId !== senderId) throw Object.assign(new Error('Plan session belongs to a foreign sender'), { code: 'AGENT_PLAN_SESSION_INVALID' })
+      sessions.delete(planSessionId)
+      if (session.expiresAt <= now().getTime()) throw Object.assign(new Error('Plan session has expired'), { code: 'AGENT_PLAN_SESSION_INVALID' })
       const approved = coordinator.approve(session.plan); const operationId = approved.approval.operationId; const total = approved.operations.length
       options.onProgress?.({ operationId, phase: 'applying', status: 'running', operationsCompleted: 0, operationsTotal: total })
-      try { const result = await coordinator.apply(approved); const summary = resultSummary(session.plan, result); operations.set(operationId, summary); operationPlans.set(operationId, session.plan); options.onProgress?.({ operationId, phase: 'completed', status: 'completed', operationsCompleted: total, operationsTotal: total }); return { operationId, result: summary } }
+      try { const result = await coordinator.apply(approved); const summary = resultSummary(session.plan, result); options.onProgress?.({ operationId, phase: 'completed', status: 'completed', operationsCompleted: total, operationsTotal: total }); return { operationId, result: summary } }
       catch (error) { options.onProgress?.({ operationId, phase: 'failed', status: 'failed', operationsCompleted: 0, operationsTotal: total }); throw error }
     },
     async rollback(operationId: string) {
-      const prior = operations.get(operationId); const plan = operationPlans.get(operationId); if (!prior || !plan || prior.status !== 'committed') throw Object.assign(new Error('Agent operation was not found or is not rollback eligible'), { code: 'AGENT_OPERATION_NOT_FOUND' })
-      options.onProgress?.({ operationId, phase: 'rolling-back', status: 'running', operationsCompleted: 0, operationsTotal: plan.operations.length }); await coordinator.rollback(operationId)
-      const summary: AgentOperationSummary = { ...prior, phase: 'rolled-back', status: 'rolled-back', verified: true, completedAt: now().toISOString() }; operations.set(operationId, summary); options.onProgress?.({ operationId, phase: 'rolled-back', status: 'completed', operationsCompleted: plan.operations.length, operationsTotal: plan.operations.length }); return summary
+      const prior = await coordinator.getOperationSummary(operationId); if (!prior || prior.phase !== 'committed') throw Object.assign(new Error('Agent operation was not found or is not rollback eligible'), { code: 'AGENT_OPERATION_NOT_FOUND' })
+      options.onProgress?.({ operationId, phase: 'rolling-back', status: 'running', operationsCompleted: 0, operationsTotal: prior.operationCount }); await coordinator.rollback(operationId)
+      const summary = durableResultSummary(await coordinator.getOperationSummary(operationId)); options.onProgress?.({ operationId, phase: 'rolled-back', status: 'completed', operationsCompleted: prior.operationCount, operationsTotal: prior.operationCount }); return summary
     },
   }
   return { readModel, mutations, coordinator, assets, secrets }

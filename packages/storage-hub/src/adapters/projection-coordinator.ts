@@ -33,6 +33,19 @@ export interface ProjectionCoordinatorOptions {
   readonly fault?: (point: ProjectionFaultPoint) => Promise<void>
 }
 
+export interface AdapterOperationSummary {
+  readonly operationId: string
+  readonly adapterId: string
+  readonly installationId: string
+  readonly kind: 'import' | 'projection'
+  readonly phase: AdapterJournal['phase']
+  readonly startedAt: string
+  readonly updatedAt: string
+  readonly verified: boolean
+  readonly operationCount: number
+  readonly materializationStrategies?: Readonly<{ clone: number; copy: number }>
+}
+
 const queues = new Map<string, Promise<void>>()
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const SHA256 = /^[a-f0-9]{64}$/
@@ -171,6 +184,26 @@ export class ProjectionCoordinator {
         await this.#rollbackJournal(journal)
       })
     }
+  }
+
+  async getOperationSummary(operationId: string): Promise<AdapterOperationSummary | undefined> {
+    if (!SAFE_SEGMENT.test(operationId)) throw new Error('Unsafe adapter operation id')
+    const stat = await statOrAbsent(this.#journalPath(operationId)); if (!stat) return undefined
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Adapter journal is not an ordinary file')
+    return this.#operationSummary(await this.#readJournal(operationId))
+  }
+
+  async listOperationSummaries(): Promise<readonly AdapterOperationSummary[]> {
+    const directory = this.#journalDirectory(); let entries
+    try { entries = await readdir(directory, { withFileTypes: true }) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
+    if (entries.some((entry) => !entry.isFile() || !entry.name.endsWith('.json') || !SAFE_SEGMENT.test(entry.name.slice(0, -5)))) throw new Error('Unknown adapter journal directory entry')
+    const summaries = await Promise.all(entries.map((entry) => this.#readJournal(entry.name.slice(0, -5)).then((journal) => this.#operationSummary(journal))))
+    return freeze(summaries.sort((left, right) => left.startedAt.localeCompare(right.startedAt) || left.operationId.localeCompare(right.operationId)))
+  }
+
+  #operationSummary(journal: AdapterJournal): AdapterOperationSummary {
+    const strategies = journal.result?.materializationStrategies?.reduce((counts, item) => { counts[item.strategy]++; return counts }, { clone: 0, copy: 0 })
+    return freeze({ operationId: journal.operationId, adapterId: journal.plan.adapterId, installationId: journal.plan.target.id, kind: journal.plan.kind, phase: journal.phase, startedAt: journal.startedAt, updatedAt: journal.updatedAt, verified: journal.result?.verified === true && (journal.phase === 'committed' || journal.phase === 'rolled-back'), operationCount: journal.plan.operations.length, ...(strategies ? { materializationStrategies: strategies } : {}) })
   }
 
   async #preparePlan(plan: AdapterPlan, adapterId: string, target: AgentInstallation): Promise<AdapterPlan> {
