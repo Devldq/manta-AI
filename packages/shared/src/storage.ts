@@ -87,7 +87,7 @@ export const MigrationPhaseSchema = z.enum([
 
 export interface MigrationJournal {
   id: string
-  kind: 'volume' | 'group'
+  kind: 'volume' | 'group' | 'import'
   sourceVolumeId: string
   targetVolumeId?: string
   targetParentPath?: string
@@ -106,7 +106,7 @@ export interface MigrationJournal {
 
 export const MigrationJournalSchema = z.object({
   id: z.string().min(1),
-  kind: z.enum(['volume', 'group']),
+  kind: z.enum(['volume', 'group', 'import']),
   sourceVolumeId: z.string().min(1),
   targetVolumeId: z.string().min(1).optional(),
   targetParentPath: z.string().min(1).optional(),
@@ -155,6 +155,7 @@ export const AshBootstrapSchema = AshLocationSnapshotSchema.extend({
 
 export interface StorageOperationProgress {
   operationId: string
+  operationKind?: 'volume' | 'group' | 'import'
   phase: string
   currentGroup?: StorageGroupId
   filesCompleted: number
@@ -166,6 +167,7 @@ export interface StorageOperationProgress {
 
 export const StorageOperationProgressSchema = z.object({
   operationId: z.string().min(1),
+  operationKind: z.enum(['volume', 'group', 'import']).optional(),
   phase: z.string().min(1),
   currentGroup: StorageGroupIdSchema.optional(),
   filesCompleted: z.number().int().nonnegative(),

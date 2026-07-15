@@ -173,9 +173,8 @@ export async function createBackendStorageComposition(bootstrap: BootstrapStore,
     // import has the same quiesce, validation, atomic swap, recovery, and
     // relaunch-safe lifecycle as every other live storage mutation.
     importer: new ImportCoordinator({
-      leases: hub.leases,
       resolveGroupRoot: (group) => runtime!.resolve(group),
-      replaceGroups: async (groups) => { await hub.migrations!.replaceGroupsFromStaging(groups) },
+      replaceGroups: async (groups, preflight) => { await hub.migrations!.replaceGroupsFromStaging(groups, undefined, preflight) },
     }),
   })
   let agents: Awaited<ReturnType<typeof createAgentStorageComposition>> | undefined

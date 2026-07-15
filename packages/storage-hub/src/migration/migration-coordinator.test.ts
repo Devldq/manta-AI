@@ -7,7 +7,7 @@ import { BootstrapStore } from '../bootstrap/bootstrap-store'
 import { volumeRoot } from '../domain/invariants'
 import { StorageLeaseManager } from '../runtime/lease-manager'
 import type { StorageGroupDriver } from './types'
-import { MigrationCoordinator } from './migration-coordinator'
+import { MigrationCoordinator, SimulatedMigrationCrash } from './migration-coordinator'
 
 const groups: StorageGroupId[] = ['extensions', 'knowledge', 'work', 'config', 'secrets', 'diagnostics', 'cache']
 const now = new Date().toISOString()
@@ -96,6 +96,68 @@ describe('MigrationCoordinator', () => {
     await expect(coordinator.replaceGroupsFromStaging([{ group: 'work', source: stagedWork }, { group: 'knowledge', source: stagedKnowledge }], '00000000-0000-4000-8000-000000000013')).rejects.toThrow('knowledge rejected')
     await expect(readFile(join(volumeRoot(source), 'work', 'work.txt'), 'utf8')).resolves.toBe('work')
     await expect(readFile(join(volumeRoot(source), 'knowledge', 'knowledge.txt'), 'utf8')).resolves.toBe('knowledge')
+  })
+
+  it.each([
+    'after-import-live-to-backup:work',
+    'after-import-staging-to-live:work',
+    'after-import-live-to-backup:knowledge',
+    'after-import-staging-to-live:knowledge',
+  ] as const)('recovers a two-group import to all-old after crash at %s', async (point) => {
+    const { source, store } = await fixture(); const operationId = `crash-${point.replace(/[^a-z]+/g, '-')}`
+    const stagedWork = join(source, 'remote-work'); const stagedKnowledge = join(source, 'remote-knowledge')
+    await mkdir(stagedWork, { recursive: true }); await mkdir(stagedKnowledge, { recursive: true })
+    await writeFile(join(stagedWork, 'work.txt'), 'remote-work'); await writeFile(join(stagedKnowledge, 'knowledge.txt'), 'remote-knowledge')
+    const crashing = new MigrationCoordinator({
+      store,
+      leases: new StorageLeaseManager(),
+      drivers: new Map([['work', driver('work')], ['knowledge', driver('knowledge')]]),
+      fault: async (candidate) => { if (candidate === point) throw new SimulatedMigrationCrash(point) },
+    })
+    await expect(crashing.replaceGroupsFromStaging([{ group: 'work', source: stagedWork }, { group: 'knowledge', source: stagedKnowledge }], operationId)).rejects.toBeInstanceOf(SimulatedMigrationCrash)
+    expect((await store.read())?.pendingMigration).toMatchObject({ id: operationId, kind: 'import', phase: 'committing', groups: ['work', 'knowledge'] })
+
+    const recovered = new MigrationCoordinator({ store: new BootstrapStore(store.filePath), leases: new StorageLeaseManager(), drivers: new Map([['work', driver('work')], ['knowledge', driver('knowledge')]]) })
+    await recovered.recoverPending(); await recovered.recoverPending()
+    await expect(readFile(join(volumeRoot(source), 'work', 'work.txt'), 'utf8')).resolves.toBe('work')
+    await expect(readFile(join(volumeRoot(source), 'knowledge', 'knowledge.txt'), 'utf8')).resolves.toBe('knowledge')
+    expect((await store.read())?.pendingMigration).toBeUndefined()
+  })
+
+  it('recovers a two-group import to all-new after the durable roll-forward decision', async () => {
+    const { source, store } = await fixture(); const operationId = 'import-roll-forward'
+    const stagedWork = join(source, 'remote-work'); const stagedKnowledge = join(source, 'remote-knowledge')
+    await mkdir(stagedWork, { recursive: true }); await mkdir(stagedKnowledge, { recursive: true })
+    await writeFile(join(stagedWork, 'work.txt'), 'remote-work'); await writeFile(join(stagedKnowledge, 'knowledge.txt'), 'remote-knowledge')
+    const crashing = new MigrationCoordinator({ store, leases: new StorageLeaseManager(), drivers: new Map([['work', driver('work')], ['knowledge', driver('knowledge')]]), fault: async (point) => { if (point === 'after-import-restarting-journal') throw new SimulatedMigrationCrash(point) } })
+    await expect(crashing.replaceGroupsFromStaging([{ group: 'work', source: stagedWork }, { group: 'knowledge', source: stagedKnowledge }], operationId)).rejects.toBeInstanceOf(SimulatedMigrationCrash)
+    expect((await store.read())?.pendingMigration).toMatchObject({ id: operationId, kind: 'import', phase: 'restarting' })
+
+    const recovered = new MigrationCoordinator({ store: new BootstrapStore(store.filePath), leases: new StorageLeaseManager(), drivers: new Map([['work', driver('work')], ['knowledge', driver('knowledge')]]) })
+    await recovered.recoverPending(); await recovered.recoverPending()
+    await expect(readFile(join(volumeRoot(source), 'work', 'work.txt'), 'utf8')).resolves.toBe('remote-work')
+    await expect(readFile(join(volumeRoot(source), 'knowledge', 'knowledge.txt'), 'utf8')).resolves.toBe('remote-knowledge')
+    expect((await store.read())?.pendingMigration).toBeUndefined()
+  })
+
+  it('keeps the durable all-new decision when the process crashes before backup cleanup', async () => {
+    const { source, store } = await fixture(); const operationId = 'import-completed-cleanup'
+    const stagedWork = join(source, 'remote-work'); const stagedKnowledge = join(source, 'remote-knowledge'); await mkdir(stagedWork, { recursive: true }); await mkdir(stagedKnowledge, { recursive: true }); await writeFile(join(stagedWork, 'work.txt'), 'remote-work'); await writeFile(join(stagedKnowledge, 'knowledge.txt'), 'remote-knowledge')
+    const crashing = new MigrationCoordinator({ store, leases: new StorageLeaseManager(), drivers: new Map([['work', driver('work')], ['knowledge', driver('knowledge')]]), fault: async (point) => { if (point === 'after-import-completed-journal') throw new SimulatedMigrationCrash(point) } })
+    await expect(crashing.replaceGroupsFromStaging([{ group: 'work', source: stagedWork }, { group: 'knowledge', source: stagedKnowledge }], operationId)).rejects.toBeInstanceOf(SimulatedMigrationCrash)
+    expect((await store.read())?.pendingMigration).toMatchObject({ kind: 'import', phase: 'completed' })
+    const recovered = new MigrationCoordinator({ store: new BootstrapStore(store.filePath), leases: new StorageLeaseManager(), drivers: new Map([['work', driver('work')], ['knowledge', driver('knowledge')]]) }); await recovered.recoverPending(); await recovered.recoverPending()
+    await expect(readFile(join(volumeRoot(source), 'work', 'work.txt'), 'utf8')).resolves.toBe('remote-work'); await expect(readFile(join(volumeRoot(source), 'knowledge', 'knowledge.txt'), 'utf8')).resolves.toBe('remote-knowledge'); expect((await store.read())?.pendingMigration).toBeUndefined()
+  })
+
+  it('journals before the first import rename and clears only after every reopen and validation', async () => {
+    const { source, store } = await fixture(); const stagedWork = join(source, 'remote-work'); const stagedKnowledge = join(source, 'remote-knowledge'); const observations: string[] = []
+    await mkdir(stagedWork, { recursive: true }); await mkdir(stagedKnowledge, { recursive: true }); await writeFile(join(stagedWork, 'work.txt'), 'remote-work'); await writeFile(join(stagedKnowledge, 'knowledge.txt'), 'remote-knowledge')
+    const observingDriver = (group: StorageGroupId): StorageGroupDriver => ({ ...driver(group), reopen: async () => { observations.push(`reopen:${group}:${(await store.read())?.pendingMigration?.phase ?? 'none'}`) }, validate: async (path) => { if (path === join(volumeRoot(source), group)) observations.push(`validate:${group}:${(await store.read())?.pendingMigration?.phase ?? 'none'}`); return { ok: true } } })
+    const coordinator = new MigrationCoordinator({ store, leases: new StorageLeaseManager(), drivers: new Map([['work', observingDriver('work')], ['knowledge', observingDriver('knowledge')]]), fault: async (point) => { if (point === 'before-import-first-rename') observations.push(`before:${(await store.read())?.pendingMigration?.phase ?? 'none'}`) } })
+    await coordinator.replaceGroupsFromStaging([{ group: 'work', source: stagedWork }, { group: 'knowledge', source: stagedKnowledge }], 'import-journal-lifetime')
+    expect(observations).toEqual(['before:committing', 'reopen:work:verifying', 'validate:work:verifying', 'reopen:knowledge:verifying', 'validate:knowledge:verifying'])
+    expect((await store.read())?.pendingMigration).toBeUndefined()
   })
 
   it('rejects a target without source plus the minimum 256 MiB margin', async () => {

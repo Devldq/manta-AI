@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto'
 import { readdir, lstat, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { StorageGroupId } from '@manta/shared'
-import { StorageLeaseManager } from '../runtime/lease-manager'
 import { SyncManifestSchema, type SyncManifest } from './sync-manifest'
 import type { ImportChoice } from './conflict-planner'
 
@@ -25,10 +24,9 @@ export async function hashSyncGroup(root: string): Promise<string> {
 
 export class ImportCoordinator {
   constructor(private readonly options: {
-    leases: StorageLeaseManager
     resolveGroupRoot(group: StorageGroupId): string
     /** Replaces all selected groups as one rollback-capable live-data transaction. */
-    replaceGroups(groups: Array<{ group: StorageGroupId; source: string }>): Promise<void>
+    replaceGroups(groups: Array<{ group: StorageGroupId; source: string }>, preflight: () => Promise<void>): Promise<void>
     hashGroup?(root: string): Promise<string>
   }) {}
 
@@ -43,10 +41,10 @@ export class ImportCoordinator {
       if (actual !== manifest.groupHashes[group]) throw new Error(`Remote ${group} hash validation failed`)
     }
     if (!selected.length) return
-    const lease = await this.options.leases.acquireExclusive(selected)
-    try {
-      // The lease closes the plan/apply TOCTOU window for every group that may
-      // be overwritten. A changed local digest must be replanned explicitly.
+    await this.options.replaceGroups(selected.map((group) => ({ group, source: join(input.stagingRoot, group) })), async () => {
+      // MigrationCoordinator invokes this preflight while it owns the same
+      // exclusive lease used for replacement, closing the plan/apply TOCTOU
+      // window without recursively acquiring a non-reentrant lease.
       for (const group of selected) {
         const expected = input.expectedLocalHashes?.[group]
         if (expected !== undefined) {
@@ -54,7 +52,6 @@ export class ImportCoordinator {
           if (actual !== expected) throw new Error(`Local ${group} data changed after this import was planned; replan required`)
         }
       }
-      await this.options.replaceGroups(selected.map((group) => ({ group, source: join(input.stagingRoot, group) })))
-    } finally { lease.release() }
+    })
   }
 }

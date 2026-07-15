@@ -11,5 +11,14 @@ export interface StorageGroupDriver {
   reopen(root: string): Promise<void>
   inventory(root: string): Promise<StorageInventory>
 }
-export type MigrationFaultPoint = 'copying' | 'validating' | 'before-bootstrap-commit' | 'after-bootstrap-commit'
+export type MigrationFaultPoint =
+  | 'copying'
+  | 'validating'
+  | 'before-bootstrap-commit'
+  | 'after-bootstrap-commit'
+  | 'before-import-first-rename'
+  | 'after-import-restarting-journal'
+  | 'after-import-completed-journal'
+  | `after-import-live-to-backup:${StorageGroupId}`
+  | `after-import-staging-to-live:${StorageGroupId}`
 export type ProgressHandler = (progress: StorageOperationProgress) => void
