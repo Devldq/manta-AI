@@ -1440,16 +1440,16 @@ function SearchResultCard({ result, index }: { result: SearchResult; index: numb
               className="text-[10px] px-1.5 py-0.5 rounded font-medium"
               style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}
             >
-              {result.chunk.metadata?.source || result.chunk.documentId?.slice(0, 8)}
+              {String(result.chunk.metadata?.source || result.chunk.documentId?.slice(0, 8))}
             </span>
             {result.chunk.metadata?.index != null && (
               <span className="text-[10px] font-mono" style={{ color: 'var(--color-text-muted)' }}>
-                #{result.chunk.metadata.index}
+                #{String(result.chunk.metadata.index)}
               </span>
             )}
             {result.chunk.metadata?.tokenEstimate != null && (
               <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-                ~{result.chunk.metadata.tokenEstimate} tok
+                ~{String(result.chunk.metadata.tokenEstimate)} tok
               </span>
             )}
           </div>

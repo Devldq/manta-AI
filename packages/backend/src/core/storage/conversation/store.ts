@@ -1,19 +1,20 @@
 /* 会话存储层 — 文件夹实现（每个会话一个文件夹，内含 session.json + log.ndjson 等） */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
+import { resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import type { Conversation, ConversationMessage, ToolCallRecord, StepUsageRecord } from '@core/types'
 
-const DATA_DIR = path.join(os.homedir(), '.manta-data', 'conversations')
+function dataDir(): string { return resolveStoragePath('work', 'conversations') }
 
 function ensureDir(): void {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
+  const dir = dataDir()
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 }
 
 /** 会话文件夹路径 */
 function convDirPath(id: string): string {
-  return path.join(DATA_DIR, id)
+  return path.join(dataDir(), safeStorageSegment(id))
 }
 
 /** 会话 JSON 文件路径 */
@@ -23,7 +24,7 @@ function convSessionFilePath(id: string): string {
 
 /** 会话专属日志文件路径 */
 export function getSessionLogPath(conversationId: string): string {
-  return path.join(convDirPath(conversationId), 'log.ndjson')
+  return resolveStoragePath('diagnostics', 'conversations', conversationId, 'log.ndjson')
 }
 
 /** 确保会话文件夹存在 */
@@ -39,7 +40,7 @@ function readConv(id: string): Conversation | null {
     try { return JSON.parse(fs.readFileSync(newFp, 'utf-8')) as Conversation } catch { return null }
   }
   // 兼容旧格式（直接的 .json 文件）
-  const oldFp = path.join(DATA_DIR, `${id}.json`)
+  const oldFp = path.join(dataDir(), safeStorageSegment(`${id}.json`))
   if (fs.existsSync(oldFp)) {
     try { return JSON.parse(fs.readFileSync(oldFp, 'utf-8')) as Conversation } catch { return null }
   }
@@ -57,7 +58,7 @@ function writeConv(conv: Conversation): void {
 
 /** 迁移旧的 .json 文件到文件夹格式 */
 function migrateOldFormat(id: string): boolean {
-  const oldFp = path.join(DATA_DIR, `${id}.json`)
+  const oldFp = path.join(dataDir(), safeStorageSegment(`${id}.json`))
   if (!fs.existsSync(oldFp)) return false
   try {
     const conv = JSON.parse(fs.readFileSync(oldFp, 'utf-8')) as Conversation
@@ -92,7 +93,7 @@ export function listConversations(): Conversation[] {
   ensureDir()
   try {
     const convs: Conversation[] = []
-    const entries = fs.readdirSync(DATA_DIR, { withFileTypes: true })
+    const entries = fs.readdirSync(dataDir(), { withFileTypes: true })
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
@@ -104,7 +105,7 @@ export function listConversations(): Conversation[] {
       } else if (entry.isFile() && entry.name.endsWith('.json') && !entry.name.endsWith('.tmp')) {
         // 旧格式兼容：直接的 .json 文件
         try {
-          const conv = JSON.parse(fs.readFileSync(path.join(DATA_DIR, entry.name), 'utf-8')) as Conversation
+          const conv = JSON.parse(fs.readFileSync(path.join(dataDir(), entry.name), 'utf-8')) as Conversation
           if (conv.id) {
             // 自动迁移到新格式
             migrateOldFormat(conv.id)
@@ -202,7 +203,7 @@ export function deleteConversation(id: string): boolean {
     try { removeDir(dir); return true } catch { return false }
   }
   // 旧格式兼容：删除 .json 文件
-  const oldFp = path.join(DATA_DIR, `${id}.json`)
+  const oldFp = path.join(dataDir(), safeStorageSegment(`${id}.json`))
   if (fs.existsSync(oldFp)) {
     try { fs.unlinkSync(oldFp); return true } catch { return false }
   }

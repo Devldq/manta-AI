@@ -591,3 +591,22 @@ export const useLogSystem = () => {
     exportLogs: logger.exportLogs,
   }
 }
+
+let schedulerOwners = 0
+
+function reconcileLogScheduler(): void {
+  if (schedulerOwners > 0) defaultLogCollector.startAutoReport()
+  else defaultLogCollector.stopAutoReport()
+}
+
+export function acquireLogScheduler(): () => void {
+  schedulerOwners += 1
+  reconcileLogScheduler()
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    schedulerOwners -= 1
+    reconcileLogScheduler()
+  }
+}

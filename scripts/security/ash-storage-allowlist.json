@@ -1,0 +1,1291 @@
+{
+  "calls": [
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 82,
+      "column": 15,
+      "operation": "mkdir",
+      "reason": "Reviewed disposable Git workspace creation under the injected ASH cache storage group; it never writes into the active synchronized volume."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 89,
+      "column": 15,
+      "operation": "writeFile",
+      "reason": "Reviewed Git ignore policy write under the injected ASH cache storage group; it never writes into the active synchronized volume."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts", "line": 113, "column": 13, "operation": "writeFile",
+      "reason": "Reviewed high-risk secrets policy ignore update limited to the disposable Git workspace under the injected ASH cache group."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts", "line": 117, "column": 49, "operation": "rm",
+      "reason": "Reviewed rollback removal limited to the disposable Git workspace ignore file when secrets policy catalog persistence fails."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts", "line": 117, "column": 96, "operation": "writeFile",
+      "reason": "Reviewed rollback restoration limited to the disposable Git workspace ignore file when secrets policy catalog persistence fails."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts", "line": 124, "column": 21, "operation": "rm",
+      "reason": "Reviewed immediate removal of the secrets copy only from the disposable Git cache workspace after the persisted policy is disabled."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 279,
+      "column": 11,
+      "operation": "mkdir",
+      "reason": "Reviewed reconstruction of a disposable Git workspace under the injected ASH cache storage group after cache cleanup or migration."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 283,
+      "column": 11,
+      "operation": "writeFile",
+      "reason": "Reviewed missing Git ignore policy restoration under the injected ASH cache storage group for the disposable workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 358,
+      "column": 64,
+      "operation": "rm",
+      "reason": "Reviewed rollback cleanup limited to a Git ignore file in the injected ASH cache storage group workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 359,
+      "column": 18,
+      "operation": "writeFile",
+      "reason": "Reviewed rollback restoration of a prior Git ignore file in the injected ASH cache storage group workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 361,
+      "column": 76,
+      "operation": "rm",
+      "reason": "Reviewed rollback removal of a newly created Git metadata directory in the injected ASH cache storage group workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 190,
+      "column": 13,
+      "operation": "mkdir",
+      "reason": "Reviewed creation of a disposable remote-import Git worktree under the injected ASH cache group; it is never an active synchronized volume."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 205,
+      "column": 15,
+      "operation": "rm",
+      "reason": "Reviewed cleanup limited to a failed disposable remote-import worktree under the injected ASH cache group."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
+      "line": 338,
+      "column": 11,
+      "operation": "rm",
+      "reason": "Reviewed cleanup of an opaque user-confirmation import staging worktree under the injected ASH cache group."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
+      "line": 14,
+      "column": 9,
+      "operation": "mkdir",
+      "reason": "Reviewed lease-protected snapshot directory creation under the injected ASH cache storage group for a disposable sync workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
+      "line": 21,
+      "column": 35,
+      "operation": "cp",
+      "reason": "Reviewed lease-protected copy from a resolved active volume into the injected ASH cache storage group disposable snapshot workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts", "line": 43, "column": 40, "operation": "rm",
+      "reason": "Reviewed removal of a stale secrets copy only from the disposable snapshot cache when the volume binding policy is disabled."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
+      "line": 47,
+      "column": 13,
+      "operation": "rm",
+      "reason": "Reviewed removal limited to a prior disposable group snapshot under the injected ASH cache storage group workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
+      "line": 54,
+      "column": 11,
+      "operation": "mkdir",
+      "reason": "Reviewed sync manifest parent creation under the injected ASH cache storage group disposable snapshot workspace."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
+      "line": 55,
+      "column": 11,
+      "operation": "writeFile",
+      "reason": "Reviewed credential-free sync manifest write under the injected ASH cache storage group disposable snapshot workspace."
+    },
+    {
+      "file": "packages/backend/src/core/storage/plugin/marketplace.ts",
+      "line": 397,
+      "column": 5,
+      "operation": "rmSync",
+      "reason": "Reviewed cleanup of an isolated external Claude CLI import directory created solely for this explicit user-requested plugin installation."
+    },
+    {
+      "file": "packages/backend/src/core/storage/plugin/marketplace.ts",
+      "line": 413,
+      "column": 15,
+      "operation": "rmSync",
+      "reason": "Reviewed cleanup of an isolated external Claude CLI import directory created solely for this explicit user-requested plugin installation."
+    },
+    {
+      "file": "packages/agent-sandbox/src/audit/AuditLogger.ts",
+      "line": 34,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/agent-sandbox/src/audit/AuditLogger.ts",
+      "line": 48,
+      "column": 3,
+      "operation": "appendFileSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/agent-sandbox/src/audit/AuditLogger.ts",
+      "line": 115,
+      "column": 5,
+      "operation": "unlinkSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/index.ts",
+      "line": 24,
+      "column": 18,
+      "operation": "spawn",
+      "reason": "Reviewed external tool or Agent task process boundary whose workspace or output is explicitly selected by the user or task."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/index.ts",
+      "line": 37,
+      "column": 15,
+      "operation": "appendFileSync",
+      "reason": "Reviewed user or Agent-selected workspace output call that must intentionally remain outside application persistence routing."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/index.ts",
+      "line": 44,
+      "column": 15,
+      "operation": "appendFileSync",
+      "reason": "Reviewed user or Agent-selected workspace output call that must intentionally remain outside application persistence routing."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/process-registry.ts",
+      "line": 86,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/process-registry.ts",
+      "line": 88,
+      "column": 5,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/engine/runner/process-registry.ts",
+      "line": 89,
+      "column": 5,
+      "operation": "renameSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/memory/store.ts",
+      "line": 73,
+      "column": 7,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/memory/store.ts",
+      "line": 76,
+      "column": 7,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/memory/store.ts",
+      "line": 233,
+      "column": 7,
+      "operation": "unlinkSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/memory/store.ts",
+      "line": 261,
+      "column": 13,
+      "operation": "unlinkSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/memory/store.ts",
+      "line": 264,
+      "column": 9,
+      "operation": "rmdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/plugin/registry.ts",
+      "line": 212,
+      "column": 22,
+      "operation": "execSync",
+      "reason": "Reviewed external tool or Agent task process boundary whose workspace or output is explicitly selected by the user or task."
+    },
+    {
+      "file": "packages/backend/src/core/storage/plugin/scanner.ts",
+      "line": 259,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed external extension import or Agent workspace output call; the destination is validated before entering ASH or remains user-selected."
+    },
+    {
+      "file": "packages/backend/src/core/storage/plugin/scanner.ts",
+      "line": 271,
+      "column": 7,
+      "operation": "copyFileSync",
+      "reason": "Reviewed external extension import or Agent workspace output call; the destination is validated before entering ASH or remains user-selected."
+    },
+    {
+      "file": "packages/backend/src/core/storage/shared/fs-utils.ts",
+      "line": 9,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/shared/fs-utils.ts",
+      "line": 16,
+      "column": 3,
+      "operation": "writeFileSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/shared/fs-utils.ts",
+      "line": 17,
+      "column": 3,
+      "operation": "renameSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/shared/fs-utils.ts",
+      "line": 54,
+      "column": 7,
+      "operation": "rmSync",
+      "reason": "Reviewed path-agnostic persistence primitive whose callers supply a mandatory ASH-resolved storage-group path."
+    },
+    {
+      "file": "packages/backend/src/core/storage/skill/scanner.ts",
+      "line": 334,
+      "column": 7,
+      "operation": "mkdirSync",
+      "reason": "Reviewed external extension import or Agent workspace output call; the destination is validated before entering ASH or remains user-selected."
+    },
+    {
+      "file": "packages/backend/src/core/storage/skill/scanner.ts",
+      "line": 336,
+      "column": 18,
+      "operation": "writeFileSync",
+      "reason": "Reviewed external extension import or Agent workspace output call; the destination is validated before entering ASH or remains user-selected."
+    },
+    {
+      "file": "packages/backend/src/core/tools/builtin/bash.ts",
+      "line": 303,
+      "column": 24,
+      "operation": "exec",
+      "reason": "Reviewed external tool or Agent task process boundary whose workspace or output is explicitly selected by the user or task."
+    },
+    {
+      "file": "packages/backend/src/storage/runtime-diagnostics.ts",
+      "line": 63,
+      "column": 29,
+      "operation": "unlinkSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/backend/src/storage/runtime-diagnostics.ts",
+      "line": 95,
+      "column": 7,
+      "operation": "mkdirSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/backend/src/storage/runtime-diagnostics.ts",
+      "line": 96,
+      "column": 7,
+      "operation": "appendFileSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/backend/src/storage/runtime-diagnostics.ts",
+      "line": 109,
+      "column": 9,
+      "operation": "mkdirSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/backend/src/storage/runtime-diagnostics.ts",
+      "line": 110,
+      "column": 9,
+      "operation": "appendFileSync",
+      "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/createStorageVolume.ts", "line": 16, "column": 13, "operation": "mkdir",
+      "reason": "Reviewed Electron privileged storage-volume creation on an explicit user-selected directory after ASH path, capacity, permission, and nesting validation."
+    },
+    {
+      "file": "packages/desktop/src/lifecycle/createStorageVolume.ts", "line": 23, "column": 39, "operation": "rm",
+      "reason": "Reviewed Electron privileged rollback cleanup limited to the newly created ASH volume in an explicit user-selected directory."
+    },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 21, "column": 11, "operation": "mkdir", "reason": "Reviewed Electron onboarding preparation on an explicit user-selected parent before any application persistence exists." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 26, "column": 13, "operation": "writeFile", "reason": "Reviewed Electron onboarding write probe limited to a random file below the explicit user-selected storage parent." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 26, "column": 62, "operation": "rename", "reason": "Reviewed Electron onboarding atomic-rename probe limited to the explicit user-selected storage parent." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 29, "column": 21, "operation": "rm", "reason": "Reviewed Electron onboarding cleanup of a random permission-probe file below the user-selected parent." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 29, "column": 71, "operation": "rm", "reason": "Reviewed Electron onboarding cleanup of a renamed random permission-probe file below the user-selected parent." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 74, "column": 51, "operation": "rename", "reason": "Reviewed crash recovery commit of a marker-owned staging root into the validated user-selected ASH location." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 75, "column": 105, "operation": "rm", "reason": "Reviewed cleanup of a recovered marker-owned staging root below the user-selected storage parent." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 79, "column": 19, "operation": "rename", "reason": "Reviewed quarantine of an expired corrupt marker-owned staging root below the user-selected parent." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 99, "column": 11, "operation": "mkdir", "reason": "Reviewed creation of a random owned staging directory below the validated explicit user-selected parent." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 100, "column": 50, "operation": "mkdir", "reason": "Reviewed creation of fixed ASH group directories below an owned staging root." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 100, "column": 85, "operation": "mkdir", "reason": "Reviewed creation of the fixed ASH backup directory below an owned staging root." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 102, "column": 17, "operation": "rename", "reason": "Reviewed atomic commit from an owned staging root to the validated user-selected ASH location." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 103, "column": 135, "operation": "rm", "reason": "Reviewed cleanup limited to a staging root after concurrent initialization recovered the committed root." },
+    { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 106, "column": 27, "operation": "rm", "reason": "Reviewed rollback cleanup limited to a random owned staging directory under the user-selected parent." },
+    { "file": "packages/desktop/src/lifecycle/RelaunchRecovery.ts", "line": 80, "column": 13, "operation": "rm", "reason": "Reviewed relaunch rollback removal of a Bootstrap-derived failed group target before restoring its exact backup." },
+    { "file": "packages/desktop/src/lifecycle/RelaunchRecovery.ts", "line": 80, "column": 71, "operation": "mkdir", "reason": "Reviewed relaunch rollback recreation of a Bootstrap-owned parent before exact backup restoration." },
+    { "file": "packages/desktop/src/lifecycle/RelaunchRecovery.ts", "line": 81, "column": 55, "operation": "rm", "reason": "Reviewed relaunch rollback cleanup of a Bootstrap-owned source before exact backup restoration." },
+    { "file": "packages/desktop/src/lifecycle/RelaunchRecovery.ts", "line": 81, "column": 113, "operation": "rename", "reason": "Reviewed relaunch rollback restoration of an exact migration backup into its previous Bootstrap-owned path." },
+    { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 27, "column": 11, "operation": "mkdir", "reason": "Reviewed durable operation-catalog lock root below Electron userData, not a user-selected application data group." },
+    { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 30, "column": 19, "operation": "mkdir", "reason": "Reviewed atomic operation-catalog lock creation below Electron userData for serialized relaunch recovery." },
+    { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 32, "column": 80, "operation": "rm", "reason": "Reviewed stale operation-catalog lock cleanup below Electron userData after its bounded ownership timeout." },
+    { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 37, "column": 54, "operation": "rm", "reason": "Reviewed operation-catalog lock cleanup below Electron userData in the lock holder finally path." },
+    { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 60, "column": 64, "operation": "rm", "reason": "Reviewed deletion of the single application-owned relaunch intent record after verified restart recovery." },
+    { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 62, "column": 88, "operation": "rename", "reason": "Reviewed quarantine of only the application-owned relaunch intent record when it cannot be parsed." },
+    { "file": "packages/desktop/src/lifecycle/createStorageVolume.ts", "line": 17, "column": 13, "operation": "mkdir", "reason": "Reviewed creation of the ASH backup control directory inside a validated newly created user-selected volume." },
+    { "file": "packages/desktop/src/desktop-runtime.ts", "line": 86, "column": 598, "operation": "rm", "reason": "Reviewed explicit user-requested backup deletion constrained by a Bootstrap-derived validated backup ID." },
+    { "file": "packages/desktop/scripts/build-win.cjs", "line": 8, "column": 16, "operation": "spawnSync", "reason": "Reviewed official electron-builder directory packaging process boundary, limited to its production artifact output." },
+    {
+      "file": "packages/desktop/scripts/copy-assets.cjs", "line": 8, "column": 3, "operation": "mkdirSync",
+      "reason": "Reviewed repository build helper creating only the Desktop distribution onboarding artifact directory during an explicit build."
+    },
+    {
+      "file": "packages/desktop/scripts/copy-assets.cjs", "line": 9, "column": 3, "operation": "copyFileSync",
+      "reason": "Reviewed repository build helper copying one read-only onboarding HTML asset into the Desktop distribution during an explicit build."
+    },
+    {
+      "file": "packages/desktop/scripts/clean.cjs", "line": 9, "column": 7, "operation": "rmSync",
+      "reason": "Reviewed repository build helper removing Desktop dist, package staging, and release artifacts only during an explicit build clean."
+    },
+    {
+      "file": "packages/rag/src/embedding-cache.ts",
+      "line": 52,
+      "column": 15,
+      "operation": "Database",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 9,
+      "column": 5,
+      "operation": "mkdirSync",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 16,
+      "column": 3,
+      "operation": "writeFileSync",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 17,
+      "column": 3,
+      "operation": "renameSync",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 23,
+      "column": 9,
+      "operation": "writeFile",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 24,
+      "column": 9,
+      "operation": "rename",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/fs-utils.ts",
+      "line": 52,
+      "column": 7,
+      "operation": "rmSync",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/rag/src/sqlite-vec-provider.ts",
+      "line": 70,
+      "column": 17,
+      "operation": "Database",
+      "reason": "Reviewed RAG persistence primitive whose database or file root is mandatory and injected from the ASH knowledge group."
+    },
+    {
+      "file": "packages/storage-hub/src/bootstrap/atomic-json.ts",
+      "line": 6,
+      "column": 9,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/bootstrap/atomic-json.ts",
+      "line": 8,
+      "column": 24,
+      "operation": "open",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/bootstrap/atomic-json.ts",
+      "line": 14,
+      "column": 11,
+      "operation": "rm",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/bootstrap/atomic-json.ts",
+      "line": 19,
+      "column": 11,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/bootstrap/atomic-json.ts",
+      "line": 21,
+      "column": 11,
+      "operation": "rm",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/copy-tree.ts",
+      "line": 14,
+      "column": 9,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/copy-tree.ts",
+      "line": 17,
+      "column": 89,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/copy-tree.ts",
+      "line": 18,
+      "column": 45,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/copy-tree.ts",
+      "line": 19,
+      "column": 202,
+      "operation": "copyFile",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 41,
+      "column": 15,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 62,
+      "column": 177,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 62,
+      "column": 232,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 64,
+      "column": 119,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 64,
+      "column": 170,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 161,
+      "column": 47,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 188,
+      "column": 142,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 188,
+      "column": 269,
+      "operation": "rm",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 189,
+      "column": 94,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 190,
+      "column": 132,
+      "operation": "mkdir",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 87,
+      "column": 15,
+      "operation": "mkdir",
+      "reason": "Reviewed transactional remote-import backup parent creation below the bootstrap-derived active ASH volume."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 88,
+      "column": 15,
+      "operation": "mkdir",
+      "reason": "Reviewed transactional remote-import target-parent creation below the bootstrap-derived active ASH volume."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 88,
+      "column": 66,
+      "operation": "rename",
+      "reason": "Reviewed atomic replacement from validated cache staging into a bootstrap-derived active ASH storage group."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 90,
+      "column": 15,
+      "operation": "rm",
+      "reason": "Reviewed removal of a transaction-owned backup only after the imported storage group reopens and validates."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 132,
+      "column": 95,
+      "operation": "mkdir",
+      "reason": "Reviewed batch remote-import backup parent creation below the bootstrap-derived active ASH volume."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts", "line": 132, "column": 146, "operation": "rename",
+      "reason": "Reviewed batch atomic move of a bootstrap-derived active ASH group into its transaction-owned backup."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 133,
+      "column": 17,
+      "operation": "mkdir",
+      "reason": "Reviewed batch remote-import target parent creation below the bootstrap-derived active ASH volume."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 133,
+      "column": 68,
+      "operation": "rename",
+      "reason": "Reviewed batch atomic replacement from validated cache staging into a bootstrap-derived active ASH storage group."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 139,
+      "column": 43,
+      "operation": "rm",
+      "reason": "Reviewed batch cleanup of transaction-owned backups only after every imported storage group validates."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 203,
+      "column": 27,
+      "operation": "rm",
+      "reason": "Reviewed batch rollback removal limited to a transaction-installed active ASH group before exact backup restore."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 203,
+      "column": 85,
+      "operation": "mkdir",
+      "reason": "Reviewed batch rollback parent recreation below the bootstrap-derived active ASH volume before backup restore."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts", "line": 203, "column": 142, "operation": "rename",
+      "reason": "Reviewed rollback restoration of a transaction-owned backup to its bootstrap-derived active ASH group path."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
+      "line": 204,
+      "column": 13,
+      "operation": "rm",
+      "reason": "Reviewed batch cleanup restricted to transaction-owned cache staging below the active ASH volume."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts", "line": 221, "column": 163, "operation": "rm",
+      "reason": "Reviewed completed import cleanup limited to the transaction-owned backup after target validation."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts", "line": 221, "column": 221, "operation": "rm",
+      "reason": "Reviewed completed import cleanup limited to transaction-owned cache staging after target validation."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-lock.ts",
+      "line": 29,
+      "column": 15,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-lock.ts",
+      "line": 31,
+      "column": 39,
+      "operation": "rename",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-lock.ts",
+      "line": 32,
+      "column": 9,
+      "operation": "unlink",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-lock.ts",
+      "line": 45,
+      "column": 26,
+      "operation": "open",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-lock.ts",
+      "line": 53,
+      "column": 153,
+      "operation": "unlink",
+      "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
+    },
+    {
+      "file": "scripts/build/clean-build.js",
+      "line": 78,
+      "column": 9,
+      "operation": "rmSync",
+      "reason": "Reviewed repository build or release maintenance call operating only on explicitly selected repository artifacts."
+    },
+    {
+      "file": "scripts/build/clean-build.js",
+      "line": 80,
+      "column": 9,
+      "operation": "unlinkSync",
+      "reason": "Reviewed repository build or release maintenance call operating only on explicitly selected repository artifacts."
+    },
+    {
+      "file": "scripts/release/update-version.ts",
+      "line": 129,
+      "column": 5,
+      "operation": "writeFileSync",
+      "reason": "Reviewed repository build or release maintenance call operating only on explicitly selected repository artifacts."
+    },
+    {
+      "file": "scripts/security/sensitive-check.ts",
+      "line": 192,
+      "column": 18,
+      "operation": "execSync",
+      "reason": "Reviewed security audit implementation call or detector literal required to inspect repository sources; it is not application persistence."
+    },
+    {
+      "file": "scripts/start-dev.js",
+      "line": 38,
+      "column": 18,
+      "operation": "spawn",
+      "reason": "Reviewed development-tool process launch rooted in the explicitly selected repository workspace; it is not application persistence."
+    },
+    {
+      "file": "scripts/start-dev.js",
+      "line": 45,
+      "column": 19,
+      "operation": "spawn",
+      "reason": "Reviewed development-tool process launch rooted in the explicitly selected repository workspace; it is not application persistence."
+    },
+    {
+      "file": "scripts/start-dev.js",
+      "line": 55,
+      "column": 22,
+      "operation": "spawn",
+      "reason": "Reviewed development-tool process launch rooted in the explicitly selected repository workspace; it is not application persistence."
+    },
+    {
+      "file": "packages/backend/src/core/security/fs-access.ts",
+      "line": 40,
+      "column": 3,
+      "operation": "writeFileSync",
+      "reason": "Reviewed boundary helper whose caller supplies an explicit user path or an ASH-rooted path assembled from validated storage segments."
+    },
+    {
+      "file": "packages/backend/src/core/security/fs-access.ts",
+      "line": 41,
+      "column": 3,
+      "operation": "renameSync",
+      "reason": "Reviewed boundary helper whose caller supplies an explicit user path or an ASH-rooted path assembled from validated storage segments."
+    },
+    {
+      "file": "packages/backend/src/core/storage/config/workspace-store.ts",
+      "line": 24,
+      "column": 3,
+      "operation": "writeFileSync",
+      "reason": "Reviewed boundary helper whose caller supplies an explicit user path or an ASH-rooted path assembled from validated storage segments."
+    },
+    {
+      "file": "packages/backend/src/core/storage/config/workspace-store.ts",
+      "line": 25,
+      "column": 3,
+      "operation": "renameSync",
+      "reason": "Reviewed boundary helper whose caller supplies an explicit user path or an ASH-rooted path assembled from validated storage segments."
+    },
+    {
+      "file": "packages/backend/src/core/storage/conversation/store.ts",
+      "line": 55,
+      "column": 3,
+      "operation": "writeFileSync",
+      "reason": "Reviewed boundary helper whose caller supplies an explicit user path or an ASH-rooted path assembled from validated storage segments."
+    },
+    {
+      "file": "packages/backend/src/core/storage/conversation/store.ts",
+      "line": 56,
+      "column": 3,
+      "operation": "renameSync",
+      "reason": "Reviewed boundary helper whose caller supplies an explicit user path or an ASH-rooted path assembled from validated storage segments."
+    },
+    {
+      "file": "packages/backend/src/core/storage/conversation/store.ts",
+      "line": 192,
+      "column": 7,
+      "operation": "unlinkSync",
+      "reason": "Reviewed boundary helper whose caller supplies an explicit user path or an ASH-rooted path assembled from validated storage segments."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 39,
+      "column": 32,
+      "operation": "mkdirSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 99,
+      "column": 24,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 117,
+      "column": 120,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 214,
+      "column": 43,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 217,
+      "column": 90,
+      "operation": "mkdirSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 223,
+      "column": 80,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/cross-group-bundle.ts",
+      "line": 224,
+      "column": 45,
+      "operation": "rmSync",
+      "reason": "Reviewed 2PC and same-secrets-volume legacy quarantine primitive with contained roots and sanitized cross-volume diagnostics only."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 30,
+      "column": 14,
+      "operation": "openSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 45,
+      "column": 123,
+      "operation": "openSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 46,
+      "column": 9,
+      "operation": "writeFileSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 48,
+      "column": 11,
+      "operation": "renameSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 17,
+      "column": 3,
+      "operation": "mkdirSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 19,
+      "column": 112,
+      "operation": "renameSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 20,
+      "column": 88,
+      "operation": "rmSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 22,
+      "column": 39,
+      "operation": "copyFileSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/durable-atomic.ts",
+      "line": 22,
+      "column": 134,
+      "operation": "openSync",
+      "reason": "Reviewed durable filesystem primitive used only after caller containment validation; it fsyncs files and affected directory parents."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 28,
+      "column": 16,
+      "operation": "openSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 28,
+      "column": 39,
+      "operation": "writeFileSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 33,
+      "column": 146,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 40,
+      "column": 11,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 44,
+      "column": 74,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 53,
+      "column": 16,
+      "operation": "openSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 66,
+      "column": 11,
+      "operation": "writeFileSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 66,
+      "column": 106,
+      "operation": "unlinkSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-upload-storage.ts",
+      "line": 50,
+      "column": 39,
+      "operation": "createWriteStream",
+      "reason": "Reviewed owned RAG blob/orphan lifecycle under injected ASH cache and knowledge roots."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 14,
+      "column": 55,
+      "operation": "execFileSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    {
+      "file": "packages/backend/src/storage/file-lock.ts",
+      "line": 16,
+      "column": 19,
+      "operation": "execFileSync",
+      "reason": "Reviewed shared lock protocol IO/process identity inspection; it cannot select application persistence targets."
+    },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 29, "column": 19, "operation": "spawn", "reason": "Reviewed release smoke tool process boundary restricted to pnpm, tar, Node ABI restore, and the freshly staged packaged executable." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 41, "column": 9, "operation": "copyFile", "reason": "Reviewed byte-exact snapshot of the Node ABI native module before the Electron-only rebuild." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 49, "column": 9, "operation": "copyFile", "reason": "Reviewed byte-exact restoration of the caller Node ABI native module in the packaging finally boundary." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 50, "column": 9, "operation": "rm", "reason": "Reviewed cleanup of the per-run native ABI snapshot after restoration." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 72, "column": 11, "operation": "mkdir", "reason": "Reviewed release smoke staging directory creation below the explicit temporary packaged-app output only." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 77, "column": 13, "operation": "cp", "reason": "Reviewed release smoke copy into an ephemeral package staging tree, never an application persistence root." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 94, "column": 11, "operation": "mkdir", "reason": "Reviewed release smoke provider package destination inside the ephemeral staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 98, "column": 11, "operation": "cp", "reason": "Reviewed release smoke provider package copy into the ephemeral staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 103, "column": 11, "operation": "mkdir", "reason": "Reviewed native package destination inside the ephemeral staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 104, "column": 11, "operation": "cp", "reason": "Reviewed native package copy into the ephemeral staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 109, "column": 9, "operation": "mkdir", "reason": "Reviewed release smoke creation of the explicit win-unpacked build artifact directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 112, "column": 11, "operation": "cp", "reason": "Reviewed release smoke Electron runtime copy into the explicit win-unpacked build artifact directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 122, "column": 9, "operation": "rename", "reason": "Reviewed release smoke executable rename inside the explicit win-unpacked build artifact directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 177, "column": 9, "operation": "writeFile", "reason": "Reviewed release smoke staged backend manifest rewrite inside an ephemeral package staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 185, "column": 11, "operation": "rm", "reason": "Reviewed release smoke cleanup limited to the explicit Desktop release build artifact directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 188, "column": 11, "operation": "rm", "reason": "Reviewed release smoke cleanup limited to its ephemeral package staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 189, "column": 11, "operation": "mkdir", "reason": "Reviewed release smoke creation of its ephemeral package staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 191, "column": 7, "operation": "cp", "reason": "Reviewed release smoke copy of compiled Desktop artifacts into its ephemeral package staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 192, "column": 7, "operation": "cp", "reason": "Reviewed release smoke copy of the Desktop manifest into its ephemeral package staging tree." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 201, "column": 11, "operation": "mkdir", "reason": "Reviewed release smoke creation of the packaged resources directory under win-unpacked only." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 203, "column": 7, "operation": "cp", "reason": "Reviewed release smoke frontend artifact copy into the explicit packaged resources directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 204, "column": 7, "operation": "cp", "reason": "Reviewed release smoke backend artifact copy into the explicit packaged resources directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 205, "column": 7, "operation": "cp", "reason": "Reviewed release smoke storage-hub artifact copy into the explicit packaged resources directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 206, "column": 7, "operation": "cp", "reason": "Reviewed release smoke RAG artifact copy into the explicit packaged resources directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 207, "column": 7, "operation": "cp", "reason": "Reviewed release smoke read-only bundled extension seed copy into the explicit packaged resources artifact." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 230, "column": 24, "operation": "mkdtemp", "reason": "Reviewed release smoke marker directory creation under the operating system temporary directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 243, "column": 27, "operation": "rm", "reason": "Reviewed release smoke marker cleanup restricted to its operating-system temporary directory." },
+    { "file": "packages/desktop/scripts/package-smoke.cjs", "line": 244, "column": 53, "operation": "rm", "reason": "Reviewed release smoke final cleanup restricted to its ephemeral package staging tree." },
+    { "file": "packages/desktop/src/main.ts", "line": 32, "column": 27, "operation": "writeFile", "reason": "Reviewed package-smoke marker write to the test harness temporary file passed only through MANTA_PACKAGE_SMOKE_FILE." },
+    { "file": "packages/desktop/src/main.ts", "line": 43, "column": 61, "operation": "mkdir", "reason": "Reviewed package-smoke composition fixture creation below the harness-owned operating-system temporary marker directory." },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 43, "column": 129, "operation": "mkdir",
+      "reason": "Reviewed ASH cache staging directory creation under the resolver-owned cache group with every Agent-controlled knowledge-base segment validated."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 48, "column": 41, "operation": "createWriteStream",
+      "reason": "Reviewed ASH cache staging byte write beneath a resolver-owned cache group using validated content-addressed temporary names."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 48, "column": 112, "operation": "rm",
+      "reason": "Reviewed ASH cache staging failure cleanup limited to the resolver-owned validated temporary upload object."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 49, "column": 29, "operation": "rm",
+      "reason": "Reviewed ASH cache staging empty-upload cleanup limited to the resolver-owned validated temporary upload object."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 53, "column": 17, "operation": "rename",
+      "reason": "Reviewed ASH cache staging atomic commit between resolver-owned validated temporary and content-addressed cache paths."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 53, "column": 123, "operation": "rm",
+      "reason": "Reviewed ASH cache staging failed atomic-commit cleanup limited to the resolver-owned validated temporary object."
+    },
+    {
+      "file": "packages/backend/src/storage/rag-staging-store.ts", "line": 53, "column": 176, "operation": "rm",
+      "reason": "Reviewed ASH cache staging duplicate-content cleanup limited to the resolver-owned validated temporary object."
+    },
+    {
+      "file": "scripts/verify/ash-phase1.ts", "line": 14, "column": 18, "operation": "spawnSync",
+      "reason": "Reviewed CI verification orchestrator which launches only explicit repository test and audit commands; it does not select application persistence paths."
+    },
+    {
+      "file": "scripts/verify/ash-phase2.ts", "line": 14, "column": 18, "operation": "spawnSync",
+      "reason": "Reviewed Phase 2 verification orchestrator which launches fixed repository tests and the storage audit; it does not select application persistence paths."
+    },
+    {
+      "file": "scripts/verify/ash-phase3.ts", "line": 18, "column": 18, "operation": "spawnSync",
+      "reason": "Reviewed Phase 3 verification orchestrator which launches fixed repository tests, typechecks, and the storage audit; it does not select application persistence paths."
+    },
+    {
+      "file": "scripts/verify/ash-phase4.ts", "line": 40, "column": 18, "operation": "spawnSync",
+      "reason": "Reviewed Phase 4 verification orchestrator which launches only fixed repository acceptance commands and does not execute an Agent harness or select application persistence paths."
+    },
+    {
+      "file": "packages/backend/src/storage/agent-storage.ts", "line": 59, "column": 15, "operation": "mkdir",
+      "reason": "Reviewed ordinary-directory creation below injected routed extensions or secrets group roots after snapshotting and revalidating every ancestor identity."
+    },
+    {
+      "file": "packages/backend/src/storage/agent-storage.ts", "line": 66, "column": 24, "operation": "open",
+      "reason": "Reviewed no-follow ordinary-file read below injected routed extensions or secrets group roots after snapshotting and revalidating every ancestor identity."
+    },
+    {
+      "file": "packages/backend/src/storage/agent-storage.ts", "line": 79, "column": 24, "operation": "open",
+      "reason": "Reviewed no-follow parent-directory handle used to durably create ordinary files below injected routed extensions or secrets group roots."
+    },
+    {
+      "file": "packages/backend/src/storage/agent-storage.ts", "line": 82, "column": 26, "operation": "open",
+      "reason": "Reviewed exclusive durable ordinary-file creation and parent fsync below injected routed extensions or secrets group roots using validated fixed namespaces and opaque IDs."
+    },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 17, "column": 3, "operation": "mkdirSync", "reason": "Reviewed volume-local CAS lease directory creation below the injected and validated ASH volume root." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 20, "column": 22, "operation": "openSync", "reason": "Reviewed exclusive volume-local CAS lease acquisition below the injected and validated ASH volume root." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 20, "column": 48, "operation": "writeFileSync", "reason": "Reviewed lease owner metadata write to the exclusively created volume-local CAS lock file." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 21, "column": 80, "operation": "unlinkSync", "reason": "Reviewed cleanup of only the current process volume-local CAS lock after failed acquisition setup." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 24, "column": 84, "operation": "unlinkSync", "reason": "Reviewed release of only the current process volume-local CAS lock after the protected operation." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 47, "column": 11, "operation": "mkdir", "reason": "Reviewed asynchronous volume-local CAS lease directory creation below the injected ASH volume root." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 51, "column": 28, "operation": "open", "reason": "Reviewed asynchronous exclusive CAS lock acquisition below the injected ASH volume root." },
+    { "file": "packages/storage-hub/src/content-store/content-store-lease.ts", "line": 57, "column": 47, "operation": "unlink", "reason": "Reviewed asynchronous release of only the current volume-local CAS lock file." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 65, "column": 139, "operation": "rm", "reason": "Reviewed removal of a relived quarantine candidate record below the locked volume-local CAS metadata root." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 74, "column": 17, "operation": "writeFile", "reason": "Reviewed durable staging write of a verified GC candidate record below the locked volume-local quarantine root." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 74, "column": 92, "operation": "rename", "reason": "Reviewed atomic publish of a verified GC candidate record within the locked volume-local quarantine root." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 76, "column": 95, "operation": "rm", "reason": "Reviewed cleanup of an owned GC candidate staging record after a failed atomic publish." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 95, "column": 15, "operation": "rm", "reason": "Reviewed removal of verified candidate metadata after unchanged object validation under the volume CAS lease." },
+    { "file": "packages/storage-hub/src/content-store/garbage-collector.ts", "line": 98, "column": 15, "operation": "unlink", "reason": "Reviewed deletion of a twice-scanned unchanged unreferenced CAS object under the volume CAS lease." },
+    {
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 39, "column": 19, "operation": "mkdir",
+      "reason": "Reviewed immutable CAS fanout directory under the explicit volume-local .ash object namespace."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 101, "column": 13, "operation": "copyFile",
+      "reason": "Reviewed atomic CAS ingestion staging copy under the verified volume-local object namespace."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 108, "column": 23, "operation": "rm",
+      "reason": "Reviewed cleanup of a random CAS object staging file below the verified object namespace."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 120, "column": 13, "operation": "writeFile",
+      "reason": "Reviewed atomic byte-ingest staging write below the verified volume-local CAS namespace."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/object-store.ts", "line": 124, "column": 23, "operation": "unlink",
+      "reason": "Reviewed cleanup of a random CAS byte-ingest staging file."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 32, "column": 17, "operation": "writeFile",
+      "reason": "Reviewed atomic asset-manifest staging write below the verified per-volume metadata namespace."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/manifest-store.ts", "line": 32, "column": 178, "operation": "rm",
+      "reason": "Reviewed cleanup of an asset-manifest staging file owned by ASH."
+    },
+    {
+      "file": "packages/backend/src/storage/content-assets.ts", "line": 141, "column": 17, "operation": "rename",
+      "reason": "Reviewed retirement of a verified legacy knowledge document into its transaction-specific same-volume backup."
+    },
+    {
+      "file": "packages/backend/src/storage/content-assets.ts", "line": 144, "column": 53, "operation": "rename",
+      "reason": "Reviewed rollback restoring a retired legacy document to its validated original knowledge path."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 22, "column": 52, "operation": "copyFile",
+      "reason": "Reviewed reflink attempt from a verified local immutable CAS object to an ASH-controlled asset destination."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 25, "column": 51, "operation": "copyFile",
+      "reason": "Reviewed verified copy fallback from a local immutable CAS object to an ASH-controlled asset destination."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 25, "column": 13, "operation": "rm",
+      "reason": "Reviewed cleanup of a failed reflink staging file before the verified copy fallback."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 28, "column": 204, "operation": "rename",
+      "reason": "Reviewed explicit approved immutable asset replacement after expected-hash revalidation."
+    },
+    {
+      "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 32, "column": 21, "operation": "rm",
+      "reason": "Reviewed cleanup of owned materialization staging files."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 23, "column": 11, "operation": "mkdir",
+      "reason": "Reviewed creation of the privileged caller-authorized adapter root; its configured parent prefix is trusted, while the created root is immediately lstat-verified as an ordinary directory and durably synced."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 31, "column": 19, "operation": "mkdir",
+      "reason": "Reviewed one-level durable directory creation after every existing ancestor was checked as an ordinary directory below an injected ASH or approved external Agent root."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 38, "column": 166, "operation": "open",
+      "reason": "Reviewed exclusive staging-file creation beside an approved adapter journal or native restore target after linked-ancestor validation."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 39, "column": 141, "operation": "rm",
+      "reason": "Reviewed failure cleanup restricted to the random exclusively-created adapter staging file."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 46, "column": 11, "operation": "rename",
+      "reason": "Reviewed atomic publication of a synced adapter journal staging file within its validated ASH state directory."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 47, "column": 27, "operation": "rm",
+      "reason": "Reviewed failed-publication cleanup restricted to the random adapter staging file."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 53, "column": 20, "operation": "open",
+      "reason": "Reviewed exclusive no-overwrite backup creation below the validated operation-specific ASH backup directory."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 55, "column": 62, "operation": "rm",
+      "reason": "Reviewed cleanup only when this call successfully created and still owns the exclusive adapter backup target."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 61, "column": 20, "operation": "open",
+      "reason": "Reviewed exclusive publication of a random nonce claim at an approved create target after its digest and fixed byte count were durably journaled."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 64, "column": 62, "operation": "rm",
+      "reason": "Reviewed failure cleanup restricted to a create claim while its exclusive creation handle remains owned by the coordinator."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 77, "column": 9, "operation": "rename",
+      "reason": "Reviewed same-directory atomic quarantine rename after the coordinator verified the approved create-claim file identity."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 81, "column": 9, "operation": "unlink",
+      "reason": "Reviewed removal of a quarantined create claim only after a no-follow handle revalidated its durable identity and required final evidence."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 90, "column": 37, "operation": "rename",
+      "reason": "Reviewed atomic rollback restore from a synced sibling staging file after repeated approved-native-path validation."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 90, "column": 145, "operation": "rm",
+      "reason": "Reviewed rollback staging cleanup restricted to the random exclusively-created sibling file."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 520, "column": 90, "operation": "open",
+      "reason": "Reviewed no-follow ordinary-file reads restricted to validated adapter native, journal, or backup paths."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 68, "column": 9, "operation": "mkdir",
+      "reason": "Reviewed exclusive empty directory-claim creation after prepared ownership evidence was durably journaled for an approved external Agent target."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 72, "column": 9, "operation": "rmdir",
+      "reason": "Reviewed empty-only removal of an approved external Agent directory claim after its durable marker and file identity were revalidated."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/codex/native-io.ts", "line": 7, "column": 24, "operation": "open",
+      "reason": "Reviewed read-only no-follow access to a file inside the detected and approved Codex home or user-skills native root."
+    },
+    {
+      "file": "packages/storage-hub/src/adapters/codex/native-io.ts", "line": 14, "column": 24, "operation": "open",
+      "reason": "Reviewed no-follow writable handle access restricted to a coordinator-owned approved Codex projection claim with before-and-after identity verification."
+    }
+  ],
+  "literals": [
+    {
+      "file": "packages/backend/src/storage/extension-seeds.ts",
+      "line": 59,
+      "column": 38,
+      "operation": "repository runtime root",
+      "reason": "Reviewed read-only bundled extension seed import from the repository's historical .manta source tree into the ASH extensions group."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-seeds.ts",
+      "line": 60,
+      "column": 38,
+      "operation": "repository runtime root",
+      "reason": "Reviewed read-only bundled extension seed import from the repository's historical .manta source tree into the ASH extensions group."
+    },
+    {
+      "file": "packages/backend/src/storage/extension-seeds.ts",
+      "line": 61,
+      "column": 38,
+      "operation": "repository runtime root",
+      "reason": "Reviewed read-only bundled extension seed import from the repository's historical .manta source tree into the ASH extensions group."
+    },
+    {
+      "file": "packages/desktop/scripts/package-smoke.cjs",
+      "line": 21,
+      "column": 132,
+      "operation": "repository runtime root",
+      "reason": "Reviewed release packaging resource assertion for the bundled repository .manta seed directory; it is not application persistence."
+    },
+    {
+      "file": "packages/desktop/scripts/package-smoke.cjs",
+      "line": 207,
+      "column": 30,
+      "operation": "repository runtime root",
+      "reason": "Reviewed release smoke read-only bundled extension seed source copied only into the explicit packaged resources artifact."
+    },
+    {
+      "file": "packages/desktop/scripts/package-smoke.cjs",
+      "line": 207,
+      "column": 57,
+      "operation": "repository runtime root",
+      "reason": "Reviewed release smoke read-only bundled extension seed source copied only into the explicit packaged resources artifact."
+    },
+    {
+      "file": "scripts/security/ash-storage-audit.ts",
+      "line": 54,
+      "column": 26,
+      "operation": "legacy data root",
+      "reason": "Reviewed security audit implementation call or detector literal required to inspect repository sources; it is not application persistence."
+    },
+    {
+      "file": "scripts/security/ash-storage-audit.ts",
+      "line": 56,
+      "column": 28,
+      "operation": "cwd MCP token root",
+      "reason": "Reviewed security audit implementation call or detector literal required to inspect repository sources; it is not application persistence."
+    }
+  ]
+}

@@ -105,7 +105,7 @@ export function getServerByName(name: string): MCPServerEntry | undefined {
  * 加载 MCP 工具可见性配置。
  *
  * 从默认配置开始，用户的配置会覆盖默认值。
- * 配置文件路径: ~/.manta-data/mcp-visibility.json
+ * Configuration path: ASH config/mcp/visibility.json
  */
 export function getMCPToolVisibility(): MCPToolVisibility {
   // TODO: 从配置文件加载用户自定义的 visibility

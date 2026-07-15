@@ -9,7 +9,7 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
+import { resolveStoragePath } from '../../../storage/path-routing'
 import { isApproved, requestAccess, listPendingRequests } from '@security/fs-access'
 import { getSecurityContext } from '../../security-context'
 
@@ -162,19 +162,19 @@ export interface TodoItem {
   priority: 'low' | 'medium' | 'high'
 }
 
-const TODO_FILE = path.join(os.homedir(), '.manta-data', 'todos.json')
+const todoFile = () => resolveStoragePath('work', 'todos.json')
 
 export function readTodos(): TodoItem[] {
   try {
-    if (fs.existsSync(TODO_FILE)) {
-      return JSON.parse(fs.readFileSync(TODO_FILE, 'utf-8'))
+    if (fs.existsSync(todoFile())) {
+      return JSON.parse(fs.readFileSync(todoFile(), 'utf-8'))
     }
   } catch { /* ignore */ }
   return []
 }
 
 export function writeTodos(todos: TodoItem[]): void {
-  const dir = path.dirname(TODO_FILE)
+  const dir = path.dirname(todoFile())
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(TODO_FILE, JSON.stringify(todos, null, 2), 'utf-8')
+  fs.writeFileSync(todoFile(), JSON.stringify(todos, null, 2), 'utf-8')
 }

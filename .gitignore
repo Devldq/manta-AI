@@ -43,6 +43,10 @@ next-env.d.ts
 
 # Turborepo
 .turbo/
+coverage/
+
+# Electron Builder smoke/package output (the application package itself is tracked)
+/packages/desktop/release*/
 
 # MCP config (contains GitHub token)
 .mcp.json

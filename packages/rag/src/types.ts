@@ -13,6 +13,9 @@ export interface DocumentMetadata {
   chunkCount?: number
   status: 'pending' | 'processing' | 'ready' | 'error'
   error?: string
+  /** Path relative to the knowledge group root for the persisted original. */
+  sourcePath?: string
+  sourceSha256?: string
 }
 
 /** 文档块 */
@@ -45,6 +48,10 @@ export interface RAGProvider {
   /** 关键词检索 */
   search(knowledgeBaseId: string, query: string, options?: SearchOptions): Promise<RetrievalResult[]>
   getStats(knowledgeBaseId: string): Promise<KnowledgeBaseStats>
+  checkpoint(): Promise<void>
+  integrityCheck(): Promise<{ ok: boolean; error?: string }>
+  close(): Promise<void>
+  reopen(storageDir: string): Promise<void>
 }
 
 /** 知识库配置（仅含存储/检索参数，不含 embedding） */

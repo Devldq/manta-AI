@@ -4,13 +4,13 @@
  */
 
 import { useEffect } from 'react'
-import { applyTheme, loadThemeFromStorage, getThemeById, getThemeConfig, DESIGN_THEMES } from '@/lib/theme-presets'
+import { applyTheme, loadThemeFromStorage, loadThemeFromAsh, getThemeById, getThemeConfig, DESIGN_THEMES } from '@/lib/theme-presets'
 
 export function ThemeInitializer() {
   useEffect(() => {
     // AI: 应用存储的主题，或使用默认 CLI Pixel 主题
-    function initTheme() {
-      const saved = loadThemeFromStorage()
+    async function initTheme() {
+      const saved = await loadThemeFromAsh()
 
       if (saved) {
         // AI: 应用已保存的主题配置
@@ -26,13 +26,13 @@ export function ThemeInitializer() {
       }
     }
 
-    initTheme()
+    void initTheme()
 
     // AI: 监听系统颜色模式变化（当存储模式为 system 时响应）
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     function handleSystemModeChange() {
-      const storedMode = localStorage.getItem('manta:color-mode')
-      if (storedMode === 'system' || !storedMode) {
+      const storedMode = loadThemeFromStorage()?.mode
+      if (!storedMode) {
         // AI: 重新加载当前主题，用新的系统模式
         const saved = loadThemeFromStorage()
         const newMode = mediaQuery.matches ? 'dark' : 'light'

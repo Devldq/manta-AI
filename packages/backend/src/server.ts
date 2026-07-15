@@ -1,180 +1,164 @@
-import Fastify from 'fastify'
-import cors from '@fastify/cors'
-import { existsSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import type { AddressInfo } from 'node:net'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { dirname, resolve } from 'node:path'
+import { buildApp, type BuildAppOptions } from './app'
+import type { BackendStorageRuntime, StorageHealthResult } from './storage/runtime'
+import { acquireClaudeMarketplaceScheduler } from './core/storage/plugin/marketplace'
+import { acquireLogScheduler } from './core/observability/log/index'
+import type { FastifyInstance } from 'fastify'
+import type { StorageApiContext } from './routes/storage'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+export { createBackendStorageComposition } from './storage/runtime'
 
-// ─── 配置 ───────────────────────────────────────────────────
-const PORT = parseInt(process.env.MANTA_PORT ?? '3001', 10)
-const HOST = process.env.MANTA_HOST ?? '0.0.0.0'
-const IS_DEV = process.env.NODE_ENV !== 'production'
-// 计算项目根目录（无论 dev/prod，始终指向 monorepo 根目录）
-const WORKSPACE_ROOT = process.env.MANTA_WORKSPACE_ROOT || resolve(__dirname, '../../..')
-process.env.MANTA_WORKSPACE_ROOT = WORKSPACE_ROOT
-const DATA_DIR = process.env.MANTA_DATA_DIR ?? resolve(process.env.HOME ?? '~', '.manta-data')
-
-// ─── 创建 Fastify 实例 ──────────────────────────────────────
-const app = Fastify({
-  logger: {
-    level: IS_DEV ? 'info' : 'warn',
-    transport: IS_DEV
-      ? { target: 'pino-pretty', options: { colorize: true } }
-      : undefined,
-  },
-})
-
-// ─── CORS 插件 ──────────────────────────────────────────────
-await app.register(cors, {
-  origin: IS_DEV
-    ? ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001']
-    : false,
-  credentials: true,
-})
-
-// ─── 健康检查 ───────────────────────────────────────────────
-app.get('/api/health', async () => {
-  return {
-    success: true,
-    data: {
-      status: 'ok',
-      version: '2.0.0',
-      timestamp: new Date().toISOString(),
-      dataDir: DATA_DIR,
-    },
-  }
-})
-
-// ─── 静态文件服务（Docker 模式） ─────────────────────────────
-if (!IS_DEV) {
-  try {
-    const { default: fastifyStatic } = await import('@fastify/static')
-    const frontendDist = resolve(__dirname, '../../frontend/dist')
-
-    if (existsSync(frontendDist)) {
-      await app.register(fastifyStatic, {
-        root: frontendDist,
-        prefix: '/',
-        wildcard: false,
-      })
-
-      // SPA fallback: 所有非 API 路由返回 index.html
-      app.setNotFoundHandler((request, reply) => {
-        if (!request.url.startsWith('/api/')) {
-          return reply.sendFile('index.html')
-        }
-        reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } })
-      })
-
-      app.log.info(`Static files served from: ${frontendDist}`)
-    }
-  } catch (err) {
-    app.log.warn('Failed to load static file serving: %s', err instanceof Error ? err.message : String(err))
-  }
+export interface ServerStartupHooks {
+  cleanupStaleRag(): void | Promise<void>
+  initializeSkills(): void | Promise<void>
 }
 
-// ─── API 路由注册 ────────────────────────────────────────────
-import { agentRoutes } from './routes/agents.js'
-import { conversationRoutes } from './routes/conversations.js'
-import { conversationDetailRoutes } from './routes/conversation-detail.js'
-import { taskRoutes } from './routes/tasks.js'
-import { appRoutes } from './routes/apps.js'
-import { workspaceRoutes } from './routes/workspaces.js'
-import { workspaceDetailRoutes } from './routes/workspace-detail.js'
-import { configRoutes } from './routes/config.js'
-import { configWorkspaceRoutes } from './routes/config-workspace.js'
-import { toolRoutes } from './routes/tools.js'
-import { toolsTestRoutes } from './routes/tools-test.js'
-import { chatConfigRoutes } from './routes/chat.js'
-import { mcpRoutes } from './routes/mcp.js'
-import { logRoutes } from './routes/logs.js'
-import { fsRoutes } from './routes/fs.js'
-import { metricsRoutes } from './routes/metrics.js'
-import { pluginRoutes } from './routes/plugins.js'
-import { ragRoutes } from './routes/rag.js'
-import { readmeRoutes } from './routes/readme.js'
-import { runnerRoutes } from './routes/runners.js'
-import { workflowRoutes } from './routes/workflow.js'
-import { skillRoutes } from './routes/skills.js'
-import { initializeSkills } from './core/storage/skill/store.js'
-import { startClaudeMarketplaceScheduler } from './core/storage/plugin/marketplace.js'
-import { default as auditRoutes } from './routes/audit.js'
-import { default as approvalRoutes } from './routes/approval.js'
-import { default as approvalSSERoutes } from './routes/approval-sse.js'
+export type ManagedBackendStorage = Omit<BackendStorageRuntime, 'drivers' | 'diagnosticsWriter' | 'marketplaceScheduler' | 'processRegistry' | 'runInStorageContext' | 'legacyRecoveryWarnings' | 'recoverStartup'> &
+  Partial<Pick<BackendStorageRuntime, 'diagnosticsWriter' | 'marketplaceScheduler' | 'runInStorageContext' | 'recoverStartup'>>
 
-await app.register(agentRoutes)
-await app.register(conversationRoutes)
-await app.register(conversationDetailRoutes)
-await app.register(taskRoutes)
-await app.register(appRoutes)
-await app.register(workspaceRoutes)
-await app.register(workspaceDetailRoutes)
-await app.register(configRoutes)
-await app.register(configWorkspaceRoutes)
-await app.register(toolRoutes)
-await app.register(toolsTestRoutes)
-await app.register(chatConfigRoutes)
-await app.register(mcpRoutes)
-await app.register(logRoutes)
-await app.register(fsRoutes)
-await app.register(metricsRoutes)
-await app.register(pluginRoutes)
-await app.register(ragRoutes)
-await app.register(readmeRoutes)
-await app.register(runnerRoutes)
-await app.register(workflowRoutes)
-await app.register(skillRoutes)
-await app.register(auditRoutes)
-await app.register(approvalRoutes)
-await app.register(approvalSSERoutes)
+export interface StartServerOptions {
+  storage: ManagedBackendStorage
+  port?: number
+  host?: string
+  startSchedulers?: boolean
+  registerRoutes?: boolean
+  startup?: false | ServerStartupHooks
+  appFactory?: (options: BuildAppOptions) => Promise<FastifyInstance>
+  schedulerAcquirers?: Array<(log: FastifyInstance['log']) => () => void | Promise<void>>
+  bundledSeedRoot?: string
+  storageApi?: StorageApiContext
+  frontendDist?: string
+  isDev?: boolean
+}
 
-// ─── 启动服务器 ─────────────────────────────────────────────
-async function start() {
+export interface MantaServerHandle {
+  readonly port: number
+  quiesce(): Promise<void>
+  close(): Promise<void>
+  healthCheck(): Promise<StorageHealthResult>
+}
+
+export async function initializeBundledExtensionsForStartup<T>(options: {
+  seed(): Promise<void>
+  loadRuntime(): Promise<{ scanPlugins(): T[]; registerPlugin(scanned: T): void; initializeSkills(): unknown | Promise<unknown> }>
+}): Promise<void> {
+  await options.seed()
+  const runtime = await options.loadRuntime()
+  for (const scanned of runtime.scanPlugins()) runtime.registerPlugin(scanned)
+  await runtime.initializeSkills()
+}
+
+export async function startServer(options: StartServerOptions): Promise<MantaServerHandle> {
+  let app: FastifyInstance | undefined
+  const schedulerDisposers: Array<() => void | Promise<void>> = []
+  const startup = options.startup === false ? undefined : options.startup ?? defaultStartupHooks(options.bundledSeedRoot)
+  const runInStorageContext = <T>(operation: () => T): T => options.storage.runInStorageContext
+    ? options.storage.runInStorageContext(operation)
+    : operation()
   try {
-    // 清理上次未完成的文档处理任务（stuck in processing）
-    try {
+    await runInStorageContext(() => options.storage.recoverStartup?.())
+    app = await runInStorageContext(() => (options.appFactory ?? buildApp)({ storage: options.storage, registerRoutes: options.registerRoutes, storageApi: options.storageApi, frontendDist: options.frontendDist, isDev: options.isDev }))
+    await app.listen({ port: options.port ?? 0, host: options.host ?? '127.0.0.1' })
+    if (options.startSchedulers !== false) {
+      const acquirers = options.schedulerAcquirers ?? [
+        (log) => options.storage.marketplaceScheduler?.acquire(log) ?? acquireClaudeMarketplaceScheduler(log),
+        () => acquireLogScheduler(),
+      ]
+      for (const acquire of acquirers) schedulerDisposers.push(acquire(app.log))
+    }
+    if (startup) {
+      await runInStorageContext(() => startup.cleanupStaleRag())
+      await runInStorageContext(() => startup.initializeSkills())
+    }
+  } catch (error) {
+    const cleanupErrors: unknown[] = []
+    for (const dispose of schedulerDisposers.splice(0)) { try { await dispose() } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
+    if (app) { try { await runInStorageContext(() => app!.close()) } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
+    try { await runInStorageContext(() => options.storage.close()) } catch (cleanupError) { cleanupErrors.push(cleanupError) }
+    if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], 'Server startup failed and cleanup was incomplete')
+    throw error
+  }
+  const address = app.server.address() as AddressInfo
+  let quiesced = false
+  let closed = false
+  let closePromise: Promise<void> | undefined
+  const quiesce = async () => {
+    if (quiesced) return
+    quiesced = true
+    app.quiesceWrites()
+    await runInStorageContext(() => options.storage.quiesce())
+  }
+  const handle: MantaServerHandle = {
+    port: address.port,
+    quiesce,
+    close() {
+      closePromise ??= (async () => {
+        closed = true
+        const errors: unknown[] = []
+        const attempt = async (operation: () => void | Promise<void>) => {
+          try { await operation() } catch (error) { errors.push(error) }
+        }
+        await attempt(quiesce)
+        await attempt(() => runInStorageContext(() => options.storage.checkpoint()))
+        for (const dispose of schedulerDisposers.splice(0)) await attempt(dispose)
+        await attempt(() => runInStorageContext(() => app.close()))
+        await attempt(() => runInStorageContext(() => options.storage.close()))
+        if (errors.length === 1) throw errors[0]
+        if (errors.length > 1) throw new AggregateError(errors, 'Server shutdown failed')
+      })()
+      return closePromise
+    },
+    async healthCheck() {
+      if (closed) return { ok: false, status: 'unhealthy', warnings: [], error: 'closed' }
+      return options.storage.healthCheck()
+    },
+  }
+  return handle
+}
+
+function defaultStartupHooks(bundledSeedRoot?: string): ServerStartupHooks {
+  return {
+    async cleanupStaleRag() {
       const { getSQLiteVecProvider } = await import('@manta/rag')
       const provider = getSQLiteVecProvider()
       await provider.initialize()
-      const staleDocs = await provider.cleanupStaleDocuments()
-      if (staleDocs.length > 0) {
-        app.log.info(
-          `[RAG Startup] 清理了 ${staleDocs.length} 个中断的文档处理任务: ` +
-          staleDocs.map((d) => `${d.docName}(${d.kbId})`).join(', ')
-        )
-      }
-    } catch (cleanupErr) {
-      app.log.warn(`[RAG Startup] 清理中断文档失败（不影响启动）: ${cleanupErr}`)
-    }
-
-    // 初始化：扫描并加载 skills/ 目录中的所有 SKILL.md
-    const skillResult = initializeSkills()
-    app.log.info(
-      `[Skill Init] 扫描完成: 总计 ${skillResult.total}, 新导入 ${skillResult.imported}, 同步更新 ${skillResult.updated}` +
-      (skillResult.errors.length ? `, 错误 ${skillResult.errors.length}` : '')
-    )
-
-    // 初始化 Claude 插件市场缓存，并定时从 claude.com/plugins 刷新。
-    startClaudeMarketplaceScheduler(app.log)
-
-    await app.listen({ port: PORT, host: HOST })
-    app.log.info(`Manta Backend running at http://${HOST}:${PORT}`)
-    app.log.info(`Data directory: ${DATA_DIR}`)
-  } catch (err) {
-    app.log.error(err)
-    process.exit(1)
+      await provider.cleanupStaleDocuments()
+    },
+    async initializeSkills() {
+      const { seedBundledExtensions } = await import('./storage/extension-seeds.js')
+      const { resolveStoragePath } = await import('./storage/path-routing.js')
+      const seedRoot = bundledSeedRoot ?? process.env.MANTA_BUNDLED_ASSETS_DIR ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
+      await initializeBundledExtensionsForStartup({
+        seed: () => seedBundledExtensions({ extensionsRoot: resolveStoragePath('extensions'), seedRoot, version: process.env.MANTA_BUNDLED_ASSETS_VERSION ?? '2.0.0' }),
+        async loadRuntime() {
+          const [{ scanPluginFiles }, { registerPlugin }, { initializeSkills }] = await Promise.all([
+            import('./core/storage/plugin/scanner.js'), import('./core/storage/plugin/store.js'), import('./core/storage/skill/store.js'),
+          ])
+          return { scanPlugins: scanPluginFiles, registerPlugin: (scanned: ReturnType<typeof scanPluginFiles>[number]) => registerPlugin(scanned.manifest, scanned.dirPath), initializeSkills }
+        },
+      })
+    },
   }
 }
 
-// ─── 优雅关闭 ───────────────────────────────────────────────
-const shutdown = async (signal: string) => {
-  app.log.info(`Received ${signal}, shutting down...`)
-  await app.close()
-  process.exit(0)
+async function runCli(): Promise<void> {
+  const bootstrapPath = process.env.MANTA_BOOTSTRAP_PATH
+  if (!bootstrapPath) throw new Error('MANTA_BOOTSTRAP_PATH is required for headless startup')
+  const { BootstrapStore } = await import('@manta/storage-hub')
+  const { createBackendStorageComposition } = await import('./storage/runtime.js')
+  const { runtime } = await createBackendStorageComposition(new BootstrapStore(bootstrapPath))
+  const handle = await startServer({
+    storage: runtime,
+    port: Number.parseInt(process.env.MANTA_PORT ?? '3001', 10),
+    host: process.env.MANTA_HOST ?? '127.0.0.1',
+  })
+  const shutdown = async () => { await handle.close() }
+  process.once('SIGINT', shutdown)
+  process.once('SIGTERM', shutdown)
 }
 
-process.on('SIGINT', () => shutdown('SIGINT'))
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-
-start()
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runCli().catch((error) => { console.error(error); process.exitCode = 1 })
+}

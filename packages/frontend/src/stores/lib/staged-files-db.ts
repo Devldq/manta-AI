@@ -1,161 +1,100 @@
-/* IndexedDB 持久化模块 —— 暂存文件队列 + 批处理元数据
- * 用于刷新页面后恢复未完成的批量处理任务
+/*
+ * The browser owns only a short-lived retry cache.  Canonical queue bytes and
+ * batch metadata are stored by the backend in ASH cache/config groups.
  */
-
+import { clientState } from '@/lib/client-state'
 import type { ChunkingConfig } from '../rag-detail-store'
 
-const DB_NAME = 'manta-rag-staged'
-const DB_VERSION = 1
-const FILES_STORE = 'files'
-const META_STORE = 'meta'
+export interface PersistedStagedFile { id: string; kbId: string; file: File; name: string; size: number; type: string; relativePath?: string }
+export interface BatchMeta { kbId: string; processingStarted: boolean; totalFiles: number; concurrency: number; chunkingConfig: ChunkingConfig; startedAt: string }
+type StageEntry = Omit<PersistedStagedFile, 'file'>
+const offlineFiles = new Map<string, PersistedStagedFile>()
+const endpoint = (kbId: string) => `/api/storage/rag-staging/${encodeURIComponent(kbId)}`
 
-/** 持久化的暂存文件（File 对象可直接存入 IndexedDB） */
-export interface PersistedStagedFile {
-  id: string
-  kbId: string
-  file: File
-  name: string
-  size: number
-  type: string
-  relativePath?: string
+function key(kbId: string, id: string): string { return `${kbId}:${id}` }
+function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' }
+function isEntry(value: unknown): value is StageEntry {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.kbId === 'string' && typeof value.name === 'string' && typeof value.size === 'number' && typeof value.type === 'string'
+}
+function responseEntry(body: unknown): StageEntry | undefined {
+  if (!isRecord(body) || !isRecord(body.data)) return undefined
+  return isEntry(body.data.entry) ? body.data.entry : undefined
+}
+function responseEntries(body: unknown): StageEntry[] {
+  if (!isRecord(body) || !isRecord(body.data) || !Array.isArray(body.data.entries)) return []
+  return body.data.entries.filter(isEntry)
+}
+function localFiles(kbId: string): PersistedStagedFile[] { return [...offlineFiles.values()].filter((file) => file.kbId === kbId) }
+
+async function upload(kbId: string, file: PersistedStagedFile): Promise<PersistedStagedFile> {
+  const body = new FormData(); body.append('file', file.file, file.name)
+  const response = await fetch(endpoint(kbId), { method: 'POST', body, headers: { 'X-Manta-Idempotency-Key': `rag-stage-${file.id}` } })
+  if (!response.ok) throw new Error(`RAG staging upload failed: HTTP ${response.status}`)
+  const entry = responseEntry(await response.json())
+  if (!isEntry(entry)) throw new Error('RAG staging upload returned invalid metadata')
+  offlineFiles.delete(key(kbId, file.id))
+  return { ...entry, kbId, file: file.file, relativePath: file.relativePath }
 }
 
-/** 批处理元数据 */
-export interface BatchMeta {
-  kbId: string
-  processingStarted: boolean
-  totalFiles: number
-  concurrency: number
-  chunkingConfig: ChunkingConfig
-  startedAt: string
-}
-
-// ── IndexedDB 连接 ──────────────────────────────────────────────
-
-let dbPromise: Promise<IDBDatabase> | null = null
-
-function openDB(): Promise<IDBDatabase> {
-  if (dbPromise) return dbPromise
-  dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION)
-    req.onupgradeneeded = () => {
-      const db = req.result
-      if (!db.objectStoreNames.contains(FILES_STORE)) {
-        db.createObjectStore(FILES_STORE, { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains(META_STORE)) {
-        db.createObjectStore(META_STORE, { keyPath: 'kbId' })
-      }
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-  return dbPromise
-}
-
-// ── 辅助：包装 IDB 请求为 Promise ───────────────────────────────
-
-function reqToPromise<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-/** 等待事务完成 */
-function txDone(tx: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-    tx.onabort = () => reject(tx.error)
-  })
-}
-
-// ── 暂存文件 CRUD ───────────────────────────────────────────────
-
-/** 保存所有暂存文件（先清除该 kbId 的旧文件，再写入新的） */
-export async function saveStagedFiles(
-  kbId: string,
-  files: { id: string; file: File; name: string; size: number; type: string; relativePath?: string }[]
-): Promise<void> {
-  const db = await openDB()
-  const tx = db.transaction(FILES_STORE, 'readwrite')
-  const store = tx.objectStore(FILES_STORE)
-
-  // 先删除该 kbId 的所有旧文件
-  const all = await reqToPromise(store.getAll())
-  for (const item of all as PersistedStagedFile[]) {
-    if (item.kbId === kbId) {
-      store.delete(item.id)
-    }
+export async function saveStagedFiles(kbId: string, next: Array<Omit<PersistedStagedFile, 'kbId'>>): Promise<PersistedStagedFile[]> {
+  const result: PersistedStagedFile[] = []
+  for (const file of next) {
+    try { result.push(await upload(kbId, { ...file, kbId })) }
+    catch (error) { offlineFiles.set(key(kbId, file.id), { ...file, kbId }); throw error }
   }
-
-  // 写入新文件
-  for (const f of files) {
-    store.add({ ...f, kbId } as PersistedStagedFile)
-  }
-
-  await txDone(tx)
+  return result
 }
-
-/** 加载该 kbId 的所有暂存文件 */
 export async function loadStagedFiles(kbId: string): Promise<PersistedStagedFile[]> {
-  const db = await openDB()
-  const tx = db.transaction(FILES_STORE, 'readonly')
-  const store = tx.objectStore(FILES_STORE)
-  const all = await reqToPromise(store.getAll())
-  return (all as PersistedStagedFile[]).filter((f) => f.kbId === kbId)
-}
-
-/** 删除单个暂存文件 */
-export async function removeStagedFileById(id: string): Promise<void> {
-  const db = await openDB()
-  const tx = db.transaction(FILES_STORE, 'readwrite')
-  tx.objectStore(FILES_STORE).delete(id)
-  await txDone(tx)
-}
-
-/** 清除该 kbId 的所有暂存文件 */
-export async function clearStagedFilesForKb(kbId: string): Promise<void> {
-  const db = await openDB()
-  const tx = db.transaction(FILES_STORE, 'readwrite')
-  const store = tx.objectStore(FILES_STORE)
-  const all = await reqToPromise(store.getAll())
-  for (const item of all as PersistedStagedFile[]) {
-    if (item.kbId === kbId) {
-      store.delete(item.id)
-    }
+  let entries: StageEntry[] = []
+  try { const response = await fetch(endpoint(kbId)); if (!response.ok) throw new Error(`RAG staging load failed: HTTP ${response.status}`); entries = responseEntries(await response.json()) } catch { return localFiles(kbId) }
+  const restored = await Promise.all(entries.map(async (entry) => {
+    const response = await fetch(`${endpoint(kbId)}/${encodeURIComponent(entry.id)}/content`)
+    if (!response.ok) throw new Error(`RAG staging content failed: HTTP ${response.status}`)
+    const file = new File([await response.blob()], entry.name, { type: entry.type })
+    return { ...entry, kbId, file }
+  }))
+  // A successful list does not prove that a previously failed upload vanished.
+  // Retry volatile browser bytes, then present the canonical and recovered rows
+  // as one id-deduplicated queue.
+  const recovered: PersistedStagedFile[] = []
+  for (const local of localFiles(kbId)) {
+    try { recovered.push(await upload(kbId, local)) }
+    catch { recovered.push(local) }
   }
-  await txDone(tx)
+  return [...new Map([...restored, ...recovered].map((file) => [file.id, file])).values()]
 }
-
-// ── 批处理元数据 ───────────────────────────────────────────────
-
-/** 保存批处理元数据 */
-export async function saveBatchMeta(meta: BatchMeta): Promise<void> {
-  const db = await openDB()
-  const tx = db.transaction(META_STORE, 'readwrite')
-  tx.objectStore(META_STORE).put(meta)
-  await txDone(tx)
+export async function claimStagedFiles(kbId: string, ids: string[], sessionId: string): Promise<void> {
+  const response = await fetch(`${endpoint(kbId)}/claim`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, sessionId }) })
+  if (!response.ok) throw new Error(`RAG staging claim failed: HTTP ${response.status}`)
 }
-
-/** 加载批处理元数据 */
-export async function loadBatchMeta(kbId: string): Promise<BatchMeta | null> {
-  const db = await openDB()
-  const tx = db.transaction(META_STORE, 'readonly')
-  const result = await reqToPromise(tx.objectStore(META_STORE).get(kbId))
-  return (result as BatchMeta | undefined) ?? null
+export async function removeStagedFileById(id: string, kbId?: string): Promise<void> {
+  // Delete the canonical record first.  If the remote write fails, retain the
+  // local row so a refresh cannot hide then silently resurrect the item.
+  if (kbId) {
+    const response = await fetch(`${endpoint(kbId)}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    if (!response.ok && response.status !== 404) throw new Error(`RAG staging delete failed: HTTP ${response.status}`)
+  }
+  for (const [cacheKey, file] of offlineFiles) if (file.id === id && (!kbId || file.kbId === kbId)) offlineFiles.delete(cacheKey)
 }
-
-/** 清除批处理元数据 */
-export async function clearBatchMeta(kbId: string): Promise<void> {
-  const db = await openDB()
-  const tx = db.transaction(META_STORE, 'readwrite')
-  tx.objectStore(META_STORE).delete(kbId)
-  await txDone(tx)
+export interface StagedFileDeletionFailure { id: string; error: Error }
+export interface StagedFileDeletionResult { deletedIds: string[]; failures: StagedFileDeletionFailure[] }
+/**
+ * Deletion is deliberately per-file: a failed canonical remote DELETE must
+ * remain visible and retryable instead of being hidden by an optimistic clear.
+ */
+export async function removeStagedFilesById(kbId: string, ids: string[]): Promise<StagedFileDeletionResult> {
+  const settled = await Promise.all(ids.map(async (id) => {
+    try { await removeStagedFileById(id, kbId); return { id, error: undefined as Error | undefined } }
+    catch (reason) { return { id, error: reason instanceof Error ? reason : new Error('Unable to remove staged file') } }
+  }))
+  return {
+    deletedIds: settled.filter((result) => !result.error).map((result) => result.id),
+    failures: settled.filter((result): result is { id: string; error: Error } => !!result.error),
+  }
 }
-
-/** 清除该 kbId 的所有数据（文件 + 元数据） */
-export async function clearAllForKb(kbId: string): Promise<void> {
-  await Promise.all([clearStagedFilesForKb(kbId), clearBatchMeta(kbId)])
-}
+export async function clearStagedFilesForKb(kbId: string): Promise<void> { const files = await loadStagedFiles(kbId); await Promise.all(files.map((file) => removeStagedFileById(file.id, kbId))) }
+async function loadSessions(): Promise<Record<string, BatchMeta>> { const value = await clientState.load<{ sessions?: Record<string, BatchMeta> }>('rag-batch'); return value?.sessions ?? {} }
+export async function saveBatchMeta(meta: BatchMeta): Promise<void> { const sessions = await loadSessions(); if (!(await clientState.set('rag-batch', { sessions: { ...sessions, [meta.kbId]: meta } }))) throw new Error('RAG batch metadata persistence failed') }
+export async function loadBatchMeta(kbId: string): Promise<BatchMeta | null> { return (await loadSessions())[kbId] ?? null }
+export async function clearBatchMeta(kbId: string): Promise<void> { const sessions = await loadSessions(); delete sessions[kbId]; if (!(await clientState.set('rag-batch', { sessions }))) throw new Error('RAG batch metadata persistence failed') }
+export async function clearAllForKb(kbId: string): Promise<void> { await Promise.all([clearStagedFilesForKb(kbId), clearBatchMeta(kbId)]) }

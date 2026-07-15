@@ -7,6 +7,7 @@ import {
   ThemeConfig,
   applyTheme,
   loadThemeFromStorage,
+  loadThemeFromAsh,
   getThemeById,
   getThemeConfig,
   saveThemeToStorage,
@@ -24,7 +25,7 @@ export default function ThemesPage() {
   const [customTheme, setCustomTheme] = useState<ThemeConfig | null>(null)
 
   useEffect(() => {
-    const saved = loadThemeFromStorage()
+    void loadThemeFromAsh().then((saved) => {
     if (saved) {
       setActiveThemeId(saved.themeId)
       setColorMode(saved.mode)
@@ -33,8 +34,7 @@ export default function ThemesPage() {
       setColorMode('dark')
       setActiveThemeId('cli-pixel')
     }
-    const storedMode = localStorage.getItem('manta:color-mode') as 'light' | 'dark' | null
-    if (storedMode) setColorMode(storedMode)
+    })
   }, [])
 
   // AI: 应用主题
@@ -50,7 +50,6 @@ export default function ThemesPage() {
   function toggleColorMode(newMode: 'light' | 'dark') {
     setColorMode(newMode)
     setColorModeClass(newMode)
-    localStorage.setItem('manta:color-mode', newMode)
     // AI: 重新应用当前主题的对应模式
     const theme = getThemeById(activeThemeId) ?? DESIGN_THEMES[0]
     const config = getThemeConfig(theme, newMode)

@@ -2,14 +2,15 @@
  * 知识库存储层 — 持久化 RAG 知识库配置
  *
  * 存储结构：
- *   ~/.manta-data/knowledge-bases/
+ *   ASH knowledge/knowledge-bases/
  *     └── {id}.json   — 每个知识库一个 JSON 文件
  */
 
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
-import { shortId, readJsonFile, writeJsonFile, removeDir } from '@manta/rag'
+import { resolveStoragePath } from '../../../storage/path-routing'
+import { shortId, readJsonFile, removeDir } from '@manta/rag'
+import { readCrossGroupBundle, transactCrossGroupBundle } from '../../../storage/cross-group-bundle'
 
 // ─── 类型定义 ─────────────────────────────────────────────────
 
@@ -71,16 +72,49 @@ export interface UpdateKnowledgeBaseInput {
   config?: Partial<KnowledgeBaseConfig>
   documentCount?: number
   chunkCount?: number
+  clearEmbeddingApiKey?: boolean
 }
 
 // ─── 路径计算 ─────────────────────────────────────────────────
 
 function getStorageDir(): string {
-  return path.join(os.homedir(), '.manta-data', 'knowledge-bases')
+  return resolveStoragePath('knowledge', 'knowledge-bases')
 }
 
 function getFilePath(id: string): string {
   return path.join(getStorageDir(), `${id}.json`)
+}
+
+function getSecretPath(id: string): string {
+  return resolveStoragePath('secrets', 'knowledge-base-api-keys', `${id}.json`)
+}
+const participants = () => [{ name: 'metadata', root: resolveStoragePath('knowledge') }, { name: 'secret', root: resolveStoragePath('secrets') }]
+
+function readKnowledgeBase(id: string): KnowledgeBase | null {
+  const committed = readCrossGroupBundle(participants(), `knowledge-base-${id}`, (bundle) => ({ metadata: bundle.read('metadata', `knowledge-bases/${id}.json`), secret: bundle.read('secret', `knowledge-base-api-keys/${id}.json`) }))
+  const kb = committed?.metadata ? JSON.parse(committed.metadata) as KnowledgeBase : readJsonFile<KnowledgeBase>(getFilePath(id))
+  if (!kb?.config.embeddingConfig) return kb
+  const secret = committed?.secret ? JSON.parse(committed.secret) as { apiKey?: string } : readJsonFile<{ apiKey?: string }>(getSecretPath(id))
+  return { ...kb, config: { ...kb.config, embeddingConfig: { ...kb.config.embeddingConfig, apiKey: secret?.apiKey } } }
+}
+
+function persistKnowledgeBase(kb: KnowledgeBase, clearApiKey = false): void {
+  const embedding = kb.config.embeddingConfig
+  if (!embedding) {
+    transactCrossGroupBundle(participants(), `knowledge-base-${kb.id}`, (bundle) => { bundle.write('metadata', `knowledge-bases/${kb.id}.json`, JSON.stringify(kb, null, 2)); bundle.write('secret', `knowledge-base-api-keys/${kb.id}.json`, '{}') })
+    return
+  }
+  let sanitized: KnowledgeBase & { config: KnowledgeBaseConfig & { embeddingConfig?: KnowledgeBaseConfig['embeddingConfig'] & { apiKeyRef?: string } } }; let nextApiKey: string | undefined
+  transactCrossGroupBundle(participants(), `knowledge-base-${kb.id}`, (bundle) => {
+  const existing = bundle.read('secret', `knowledge-base-api-keys/${kb.id}.json`); const previousSecret = existing ? (JSON.parse(existing) as { apiKey?: string }).apiKey : readJsonFile<{ apiKey?: string }>(getSecretPath(kb.id))?.apiKey
+  const { apiKey, ...preferences } = embedding
+  nextApiKey = clearApiKey ? undefined : apiKey ?? previousSecret
+  sanitized = {
+    ...kb,
+    config: { ...kb.config, embeddingConfig: nextApiKey ? { ...preferences, apiKeyRef: `knowledge-base:${kb.id}` } : preferences },
+  }
+  bundle.write('secret', `knowledge-base-api-keys/${kb.id}.json`, JSON.stringify(nextApiKey ? { apiKey: nextApiKey } : {}, null, 2)); bundle.write('metadata', `knowledge-bases/${kb.id}.json`, JSON.stringify(sanitized, null, 2))
+  })
 }
 
 // ─── 默认配置 ─────────────────────────────────────────────────
@@ -112,7 +146,7 @@ export function listKnowledgeBases(search?: string): KnowledgeBase[] {
   const kbs: KnowledgeBase[] = []
 
   for (const file of files) {
-    const data = readJsonFile<KnowledgeBase>(path.join(dir, file))
+    const data = readKnowledgeBase(path.basename(file, '.json'))
     if (data) {
       if (search) {
         const q = search.toLowerCase()
@@ -128,7 +162,7 @@ export function listKnowledgeBases(search?: string): KnowledgeBase[] {
 }
 
 export function getKnowledgeBase(id: string): KnowledgeBase | null {
-  return readJsonFile<KnowledgeBase>(getFilePath(id))
+  return readKnowledgeBase(id)
 }
 
 export function createKnowledgeBase(input: CreateKnowledgeBaseInput): KnowledgeBase {
@@ -152,12 +186,12 @@ export function createKnowledgeBase(input: CreateKnowledgeBaseInput): KnowledgeB
     updatedAt: timestamp,
   }
 
-  writeJsonFile(getFilePath(id), kb)
+  persistKnowledgeBase(kb)
   return kb
 }
 
 export function updateKnowledgeBase(id: string, patch: UpdateKnowledgeBaseInput): KnowledgeBase | null {
-  const kb = readJsonFile<KnowledgeBase>(getFilePath(id))
+  const kb = readKnowledgeBase(id)
   if (!kb) return null
 
   if (patch.name !== undefined) kb.name = patch.name
@@ -171,7 +205,7 @@ export function updateKnowledgeBase(id: string, patch: UpdateKnowledgeBaseInput)
   }
 
   kb.updatedAt = now()
-  writeJsonFile(getFilePath(id), kb)
+  persistKnowledgeBase(kb, patch.clearEmbeddingApiKey === true)
   return kb
 }
 
@@ -179,11 +213,11 @@ export function deleteKnowledgeBase(id: string): boolean {
   const filePath = getFilePath(id)
   if (!fs.existsSync(filePath)) return false
 
-  const kbDir = path.join(os.homedir(), '.manta-data', 'rag', id)
+  const kbDir = resolveStoragePath('knowledge', 'rag', id)
   removeDir(kbDir)
 
   try {
-    fs.unlinkSync(filePath)
+    transactCrossGroupBundle(participants(), `knowledge-base-${id}`, (bundle) => { bundle.delete('metadata', `knowledge-bases/${id}.json`); bundle.delete('secret', `knowledge-base-api-keys/${id}.json`) })
     return true
   } catch {
     return false

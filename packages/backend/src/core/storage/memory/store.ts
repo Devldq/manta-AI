@@ -1,7 +1,7 @@
 /* MemoryStore — 记忆系统存储层
  *
  * 架构：MEMORY.md 索引 + 独立 .md 文件（YAML frontmatter 格式）
- * 存储路径：~/.manta-data/memory/
+ * Storage path: ASH work/memory.
  *
  * 硬性约束：
  * - MAX_INDEX_LINES = 200  — 索引最多 200 行，低价值记忆自然淘汰
@@ -10,13 +10,12 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
+import { resolveStoragePath } from '../../../storage/path-routing'
 import type { MemoryEntry, MemoryType, IndexEntry } from './types'
 import { slugify as sharedSlugify, atomicWrite as sharedAtomicWrite } from '../shared/fs-utils'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────────
 
-const MEMORY_DIR = path.join(os.homedir(), '.manta-data', 'memory')
 const INDEX_FILE = 'MEMORY.md'
 const MAX_INDEX_LINES = 200
 const MAX_FILE_CHARS = 4000
@@ -57,7 +56,7 @@ export class MemoryStore {
   private readonly baseDir: string
 
   constructor(baseDir?: string) {
-    this.baseDir = baseDir ?? MEMORY_DIR
+    this.baseDir = baseDir ?? resolveStoragePath('work', 'memory')
   }
 
   private get memoryDir(): string {

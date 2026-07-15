@@ -34,7 +34,7 @@ export interface Task {
   workDir?: string
 
   // 执行结果
-  outputDir?: string  // ~/.manta-data/tasks/{id}/
+  outputDir?: string  // Explicit user/Agent-selected output directory; ASH does not redirect it.
   error?: string
 
   // 时间戳
@@ -739,7 +739,7 @@ export interface ConversationSummary {
 export type SkillType = 'writing' | 'tool' | 'workflow'
 
 /** Skill 来源 */
-export type SkillSource = 'builtin' | 'user' | 'plugin'
+export type SkillSource = 'builtin' | 'user' | 'plugin' | 'file' | 'ai-generated'
 
 /** Skill 参数 JSON Schema */
 export interface SkillParameter {
@@ -787,6 +787,8 @@ export interface SkillDefinition {
   tools?: string[]
   /** 文件路径（磁盘存储时） */
   filePath?: string
+  /** Package directory relative to the extensions storage-group root. */
+  packagePath?: string
   /** 是否启用 */
   enabled: boolean
   /** 时间戳 */
@@ -802,6 +804,8 @@ export interface SkillSummary {
   type: SkillType
   version?: string
   source?: SkillSource
+  metadata: SkillMetadata
+  tools?: string[]
   enabled: boolean
   boundAgents?: string[]
   createdAt: string

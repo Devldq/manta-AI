@@ -1,11 +1,33 @@
 appId: com.manta.desktop
 productName: Manta
+copyright: Copyright © 2026 Manta AI
 directories:
-  output: dist
+  # Never package the workspace directly: this is the identical flattened CJS
+  # backend/native/provider closure inspected by package:dir.
+  app: .package-staging/app
+  output: release
+
+asar: true
 
 files:
   - dist/**/*
   - package.json
+
+extraResources:
+  - from: ../frontend/dist
+    to: frontend/dist
+  - from: ../backend/dist
+    to: backend/dist
+  - from: ../storage-hub/dist
+    to: storage-hub/dist
+  - from: ../rag/dist
+    to: rag/dist
+  - from: ../../.manta
+    to: .manta
+
+asarUnpack:
+  - node_modules/**/better-sqlite3/**/*
+  - node_modules/**/sqlite-vec/**/*
 
 mac:
   target:
@@ -16,6 +38,10 @@ mac:
   category: public.app-category.developer-tools
 
 win:
+  # Packaging smoke builds are intentionally unsigned.  Disabling rcedit keeps
+  # the local/CI directory build independent from electron-builder's optional
+  # winCodeSign download; release signing is configured by the release pipeline.
+  signAndEditExecutable: false
   target:
     - target: nsis
       arch:

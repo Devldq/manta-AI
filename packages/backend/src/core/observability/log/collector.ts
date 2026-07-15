@@ -17,6 +17,7 @@ import {
   SystemLog,
   PerformanceLog
 } from './types'
+import { runWithoutDiagnosticsOwner } from '../../../storage/runtime-diagnostics'
 
 /** 默认日志配置 */
 const DEFAULT_CONFIG: LogReportConfig = {
@@ -37,7 +38,6 @@ export class DefaultLogCollector implements LogCollector {
 
   constructor(config?: Partial<LogReportConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config }
-    this.startAutoReport()
   }
 
   /** 添加单条日志，返回创建的完整日志条目 */
@@ -274,16 +274,16 @@ export class DefaultLogCollector implements LogCollector {
   }
 
   /** 开始自动上报 */
-  private startAutoReport(): void {
-    if (!this.config.enabled || this.config.reportInterval <= 0) return
+  startAutoReport(): void {
+    if (this.reportTimer || !this.config.enabled || this.config.reportInterval <= 0) return
 
-    this.reportTimer = setInterval(() => {
+    this.reportTimer = runWithoutDiagnosticsOwner(() => setInterval(() => {
       this.reportLogs().catch(console.error)
-    }, this.config.reportInterval)
+    }, this.config.reportInterval))
   }
 
   /** 停止自动上报 */
-  private stopAutoReport(): void {
+  stopAutoReport(): void {
     if (this.reportTimer) {
       clearInterval(this.reportTimer)
       this.reportTimer = null

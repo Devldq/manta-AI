@@ -6,8 +6,12 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { ensureDir, readJsonFile, writeJsonFile } from '../shared/fs-utils'
+import { ensureDir, readJsonFile } from '../shared/fs-utils'
 import { registerPlugin } from './store'
+import { runWithoutDiagnosticsOwner } from '../../../storage/runtime-diagnostics'
+import { resolveStoragePath } from '../../../storage/path-routing'
+import { transactionalWriteExtensionFile } from '../../../storage/extension-transactions'
+import { installPluginPackage, type InstallPluginPackageOptions } from '../../../storage/plugin-package-install'
 
 const execFileAsync = promisify(execFile)
 
@@ -51,17 +55,30 @@ interface CommandOutput {
   stdout: string
   stderr: string
 }
+interface ClaudeExecutionOptions { cwd: string; timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv }
+export interface ClaudePluginInstallOptions {
+  claudeBin?: string
+  marketplaceCache?: PluginMarketplaceCache | null
+  execute?: (bin: string, args: string[], options: ClaudeExecutionOptions) => Promise<CommandOutput>
+  snapshotPackage?: InstallPluginPackageOptions['snapshotPackage']
+}
+interface ClaudeIsolation { root: string; configDir: string; env: NodeJS.ProcessEnv }
 
 let refreshTimer: NodeJS.Timeout | null = null
-let inFlightRefresh: Promise<PluginMarketplaceCache> | null = null
+const inFlightRefresh = new Map<string, Promise<PluginMarketplaceCache>>()
+interface MarketplaceSchedulerState {
+  paused: boolean
+  execute(): Promise<void>
+}
+const schedulerOwners = new Map<symbol, MarketplaceSchedulerState>()
+const activeClaudeInstalls = new Map<string, number>()
 
 function getMarketplaceDataDir(): string {
-  const root = process.env.MANTA_WORKSPACE_ROOT || process.cwd()
-  return path.join(root, '.manta', 'plugin-marketplace')
+  return resolveStoragePath('extensions', 'plugin-marketplace')
 }
 
-function getCachePath(): string {
-  return path.join(getMarketplaceDataDir(), 'claude.json')
+function getCachePath(dataDir = getMarketplaceDataDir()): string {
+  return path.join(dataDir, 'claude.json')
 }
 
 function decodeHtml(value: string): string {
@@ -105,23 +122,20 @@ function normalizeClaudePluginSpec(source: string): string {
 async function runClaude(
   claudeBin: string,
   args: string[],
+  isolation: ClaudeIsolation,
+  execute: NonNullable<ClaudePluginInstallOptions['execute']> = async (bin, commandArgs, options) => {
+    const result = await execFileAsync(bin, commandArgs, options)
+    return { stdout: result.stdout, stderr: result.stderr }
+  },
 ): Promise<CommandOutput> {
-  const { stdout, stderr } = await execFileAsync(
-    claudeBin,
-    args,
-    {
-      cwd: process.env.MANTA_WORKSPACE_ROOT || process.cwd(),
-      timeout: INSTALL_TIMEOUT_MS,
-      maxBuffer: 1024 * 1024,
-    },
-  )
+  const { stdout, stderr } = await execute(claudeBin, args, { cwd: isolation.root, timeout: INSTALL_TIMEOUT_MS, maxBuffer: 1024 * 1024, env: isolation.env })
   return { stdout: stdout.trim(), stderr: stderr.trim() }
 }
 
-async function ensureOfficialClaudeMarketplace(claudeBin: string): Promise<CommandOutput[]> {
+async function ensureOfficialClaudeMarketplace(claudeBin: string, isolation: ClaudeIsolation, execute?: ClaudePluginInstallOptions['execute']): Promise<CommandOutput[]> {
   const outputs: CommandOutput[] = []
   try {
-    const list = await runClaude(claudeBin, ['plugin', 'marketplace', 'list', '--json'])
+    const list = await runClaude(claudeBin, ['plugin', 'marketplace', 'list', '--json'], isolation, execute)
     outputs.push(list)
     const marketplaces = JSON.parse(list.stdout || '[]') as Array<{ name?: string; repo?: string }>
     const hasOfficial = marketplaces.some((marketplace) =>
@@ -138,7 +152,7 @@ async function ensureOfficialClaudeMarketplace(claudeBin: string): Promise<Comma
     'marketplace',
     'add',
     'anthropics/claude-plugins-official',
-  ]))
+  ], isolation, execute))
   return outputs
 }
 
@@ -234,14 +248,15 @@ async function fetchText(url: string): Promise<string> {
   }
 }
 
-export function readClaudeMarketplaceCache(): PluginMarketplaceCache | null {
-  return readJsonFile<PluginMarketplaceCache>(getCachePath())
+export function readClaudeMarketplaceCache(dataDir = getMarketplaceDataDir()): PluginMarketplaceCache | null {
+  return readJsonFile<PluginMarketplaceCache>(getCachePath(dataDir))
 }
 
-export async function refreshClaudeMarketplace(): Promise<PluginMarketplaceCache> {
-  if (inFlightRefresh) return inFlightRefresh
+export async function refreshClaudeMarketplace(dataDir = getMarketplaceDataDir()): Promise<PluginMarketplaceCache> {
+  const existing = inFlightRefresh.get(dataDir)
+  if (existing) return existing
 
-  inFlightRefresh = (async () => {
+  const refresh = (async () => {
     const html = await fetchText(CLAUDE_MARKETPLACE_URL)
     const items = parseClaudePluginsPage(html)
     if (items.length === 0) {
@@ -253,15 +268,16 @@ export async function refreshClaudeMarketplace(): Promise<PluginMarketplaceCache
       refreshedAt: new Date().toISOString(),
       items,
     }
-    ensureDir(getMarketplaceDataDir())
-    writeJsonFile(getCachePath(), cache)
+    ensureDir(dataDir)
+    transactionalWriteExtensionFile({ extensionsRoot: path.dirname(dataDir), destination: getCachePath(dataDir), content: JSON.stringify(cache, null, 2) })
     return cache
   })()
+  inFlightRefresh.set(dataDir, refresh)
 
   try {
-    return await inFlightRefresh
+    return await refresh
   } finally {
-    inFlightRefresh = null
+    if (inFlightRefresh.get(dataDir) === refresh) inFlightRefresh.delete(dataDir)
   }
 }
 
@@ -323,39 +339,86 @@ function manifestFromClaudePlugin(
   }
 }
 
+function findInstalledClaudePackage(root: string, slug: string): string | undefined {
+  const candidates: string[] = []
+  const visit = (directory: string) => {
+    let entries: fs.Dirent[]
+    try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return }
+    const names = new Set(entries.map((entry) => entry.name))
+    if (names.has('plugin.yaml') || names.has('plugin.json') || fs.existsSync(path.join(directory, '.claude-plugin', 'plugin.json'))) candidates.push(directory)
+    for (const entry of entries) if (entry.isDirectory() && !entry.isSymbolicLink()) visit(path.join(directory, entry.name))
+  }
+  visit(root)
+  return candidates.find((candidate) => path.basename(candidate) === slug) ?? candidates[0]
+}
+
+function createClaudeIsolation(extensionsRoot: string): ClaudeIsolation {
+  const parent = path.join(extensionsRoot, '.ash-cli-staging'); ensureDir(parent)
+  const root = fs.mkdtempSync(path.join(parent, 'claude-'))
+  const configDir = path.join(root, 'claude-config'); ensureDir(configDir)
+  const directoryVariables = ['APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'TEMP', 'TMP', 'TMPDIR'] as const
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SYSTEMROOT', 'COMSPEC', 'WINDIR', 'LANG', 'LC_ALL']) {
+    if (process.env[key] !== undefined) env[key] = process.env[key]
+  }
+  for (const key of directoryVariables) {
+    const directory = path.join(root, key.toLowerCase()); ensureDir(directory); env[key] = directory
+  }
+  Object.assign(env, { HOME: root, USERPROFILE: root, CLAUDE_CONFIG_DIR: configDir })
+  return { root, configDir, env }
+}
+
 export async function installClaudePlugin(
   source: string,
+  options: ClaudePluginInstallOptions = {},
 ): Promise<ClaudePluginInstallResult> {
   const spec = normalizeClaudePluginSpec(source)
-  const cache = await getClaudeMarketplace().catch(() => null)
+  const cache = Object.prototype.hasOwnProperty.call(options, 'marketplaceCache') ? options.marketplaceCache ?? null : await getClaudeMarketplace().catch(() => null)
   const item = cache?.items.find((entry) => entry.pluginId === spec || entry.slug === spec.split('@')[0])
   const commandText = item ? await getInstallCommandFromDetailPage(item) : `claude plugin install ${spec}`
   const commandSpec = normalizeClaudePluginSpec(commandText)
 
-  const claudeBin = resolveClaudeBinary()
-  const setupOutputs = await ensureOfficialClaudeMarketplace(claudeBin)
-
+  const claudeBin = options.claudeBin ?? resolveClaudeBinary()
+  const extensionsRoot = resolveStoragePath('extensions')
+  const isolation = createClaudeIsolation(extensionsRoot)
+  activeClaudeInstalls.set(extensionsRoot, (activeClaudeInstalls.get(extensionsRoot) ?? 0) + 1)
+  let setupOutputs: CommandOutput[]
   let installOutput: CommandOutput
   try {
-    installOutput = await runClaude(claudeBin, ['plugin', 'install', commandSpec])
+    setupOutputs = await ensureOfficialClaudeMarketplace(claudeBin, isolation, options.execute)
+    try {
+      installOutput = await runClaude(claudeBin, ['plugin', 'install', commandSpec], isolation, options.execute)
+    } catch (error) {
+      if (!shouldRefreshMarketplaceAfterInstallError(error)) throw error
+      setupOutputs.push(await runClaude(claudeBin, ['plugin', 'marketplace', 'update', CLAUDE_OFFICIAL_MARKETPLACE], isolation, options.execute))
+      installOutput = await runClaude(claudeBin, ['plugin', 'install', commandSpec], isolation, options.execute)
+    }
   } catch (error) {
-    if (!shouldRefreshMarketplaceAfterInstallError(error)) throw error
-    setupOutputs.push(await runClaude(claudeBin, [
-      'plugin',
-      'marketplace',
-      'update',
-      CLAUDE_OFFICIAL_MARKETPLACE,
-    ]))
-    installOutput = await runClaude(claudeBin, ['plugin', 'install', commandSpec])
+    fs.rmSync(isolation.root, { recursive: true, force: true })
+    const remaining = (activeClaudeInstalls.get(extensionsRoot) ?? 1) - 1; if (remaining) activeClaudeInstalls.set(extensionsRoot, remaining); else activeClaudeInstalls.delete(extensionsRoot)
+    throw error
   }
+  try {
+    const slug = commandSpec.split('@')[0]
+    const installedSource = findInstalledClaudePackage(isolation.configDir, slug) ?? findInstalledClaudePackage(isolation.root, slug)
+    if (!installedSource) throw new Error('Claude CLI completed without producing an installed plugin package in its isolated configuration directory')
+    const manifest = manifestFromClaudePlugin(commandSpec, item)
+    const destination = resolveStoragePath('extensions', 'plugins', manifest.id)
+    const plugin = await installPluginPackage({ extensionsRoot, source: installedSource, destination, manifest, snapshotPackage: options.snapshotPackage })
+    return {
+      plugin, marketplaceItem: item, command: [claudeBin, 'plugin', 'install', commandSpec],
+      stdout: [...setupOutputs.map((output) => output.stdout), installOutput.stdout].filter(Boolean).join('\n'),
+      stderr: [...setupOutputs.map((output) => output.stderr), installOutput.stderr].filter(Boolean).join('\n'),
+    }
+  } finally { fs.rmSync(isolation.root, { recursive: true, force: true }); const remaining = (activeClaudeInstalls.get(extensionsRoot) ?? 1) - 1; if (remaining) activeClaudeInstalls.set(extensionsRoot, remaining); else activeClaudeInstalls.delete(extensionsRoot) }
+}
 
-  const plugin = registerPlugin(manifestFromClaudePlugin(commandSpec, item))
+export function createClaudeInstallResource(initialRoot: string) {
+  let root = initialRoot
+  const idle = () => activeClaudeInstalls.get(root) ? { ok: false, error: 'Claude plugin installations are still active' } : { ok: true }
   return {
-    plugin,
-    marketplaceItem: item,
-    command: [claudeBin, 'plugin', 'install', commandSpec],
-    stdout: [...setupOutputs.map((output) => output.stdout), installOutput.stdout].filter(Boolean).join('\n'),
-    stderr: [...setupOutputs.map((output) => output.stderr), installOutput.stderr].filter(Boolean).join('\n'),
+    checkpoint() { const state = idle(); if (!state.ok) throw new Error(state.error) }, close() { const state = idle(); if (!state.ok) throw new Error(state.error) }, integrityCheck: idle,
+    reopen(nextRoot: string) { const state = idle(); if (!state.ok) throw new Error(state.error); root = nextRoot },
   }
 }
 
@@ -365,17 +428,119 @@ export function isClaudePluginInstallSource(source: string): boolean {
     /^[a-zA-Z0-9._-]+@claude-plugins-official$/.test(trimmed)
 }
 
-export function startClaudeMarketplaceScheduler(log?: { info: (message: string) => void; warn: (message: string) => void }): void {
+function runScheduledRefresh(): void {
+  for (const owner of schedulerOwners.values()) {
+    if (owner.paused) continue
+    void owner.execute()
+  }
+}
+
+function reconcileScheduler(): void {
+  if (![...schedulerOwners.values()].some((owner) => !owner.paused)) {
+    if (refreshTimer) clearInterval(refreshTimer)
+    refreshTimer = null
+    return
+  }
   if (refreshTimer) return
+  runScheduledRefresh()
 
-  refreshClaudeMarketplace()
-    .then((cache) => log?.info(`[Plugin Marketplace] Claude 市场刷新完成: ${cache.items.length} 个插件`))
-    .catch((err) => log?.warn(`[Plugin Marketplace] Claude 市场刷新失败: ${err instanceof Error ? err.message : String(err)}`))
-
-  refreshTimer = setInterval(() => {
-    refreshClaudeMarketplace()
-      .then((cache) => log?.info(`[Plugin Marketplace] Claude 市场定时刷新完成: ${cache.items.length} 个插件`))
-      .catch((err) => log?.warn(`[Plugin Marketplace] Claude 市场定时刷新失败: ${err instanceof Error ? err.message : String(err)}`))
-  }, MARKETPLACE_REFRESH_INTERVAL_MS)
+  refreshTimer = runWithoutDiagnosticsOwner(() => setInterval(() => {
+    runScheduledRefresh()
+  }, MARKETPLACE_REFRESH_INTERVAL_MS))
   refreshTimer.unref()
+}
+
+export function acquireClaudeMarketplaceScheduler(log?: { info: (message: string) => void; warn: (message: string) => void }): () => Promise<void> {
+  const owner = createClaudeMarketplaceRuntimeOwner()
+  const release = owner.acquire(log)
+  return async () => { release(); await owner.dispose() }
+}
+
+export interface ClaudeMarketplaceRuntimeOwner {
+  acquire(log?: { info: (message: string) => void; warn: (message: string) => void }): () => void
+  pause(): () => void
+  checkpoint(): Promise<void>
+  reopen(dataDir: string): Promise<void>
+  dispose(): Promise<void>
+}
+
+export function createClaudeMarketplaceRuntimeOwner(
+  initialDataDir = getMarketplaceDataDir(),
+  refresh: (dataDir: string) => Promise<PluginMarketplaceCache> = refreshClaudeMarketplace,
+  runInContext: <T>(operation: () => T) => T = (operation) => operation(),
+): ClaudeMarketplaceRuntimeOwner {
+  const id = Symbol('marketplace-runtime-owner')
+  let dataDir = initialDataDir
+  let paused = false
+  let acquired = false
+  let closing = false
+  let disposed = false
+  let disposePromise: Promise<void> | undefined
+  const inFlight = new Set<Promise<void>>()
+  let ownerLog: { info: (message: string) => void; warn: (message: string) => void } | undefined
+  const execute = (): Promise<void> => {
+    if (closing || disposed || paused) return Promise.resolve()
+    let task!: Promise<void>
+    task = Promise.resolve()
+      .then(() => runInContext(async () => {
+        try {
+          const cache = await refresh(dataDir)
+          ownerLog?.info(`[Plugin Marketplace] Claude 市场刷新完成: ${cache.items.length} 个插件`)
+        } catch (error) {
+          ownerLog?.warn(`[Plugin Marketplace] Claude 市场刷新失败: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }))
+      .catch(() => undefined)
+      .finally(() => { inFlight.delete(task) })
+    inFlight.add(task)
+    return task
+  }
+  return {
+    acquire(log) {
+      if (closing || disposed) throw new Error('Marketplace scheduler owner is disposed')
+      if (acquired) throw new Error('Marketplace scheduler owner is already acquired')
+      acquired = true
+      ownerLog = log
+      schedulerOwners.set(id, { paused, execute }); reconcileScheduler()
+      let released = false
+      return () => { if (!released) { released = true; acquired = false; schedulerOwners.delete(id); reconcileScheduler() } }
+    },
+    pause() {
+      if (closing || disposed) throw new Error('Marketplace scheduler owner is disposed')
+      paused = true
+      const state = schedulerOwners.get(id); if (state) state.paused = true
+      reconcileScheduler()
+      let resumed = false
+      return () => {
+        if (resumed) return
+        if (closing || disposed) { resumed = true; return }
+        resumed = true; paused = false
+        const current = schedulerOwners.get(id)
+        if (current) { current.paused = false; void current.execute() }
+        reconcileScheduler()
+      }
+    },
+    async checkpoint() { await Promise.allSettled([...inFlight]); await inFlightRefresh.get(dataDir) },
+    async reopen(nextDataDir) {
+      if (closing || disposed) throw new Error('Marketplace scheduler owner is disposed')
+      await Promise.allSettled([...inFlight])
+      await inFlightRefresh.get(dataDir)
+      dataDir = nextDataDir
+    },
+    dispose() {
+      disposePromise ??= (async () => {
+        closing = true
+        schedulerOwners.delete(id); acquired = false; reconcileScheduler()
+        await Promise.allSettled([...inFlight])
+        const globalRefresh = inFlightRefresh.get(dataDir)
+        if (globalRefresh) await globalRefresh.catch(() => undefined)
+        disposed = true
+      })()
+      return disposePromise
+    },
+  }
+}
+
+export async function checkpointClaudeMarketplaceScheduler(): Promise<void> {
+  await Promise.all(inFlightRefresh.values())
 }

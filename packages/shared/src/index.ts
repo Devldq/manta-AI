@@ -8,3 +8,6 @@ export * from './api-schemas'
 
 // Constants
 export * from './constants'
+
+// Agent Storage Hub contracts (browser-safe; no Node core dependencies)
+export * from './storage'

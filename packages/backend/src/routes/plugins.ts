@@ -23,18 +23,16 @@ import * as path from 'path'
 import {
   listPlugins,
   getPlugin,
-  installPlugin,
-  deletePlugin,
   updatePlugin,
   enablePlugin as storeEnable,
   disablePlugin as storeDisable,
   getPluginsSourceDir,
   findPluginByManifestId,
+  getPluginRegistryFilePath,
 } from '../core/storage/plugin/store'
 import {
   scanPluginFiles,
   readPluginYamlContent,
-  copyPluginDir,
   validatePluginManifest,
   getPluginsBaseDir,
 } from '../core/storage/plugin/scanner'
@@ -51,6 +49,9 @@ import type {
   InstallPluginInput,
   UpdatePluginInput,
 } from '@manta/shared'
+import { resolveStoragePath } from '../storage/path-routing'
+import { transactionalUninstallDirectory } from '../storage/extension-transactions'
+import { installPluginPackage } from '../storage/plugin-package-install'
 
 // 内置插件 ID（禁止卸载）
 const BUILTIN_PLUGIN_IDS = new Set<string>()
@@ -203,13 +204,8 @@ export async function pluginRoutes(app: FastifyInstance) {
       await pluginRegistry.onPreUninstall(id)
 
       // 删除插件目录
-      const pluginDir = path.join(getPluginsSourceDir(), plugin.manifest.id)
-      if (fs.existsSync(pluginDir)) {
-        fs.rmSync(pluginDir, { recursive: true, force: true })
-      }
-
-      const deleted = deletePlugin(id)
-      if (!deleted) throw Errors.NOT_FOUND('Plugin', id)
+      const pluginDir = plugin.installPath ?? path.join(getPluginsSourceDir(), plugin.manifest.id)
+      transactionalUninstallDirectory({ extensionsRoot: resolveStoragePath('extensions'), destination: pluginDir, registryDeletes: [getPluginRegistryFilePath(id)] })
 
       return reply.send(apiSuccess({ success: true }))
     } catch (err) {
@@ -296,16 +292,10 @@ export async function pluginRoutes(app: FastifyInstance) {
 
       // 复制到 plugins/ 目录
       const destDir = path.join(getPluginsSourceDir(), manifest.id)
-      if (fs.existsSync(destDir)) {
-        fs.rmSync(destDir, { recursive: true, force: true })
-      }
-      copyPluginDir(resolvedSource, destDir)
-
-      // 注册到存储
-      const installed = await (async () => {
-        const { registerPlugin } = await import('../core/storage/plugin/store')
-        return registerPlugin(manifest, destDir)
-      })()
+      const installed = await installPluginPackage({
+        extensionsRoot: resolveStoragePath('extensions'), source: resolvedSource, destination: destDir, manifest,
+        validate: (staged) => { if (!fs.existsSync(path.join(staged, 'plugin.yaml'))) throw new Error('Staged plugin manifest is missing') },
+      })
 
       // 执行安装后钩子
       await pluginRegistry.onPostInstall(installed.id)
@@ -521,8 +511,10 @@ export async function pluginRoutes(app: FastifyInstance) {
 
         // 注册
         try {
-          const { registerPlugin } = await import('../core/storage/plugin/store')
-          const result = registerPlugin(scannedPlugin.manifest, scannedPlugin.dirPath)
+          const result = await installPluginPackage({
+            extensionsRoot: resolveStoragePath('extensions'), source: scannedPlugin.dirPath, destination: scannedPlugin.dirPath, manifest: scannedPlugin.manifest,
+            validate: (staged) => { if (!fs.existsSync(path.join(staged, 'plugin.yaml'))) throw new Error('Staged plugin manifest is missing') },
+          })
           registered.push(result)
         } catch (e) {
           errors.push({ id: pluginId, error: String(e) })
@@ -610,13 +602,10 @@ async function pluginRoutesInstallFile(
   }
 
   const destDir = path.join(getPluginsSourceDir(), manifest.id)
-  if (fs.existsSync(destDir)) {
-    fs.rmSync(destDir, { recursive: true, force: true })
-  }
-  copyPluginDir(resolvedSource, destDir)
-
-  const { registerPlugin } = await import('../core/storage/plugin/store')
-  const installed = registerPlugin(manifest, destDir)
+  const installed = await installPluginPackage({
+    extensionsRoot: resolveStoragePath('extensions'), source: resolvedSource, destination: destDir, manifest,
+    validate: (staged) => { if (!fs.existsSync(path.join(staged, 'plugin.yaml'))) throw new Error('Staged plugin manifest is missing') },
+  })
   await pluginRegistry.onPostInstall(installed.id)
 
   return reply.status(201).send(

@@ -1,6 +1,5 @@
 import Database from 'better-sqlite3'
 import * as path from 'path'
-import * as os from 'os'
 import { ensureDir } from './fs-utils'
 import type {
   RAGProvider,
@@ -25,6 +24,8 @@ interface DocRow {
   uploaded_at: string
   processed_at: string | null
   error: string | null
+  source_path: string | null
+  source_sha256: string | null
 }
 
 interface ChunkRow {
@@ -55,9 +56,9 @@ export class SQLiteVecProvider implements RAGProvider {
     return this.db
   }
 
-  constructor(storageDir?: string) {
-    const dir = storageDir || path.join(os.homedir(), '.manta-data', 'rag')
-    this.dbPath = path.join(dir, 'vectors.db')
+  constructor(storageDir: string) {
+    if (!storageDir) throw new Error('RAG storage directory is required')
+    this.dbPath = path.join(storageDir, 'vectors.db')
   }
 
   async initialize(): Promise<void> {
@@ -86,9 +87,14 @@ export class SQLiteVecProvider implements RAGProvider {
           uploaded_at TEXT NOT NULL,
           processed_at TEXT,
           error TEXT,
+          source_path TEXT,
+          source_sha256 TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
       `)
+      const documentColumns = this.db.pragma('table_info(documents)') as Array<{ name: string }>
+      if (!documentColumns.some((column) => column.name === 'source_path')) this.db.exec('ALTER TABLE documents ADD COLUMN source_path TEXT')
+      if (!documentColumns.some((column) => column.name === 'source_sha256')) this.db.exec('ALTER TABLE documents ADD COLUMN source_sha256 TEXT')
 
       // 创建分块表（embedding 以 JSON 文本存储）
       this.db.exec(`
@@ -150,8 +156,8 @@ export class SQLiteVecProvider implements RAGProvider {
     const now = new Date().toISOString()
 
     const insertDoc = this.db.prepare(`
-      INSERT OR REPLACE INTO documents (id, kb_id, name, mime_type, size, status, chunk_count, uploaded_at, processed_at, error)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO documents (id, kb_id, name, mime_type, size, status, chunk_count, uploaded_at, processed_at, error, source_path, source_sha256)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     const insertChunk = this.db.prepare(`
@@ -175,7 +181,9 @@ export class SQLiteVecProvider implements RAGProvider {
         chunks.length,
         document.uploadedAt,
         now,
-        null
+        null,
+        document.sourcePath ?? null,
+        document.sourceSha256 ?? null
       )
 
       // 批量插入 chunks
@@ -218,15 +226,17 @@ export class SQLiteVecProvider implements RAGProvider {
     await this.ensureInitialized()
 
     this.db.prepare(`
-      INSERT OR REPLACE INTO documents (id, kb_id, name, mime_type, size, status, chunk_count, uploaded_at, processed_at, error)
-      VALUES (?, ?, ?, ?, ?, 'processing', 0, ?, NULL, NULL)
+      INSERT OR REPLACE INTO documents (id, kb_id, name, mime_type, size, status, chunk_count, uploaded_at, processed_at, error, source_path, source_sha256)
+      VALUES (?, ?, ?, ?, ?, 'processing', 0, ?, NULL, NULL, ?, ?)
     `).run(
       document.id,
       knowledgeBaseId,
       document.name,
       document.type,
       document.size,
-      document.uploadedAt
+      document.uploadedAt,
+      document.sourcePath ?? null,
+      document.sourceSha256 ?? null
     )
   }
 
@@ -444,6 +454,8 @@ export class SQLiteVecProvider implements RAGProvider {
       chunkCount: row.chunk_count,
       status: row.status as DocumentMetadata['status'],
       error: row.error || undefined,
+      sourcePath: row.source_path || undefined,
+      sourceSha256: row.source_sha256 || undefined,
     }))
   }
 
@@ -467,7 +479,14 @@ export class SQLiteVecProvider implements RAGProvider {
       chunkCount: row.chunk_count,
       status: row.status as DocumentMetadata['status'],
       error: row.error || undefined,
+      sourcePath: row.source_path || undefined,
+      sourceSha256: row.source_sha256 || undefined,
     }
+  }
+
+  async hasSourceSha256(sha256: string): Promise<boolean> {
+    await this.ensureInitialized()
+    return Boolean(this.db.prepare('SELECT 1 FROM documents WHERE source_sha256 = ? LIMIT 1').get(sha256))
   }
 
   /**
@@ -494,11 +513,29 @@ export class SQLiteVecProvider implements RAGProvider {
   /**
    * 关闭数据库连接
    */
-  close(): void {
+  async checkpoint(): Promise<void> {
+    if (this.initialized) this.db.pragma('wal_checkpoint(TRUNCATE)')
+  }
+
+  async integrityCheck(): Promise<{ ok: boolean; error?: string }> {
+    await this.ensureInitialized()
+    const rows = this.db.pragma('integrity_check') as Array<{ integrity_check: string }>
+    const error = rows.map((row) => row.integrity_check).find((value) => value !== 'ok')
+    return error ? { ok: false, error } : { ok: true }
+  }
+
+  async close(): Promise<void> {
     if (this.db) {
       this.db.close()
       this.initialized = false
     }
+  }
+
+  async reopen(storageDir: string): Promise<void> {
+    if (!storageDir) throw new Error('RAG storage directory is required')
+    await this.close()
+    this.dbPath = path.join(storageDir, 'vectors.db')
+    await this.initialize()
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -572,17 +609,24 @@ function escapeRegExp(str: string): string {
 
 let providerInstance: SQLiteVecProvider | null = null
 
-export function createSQLiteVecProvider(): RAGProvider {
-  if (!providerInstance) {
-    providerInstance = new SQLiteVecProvider()
-  }
+export function createSQLiteVecProvider(storageDir: string): SQLiteVecProvider {
+  return new SQLiteVecProvider(storageDir)
+}
+
+export function configureSQLiteVecProvider(storageDir: string): SQLiteVecProvider {
+  if (providerInstance) throw new Error('SQLiteVecProvider is already configured; reset it before reconfiguring')
+  providerInstance = new SQLiteVecProvider(storageDir)
   return providerInstance
 }
 
 /** 获取 SQLiteVecProvider 实例（带具体类型，用于调用扩展方法） */
 export function getSQLiteVecProvider(): SQLiteVecProvider {
-  if (!providerInstance) {
-    providerInstance = new SQLiteVecProvider()
-  }
+  if (!providerInstance) throw new Error('SQLiteVecProvider has not been configured with a storage directory')
   return providerInstance
+}
+
+export async function resetSQLiteVecProvider(): Promise<void> {
+  const current = providerInstance
+  await current?.close()
+  if (providerInstance === current) providerInstance = null
 }

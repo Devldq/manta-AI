@@ -12,7 +12,7 @@ fi
 
 # 检查配置文件是否存在
 CONFIG_FILE="config/sensitive-rules.yaml"
-SCRIPT_FILE="scripts/sensitive-check.ts"
+SCRIPT_FILE="scripts/security/sensitive-check.ts"
 
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "⚠️  未找到配置文件: $CONFIG_FILE"

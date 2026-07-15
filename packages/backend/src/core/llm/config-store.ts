@@ -1,28 +1,48 @@
-/* LLM 配置持久化存储 — ~/manta-data/llm-profiles.json（多模型配置） */
+/* LLM profile metadata persists in ASH config; API keys persist in ASH secrets. */
 import * as fs from 'fs'
-import * as path from 'path'
-import * as os from 'os'
+import { resolveStoragePath } from '../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import type { LLMConfig, ModelProfile, LLMProfilesConfig } from './types'
 import { getDefaultLLMConfig, profileToLLMConfig } from './types'
+import { readCrossGroupBundle, transactCrossGroupBundle } from '../../storage/cross-group-bundle'
+import { durableAtomicWrite } from '../../storage/durable-atomic'
 
 // 配置文件路径
-const DATA_DIR = path.join(os.homedir(), '.manta-data')
-const PROFILES_FILE = path.join(DATA_DIR, 'llm-profiles.json')
-const LEGACY_FILE = path.join(DATA_DIR, 'llm-config.json')
-
-function ensureDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
-  }
-}
+const profilesFile = () => resolveStoragePath('config', 'llm-profiles.json')
+const legacyFile = () => resolveStoragePath('config', 'llm-config.json')
+const profileSecretsFile = () => resolveStoragePath('secrets', 'llm-profile-api-keys.json')
+const participants = () => [{ name: 'metadata', root: resolveStoragePath('config') }, { name: 'secret', root: resolveStoragePath('secrets') }]
 
 /** 安全写文件（先写 tmp 再 rename） */
 function safeWrite(filePath: string, data: unknown): void {
-  ensureDir()
-  const tmp = `${filePath}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
-  fs.renameSync(tmp, filePath)
+  durableAtomicWrite(filePath, JSON.stringify(data, null, 2))
+}
+
+function readProfileSecrets(): Record<string, string> {
+  try { return JSON.parse(fs.readFileSync(profileSecretsFile(), 'utf8')) as Record<string, string> } catch { return {} }
+}
+
+function persistProfiles(config: LLMProfilesConfig): void {
+  let profiles: ModelProfile[] = []
+  transactCrossGroupBundle(participants(), 'llm-profiles', (bundle) => {
+  const existingRaw = bundle.read('secret', 'llm-profile-api-keys.json')
+  const existing = existingRaw ? JSON.parse(existingRaw) as Record<string, string> : readProfileSecrets()
+  const secrets: Record<string, string> = {}
+  profiles = config.profiles.map((profile) => {
+    const clearApiKey = (profile as ModelProfile & { clearApiKey?: boolean }).clearApiKey === true
+    const apiKey = clearApiKey ? undefined : profile.apiKey ?? existing[profile.id]
+    if (apiKey) secrets[profile.id] = apiKey
+    const { apiKey: _, clearApiKey: __, ...metadata } = profile as ModelProfile & { clearApiKey?: boolean }
+    return apiKey ? { ...metadata, apiKeyRef: `llm-profile:${profile.id}` } : metadata
+  })
+  bundle.write('secret', 'llm-profile-api-keys.json', JSON.stringify(secrets, null, 2))
+  bundle.write('metadata', 'llm-profiles.json', JSON.stringify({ ...config, profiles }, null, 2))
+  })
+}
+
+function hydrateProfiles(config: LLMProfilesConfig): LLMProfilesConfig {
+  const secrets = readProfileSecrets()
+  return { ...config, profiles: config.profiles.map((profile) => ({ ...profile, apiKey: secrets[profile.id] })) }
 }
 
 /** 从旧格式（单一 LLMConfig）迁移为新格式（LLMProfilesConfig） */
@@ -42,8 +62,8 @@ function migrateLegacyConfig(legacy: LLMConfig): LLMProfilesConfig {
 /** 读取旧格式配置文件（用于自动迁移） */
 function readLegacyConfig(): LLMConfig | null {
   try {
-    if (fs.existsSync(LEGACY_FILE)) {
-      const raw = fs.readFileSync(LEGACY_FILE, 'utf-8')
+    if (fs.existsSync(legacyFile())) {
+      const raw = fs.readFileSync(legacyFile(), 'utf-8')
       return JSON.parse(raw) as LLMConfig
     }
   } catch {
@@ -57,10 +77,10 @@ function tryMigrateLegacy(): void {
   const legacy = readLegacyConfig()
   if (legacy) {
     const migrated = migrateLegacyConfig(legacy)
-    safeWrite(PROFILES_FILE, migrated)
+    persistProfiles(migrated)
     // 迁移完成后删除旧文件
     try {
-      fs.unlinkSync(LEGACY_FILE)
+      fs.unlinkSync(legacyFile())
     } catch {
       // 删除失败不影响功能
     }
@@ -89,6 +109,11 @@ let migrationDone = false
 
 /** 读取多模型配置列表 */
 export function getLLMProfiles(): LLMProfilesConfig {
+  const committed = readCrossGroupBundle(participants(), 'llm-profiles', (bundle) => ({ metadata: bundle.read('metadata', 'llm-profiles.json'), secrets: bundle.read('secret', 'llm-profile-api-keys.json') }))
+  if (committed?.metadata) {
+    const parsed = JSON.parse(committed.metadata) as LLMProfilesConfig; const secrets = committed.secrets ? JSON.parse(committed.secrets) as Record<string, string> : {}
+    return { ...parsed, profiles: parsed.profiles.map((profile) => ({ ...profile, apiKey: secrets[profile.id] })) }
+  }
   // 1. 尝试自动迁移旧格式（仅执行一次）
   if (!migrationDone) {
     tryMigrateLegacy()
@@ -97,20 +122,20 @@ export function getLLMProfiles(): LLMProfilesConfig {
 
   // 2. 读取新格式
   try {
-    if (fs.existsSync(PROFILES_FILE)) {
-      const raw = fs.readFileSync(PROFILES_FILE, 'utf-8')
+    if (fs.existsSync(profilesFile())) {
+      const raw = fs.readFileSync(profilesFile(), 'utf-8')
       const parsed = JSON.parse(raw)
 
       // 判断是否为旧格式（没有 profiles 字段）
       if (parsed && typeof parsed === 'object' && !('profiles' in parsed)) {
         const migrated = migrateLegacyConfig(parsed as LLMConfig)
-        safeWrite(PROFILES_FILE, migrated)
-        return migrated
+        persistProfiles(migrated)
+        return hydrateProfiles(migrated)
       }
 
       const config = parsed as LLMProfilesConfig
       if (config.profiles && config.profiles.length > 0) {
-        return config
+        return hydrateProfiles(config)
       }
     }
   } catch {
@@ -119,13 +144,13 @@ export function getLLMProfiles(): LLMProfilesConfig {
 
   // 3. 无配置文件，从环境变量创建默认配置
   const defaultConfig = createDefaultFromEnv()
-  safeWrite(PROFILES_FILE, defaultConfig)
+  persistProfiles(defaultConfig)
   return defaultConfig
 }
 
 /** 保存多模型配置列表 */
 export function saveLLMProfiles(config: LLMProfilesConfig): void {
-  safeWrite(PROFILES_FILE, config)
+  persistProfiles(config)
 }
 
 // ─── 激活配置 ───

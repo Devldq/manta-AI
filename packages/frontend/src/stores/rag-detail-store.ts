@@ -6,10 +6,12 @@ import {
   saveStagedFiles,
   loadStagedFiles,
   removeStagedFileById,
+  removeStagedFilesById,
   clearAllForKb,
   saveBatchMeta,
   loadBatchMeta,
   clearBatchMeta,
+  claimStagedFiles,
 } from '@/stores/lib/staged-files-db'
 
 // ── 文档列表轮询定时器（有 processing 文档时自动刷新）─────────
@@ -918,30 +920,68 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     set((s) => ({ stagedFiles: [...s.stagedFiles, ...staged] }))
     // 持久化到 IndexedDB（fire-and-forget）
     const kbId = get().currentKbId
-    if (kbId) saveStagedFiles(kbId, get().stagedFiles).catch(() => {})
+    // File bytes become recoverable only after the cache API acknowledges
+    // them.  On offline failure they remain visibly local and are retried by
+    // the next add/process action; no browser durable store is claimed.
+    if (kbId) void saveStagedFiles(kbId, staged).then((persisted) => {
+      const byLocalId = new Map(staged.map((file, index) => [file.id, persisted[index]]))
+      set((state) => ({ stagedFiles: state.stagedFiles.map((file) => {
+        const remote = byLocalId.get(file.id)
+        return remote ? { ...file, id: remote.id, name: remote.name, size: remote.size, type: remote.type } : file
+      }) }))
+    }).catch((error) => console.warn('[RAG Batch] staged cache upload retained for retry', error))
   },
 
   removeStagedFile: (id: string) => {
-    set((s) => {
-      const nextProgress = { ...s.stagedFileProgress }
-      delete nextProgress[id]
-      return {
-        stagedFiles: s.stagedFiles.filter((f) => f.id !== id),
-        stagedFileProgress: nextProgress,
-      }
+    void removeStagedFileById(id, get().currentKbId ?? undefined).then(() => {
+      set((s) => {
+        const nextProgress = { ...s.stagedFileProgress }
+        delete nextProgress[id]
+        return { stagedFiles: s.stagedFiles.filter((f) => f.id !== id), stagedFileProgress: nextProgress }
+      })
+    }).catch((error: unknown) => {
+      console.warn('[RAG Batch] staged cache delete retained for retry', error)
+      set((s) => ({ stagedFileProgress: { ...s.stagedFileProgress, [id]: { ...s.stagedFileProgress[id], stage: 'error', progress: s.stagedFileProgress[id]?.progress ?? 0, error: error instanceof Error ? error.message : 'Unable to remove staged file' } } }))
     })
-    removeStagedFileById(id).catch(() => {})
   },
 
   removeStagedFileById: (id: string) => {
-    set((s) => ({ stagedFiles: s.stagedFiles.filter((f) => f.id !== id) }))
-    removeStagedFileById(id).catch(() => {})
+    void removeStagedFileById(id, get().currentKbId ?? undefined).then(() => {
+      set((s) => ({ stagedFiles: s.stagedFiles.filter((f) => f.id !== id) }))
+    }).catch((error: unknown) => {
+      console.warn('[RAG Batch] staged cache delete retained for retry', error)
+      set((s) => ({ stagedFileProgress: { ...s.stagedFileProgress, [id]: { ...s.stagedFileProgress[id], stage: 'error', progress: s.stagedFileProgress[id]?.progress ?? 0, error: error instanceof Error ? error.message : 'Unable to remove staged file' } } }))
+    })
   },
 
   clearStagedFiles: () => {
-    set({ stagedFiles: [], stagedFileProgress: {} })
     const kbId = get().currentKbId
-    if (kbId) clearAllForKb(kbId).catch(() => {})
+    const staged = get().stagedFiles
+    if (!kbId) { set({ stagedFiles: [], stagedFileProgress: {} }); return }
+    void removeStagedFilesById(kbId, staged.map((file) => file.id)).then(async ({ deletedIds, failures }) => {
+      const deleted = new Set(deletedIds)
+      const failureById = new Map(failures.map((failure) => [failure.id, failure.error]))
+      set((state) => {
+        const progress = { ...state.stagedFileProgress }
+        for (const id of deleted) delete progress[id]
+        for (const [id, error] of failureById) progress[id] = { ...progress[id], stage: 'error', progress: progress[id]?.progress ?? 0, error: error.message }
+        return { stagedFiles: state.stagedFiles.filter((file) => !deleted.has(file.id)), stagedFileProgress: progress }
+      })
+      if (failures.length === 0) { await clearBatchMeta(kbId); return }
+      // Acknowledge partial success before reloading. Merge only retained rows
+      // so a server reload cannot resurrect an acknowledged deletion.
+      try {
+        const persisted = await loadStagedFiles(kbId)
+        set((state) => {
+          const current = new Map(state.stagedFiles.map((file) => [file.id, file]))
+          for (const file of persisted) if (!deleted.has(file.id)) current.set(file.id, { id: file.id, file: file.file, name: file.name, size: file.size, type: file.type, relativePath: file.relativePath })
+          return { stagedFiles: [...current.values()] }
+        })
+      } catch (reason) {
+        const message = reason instanceof Error ? reason.message : 'Unable to reload staged files'
+        set((state) => ({ stagedFileProgress: Object.fromEntries(Object.entries(state.stagedFileProgress).map(([id, progress]) => failureById.has(id) ? [id, { ...progress, stage: 'error', error: message }] : [id, progress])) }))
+      }
+    })
   },
 
   updateChunkingConfig: (config: Partial<ChunkingConfig>) => {
@@ -967,6 +1007,9 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       chunkingConfig: { ...chunkingConfig },
       startedAt: new Date().toISOString(),
     }).catch(() => {})
+    // Claim only canonical IDs. A local offline file will fail naturally when
+    // upload starts and remains in memory for a visible retry.
+    await claimStagedFiles(kbId, stagedFiles.filter((file) => /^[a-f0-9]{64}$/.test(file.id)).map((file) => file.id), `batch-${kbId}`).catch(() => {})
 
     const concurrency = Math.max(1, Math.min(chunkingConfig.batchConcurrency || 1, 50, stagedFiles.length))
 
@@ -987,6 +1030,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     })
 
     const errors: string[] = []
+    const completedStageIds = new Set<string>()
     let completedCount = alreadyCompleted
     let nextIndex = 0
 
@@ -1024,6 +1068,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       while (nextIndex < stagedFiles.length) {
         const myIndex = nextIndex++
         const sf = stagedFiles[myIndex]
+        let succeeded = false
 
         // 标记为上传中，记录开始时间，并加入 active 列表
         setProgress(sf.id, { stage: 'uploading', progress: 0, startTime: Date.now() })
@@ -1088,6 +1133,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
                   }
                   case 'done': {
                     fileDone = true
+                    succeeded = true
                     setProgress(sf.id, { stage: 'done', progress: 100, endTime: Date.now() })
                     updateActiveFile(sf.name, 100, 'done')
                     break
@@ -1114,6 +1160,17 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
         }
 
         removeActiveFile(sf.name)
+        if (succeeded && /^[a-f0-9]{64}$/.test(sf.id)) {
+          try {
+            await removeStagedFileById(sf.id, kbId)
+            completedStageIds.add(sf.id)
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unable to remove staged cache file'
+            errors.push(`${sf.name}: ${message}`)
+            setProgress(sf.id, { stage: 'error', progress: 100, error: message, endTime: Date.now() })
+            console.warn('[RAG Batch] processed document retained because cache delete failed', error)
+          }
+        }
         completedCount++
         set({ batchCompletedCount: completedCount })
         // 每个文件完成后静默刷新文档列表，增量合并不闪烁
@@ -1137,7 +1194,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       batchProcessing: false,
       batchDone: true,
       batchErrors: errors,
-      stagedFiles: [],
+      stagedFiles: stagedFiles.filter((file) => !completedStageIds.has(file.id)),
       batchActiveFiles: [],
       stagedFileProgress: {},
     })
@@ -1152,7 +1209,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     }
 
     // 清除 IndexedDB 中的批处理数据
-    await clearAllForKb(kbId).catch(() => {})
+    if (errors.length === 0) await clearAllForKb(kbId).catch((error: unknown) => console.warn('[RAG Batch] staged cache clear retained for retry', error))
 
     // 短暂展示完成后清理
     setTimeout(() => {
@@ -1188,7 +1245,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       const persistedFiles = await loadStagedFiles(kbId)
       if (persistedFiles.length === 0) {
         // IndexedDB 中没有文件，清除元数据
-        await clearAllForKb(kbId).catch(() => {})
+        await clearAllForKb(kbId).catch((error: unknown) => console.warn('[RAG Batch] staged cache clear retained for retry', error))
         return
       }
 
@@ -1268,7 +1325,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       } else {
         // 所有文件都已处理完成
         set({ batchProcessing: false, batchDone: true, stagedFiles: [], batchActiveFiles: [] })
-        await clearAllForKb(kbId).catch(() => {})
+        await clearAllForKb(kbId).catch((error: unknown) => console.warn('[RAG Batch] staged cache clear retained for retry', error))
         setTimeout(() => set({ batchDone: false }), 2000)
       }
     } catch {

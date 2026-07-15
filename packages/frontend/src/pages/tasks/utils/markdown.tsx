@@ -67,7 +67,7 @@ function CodeBlock({ isBlock, lang, children, ...props }: { isBlock: boolean; la
 // 提取为模块级常量，避免每次渲染创建新对象导致 ReactMarkdown 重建 DOM
 export const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
   code({ className, children, ...props }) {
-    const isBlock = className?.includes('language-')
+    const isBlock = className?.includes('language-') ?? false
     const lang = className?.replace('language-', '') ?? ''
     return <CodeBlock isBlock={isBlock} lang={lang} children={children} {...props} />
   },

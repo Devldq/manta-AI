@@ -4,6 +4,13 @@ import { useState, useEffect, useRef, memo } from 'react'
 import { createPortal } from 'react-dom'
 import { Folder, FolderOpen, Check, FolderPlus, ChevronDown } from 'lucide-react'
 
+declare global {
+  interface Window {
+    electronAPI?: { openDirectory?: () => Promise<string | null> }
+    showDirectoryPicker?: () => Promise<{ name: string }>
+  }
+}
+
 export interface WorkspaceEntry {
   id: string
   name: string
@@ -61,7 +68,7 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
   async function handlePickFolder() {
     setOpen(false)
     try {
-      const api = (window as Record<string, unknown> & { electronAPI?: { openDirectory?: () => Promise<string | null> } }).electronAPI
+      const api = window.electronAPI
       if (api?.openDirectory) {
         const dir = await api.openDirectory()
         if (dir) {
@@ -71,9 +78,8 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
         return
       }
       // 浏览器模式：showDirectoryPicker 只返回目录名，需要用户确认完整路径
-      const w = window as Record<string, unknown> & { showDirectoryPicker?: () => Promise<{ name: string }> }
-      if (w.showDirectoryPicker) {
-        const handle = await w.showDirectoryPicker()
+      if (window.showDirectoryPicker) {
+        const handle = await window.showDirectoryPicker()
         // handle.name 只是目录名（如 "炒股"），不是完整路径
         // 让用户输入完整绝对路径
         const fullPath = window.prompt(

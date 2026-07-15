@@ -3,14 +3,15 @@
  */
 
 import { FastifyPluginAsync } from 'fastify'
-import * as fs from 'fs'
-import * as path from 'path'
-import * as os from 'os'
+import { currentDiagnosticsOwner } from '../storage/runtime-diagnostics'
 
 // ─── 从 @manta/agent-sandbox 复制的审计日志函数 ──────────────────────
 
-const AUDIT_DIR = path.join(os.homedir(), '.manta-data')
-const AUDIT_LOG_FILE = path.join(AUDIT_DIR, 'audit.log')
+function diagnostics() {
+  const owner = currentDiagnosticsOwner()
+  if (!owner) throw new Error('Diagnostics writer is not available')
+  return owner
+}
 
 interface AuditEntry {
   timestamp: string
@@ -23,12 +24,6 @@ interface AuditEntry {
   durationMs?: number
 }
 
-function ensureAuditDir(): void {
-  if (!fs.existsSync(AUDIT_DIR)) {
-    fs.mkdirSync(AUDIT_DIR, { recursive: true })
-  }
-}
-
 function readAuditLogs(options?: {
   taskId?: string
   workspaceId?: string
@@ -37,22 +32,7 @@ function readAuditLogs(options?: {
   endTime?: string
   limit?: number
 }): AuditEntry[] {
-  if (!fs.existsSync(AUDIT_LOG_FILE)) {
-    return []
-  }
-  
-  const content = fs.readFileSync(AUDIT_LOG_FILE, 'utf-8')
-  const lines = content.trim().split('\n').filter(Boolean)
-  
-  let entries = lines
-    .map((line) => {
-      try {
-        return JSON.parse(line) as AuditEntry
-      } catch {
-        return null
-      }
-    })
-    .filter((entry) => entry !== null) as AuditEntry[]
+  let entries = diagnostics().readAuditEntries<AuditEntry & Record<string, unknown>>()
   
   // 应用过滤条件
   if (options?.taskId) {
@@ -80,17 +60,11 @@ function readAuditLogs(options?: {
 }
 
 function clearAuditLogs(): void {
-  if (fs.existsSync(AUDIT_LOG_FILE)) {
-    fs.unlinkSync(AUDIT_LOG_FILE)
-  }
+  diagnostics().clearAudit()
 }
 
 function getAuditLogSize(): number {
-  if (!fs.existsSync(AUDIT_LOG_FILE)) {
-    return 0
-  }
-  const stats = fs.statSync(AUDIT_LOG_FILE)
-  return stats.size
+  return diagnostics().auditSize()
 }
 
 // ─── 路由定义 ──────────────────────────────────────────────────────────

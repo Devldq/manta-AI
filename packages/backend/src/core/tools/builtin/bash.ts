@@ -16,6 +16,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { getSecurityContext, type SecurityContext as SecurityContextType } from '../../security-context'
+import { currentDiagnosticsOwner } from '../../../storage/runtime-diagnostics'
 
 // ─── 类型定义 ────────────────────────────────────────────────────────────────────
 
@@ -141,19 +142,8 @@ function validateCommand(command: string, cwd: string): CommandValidationResult 
 
 // ─── 审计日志函数 ───────────────────────────────────────────────────────────────
 
-const AUDIT_DIR = path.join(os.homedir(), '.manta-data')
-const AUDIT_LOG_FILE = path.join(AUDIT_DIR, 'audit.log')
-
-function ensureAuditDir(): void {
-  if (!fs.existsSync(AUDIT_DIR)) {
-    fs.mkdirSync(AUDIT_DIR, { recursive: true })
-  }
-}
-
 function auditLog(entry: AuditEntry): void {
-  ensureAuditDir()
-  const line = JSON.stringify(entry) + '\n'
-  fs.appendFileSync(AUDIT_LOG_FILE, line, 'utf-8')
+  currentDiagnosticsOwner()?.appendAudit({ ...entry })
 }
 
 function createAuditEntry(params: {

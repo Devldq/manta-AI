@@ -11,7 +11,6 @@
 import Database from 'better-sqlite3'
 import crypto from 'crypto'
 import * as path from 'path'
-import * as os from 'os'
 import { ensureDir } from './fs-utils'
 import type { EmbeddingService } from './types'
 
@@ -33,12 +32,12 @@ export class EmbeddingCacheManager {
   private maxEntries: number
 
   /**
-   * @param cacheDir - 缓存目录（可选，默认为 ~/.manta-data/rag/cache）
+   * @param cacheDir - 由 Storage Hub 路由出的缓存目录（必填）
    * @param maxEntries - 最大缓存条目数（可选，默认 100000）
    */
-  constructor(cacheDir?: string, maxEntries?: number) {
-    const dir = cacheDir || path.join(os.homedir(), '.manta-data', 'rag', 'cache')
-    this.dbPath = path.join(dir, 'embedding-cache.db')
+  constructor(cacheDir: string, maxEntries?: number) {
+    if (!cacheDir) throw new Error('Embedding cache directory is required')
+    this.dbPath = path.join(cacheDir, 'embedding-cache.db')
     this.maxEntries = maxEntries || 100000
   }
 
@@ -258,6 +257,24 @@ export class EmbeddingCacheManager {
       this.initialized = false
     }
   }
+
+  checkpoint(): void {
+    if (this.initialized) this.db.pragma('wal_checkpoint(TRUNCATE)')
+  }
+
+  integrityCheck(): { ok: boolean; error?: string } {
+    this.ensureInitialized()
+    const rows = this.db.pragma('integrity_check') as Array<{ integrity_check: string }>
+    const error = rows.map((row) => row.integrity_check).find((value) => value !== 'ok')
+    return error ? { ok: false, error } : { ok: true }
+  }
+
+  reopen(cacheDir: string): void {
+    if (!cacheDir) throw new Error('Embedding cache directory is required')
+    this.close()
+    this.dbPath = path.join(cacheDir, 'embedding-cache.db')
+    this.ensureInitialized()
+  }
 }
 
 /**
@@ -343,9 +360,8 @@ export class CachedEmbeddingService implements EmbeddingService {
  */
 export function createCachedEmbeddingService(
   originalService: EmbeddingService,
-  cacheManager?: EmbeddingCacheManager,
+  cacheManager: EmbeddingCacheManager,
   model?: string
 ): CachedEmbeddingService {
-  const cache = cacheManager || new EmbeddingCacheManager()
-  return new CachedEmbeddingService(originalService, cache, model)
+  return new CachedEmbeddingService(originalService, cacheManager, model)
 }

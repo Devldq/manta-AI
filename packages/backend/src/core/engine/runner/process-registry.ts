@@ -1,153 +1,106 @@
-/*  start: ProcessRegistry — Agent 进程追踪与管理 */
-import * as fs from 'fs'
-import * as path from 'path'
-import * as os from 'os'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import type { ManagedResource } from '../../../storage/group-drivers'
 
-// AI: 进程注册表文件路径
-const DATA_DIR = path.join(os.homedir(), '.manta-data')
-const REGISTRY_FILE = path.join(DATA_DIR, 'process-registry.json')
-
-interface ProcessRecord {
+export interface ProcessRecord {
   taskId: string
   pid: number
   agentName: string
   startedAt: string
 }
 
-// ─── ProcessRegistry 类 ───────────────────────────────────────────
-
-/**
- * AI: 进程注册表 — 追踪每个任务启动的 agent 进程
- * - 支持一个任务关联多个进程（parallel 步骤）
- * - 提供 kill 方法强制停止进程
- * - 自动清理已结束的进程记录
- */
-export class ProcessRegistry {
+/** A work-group owned process registry. Construction is the only point where I/O starts. */
+export class ProcessRegistry implements ManagedResource {
   private records: ProcessRecord[] = []
+  private root: string
+  private closed = false
 
-  constructor() {
+  constructor(root: string) {
+    this.root = root
     this.load()
   }
 
-  // AI: 从文件加载注册表
+  private get directory(): string { return join(this.root, 'processes') }
+  private get file(): string { return join(this.directory, 'process-registry.json') }
+
   private load(): void {
+    this.records = []
+    if (!existsSync(this.file)) return
     try {
-      if (fs.existsSync(REGISTRY_FILE)) {
-        const raw = fs.readFileSync(REGISTRY_FILE, 'utf-8')
-        this.records = JSON.parse(raw) as ProcessRecord[]
-      }
-    } catch (err) {
-      console.error('[ProcessRegistry] 加载失败:', err)
+      const parsed = JSON.parse(readFileSync(this.file, 'utf8'))
+      this.records = Array.isArray(parsed) ? parsed as ProcessRecord[] : []
+    } catch {
       this.records = []
     }
   }
 
-  // AI: 保存注册表到文件
-  private save(): void {
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true })
-      }
-      const tmp = `${REGISTRY_FILE}.tmp`
-      fs.writeFileSync(tmp, JSON.stringify(this.records, null, 2), 'utf-8')
-      fs.renameSync(tmp, REGISTRY_FILE)
-    } catch (err) {
-      console.error('[ProcessRegistry] 保存失败:', err)
-    }
+  private assertOpen(): void {
+    if (this.closed) throw new Error('ProcessRegistry is closed')
   }
 
-  // AI: 注册任务关联的进程
   register(taskId: string, pid: number, agentName: string): void {
-    this.records.push({
-      taskId,
-      pid,
-      agentName,
-      startedAt: new Date().toISOString(),
-    })
-    this.save()
-    console.log(`[ProcessRegistry] 注册进程: taskId=${taskId}, pid=${pid}, agent=${agentName}`)
+    this.assertOpen()
+    this.records.push({ taskId, pid, agentName, startedAt: new Date().toISOString() })
+    this.persist()
   }
 
-  // AI: 停止任务关联的所有进程
   async kill(taskId: string): Promise<{ killed: number; failed: number }> {
-    const pids = this.records.filter((r) => r.taskId === taskId).map((r) => r.pid)
-    if (pids.length === 0) {
-      console.log(`[ProcessRegistry] 任务 ${taskId} 无关联进程`)
-      return { killed: 0, failed: 0 }
-    }
-
+    this.assertOpen()
+    const pids = this.records.filter((record) => record.taskId === taskId).map((record) => record.pid)
     let killed = 0
     let failed = 0
-
     for (const pid of pids) {
-      try {
-        // AI: 尝试发送 SIGTERM 信号
-        process.kill(pid, 'SIGTERM')
-        console.log(`[ProcessRegistry] 已发送 SIGTERM 到进程 ${pid}`)
-        killed++
-      } catch (err: unknown) {
-        const error = err as NodeJS.ErrnoException
-        if (error.code === 'ESRCH') {
-          // AI: 进程已经不存在，视为正常
-          console.log(`[ProcessRegistry] 进程 ${pid} 已不存在`)
-          killed++
-        } else {
-          console.error(`[ProcessRegistry] 停止进程 ${pid} 失败:`, error)
-          failed++
-        }
+      try { process.kill(pid, 'SIGTERM'); killed += 1 }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') killed += 1
+        else failed += 1
       }
     }
-
-    // AI: 清理该任务的进程记录
     this.cleanup(taskId)
-
     return { killed, failed }
   }
 
-  // AI: 清理已结束的进程记录
   cleanup(taskId: string): void {
-    const before = this.records.length
-    this.records = this.records.filter((r) => r.taskId !== taskId)
-    const after = this.records.length
-    if (before !== after) {
-      this.save()
-      console.log(`[ProcessRegistry] 清理任务 ${taskId} 的 ${before - after} 条记录`)
-    }
+    this.assertOpen()
+    this.records = this.records.filter((record) => record.taskId !== taskId)
+    this.persist()
   }
 
-  // AI: 检查进程是否存在
   isAlive(pid: number): boolean {
-    try {
-      // AI: signal 0 不发送实际信号，只检查进程是否存在
-      process.kill(pid, 0)
-      return true
-    } catch {
-      return false
-    }
+    try { process.kill(pid, 0); return true } catch { return false }
   }
 
-  // AI: 清理所有已结束的进程记录（维护用）
   cleanupAll(): void {
-    const before = this.records.length
-    this.records = this.records.filter((r) => this.isAlive(r.pid))
-    const after = this.records.length
-    if (before !== after) {
-      this.save()
-      console.log(`[ProcessRegistry] 全局清理: 删除 ${before - after} 条无效记录`)
-    }
+    this.assertOpen()
+    this.records = this.records.filter((record) => this.isAlive(record.pid))
+    this.persist()
   }
 
-  // AI: 获取任务关联的所有进程信息（调试用）
   getTaskProcesses(taskId: string): ProcessRecord[] {
-    return this.records.filter((r) => r.taskId === taskId)
+    return this.records.filter((record) => record.taskId === taskId).map((record) => ({ ...record }))
   }
 
-  // AI: 获取所有注册的进程（调试用）
-  getAllProcesses(): ProcessRecord[] {
-    return [...this.records]
+  getAllProcesses(): ProcessRecord[] { return this.records.map((record) => ({ ...record })) }
+
+  private persist(): void {
+    mkdirSync(this.directory, { recursive: true })
+    const temporary = `${this.file}.tmp`
+    writeFileSync(temporary, JSON.stringify(this.records, null, 2), 'utf8')
+    renameSync(temporary, this.file)
   }
+
+  checkpoint(): void { if (!this.closed) this.persist() }
+  close(): void { if (!this.closed) { this.persist(); this.closed = true } }
+  integrityCheck(): { ok: boolean; error?: string } {
+    if (!existsSync(this.file)) return { ok: true }
+    try {
+      const parsed = JSON.parse(readFileSync(this.file, 'utf8'))
+      return Array.isArray(parsed) ? { ok: true } : { ok: false, error: 'Process registry must contain an array' }
+    } catch (error) { return { ok: false, error: String(error) } }
+  }
+  reopen(root: string): void { this.root = root; this.closed = false; this.load() }
 }
 
-// AI: 全局单例
-export const processRegistry = new ProcessRegistry()
-/*  end: ProcessRegistry 结束 */
+export function createProcessRegistry(workRoot: string): ProcessRegistry {
+  return new ProcessRegistry(workRoot)
+}

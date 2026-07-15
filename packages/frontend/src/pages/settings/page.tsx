@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import React from 'react'
 import { Link } from 'react-router-dom'
 import { SkeletonList } from '@/components/skeleton'
+import { StorageSettingsPanel } from '@/features/storage/StorageSettingsPanel'
+import { clientState } from '@/lib/client-state'
 
 interface RunnerStatus {
   id: string
@@ -40,6 +42,7 @@ const TOC = [
   { id: 'section-plugins', label: '插件管理' },
   { id: 'section-sysinfo', label: '系统信息' },
   { id: 'section-data-manage', label: '数据管理' },
+  { id: 'section-storage', label: 'Storage' },
 ]
 
 export default function SettingsPage() {
@@ -54,6 +57,7 @@ export default function SettingsPage() {
   })
   const [webhookSaving, setWebhookSaving] = useState(false)
   const [webhookSaved, setWebhookSaved] = useState(false)
+  const [webhookError, setWebhookError] = useState('')
   const [plugins, setPlugins] = useState<PluginManifest[]>([])
   const [pluginsLoading, setPluginsLoading] = useState(false)
   const [installPkg, setInstallPkg] = useState('')
@@ -74,11 +78,8 @@ export default function SettingsPage() {
     
     // 并行执行数据获取
     Promise.allSettled([probeRunners(), loadPlugins()])
+    void clientState.load<WebhookConfig>('webhook').then((saved) => { if (saved) setWebhook(saved) }).catch(() => setWebhookError('Unable to load webhook settings'))
     
-    const saved = localStorage.getItem('manta:webhook')
-    if (saved) {
-      try { setWebhook(JSON.parse(saved)) } catch {}
-    }
     // AI: 加载 README
     fetch('/api/readme')
       .then((r) => r.json())
@@ -212,14 +213,15 @@ export default function SettingsPage() {
     }
   }
 
-  function saveWebhook() {
+  async function saveWebhook() {
     setWebhookSaving(true)
-    localStorage.setItem('manta:webhook', JSON.stringify(webhook))
-    setTimeout(() => {
+    setWebhookError('')
+    try {
+      if (!await clientState.set('webhook', webhook)) throw new Error('Webhook settings could not be saved')
       setWebhookSaving(false)
       setWebhookSaved(true)
       setTimeout(() => setWebhookSaved(false), 2000)
-    }, 300)
+    } catch (error) { setWebhookSaving(false); setWebhookError(error instanceof Error ? error.message : 'Webhook settings could not be saved') }
   }
 
   // AI start: 自动更新相关函数
@@ -630,6 +632,7 @@ export default function SettingsPage() {
                 {webhookSaved ? '✓ 已保存' : webhookSaving ? '保存中...' : '保存配置'}
               </button>
             </div>
+            {webhookError && <p role="alert" style={{ color: 'var(--color-status-failed)', fontSize: '12px', marginTop: '8px' }}>{webhookError}</p>}
           </div>
         </section>
 
@@ -775,8 +778,8 @@ export default function SettingsPage() {
             style={{ border: '1px solid var(--color-border)' }}
           >
             <InfoRow label="版本" value="Manta v2.0.0" />
-            <InfoRow label="数据目录" value="~/.manta-data/" />
-            <InfoRow label="会话存储" value="~/.manta-data/conversations/" />
+            <InfoRow label="数据目录" value="已配置的 ASH 卷（.manta-ai）" />
+            <InfoRow label="会话存储" value="ASH work/conversations" />
           </div>
         </section>
 
@@ -790,7 +793,7 @@ export default function SettingsPage() {
             style={{ border: '1px solid var(--color-border)' }}
           >
             <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: '16px' }}>
-              管理本地数据存储目录（<code style={{ fontFamily: 'var(--font-mono)' }}>~/.manta-data</code>），包含会话记录、LLM 配置、插件设置、记忆等。
+              管理 ASH 卷与存储组，所有内部数据统一保存在所选父目录下的 <code style={{ fontFamily: 'var(--font-mono)' }}>.manta-ai</code>。
             </p>
             <div className="flex items-center gap-3">
               <button
@@ -799,7 +802,7 @@ export default function SettingsPage() {
                   if (electronAPI?.openDataDir) {
                     await electronAPI.openDataDir()
                   } else {
-                    alert('请手动打开数据目录：~/.manta-data')
+                    alert('请在桌面应用中打开已配置的 ASH 卷。')
                   }
                 }}
                 style={{
@@ -820,7 +823,7 @@ export default function SettingsPage() {
               </button>
               <button
                 onClick={async () => {
-                  if (!confirm('确定要重置系统吗？\n\n这将删除所有本地数据（~/.manta-data），包括会话记录、LLM 配置、插件设置、记忆等。\n\n此操作不可撤销！')) return
+                  if (!confirm('确定要重置系统吗？\n\n这将删除所有已配置 ASH 卷中的本地数据。\n\n此操作不可撤销！')) return
 
                   const electronAPI = (window as unknown as { electronAPI?: { resetSystem?: () => Promise<{ success: boolean; canceled?: boolean; error?: string }> } }).electronAPI
                   if (electronAPI?.resetSystem) {
@@ -832,7 +835,7 @@ export default function SettingsPage() {
                       alert(`重置失败：${result.error ?? '未知错误'}`)
                     }
                   } else {
-                    alert('重置系统功能仅在 Electron 桌面应用中可用。请手动删除 ~/.manta-data 目录。')
+                    alert('重置系统功能仅在 Electron 桌面应用中可用。')
                   }
                 }}
                 style={{
@@ -856,6 +859,10 @@ export default function SettingsPage() {
               ⚠ 重置将删除所有会话、配置、记忆等数据，操作不可撤销。重置后需重启应用。
             </p>
           </div>
+        </section>
+
+        <section id="section-storage" className="mb-10 scroll-mt-8">
+          <StorageSettingsPanel />
         </section>
       </div>
     </div>
