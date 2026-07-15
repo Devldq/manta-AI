@@ -63,10 +63,7 @@ function fixtureAdapter(target: AgentInstallation, operations: PreviewFileOperat
     displayName: 'Fixture',
     detect: async () => [target],
     inspect: async () => ({ schemaVersion: 1, installationId: target.id, assets: [] }),
-    planImport: async () => {
-      const { selection: _selection, ...plan } = rawPlan(target, operations)
-      return { ...plan, kind: 'import' }
-    },
+    planImport: async (importSelection) => ({ ...rawPlan(target, operations), kind: 'import', selection: importSelection }),
     planProjection: async () => rawPlan(target, operations),
     apply,
   }

@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { lstat, open, readFile, readdir } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { constants } from 'node:fs'
+import { chmod, lstat, mkdir, open, readFile, readdir } from 'node:fs/promises'
+import { dirname, join, parse, resolve } from 'node:path'
 import { AdapterRegistry, AssetManifestStore, CodexAdapter, ProjectionCoordinator, VolumeObjectStore, type AdapterPlan, type AdapterResult, type AgentInstallation, type CodexPortableAsset, type CodexPortableAssetKind, type CodexPortableAssetRepository, type CodexPortableAssetSummary, type CodexSecretRepository, type PreviewFileOperation } from '@manta/storage-hub'
 import type { StorageGroupId } from '@manta/shared'
 
@@ -37,11 +38,46 @@ function jsonMetadata(value: unknown): Readonly<Record<string, unknown>> | undef
   return parsed as Readonly<Record<string, unknown>>
 }
 
-async function writeExclusiveDurable(path: string, bytes: string, mode = 0o600): Promise<void> {
-  const handle = await open(path, 'wx', mode)
-  try { await handle.writeFile(bytes, 'utf8'); await handle.sync() } finally { await handle.close() }
-  const parent = await open(dirname(path), 'r')
+export interface AgentStorageIoHooks { afterAncestorSnapshot?(operation: 'descriptor-read' | 'descriptor-write' | 'secret-write', path: string): Promise<void> }
+interface DirectoryIdentity { path: string; identity: string }
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0
+function statIdentity(value: { dev: number | bigint; ino: number | bigint }): string { return `${value.dev}:${value.ino}` }
+function ancestorPaths(path: string): string[] { const absolute = resolve(path); const root = parse(absolute).root; const relative = absolute.slice(root.length).split(/[\\/]/).filter(Boolean); const paths = [root]; for (const part of relative) paths.push(join(paths.at(-1)!, part)); return paths }
+async function snapshotDirectoryChain(path: string): Promise<readonly DirectoryIdentity[]> {
+  const result: DirectoryIdentity[] = []
+  for (const current of ancestorPaths(path)) { const value = await lstat(current, { bigint: true }); if (!value.isDirectory() || value.isSymbolicLink()) throw new Error(`Storage ancestor is linked or not an ordinary directory: ${current}`); result.push({ path: current, identity: statIdentity(value) }) }
+  return result
+}
+async function assertDirectoryChain(snapshot: readonly DirectoryIdentity[]): Promise<void> {
+  for (const expected of snapshot) { const value = await lstat(expected.path, { bigint: true }); if (!value.isDirectory() || value.isSymbolicLink() || statIdentity(value) !== expected.identity) throw new Error(`Storage ancestor identity changed: ${expected.path}`) }
+}
+async function ensureOrdinaryDirectory(parent: string, directory: string, mode?: number): Promise<void> {
+  const before = await snapshotDirectoryChain(parent)
+  try { await mkdir(directory, { mode }) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+  await assertDirectoryChain(before)
+  const value = await lstat(directory, { bigint: true }); if (!value.isDirectory() || value.isSymbolicLink()) throw new Error('Storage directory is linked or not an ordinary directory')
+  if (mode !== undefined && process.platform !== 'win32') { await chmod(directory, mode); const secured = await lstat(directory); if ((secured.mode & 0o777) !== mode) throw new Error('Storage directory permissions are not private') }
+}
+async function readOrdinaryNoFollow(path: string, operation: 'descriptor-read', hooks?: AgentStorageIoHooks): Promise<string> {
+  const ancestors = await snapshotDirectoryChain(dirname(path)); await hooks?.afterAncestorSnapshot?.(operation, path); await assertDirectoryChain(ancestors)
+  const handle = await open(path, constants.O_RDONLY | NO_FOLLOW)
+  try {
+    const opened = await handle.stat({ bigint: true }); if (!opened.isFile()) throw new Error('Storage leaf is not an ordinary file')
+    const bytes = await handle.readFile(); const leaf = await lstat(path, { bigint: true }); if (!leaf.isFile() || leaf.isSymbolicLink() || statIdentity(leaf) !== statIdentity(opened)) throw new Error('Storage leaf identity changed')
+    await assertDirectoryChain(ancestors); return bytes.toString('utf8')
+  } finally { await handle.close() }
+}
+async function readDirectoryNamesStable(path: string, hooks?: AgentStorageIoHooks): Promise<string[]> {
+  const ancestors = await snapshotDirectoryChain(path); await hooks?.afterAncestorSnapshot?.('descriptor-read', path); await assertDirectoryChain(ancestors)
+  const names = await readdir(path); await assertDirectoryChain(ancestors); return names
+}
+async function writeExclusiveDurable(path: string, bytes: string, mode = 0o600, operation: 'descriptor-write' | 'secret-write' = 'descriptor-write', hooks?: AgentStorageIoHooks): Promise<void> {
+  const ancestors = await snapshotDirectoryChain(dirname(path)); await hooks?.afterAncestorSnapshot?.(operation, path); await assertDirectoryChain(ancestors)
+  const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW, mode)
+  try { const opened = await handle.stat({ bigint: true }); if (!opened.isFile()) throw new Error('Storage leaf is not an ordinary file'); await handle.writeFile(bytes, 'utf8'); await handle.sync(); const leaf = await lstat(path, { bigint: true }); if (!leaf.isFile() || leaf.isSymbolicLink() || statIdentity(leaf) !== statIdentity(opened)) throw new Error('Storage leaf identity changed'); await assertDirectoryChain(ancestors) } finally { await handle.close() }
+  const parent = await open(dirname(path), constants.O_RDONLY | NO_FOLLOW)
   try { await parent.sync() } catch (error) { if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM') throw error } finally { await parent.close() }
+  await assertDirectoryChain(ancestors)
 }
 
 /** Immutable Codex assets whose bytes are backed by the extensions volume's verified CAS. */
@@ -50,22 +86,23 @@ export class AshCodexPortableAssetRepository implements CodexPortableAssetReposi
   readonly #volumeRoot: string
   readonly #objects: VolumeObjectStore
   readonly #manifests: AssetManifestStore
+  readonly #hooks?: AgentStorageIoHooks
 
-  constructor(extensionsRoot: string) {
+  constructor(extensionsRoot: string, hooks?: AgentStorageIoHooks) {
     this.#extensionsRoot = resolve(extensionsRoot); this.#volumeRoot = dirname(this.#extensionsRoot)
     this.#objects = new VolumeObjectStore(this.#volumeRoot); this.#manifests = new AssetManifestStore(this.#volumeRoot)
+    this.#hooks = hooks
   }
 
   #descriptorPath(id: string): string { assertId(id, 'Portable asset id'); return join(this.#extensionsRoot, 'agent-assets', `${id}${DESCRIPTOR_SUFFIX}`) }
   #manifestId(id: string): string { return `codex-${createHash('sha256').update(id).digest('hex')}` }
 
-  async #assertDirectory(): Promise<void> { const stat = await lstat(join(this.#extensionsRoot, 'agent-assets')); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Portable asset repository directory is linked or not an ordinary directory') }
-  async #readDescriptor(id: string): Promise<unknown> { await this.#assertDirectory(); const path = this.#descriptorPath(id); const stat = await lstat(path); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Portable asset descriptor is linked or not an ordinary file'); return JSON.parse(await readFile(path, 'utf8')) }
+  async #readDescriptor(id: string): Promise<unknown> { const path = this.#descriptorPath(id); return JSON.parse(await readOrdinaryNoFollow(path, 'descriptor-read', this.#hooks)) }
 
   async list(): Promise<readonly CodexPortableAssetSummary[]> {
     const directory = join(this.#extensionsRoot, 'agent-assets')
     let names: string[]
-    try { await this.#assertDirectory(); names = await readdir(directory) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
+    try { names = await readDirectoryNamesStable(directory, this.#hooks) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
     const ids = names.map((name) => { if (!name.endsWith(DESCRIPTOR_SUFFIX)) throw new Error('Unknown portable asset repository entry'); const id = name.slice(0, -DESCRIPTOR_SUFFIX.length); assertId(id, 'Portable asset id'); return id }).sort()
     const assets = await Promise.all(ids.map((id) => this.read(id)))
     return assets.map(({ id, kind }) => ({ schemaVersion: 1, id, kind }))
@@ -105,8 +142,8 @@ export class AshCodexPortableAssetRepository implements CodexPortableAssetReposi
       const manifest = await this.#manifests.read(this.#manifestId(asset.id)); if (canonical(manifest.entries) !== canonical(entries)) throw new Error('Portable asset id collision with different immutable content')
     }
     const path = this.#descriptorPath(asset.id)
-    await import('node:fs/promises').then(({ mkdir }) => mkdir(dirname(path), { recursive: true }))
-    try { await writeExclusiveDurable(path, `${JSON.stringify(descriptor, null, 2)}\n`) } catch (error) {
+    await ensureOrdinaryDirectory(this.#extensionsRoot, dirname(path))
+    try { await writeExclusiveDurable(path, `${JSON.stringify(descriptor, null, 2)}\n`, 0o600, 'descriptor-write', this.#hooks) } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
       const existing = await this.read(asset.id); if (digest(this.#digestPayload(existing)) !== assetDigest) throw new Error('Portable asset id collision with different immutable content')
     }
@@ -139,13 +176,13 @@ export class AshCodexPortableAssetRepository implements CodexPortableAssetReposi
 /** Write-only opaque secret sink. Deliberately exposes no read or list method. */
 export class AshCodexSecretRepository implements CodexSecretRepository {
   readonly #secretsRoot: string
-  constructor(secretsRoot: string) { this.#secretsRoot = resolve(secretsRoot) }
+  readonly #hooks?: AgentStorageIoHooks
+  constructor(secretsRoot: string, hooks?: AgentStorageIoHooks) { this.#secretsRoot = resolve(secretsRoot); this.#hooks = hooks }
   async storeLiteral(input: { readonly value: string; readonly purpose: string }): Promise<string> {
     if (!input.value || !input.purpose || input.purpose.includes('\0')) throw new Error('Secret input is invalid')
     const reference = `secret-${randomUUID()}`; const directory = join(this.#secretsRoot, 'agent-secrets')
-    await import('node:fs/promises').then(({ mkdir }) => mkdir(directory, { recursive: true, mode: 0o700 }))
-    const directoryStat = await lstat(directory); if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) throw new Error('Secret directory is linked or not an ordinary directory')
-    await writeExclusiveDurable(join(directory, `${reference}.json`), `${JSON.stringify({ schemaVersion: 1, purpose: input.purpose, value: input.value })}\n`)
+    await ensureOrdinaryDirectory(this.#secretsRoot, directory, 0o700)
+    await writeExclusiveDurable(join(directory, `${reference}.json`), `${JSON.stringify({ schemaVersion: 1, purpose: input.purpose, value: input.value })}\n`, 0o600, 'secret-write', this.#hooks)
     return reference
   }
 }
@@ -233,7 +270,7 @@ export async function createAgentStorageComposition(options: AgentStorageOptions
     async operation(operationId: string) { const value = await coordinator.getOperationSummary(operationId); if (!value) throw Object.assign(new Error('Agent operation was not found'), { code: 'AGENT_OPERATION_NOT_FOUND' }); return durableResultSummary(value) },
   }
   const mutations = {
-    async previewImport(adapterId: string, installationId: string, senderId: string) { return preview(await coordinator.planImport(adapterId, await installation(adapterId, installationId)), senderId) },
+    async previewImport(adapterId: string, installationId: string, assetIds: readonly string[], senderId: string) { return preview(await coordinator.planImport(adapterId, { schemaVersion: 1, assetIds: [...assetIds] }, await installation(adapterId, installationId)), senderId) },
     async previewProjection(adapterId: string, installationId: string, assetIds: readonly string[], senderId: string) { return preview(await coordinator.planProjection(adapterId, { schemaVersion: 1, assetIds: [...assetIds] }, await installation(adapterId, installationId)), senderId) },
     async apply(planSessionId: string, senderId: string) {
       const currentTime = now().getTime(); for (const [id, candidate] of sessions) if (candidate.expiresAt <= currentTime && id !== planSessionId) sessions.delete(id)

@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { mkdtemp } from 'node:fs/promises'
@@ -69,6 +69,14 @@ describe('ASH Codex portable asset repository', () => {
     const { extensions } = await roots(); const repository = new AshCodexPortableAssetRepository(extensions); const descriptor = join(extensions, 'agent-assets', 'directory.json'); await mkdir(descriptor, { recursive: true })
     await expect(repository.read('directory')).rejects.toThrow(/ordinary/i)
   })
+
+  it('fails closed when the descriptor directory identity changes between validation and no-follow read', async () => {
+    const { extensions } = await roots(); const repository = new AshCodexPortableAssetRepository(extensions)
+    await repository.import({ schemaVersion: 1, id: 'racing', kind: 'mcp-server', name: 'racing', metadata: {} })
+    const directory = join(extensions, 'agent-assets'); const moved = join(extensions, 'agent-assets-moved'); let raced = false
+    const racing = new AshCodexPortableAssetRepository(extensions, { afterAncestorSnapshot: async (_operation, path) => { if (raced || path !== join(directory, 'racing.json')) return; raced = true; await rename(directory, moved); await mkdir(directory) } })
+    await expect(racing.read('racing')).rejects.toThrow(/ancestor|identity|changed/i)
+  })
 })
 
 describe('ASH Codex secret repository', () => {
@@ -88,6 +96,14 @@ describe('ASH Codex secret repository', () => {
     try { await symlink(outside, join(secrets, 'agent-secrets'), process.platform === 'win32' ? 'junction' : 'dir') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM') return; throw error }
     await expect(new AshCodexSecretRepository(secrets).storeLiteral({ value: `s-${crypto.randomUUID()}`, purpose: 'field' })).rejects.toThrow(/linked|symbolic/i)
   })
+
+  it('fails closed when the secret directory is replaced after validation and enforces private POSIX permissions', async () => {
+    const { secrets } = await roots(); const directory = join(secrets, 'agent-secrets'); await mkdir(directory); if (process.platform !== 'win32') await chmod(directory, 0o777)
+    const moved = join(secrets, 'agent-secrets-moved'); let raced = false
+    const repository = new AshCodexSecretRepository(secrets, { afterAncestorSnapshot: async (_operation, path) => { if (raced || !path.startsWith(directory)) return; raced = true; await rename(directory, moved); await mkdir(directory) } })
+    await expect(repository.storeLiteral({ value: 'secret', purpose: 'race' })).rejects.toThrow(/ancestor|identity|changed/i)
+    if (process.platform !== 'win32') expect((await stat(moved)).mode & 0o777).toBe(0o700)
+  })
 })
 
 describe('Agent storage composition', () => {
@@ -103,7 +119,7 @@ describe('Agent storage composition', () => {
       onProgress: (value) => progress.push(value),
     })
     expect((await composition.readModel.agents()).adapters[0]?.installations[0]?.id).toBe('codex-user')
-    const preview = await composition.mutations.previewImport('codex', 'codex-user', 'sender-1')
+    const preview = await composition.mutations.previewImport('codex', 'codex-user', ['codex-skill-demo'], 'sender-1')
     expect(preview.operations).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'read', nativePath: join(nativeSkill, 'SKILL.md') })]))
     const imported = await composition.mutations.apply(preview.planSessionId, 'sender-1')
     expect(imported.result).toEqual(expect.objectContaining({ status: 'committed', verified: true }))
@@ -126,13 +142,13 @@ describe('Agent storage composition', () => {
     const { volume, extensions, secrets } = await roots(); const home = join(volume, 'home'); await mkdir(join(home, '.codex'), { recursive: true }); await mkdir(join(home, '.agents', 'skills'), { recursive: true })
     let now = new Date('2026-07-15T00:00:00.000Z')
     const composition = await createAgentStorageComposition({ resolve: (group, ...segments) => join(group === 'extensions' ? extensions : group === 'secrets' ? secrets : join(volume, group), ...segments), homeDirectory: home, environment: {}, now: () => now, sessionTtlMs: 1_000 })
-    const preview = await composition.mutations.previewImport('codex', 'codex-user', 'owner')
+    const preview = await composition.mutations.previewImport('codex', 'codex-user', [], 'owner')
     expect(preview.expiresAt).toBe('2026-07-15T00:00:01.000Z')
     await expect(composition.mutations.apply(preview.planSessionId, 'foreign')).rejects.toThrow(/foreign/i)
-    const replacement = await composition.mutations.previewImport('codex', 'codex-user', 'owner')
+    const replacement = await composition.mutations.previewImport('codex', 'codex-user', [], 'owner')
     await expect(composition.mutations.apply(preview.planSessionId, 'owner')).rejects.toThrow(/unknown|reused/i)
     await expect(composition.mutations.apply(replacement.planSessionId, 'owner')).resolves.toEqual(expect.objectContaining({ operationId: expect.any(String) }))
-    const expired = await composition.mutations.previewImport('codex', 'codex-user', 'owner'); now = new Date('2026-07-15T00:00:02.000Z')
+    const expired = await composition.mutations.previewImport('codex', 'codex-user', [], 'owner'); now = new Date('2026-07-15T00:00:02.000Z')
     await expect(composition.mutations.apply(expired.planSessionId, 'owner')).rejects.toThrow(/expired/i)
   })
 

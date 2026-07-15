@@ -272,7 +272,7 @@ export const StorageIpcRequestSchema = z.union([
   z.object({ channel: z.literal('storage:apply-git-import'), volumeId: z.string().min(1), sessionId: z.string().min(1), decisions: z.partialRecord(StorageGroupIdSchema, StorageImportChoiceSchema) }),
   z.object({ channel: z.literal('storage:delete-backup'), backupId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:open-volume'), volumeId: z.string().min(1) }),
-  z.object({ channel: z.literal('storage:agent-plan-import'), adapterId: AgentOpaqueIdSchema, installationId: AgentOpaqueIdSchema }).strict(),
+  z.object({ channel: z.literal('storage:agent-plan-import'), adapterId: AgentOpaqueIdSchema, installationId: AgentOpaqueIdSchema, assetIds: z.array(AgentOpaqueIdSchema).min(1).max(256).refine((ids) => new Set(ids).size === ids.length, 'Native asset ids must be unique') }).strict(),
   z.object({ channel: z.literal('storage:agent-plan-projection'), adapterId: AgentOpaqueIdSchema, installationId: AgentOpaqueIdSchema, assetIds: z.array(AgentOpaqueIdSchema).min(1).max(256).refine((ids) => new Set(ids).size === ids.length, 'Portable asset ids must be unique') }).strict(),
   z.object({ channel: z.literal('storage:agent-apply'), planSessionId: AgentOpaqueIdSchema }).strict(),
   z.object({ channel: z.literal('storage:agent-rollback'), operationId: AgentOpaqueIdSchema }).strict(),

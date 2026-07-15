@@ -62,6 +62,7 @@ interface AdapterPlanBase {
 
 export interface ImportPlan extends AdapterPlanBase {
   readonly kind: 'import'
+  readonly selection: AssetSelection
 }
 
 export interface ProjectionPlan extends AdapterPlanBase {
@@ -147,7 +148,7 @@ export interface AgentAdapter {
   readonly displayName: string
   detect(): Promise<AgentInstallation[]>
   inspect(target: AgentInstallation): Promise<AgentAssetInventory>
-  planImport(target: AgentInstallation): Promise<ImportPlan>
+  planImport(selection: AssetSelection, target: AgentInstallation): Promise<ImportPlan>
   planProjection(selection: AssetSelection, target: AgentInstallation): Promise<ProjectionPlan>
   apply(plan: ApprovedAdapterPlan): Promise<AdapterResult>
 }

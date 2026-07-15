@@ -70,7 +70,7 @@ function freeze<T>(value: T): T {
 }
 function planPayload(plan: AdapterPlan): unknown {
   const base = { schemaVersion: plan.schemaVersion, kind: plan.kind, planId: plan.planId, adapterId: plan.adapterId, target: plan.target, operations: plan.operations, createdAt: plan.createdAt, expiresAt: plan.expiresAt }
-  return plan.kind === 'projection' ? { ...base, selection: plan.selection } : base
+  return { ...base, selection: plan.selection }
 }
 function same(left: unknown, right: unknown): boolean { return canonical(left) === canonical(right) }
 function normalized(path: string): string { const value = resolve(path); return process.platform === 'win32' ? value.toLowerCase() : value }
@@ -110,8 +110,26 @@ export class ProjectionCoordinator {
     this.#validateTarget(target, adapterId); return freeze(clone(await this.#registry.require(adapterId).inspect(freeze(clone(target)))))
   }
 
-  async planImport(adapterId: string, target: AgentInstallation): Promise<ImportPlan> {
-    this.#validateTarget(target, adapterId); return this.#preparePlan(await this.#registry.require(adapterId).planImport(freeze(clone(target))), adapterId, target) as Promise<ImportPlan>
+  async planImport(adapterId: string, target: AgentInstallation): Promise<ImportPlan>
+  async planImport(adapterId: string, selection: AssetSelection, target: AgentInstallation): Promise<ImportPlan>
+  async planImport(adapterId: string, selectionOrTarget: AssetSelection | AgentInstallation, maybeTarget?: AgentInstallation): Promise<ImportPlan> {
+    const target = maybeTarget ?? selectionOrTarget as AgentInstallation
+    this.#validateTarget(target, adapterId)
+    const inventory = await this.inspect(adapterId, target)
+    if (inventory.schemaVersion !== 1 || inventory.installationId !== target.id || !Array.isArray(inventory.assets)) throw new Error('Malformed native asset inventory')
+    const assets = new Map<string, (typeof inventory.assets)[number]>()
+    for (const asset of inventory.assets) {
+      if (!asset || !SAFE_SEGMENT.test(asset.id) || assets.has(asset.id)) throw new Error('Malformed or duplicate native asset inventory id')
+      assets.set(asset.id, asset)
+    }
+    const requested = maybeTarget ? selectionOrTarget as AssetSelection : { schemaVersion: 1 as const, assetIds: [...assets.keys()] }
+    this.#validateSelection(requested)
+    const assetDigests: Record<string, string> = {}
+    for (const id of requested.assetIds) { const asset = assets.get(id); if (!asset) throw new Error(`Unknown native asset selection: ${id}`); assetDigests[id] = digest(asset) }
+    const selection = freeze({ ...clone(requested), assetDigests })
+    const plan = await this.#registry.require(adapterId).planImport(selection, freeze(clone(target)))
+    if (!same(plan.selection, selection)) throw new Error('Adapter import plan selection does not match fresh native inventory')
+    return this.#preparePlan(plan, adapterId, target) as Promise<ImportPlan>
   }
 
   async planProjection(adapterId: string, selection: AssetSelection, target: AgentInstallation): Promise<ProjectionPlan> {
@@ -235,10 +253,10 @@ export class ProjectionCoordinator {
 
   #validatePlanShape(plan: AdapterPlan, allowApproval = false): void {
     if (!plan || typeof plan !== 'object') throw new Error('Malformed adapter plan')
-    const allowed = plan.kind === 'projection' ? ['schemaVersion', 'kind', 'planId', 'adapterId', 'target', 'selection', 'operations', 'createdAt', 'expiresAt', 'digest'] : ['schemaVersion', 'kind', 'planId', 'adapterId', 'target', 'operations', 'createdAt', 'expiresAt', 'digest']
+    const allowed = ['schemaVersion', 'kind', 'planId', 'adapterId', 'target', 'selection', 'operations', 'createdAt', 'expiresAt', 'digest']
     expectedKeys(plan, allowApproval ? [...allowed, 'approval'] : allowed, 'Adapter plan')
     if (plan.schemaVersion !== 1 || (plan.kind !== 'import' && plan.kind !== 'projection') || !SAFE_SEGMENT.test(plan.planId) || !SAFE_SEGMENT.test(plan.adapterId) || !Array.isArray(plan.operations) || Number.isNaN(Date.parse(plan.createdAt)) || Number.isNaN(Date.parse(plan.expiresAt)) || typeof plan.digest !== 'string') throw new Error('Malformed adapter plan')
-    this.#validateTarget(plan.target, plan.adapterId); if (plan.kind === 'projection') this.#validateSelection(plan.selection)
+    this.#validateTarget(plan.target, plan.adapterId); this.#validateSelection(plan.selection)
   }
 
   async #validateOperations(target: AgentInstallation, operations: readonly PreviewFileOperation[], requireBefore = true): Promise<void> {

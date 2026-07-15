@@ -110,13 +110,14 @@ describe('storage IPC', () => {
     const plan = { planSessionId: 'session-1', kind: 'projection', expiresAt: '2026-07-15T01:00:00.000Z', operations: [{ id: 'create-1', kind: 'create', rootId: 'user-skills', nativePath: '/home/.agents/skills/demo/SKILL.md', expectedAfterSha256: 'a'.repeat(64) }] }
     const result = { operationId: 'operation-1', adapterId: 'codex', installationId: 'codex-user', kind: 'projection', phase: 'committed', status: 'committed', verified: true, completedAt: '2026-07-15T00:00:01.000Z', operationCount: 1 }
     const rolled = { ...result, phase: 'rolled-back', status: 'rolled-back' }
-    const services: any = { agentPlanProjection: vi.fn(async () => plan), agentApply: vi.fn(async () => ({ operationId: 'operation-1', result })), agentRollback: vi.fn(async () => rolled) }
+    const services: any = { agentPlanImport: vi.fn(async () => plan), agentPlanProjection: vi.fn(async () => plan), agentApply: vi.fn(async () => ({ operationId: 'operation-1', result })), agentRollback: vi.fn(async () => rolled) }
     registerStorageIpc({ ipcMain: ipc, trustedOrigin: 'http://127.0.0.1:4444', trustedSenderId: 9, services })
     const frame: any = { url: 'http://127.0.0.1:4444/' }; frame.top = frame; const event = { sender: { id: 9 }, senderFrame: frame }
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:agent-plan-import', adapterId: 'codex', installationId: 'codex-user', assetIds: ['native'] })).resolves.toEqual({ ok: true, kind: 'agent-plan', plan })
     await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:agent-plan-projection', adapterId: 'codex', installationId: 'codex-user', assetIds: ['portable'] })).resolves.toEqual({ ok: true, kind: 'agent-plan', plan })
     await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:agent-apply', planSessionId: 'session-1' })).resolves.toEqual({ ok: true, kind: 'agent-applied', operationId: 'operation-1', result })
     await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:agent-rollback', operationId: 'operation-1' })).resolves.toEqual({ ok: true, kind: 'agent-rolled-back', result: rolled })
-    expect(services.agentPlanProjection).toHaveBeenCalledWith('codex', 'codex-user', ['portable'], '9'); expect(services.agentApply).toHaveBeenCalledWith('session-1', '9')
+    expect(services.agentPlanImport).toHaveBeenCalledWith('codex', 'codex-user', ['native'], '9'); expect(services.agentPlanProjection).toHaveBeenCalledWith('codex', 'codex-user', ['portable'], '9'); expect(services.agentApply).toHaveBeenCalledWith('session-1', '9')
     await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:agent-plan-import', adapterId: 'codex', installationId: 'codex-user', nativePath: '/forbidden' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
   })
 

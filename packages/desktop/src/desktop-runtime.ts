@@ -102,7 +102,7 @@ function installMainStorageIpc(origin: string): void {
     async applyGitImport(volumeId, input) {
       await composition.git.applyRemoteImport(volumeId, input)
     },
-    agentPlanImport: (adapterId, installationId, senderId) => composition.agents.mutations.previewImport(adapterId, installationId, senderId),
+    agentPlanImport: (adapterId, installationId, assetIds, senderId) => composition.agents.mutations.previewImport(adapterId, installationId, assetIds, senderId),
     agentPlanProjection: (adapterId, installationId, assetIds, senderId) => composition.agents.mutations.previewProjection(adapterId, installationId, assetIds, senderId),
     agentApply: (planSessionId, senderId) => composition.agents.mutations.apply(planSessionId, senderId),
     agentRollback: (operationId) => composition.agents.mutations.rollback(operationId),

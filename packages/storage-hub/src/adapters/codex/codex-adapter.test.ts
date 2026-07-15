@@ -82,6 +82,27 @@ describe('Codex detection and inventory', () => {
     const instance = adapter(home).adapter; const plan = await instance.planImport((await instance.detect())[0]); expect(new Set(plan.operations.map((operation) => operation.id)).size).toBe(plan.operations.length)
   })
 
+  it('binds a unique native asset selection to fresh inventory and imports only selected assets', async () => {
+    const home = await temporary(); await mkdir(join(home, '.codex')); for (const name of ['one', 'two']) { const path = join(home, '.agents', 'skills', name); await mkdir(path, { recursive: true }); await writeFile(join(path, 'SKILL.md'), name) }
+    const { adapter: instance, assets } = adapter(home); const target = (await instance.detect())[0]; const state = join(await temporary(), 'state'); const coordinator = new ProjectionCoordinator({ stateRoot: state, coordinationRoot: state, registry: new AdapterRegistry([instance]), now: () => new Date('2026-07-15T00:01:00.000Z') })
+    await expect(coordinator.planImport('codex', { schemaVersion: 1, assetIds: ['missing'] }, target)).rejects.toThrow(/unknown|selection/i)
+    await expect(coordinator.planImport('codex', { schemaVersion: 1, assetIds: ['codex-skill-one', 'codex-skill-one'] }, target)).rejects.toThrow(/duplicate|selection/i)
+    const plan = await coordinator.planImport('codex', { schemaVersion: 1, assetIds: ['codex-skill-one'] }, target)
+    expect(plan.selection.assetIds).toEqual(['codex-skill-one']); expect(plan.operations.every((operation) => !operation.nativePath.includes(`${join('skills', 'two')}`))).toBe(true)
+    await coordinator.apply(coordinator.approve(plan)); expect([...assets.values.keys()]).toEqual(['codex-skill-one'])
+  })
+
+  it('imports only the selected MCP server from a shared config and does not import unselected instructions', async () => {
+    const home = await temporary(); const codex = join(home, '.codex'); await mkdir(codex); await mkdir(join(home, '.agents', 'skills'), { recursive: true })
+    await writeFile(join(codex, 'AGENTS.md'), 'do not import me')
+    await writeFile(join(codex, 'config.toml'), '[mcp_servers.chosen]\ncommand = "chosen"\n[mcp_servers.other]\ncommand = "other"\n')
+    const { adapter: instance, assets } = adapter(home); const target = (await instance.detect())[0]; const state = join(await temporary(), 'state'); const coordinator = new ProjectionCoordinator({ stateRoot: state, coordinationRoot: state, registry: new AdapterRegistry([instance]), now: () => new Date('2026-07-15T00:01:00.000Z') })
+    const plan = await coordinator.planImport('codex', { schemaVersion: 1, assetIds: ['codex-mcp-chosen'] }, target)
+    expect(plan.operations.map((operation) => operation.id)).toEqual(['read-mcp-config'])
+    await coordinator.apply(coordinator.approve(plan))
+    expect([...assets.values.keys()]).toEqual(['codex-mcp-chosen'])
+  })
+
   it('imports AGENTS.md when an already-approved override is empty', async () => {
     const home = await temporary(); const codex = join(home, '.codex'); await mkdir(codex); await mkdir(join(home, '.agents', 'skills'), { recursive: true }); await writeFile(join(codex, 'AGENTS.override.md'), ' \n'); await writeFile(join(codex, 'AGENTS.md'), 'active')
     const { adapter: instance, assets } = adapter(home); const target = (await instance.detect())[0]; const state = join(await temporary(), 'state'); const coordinator = new ProjectionCoordinator({ stateRoot: state, coordinationRoot: state, registry: new AdapterRegistry([instance]), now: () => new Date('2026-07-15T00:01:00.000Z') }); await coordinator.apply(coordinator.approve(await coordinator.planImport('codex', target))); expect(assets.values.get('codex-instructions')?.name).toBe('AGENTS.md')

@@ -3,9 +3,11 @@ import { AgentStorageProgressSchema, StorageIpcRequestSchema, StorageIpcResponse
 
 describe('Agent storage shared contracts', () => {
   it('accepts only opaque identifiers in strict privileged requests', () => {
-    expect(StorageIpcRequestSchema.parse({ channel: 'storage:agent-plan-import', adapterId: 'codex', installationId: 'codex-user' })).toEqual({ channel: 'storage:agent-plan-import', adapterId: 'codex', installationId: 'codex-user' })
+    expect(StorageIpcRequestSchema.parse({ channel: 'storage:agent-plan-import', adapterId: 'codex', installationId: 'codex-user', assetIds: ['native-skill'] })).toEqual({ channel: 'storage:agent-plan-import', adapterId: 'codex', installationId: 'codex-user', assetIds: ['native-skill'] })
     for (const invalid of [
       { channel: 'storage:agent-plan-import', adapterId: 'codex', installationId: 'codex-user', nativePath: '/private' },
+      { channel: 'storage:agent-plan-import', adapterId: 'codex', installationId: 'codex-user', assetIds: [] },
+      { channel: 'storage:agent-plan-import', adapterId: 'codex', installationId: 'codex-user', assetIds: ['one', 'one'] },
       { channel: 'storage:agent-plan-projection', adapterId: 'codex', installationId: 'codex-user', assetIds: ['one', 'one'] },
       { channel: 'storage:agent-apply', planSessionId: '../plan' },
       { channel: 'storage:agent-rollback', operationId: 'operation', command: 'run' },
