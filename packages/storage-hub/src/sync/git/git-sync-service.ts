@@ -91,12 +91,13 @@ export class GitSyncService {
           await this.options.runner.exec(['remote', 'add', 'origin', input.remoteUrl], { cwd: repositoryPath })
           transaction.remoteAdded = true
         }
+        const remoteBranch = input.mode === 'remote' ? await this.discoverRemoteBranch(repositoryPath) : undefined
         if (input.credential) {
           transaction.credential = { ref: input.credential.ref, original: await this.credentials.get(input.credential.ref) }
           await this.credentials.put(input.credential.ref, input.credential.secret)
         }
         const now = new Date().toISOString()
-        return await this.options.bindings.bind({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH, mode: input.mode, remoteUrl: input.remoteUrl, credentialRef, createdAt: now, updatedAt: now })
+        return await this.options.bindings.bind({ volumeId: input.volumeId, repositoryRelativePath: REPOSITORY_RELATIVE_PATH, mode: input.mode, remoteUrl: input.remoteUrl, remoteBranch, credentialRef, createdAt: now, updatedAt: now })
       } catch (error) {
         await this.rollbackBind(repositoryPath, transaction, error)
         throw error
@@ -147,7 +148,7 @@ export class GitSyncService {
       const binding = await this.binding(volumeId); const repositoryPath = this.repositoryPath(binding.volumeId)
       const manifest = await buildVolumeSnapshot({ volumeId, generation: this.options.snapshots!.generation(), volumeRoot: this.options.volumes.resolveVolumeRoot(volumeId), cachePath: repositoryPath, leases: this.options.snapshots!.leases, checkpoint: this.options.snapshots!.checkpoint })
       const commit = await this.commitLocalSnapshot(volumeId, `ASH snapshot ${manifest.generation}`)
-      if (binding.mode === 'remote') await this.pushWithRetry(repositoryPath)
+      if (binding.mode === 'remote') await this.pushWithRetry(repositoryPath, binding.remoteBranch)
       await this.options.bindings.recordSync(volumeId, manifest.groupHashes)
       return { commit, groupHashes: manifest.groupHashes }
     })
@@ -160,7 +161,7 @@ export class GitSyncService {
       if (binding.mode !== 'remote') throw new Error('Only remote Git bindings can fetch an import')
       const repositoryPath = this.repositoryPath(volumeId)
       await this.options.runner.exec(['fetch', '--no-tags', 'origin'], { cwd: repositoryPath })
-      const branch = (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
+      const branch = binding.remoteBranch ?? (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
       const ref = `refs/remotes/origin/${branch}`
       await this.options.runner.exec(['rev-parse', '--verify', ref], { cwd: repositoryPath })
       const stagingRoot = join(this.options.cachePath(volumeId), '.ash', 'sync', 'import-staging', randomUUID())
@@ -260,23 +261,40 @@ export class GitSyncService {
     // Recreate the local branch ancestry without checking out, merging, or
     // resetting snapshot files. This only touches the disposable cache repo,
     // so a later snapshot commit remains a fast-forward of the remote state.
-    await this.options.runner.exec(['fetch', '--no-tags', 'origin'], { cwd: repositoryPath })
-    const branch = (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
+    const branch = binding.remoteBranch ?? (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
+    await this.options.runner.exec(['fetch', '--no-tags', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`], { cwd: repositoryPath })
     const remoteRef = `refs/remotes/origin/${branch}`
     try {
       const remoteCommit = (await this.options.runner.exec(['rev-parse', '--verify', remoteRef], { cwd: repositoryPath })).stdout.trim()
       await this.options.runner.exec(['update-ref', `refs/heads/${branch}`, remoteCommit], { cwd: repositoryPath })
+      await this.options.runner.exec(['symbolic-ref', 'HEAD', `refs/heads/${branch}`], { cwd: repositoryPath })
     } catch {
       // An empty remote has no branch yet; the first snapshot will create it.
     }
   }
-  private async pushWithRetry(repositoryPath: string): Promise<void> {
-    const branch = (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
+  private async pushWithRetry(repositoryPath: string, configuredBranch?: string): Promise<void> {
+    const branch = configuredBranch ?? (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
     let lastError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try { await this.options.runner.exec(['push', 'origin', `HEAD:refs/heads/${branch}`], { cwd: repositoryPath }); return } catch (error) { lastError = error }
     }
     throw lastError
+  }
+  private async discoverRemoteBranch(repositoryPath: string): Promise<string> {
+    const localBranch = (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
+    let output: string
+    try { output = (await this.options.runner.exec(['ls-remote', '--symref', 'origin', 'HEAD', 'refs/heads/*'], { cwd: repositoryPath })).stdout }
+    catch { return localBranch }
+    const symbolic = output.split(/\r?\n/).map((line) => /^ref:\s+refs\/heads\/(.+)\s+HEAD$/.exec(line)?.[1]).find(Boolean)
+    const branches = output.split(/\r?\n/).map((line) => /^[a-f0-9]+\s+refs\/heads\/(.+)$/.exec(line)?.[1]).filter((branch): branch is string => Boolean(branch)).sort()
+    const branch = symbolic ?? branches[0] ?? localBranch
+    if (branches.includes(branch)) {
+      await this.options.runner.exec(['fetch', '--no-tags', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`], { cwd: repositoryPath })
+      const remoteCommit = (await this.options.runner.exec(['rev-parse', '--verify', `refs/remotes/origin/${branch}`], { cwd: repositoryPath })).stdout.trim()
+      await this.options.runner.exec(['update-ref', `refs/heads/${branch}`, remoteCommit], { cwd: repositoryPath })
+      await this.options.runner.exec(['symbolic-ref', 'HEAD', `refs/heads/${branch}`], { cwd: repositoryPath })
+    }
+    return branch
   }
   private now(): number { return this.options.now?.() ?? Date.now() }
   private importSessionTtlMs(): number {

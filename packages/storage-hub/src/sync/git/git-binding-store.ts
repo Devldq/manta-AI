@@ -15,6 +15,7 @@ function validate(binding: GitBinding & { repositoryRelativePath?: unknown }): G
   const normalized = { ...withoutPath, repositoryRelativePath: typeof repositoryRelativePath === 'string' && repositoryRelativePath ? repositoryRelativePath : join('.ash', 'sync', 'git') }
   if (!normalized.volumeId || !normalized.mode || !normalized.createdAt || !normalized.updatedAt) throw new Error('Invalid Git binding')
   if (binding.mode === 'remote' && !binding.remoteUrl) throw new Error('Remote Git binding requires a remote URL')
+  if (binding.remoteBranch !== undefined && (!binding.remoteBranch || /[\s~^:?*[\\]/.test(binding.remoteBranch) || binding.remoteBranch.includes('..') || binding.remoteBranch.includes('@{') || binding.remoteBranch.startsWith('-') || binding.remoteBranch.endsWith('/') || binding.remoteBranch.endsWith('.') || binding.remoteBranch.endsWith('.lock'))) throw new Error('Invalid Git remote branch')
   if (binding.remoteUrl && !GitRemoteUrlSchema.safeParse(binding.remoteUrl).success) throw new Error('Git remote URL is invalid or contains credentials')
   if (binding.credentialRef?.trim() === '') throw new Error('Git credential reference must not be empty')
   return normalized
@@ -35,7 +36,7 @@ export class GitBindingStore {
   async bind(binding: GitBinding): Promise<GitBinding> {
     const valid = validate(binding); const catalog = await this.read(); const existing = catalog.bindings.find((item) => item.volumeId === valid.volumeId)
     if (existing) {
-      if (existing.mode !== valid.mode || existing.remoteUrl !== valid.remoteUrl || existing.credentialRef !== valid.credentialRef) throw new Error(`Volume ${valid.volumeId} already has a Git binding`)
+      if (existing.mode !== valid.mode || existing.remoteUrl !== valid.remoteUrl || existing.remoteBranch !== valid.remoteBranch || existing.credentialRef !== valid.credentialRef) throw new Error(`Volume ${valid.volumeId} already has a Git binding`)
       return existing
     }
     await writeJsonAtomic(this.filePath, { schemaVersion: 1, bindings: [...catalog.bindings, valid] })

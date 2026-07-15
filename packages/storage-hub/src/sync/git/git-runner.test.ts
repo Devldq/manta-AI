@@ -14,6 +14,28 @@ async function directory(): Promise<string> {
   return result
 }
 
+function mappedRemoteRunner(real: GitRunner, remoteUrl: string, remote: string): GitRunner {
+  return new GitRunner({ execFile: async (_binary, args, options) => {
+    let rewritten = [...args]
+    if (rewritten[0] === 'init') rewritten = ['-c', 'init.defaultBranch=master', ...rewritten]
+    if (rewritten[0] === 'remote' && rewritten[1] === 'add' && rewritten[2] === 'origin' && rewritten[3] === remoteUrl) {
+      rewritten = [...rewritten.slice(0, 3), `file://${remote}`]
+    }
+    return real.exec(rewritten, { cwd: options.cwd, env: options.env })
+  } })
+}
+
+async function seedBareRemote(real: GitRunner, remote: string, branch: string): Promise<void> {
+  const source = await directory()
+  await real.exec(['init', '--bare', '--quiet', `--initial-branch=${branch}`], { cwd: remote })
+  await real.exec(['init', '--quiet', `--initial-branch=${branch}`], { cwd: source })
+  await writeFile(path.join(source, 'seed.txt'), branch)
+  await real.exec(['add', 'seed.txt'], { cwd: source })
+  await real.exec(['-c', 'user.name=Test', '-c', 'user.email=test@localhost', 'commit', '--quiet', '-m', 'seed'], { cwd: source })
+  await real.exec(['remote', 'add', 'origin', `file://${remote}`], { cwd: source })
+  await real.exec(['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`], { cwd: source })
+}
+
 // Git may release nested metadata handles a moment after a child process exits on Windows.
 // Retry only disposable test directories so root-level parallel test runs cannot flake on ENOTEMPTY.
 afterEach(async () => { await Promise.all(directories.splice(0).map((item) => rm(item, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }))) })
@@ -258,6 +280,36 @@ describe('GitSyncService', () => {
     expect(commands.filter(({ cwd }) => cwd?.startsWith(root)).map(({ args }) => args[0])).not.toContain('init')
     await expect(readFile(path.join(root, '.ash', 'sync', 'git', '.git', 'HEAD'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   }, 15_000)
+
+  it.each(['main', 'trunk'])('discovers and persists the remote %s branch even when local Git initializes master', async (branch) => {
+    const root = await directory(); const cache = await directory(); const remote = await directory(); const real = new GitRunner(); const leases = new StorageLeaseManager()
+    await seedBareRemote(real, remote, branch)
+    await mkdir(path.join(root, 'work'), { recursive: true }); await writeFile(path.join(root, 'work', 'task.md'), `${branch} snapshot`)
+    const remoteUrl = 'https://example.test/ash.git'; const cachePath = (id: string) => path.join(cache, id)
+    const bindings = new GitBindingStore(path.join(root, 'config'))
+    const service = new GitSyncService({ runner: mappedRemoteRunner(real, remoteUrl, remote), bindings, volumes: resolver('primary', root), cachePath, snapshots: { generation: () => 3, leases } })
+
+    const binding = await service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl })
+    expect(binding).toMatchObject({ remoteBranch: branch })
+    expect(JSON.parse(await readFile(path.join(root, 'config', '.ash', 'sync', 'git-bindings.json'), 'utf8')).bindings[0]).toMatchObject({ remoteBranch: branch })
+
+    await rm(cachePath('primary'), { recursive: true, force: true })
+    await service.syncVolume('primary')
+    await expect(real.exec(['show', `refs/heads/${branch}:work/task.md`], { cwd: remote })).resolves.toMatchObject({ stdout: `${branch} snapshot` })
+    await expect(real.exec(['show-ref', '--verify', 'refs/heads/master'], { cwd: remote })).rejects.toThrow()
+    await expect(service.fetchRemoteImport('primary')).resolves.toMatchObject({ manifest: { volumeId: 'primary' } })
+  }, 15_000)
+
+  it('persists the locally initialized branch for an empty remote that advertises no HEAD', async () => {
+    const root = await directory(); const cache = await directory(); const remote = await directory(); const real = new GitRunner()
+    await real.exec(['init', '--bare', '--quiet', '--initial-branch=trunk'], { cwd: remote })
+    const remoteUrl = 'https://example.test/empty.git'
+    const bindings = new GitBindingStore(path.join(root, 'config'))
+    const service = new GitSyncService({ runner: mappedRemoteRunner(real, remoteUrl, remote), bindings, volumes: resolver('primary', root), cachePath: (id) => path.join(cache, id) })
+
+    await expect(service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl })).resolves.toMatchObject({ remoteBranch: 'master' })
+    await expect(bindings.get('primary')).resolves.toMatchObject({ remoteBranch: 'master' })
+  })
 
   it('fetches a remote manifest only into a disposable cache staging worktree', async () => {
     const root = await directory(); const cache = await directory(); const remote = await directory(); const real = new GitRunner(); const leases = new StorageLeaseManager()

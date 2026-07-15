@@ -25,6 +25,8 @@ export interface GitBinding {
   repositoryRelativePath: string
   mode: GitBindingMode
   remoteUrl?: string
+  /** Immutable branch selected from the remote at bind time (or the local initial branch for an empty remote). */
+  remoteBranch?: string
   credentialRef?: CredentialRef
   createdAt: string
   updatedAt: string
