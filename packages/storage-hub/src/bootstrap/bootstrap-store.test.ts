@@ -34,6 +34,33 @@ describe('BootstrapStore', () => {
     expect(value.previous?.generation).toBe(1)
     expect((await readdir(dir)).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
+
+  it('serializes updates from independent store instances without losing either update', async () => {
+    const dir = await fresh(); const file = path.join(dir, 'bootstrap.json')
+    const first = new BootstrapStore(file); const second = new BootstrapStore(file)
+    await first.write(snapshot())
+    let releaseFirst!: () => void; let enteredFirst!: () => void
+    const firstEntered = new Promise<void>((resolve) => { enteredFirst = resolve })
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const updateOne = first.update(async (current) => {
+      enteredFirst(); await firstGate
+      return { ...current, generation: current.generation + 1, volumes: [...current.volumes, { ...current.volumes[0], id: 'v2', name: 'second', parentPath: '/second' }] }
+    })
+    await firstEntered
+    let secondEntered = false
+    const updateTwo = second.update((current) => {
+      secondEntered = true
+      return { ...current, generation: current.generation + 1, volumes: [...current.volumes, { ...current.volumes[0], id: 'v3', name: 'third', parentPath: '/third' }] }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    const overlapped = secondEntered
+    releaseFirst(); await Promise.all([updateOne, updateTwo])
+    const value = await first.read()
+    expect(overlapped).toBe(false)
+    expect(value?.generation).toBe(3)
+    expect(value?.volumes.map(({ id }) => id)).toEqual(['v1', 'v2', 'v3'])
+    expect(value?.previous?.generation).toBe(2)
+  })
 })
 
 describe('recoverBootstrap', () => {

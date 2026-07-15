@@ -5,7 +5,7 @@ import { powershell } from '../platform/powershell'
 interface LockOwner { token: string; pid: number; processIdentity: string; createdAt: string }
 export interface ProcessInspection { alive: boolean; identity?: string }
 export interface MigrationFileLock { release(): Promise<void> }
-export interface MigrationLockOptions { breakStale?: boolean; afterCreate?: () => Promise<void>; inspectProcess?: (pid: number) => Promise<ProcessInspection> }
+export interface MigrationLockOptions { breakStale?: boolean; afterCreate?: () => Promise<void>; inspectProcess?: (pid: number) => Promise<ProcessInspection>; waitTimeoutMs?: number; retryDelayMs?: number }
 let selfInspection: Promise<ProcessInspection> | undefined
 
 function parseOwner(text: string): LockOwner | undefined {
@@ -40,8 +40,15 @@ export async function acquireMigrationFileLock(bootstrapPath: string, input: boo
     else { const processState = await inspect(owner.pid); if (processState.alive && !processState.identity) throw new Error('Storage mapping transaction process identity is unavailable; refusing stale recovery'); if (processState.alive && processState.identity === owner.processIdentity) throw new Error('Storage mapping transaction lock is already held'); await removeOwned(lockPath, owner.token, true) }
   }
   const self = await (options.inspectProcess ? inspect(process.pid) : (selfInspection ??= inspectProcess(process.pid))); if (!self.alive || !self.identity) throw new Error('Storage mapping transaction process identity is unavailable')
-  let handle
-  try { handle = await open(lockPath, 'wx') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('Storage mapping transaction lock is already held', { cause: error }); throw error }
+  let handle; const deadline = Date.now() + (options.waitTimeoutMs ?? 0)
+  while (!handle) {
+    try { handle = await open(lockPath, 'wx') }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      if (Date.now() >= deadline) throw new Error('Storage mapping transaction lock is already held', { cause: error })
+      await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs ?? 10))
+    }
+  }
   const owner: LockOwner = { token: randomUUID(), pid: process.pid, processIdentity: self.identity, createdAt: new Date().toISOString() }
   try { await options.afterCreate?.(); await handle.writeFile(JSON.stringify(owner)); await handle.sync() } catch (error) { await handle.close(); await unlink(lockPath).catch(() => undefined); throw error }
   let released = false
