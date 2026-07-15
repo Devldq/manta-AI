@@ -18,5 +18,9 @@ export async function createStorageVolume(options: { parentPath: string; name: s
       const next = { ...current, generation: current.generation + 1, volumes: [...current.volumes, volume] }; new VolumeRegistry(next); return next
     })
     return volume.id
-  } catch (error) { if (created) await rm(root, { recursive: true, force: true }).catch(() => {}); throw error }
+  } catch (error) {
+    const registered = await options.bootstrap.read().then((current) => current?.volumes.some(({ id }) => id === volume.id) ?? false, () => false)
+    if (created && !registered) await rm(root, { recursive: true, force: true }).catch(() => {})
+    throw error
+  }
 }
