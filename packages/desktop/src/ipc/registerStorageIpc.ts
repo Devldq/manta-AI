@@ -1,10 +1,11 @@
 import { AgentStorageProgressSchema, StorageIpcRequestSchema, StorageIpcResponseSchema, type AgentOperationSummary, type AgentPlanPreview, type AgentStorageProgress, type StorageGitImportPlan, type StorageGroupId, type StorageIpcRequest, type StorageIpcResponse, type StorageOperationProgress } from '@manta/shared'
+import { randomUUID } from 'node:crypto'
 
 interface IpcMainLike { handle(channel: string, listener: (event: any, request: unknown) => unknown): void; removeHandler(channel: string): void }
 interface IpcRendererLike { invoke(channel: string, request?: unknown): Promise<unknown>; on(channel: string, listener: (...args: any[]) => void): void; removeListener(channel: string, listener: (...args: any[]) => void): void }
 export interface StartedStorageOperation { operationId: string; completion?: Promise<unknown> }
 type StorageOperationStart = string | StartedStorageOperation
-type ConfiguredGitBinding = { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; createdAt: string; updatedAt: string }
+type ConfiguredGitBinding = { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; includeSecrets?: boolean; createdAt: string; updatedAt: string }
 export interface StorageIpcServices {
   selectParent(purpose: 'createVolume' | 'migrateVolume', event: any): Promise<string | undefined>
   createVolume(name: string, selectionId: string, event: any): Promise<string>
@@ -13,6 +14,8 @@ export interface StorageIpcServices {
   openVolume(volumeId: string): Promise<void>
   deleteBackup(backupId: string): Promise<void>
   configureGit?(volumeId: string, config: Extract<StorageIpcRequest, { channel: 'storage:configure-git' }>): Promise<ConfiguredGitBinding>
+  confirmGitSecrets?(volumeId: string, event: any): Promise<boolean>
+  setGitSecretsPolicy?(volumeId: string, includeSecrets: boolean): Promise<ConfiguredGitBinding>
   syncVolume?(volumeId: string): Promise<unknown>
   planGitImport?(volumeId: string): Promise<StorageGitImportPlan>
   applyGitImport?(volumeId: string, input: Pick<Extract<StorageIpcRequest, { channel: 'storage:apply-git-import' }>, 'sessionId' | 'decisions'>): Promise<void>
@@ -32,7 +35,10 @@ function startedOperation(value: StorageOperationStart): string {
   return value.operationId
 }
 
-export function registerStorageIpc(options: { ipcMain: IpcMainLike; trustedOrigin: string; trustedSenderId?: number; services: StorageIpcServices }): () => void {
+export function registerStorageIpc(options: { ipcMain: IpcMainLike; trustedOrigin: string; trustedSenderId?: number; services: StorageIpcServices; now?: () => number; randomId?: () => string; secretsGrantTtlMs?: number }): () => void {
+  const grants = new Map<string, { senderId: string; frameId: string; origin: string; volumeId: string; expiresAt: number }>()
+  const now = options.now ?? Date.now
+  const grantTtl = options.secretsGrantTtlMs ?? 60_000
   const handler = async (event: any, raw: unknown): Promise<StorageIpcResponse> => {
     try {
       const actual = new URL(event.senderFrame?.url ?? '')
@@ -41,6 +47,7 @@ export function registerStorageIpc(options: { ipcMain: IpcMainLike; trustedOrigi
       if (event.senderFrame?.top && event.senderFrame.top !== event.senderFrame) throw Object.assign(new Error('Untrusted IPC frame'), { code: 'UNTRUSTED_FRAME' })
       const request = StorageIpcRequestSchema.parse(raw); let response: StorageIpcResponse
       const senderId = String(event.sender?.id ?? '')
+      const frameId = String(event.senderFrame?.routingId ?? '')
       switch (request.channel) {
         case 'storage:select-parent': { const selectionId = await options.services.selectParent(request.purpose, event); response = { ok: true, kind: 'parent-selected', selectionId }; break }
         case 'storage:create-volume': assertId(request.selectionId, 'selectionId'); response = { ok: true, kind: 'volume-created', volumeId: await options.services.createVolume(request.name, request.selectionId, event) }; break
@@ -49,6 +56,26 @@ export function registerStorageIpc(options: { ipcMain: IpcMainLike; trustedOrigi
         case 'storage:open-volume': assertId(request.volumeId, 'volumeId'); await options.services.openVolume(request.volumeId); response = { ok: true, kind: 'completed' }; break
         case 'storage:delete-backup': assertId(request.backupId, 'backupId'); await options.services.deleteBackup(request.backupId); response = { ok: true, kind: 'completed' }; break
         case 'storage:configure-git': assertId(request.volumeId, 'volumeId'); if (!options.services.configureGit) throw Object.assign(new Error('Git is unavailable'), { code: 'GIT_UNAVAILABLE' }); response = { ok: true, kind: 'git-configured', binding: await options.services.configureGit(request.volumeId, request) }; break
+        case 'storage:request-git-secrets-grant': {
+          assertId(request.volumeId, 'volumeId')
+          if (!options.services.confirmGitSecrets || !await options.services.confirmGitSecrets(request.volumeId, event)) throw Object.assign(new Error('Secrets synchronization was not confirmed'), { code: 'GIT_SECRETS_CONFIRMATION_CANCELLED' })
+          const grant = (options.randomId ?? randomUUID)(); const expiresAt = now() + grantTtl
+          grants.set(grant, { senderId, frameId, origin: actual.origin, volumeId: request.volumeId, expiresAt })
+          response = { ok: true, kind: 'git-secrets-grant', grant, expiresAt }; break
+        }
+        case 'storage:set-git-secrets-policy': {
+          assertId(request.volumeId, 'volumeId')
+          if (!options.services.setGitSecretsPolicy) throw Object.assign(new Error('Git secrets policy is unavailable'), { code: 'GIT_UNAVAILABLE' })
+          if (request.includeSecrets) {
+            const grant = grants.get(request.grant)
+            if (!grant || grant.senderId !== senderId || grant.frameId !== frameId || grant.origin !== actual.origin || grant.volumeId !== request.volumeId || now() >= grant.expiresAt) {
+              if (grant && now() >= grant.expiresAt) grants.delete(request.grant)
+              throw Object.assign(new Error('Invalid or expired Git secrets grant'), { code: 'INVALID_GIT_SECRETS_GRANT' })
+            }
+            grants.delete(request.grant)
+          }
+          response = { ok: true, kind: 'git-secrets-policy', binding: await options.services.setGitSecretsPolicy(request.volumeId, request.includeSecrets) }; break
+        }
         case 'storage:sync-volume': assertId(request.volumeId, 'volumeId'); if (!options.services.syncVolume) throw new Error('Sync is unavailable'); await options.services.syncVolume(request.volumeId); response = { ok: true, kind: 'completed' }; break
         case 'storage:plan-git-import': assertId(request.volumeId, 'volumeId'); if (!options.services.planGitImport) throw Object.assign(new Error('Git import is unavailable'), { code: 'GIT_IMPORT_UNAVAILABLE' }); response = { ok: true, kind: 'git-import-plan', plan: await options.services.planGitImport(request.volumeId) }; break
         case 'storage:apply-git-import': assertId(request.volumeId, 'volumeId'); assertId(request.sessionId, 'sessionId'); if (!options.services.applyGitImport) throw Object.assign(new Error('Git import is unavailable'), { code: 'GIT_IMPORT_UNAVAILABLE' }); await options.services.applyGitImport(request.volumeId, { sessionId: request.sessionId, decisions: request.decisions }); response = { ok: true, kind: 'completed' }; break

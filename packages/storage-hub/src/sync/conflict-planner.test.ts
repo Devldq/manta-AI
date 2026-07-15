@@ -35,4 +35,10 @@ describe('planGroupConflicts', () => {
     const plan = planGroupConflicts({ base: {}, local: {}, remote: { extensions: hash('d') } })
     expect(plan.groups).toEqual([expect.objectContaining({ group: 'extensions', state: 'remote-addition', defaultChoice: 'keep-remote' })])
   })
+
+  it('plans secrets only when the caller supplies the enabled binding policy', () => {
+    const hashes = { base: {}, local: {}, remote: { secrets: hash('s') } }
+    expect(planGroupConflicts(hashes).groups).toEqual([])
+    expect(planGroupConflicts({ ...hashes, includeSecrets: true }).groups).toEqual([expect.objectContaining({ group: 'secrets', state: 'remote-addition', defaultChoice: 'keep-remote' })])
+  })
 })

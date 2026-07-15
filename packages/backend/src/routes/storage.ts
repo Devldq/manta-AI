@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify'
 
 export interface StorageGitApi {
   capability(): Promise<{ available: boolean; version?: string; reason?: string }>
-  bindings(): Promise<Array<{ volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; lastSyncedGroupHashes?: Partial<Record<StorageGroupId, string>>; lastSyncedAt?: string; lastSyncStatus?: 'succeeded'; createdAt: string; updatedAt: string }>>
+  bindings(): Promise<Array<{ volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; includeSecrets?: boolean; lastSyncedGroupHashes?: Partial<Record<StorageGroupId, string>>; lastSyncedAt?: string; lastSyncStatus?: 'succeeded'; createdAt: string; updatedAt: string }>>
   status(volumeId: string): Promise<string>
   history(volumeId: string): Promise<string>
 }

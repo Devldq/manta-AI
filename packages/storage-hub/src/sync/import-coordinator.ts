@@ -31,12 +31,12 @@ export class ImportCoordinator {
   }) {}
 
   /** Applies only explicit remote decisions after the isolated snapshot is fully validated. */
-  async apply(input: { volumeId: string; stagingRoot: string; manifest: SyncManifest; decisions: Partial<Record<StorageGroupId, ImportChoice>>; expectedLocalHashes?: Partial<Record<StorageGroupId, string>> }): Promise<void> {
+  async apply(input: { volumeId: string; stagingRoot: string; manifest: SyncManifest; decisions: Partial<Record<StorageGroupId, ImportChoice>>; expectedLocalHashes?: Partial<Record<StorageGroupId, string>>; includeSecrets?: boolean }): Promise<void> {
     const manifest = SyncManifestSchema.parse(input.manifest) as SyncManifest
     if (manifest.volumeId !== input.volumeId) throw new Error('Fetched sync manifest does not belong to this volume')
     const selected = Object.entries(input.decisions).filter(([, choice]) => choice === 'keep-remote').map(([group]) => group as StorageGroupId)
     for (const group of selected) {
-      if (!IMPORTABLE.has(group) || !manifest.groupHashes[group]) throw new Error(`Storage group ${group} cannot be imported from this snapshot`)
+      if ((!IMPORTABLE.has(group) && !(group === 'secrets' && input.includeSecrets)) || !manifest.groupHashes[group]) throw new Error(`Storage group ${group} cannot be imported from this snapshot`)
       const actual = await (this.options.hashGroup ?? hashSyncGroup)(join(input.stagingRoot, group))
       if (actual !== manifest.groupHashes[group]) throw new Error(`Remote ${group} hash validation failed`)
     }

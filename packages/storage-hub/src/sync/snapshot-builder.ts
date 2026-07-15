@@ -35,11 +35,14 @@ export async function buildVolumeSnapshot(options: {
   leases: StorageLeaseManager
   checkpoint?: (group: StorageGroupId) => Promise<void>
   now?: () => Date
+  includeSecrets?: boolean
 }): Promise<SyncManifest> {
-  const lease = await options.leases.acquireExclusive(SNAPSHOT_GROUPS)
+  const groups = options.includeSecrets ? [...SNAPSHOT_GROUPS, 'secrets' as const] : SNAPSHOT_GROUPS
+  const lease = await options.leases.acquireExclusive(groups)
   try {
+    if (!options.includeSecrets) await rm(join(options.cachePath, 'secrets'), { recursive: true, force: true })
     const groupHashes: Partial<Record<StorageGroupId, string>> = {}
-    for (const group of SNAPSHOT_GROUPS) {
+    for (const group of groups) {
       const source = join(options.volumeRoot, group); const destination = join(options.cachePath, group)
       await rm(destination, { recursive: true, force: true })
       if (!await directoryExists(source)) continue

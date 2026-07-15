@@ -12,7 +12,7 @@ import { SyncManifestSchema, syncManifestPath, type SyncManifest } from '../sync
 import type { StorageLeaseManager } from '../../runtime/lease-manager'
 
 const SYNC_EXCLUDED_GROUPS = new Set(['secrets', 'diagnostics', 'cache'])
-const SAFE_IGNORE = ['# Manta ASH Git snapshots never include sensitive or transient groups.', 'secrets/', 'diagnostics/', 'cache/', '.ash/'].join('\n') + '\n'
+const safeIgnore = (includeSecrets: boolean) => ['# Manta ASH Git snapshot exclusions.', ...(includeSecrets ? [] : ['secrets/']), 'diagnostics/', 'cache/', '.ash/'].join('\n') + '\n'
 
 const REPOSITORY_RELATIVE_PATH = join('.ash', 'sync', 'git')
 
@@ -86,7 +86,7 @@ export class GitSyncService {
         transaction.gitDirectoryCreated = !hadGitDirectory && await exists(gitDirectory)
         const gitignorePath = join(repositoryPath, '.gitignore')
         transaction.gitignore = { path: gitignorePath, original: await readOptional(gitignorePath) }
-        await writeFile(gitignorePath, SAFE_IGNORE, 'utf8')
+        await writeFile(gitignorePath, safeIgnore(false), 'utf8')
         if (input.mode === 'remote' && input.remoteUrl) {
           await this.options.runner.exec(['remote', 'add', 'origin', input.remoteUrl], { cwd: repositoryPath })
           transaction.remoteAdded = true
@@ -106,6 +106,27 @@ export class GitSyncService {
   }
 
   async listBindings(): Promise<GitBinding[]> { return this.options.bindings.list() }
+  async setIncludeSecrets(volumeId: string, includeSecrets: boolean): Promise<GitBinding> {
+    return this.withBindingLock(volumeId, async () => {
+      const binding = await this.binding(volumeId)
+      const repositoryPath = this.repositoryPath(binding.volumeId); const gitignorePath = join(repositoryPath, '.gitignore'); const original = await readOptional(gitignorePath)
+      await writeFile(gitignorePath, safeIgnore(includeSecrets), 'utf8')
+      let updated: GitBinding
+      try { updated = await this.options.bindings.setIncludeSecrets(volumeId, includeSecrets) }
+      catch (error) {
+        try { if (original === undefined) await rm(gitignorePath, { force: true }); else await writeFile(gitignorePath, original, 'utf8') }
+        catch (rollback) { throw new AggregateError([error, rollback], 'Git secrets policy update failed and rollback was incomplete', { cause: error }) }
+        throw error
+      }
+      if (!includeSecrets) {
+        const failures: unknown[] = []
+        try { await this.options.runner.exec(['rm', '--cached', '-r', '--ignore-unmatch', '--', 'secrets'], { cwd: repositoryPath }) } catch (error) { failures.push(error) }
+        try { await rm(join(repositoryPath, 'secrets'), { recursive: true, force: true }) } catch (error) { failures.push(error) }
+        if (failures.length) throw new AggregateError(failures, 'Secrets synchronization was disabled, but Git cache cleanup must be retried')
+      }
+      return updated
+    })
+  }
   async capability() { return this.options.runner.capability() }
 
   async inspectPending(volumeId: string): Promise<{ pending: boolean; blockers: Array<{ code: string; path?: string; detail: string }> }> {
@@ -130,7 +151,7 @@ export class GitSyncService {
   async history(volumeId: string): Promise<string> { const binding = await this.binding(volumeId); return (await this.options.runner.exec(['log', '--format=%H%x09%s', '-n', '50'], { cwd: this.repositoryPath(binding.volumeId) })).stdout }
 
   async commitLocalSnapshot(volumeId: string, message: string): Promise<string> {
-    const binding = await this.binding(volumeId); const repositoryPath = this.repositoryPath(binding.volumeId); await this.scanForSecrets(repositoryPath)
+    const binding = await this.binding(volumeId); const repositoryPath = this.repositoryPath(binding.volumeId); await this.scanForSecrets(repositoryPath, binding.includeSecrets === true)
     await this.options.runner.exec(['add', '--all'], { cwd: repositoryPath })
     const status = await this.status(volumeId)
     if (!status.trim()) return (await this.options.runner.exec(['rev-parse', '--verify', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
@@ -146,7 +167,8 @@ export class GitSyncService {
     if (!this.options.snapshots) throw new Error('Git snapshot support is unavailable')
     return this.withBindingLock(volumeId, async () => {
       const binding = await this.binding(volumeId); const repositoryPath = this.repositoryPath(binding.volumeId)
-      const manifest = await buildVolumeSnapshot({ volumeId, generation: this.options.snapshots!.generation(), volumeRoot: this.options.volumes.resolveVolumeRoot(volumeId), cachePath: repositoryPath, leases: this.options.snapshots!.leases, checkpoint: this.options.snapshots!.checkpoint })
+      const manifest = await buildVolumeSnapshot({ volumeId, generation: this.options.snapshots!.generation(), volumeRoot: this.options.volumes.resolveVolumeRoot(volumeId), cachePath: repositoryPath, leases: this.options.snapshots!.leases, checkpoint: this.options.snapshots!.checkpoint, includeSecrets: binding.includeSecrets === true })
+      if (binding.includeSecrets !== true) await this.options.runner.exec(['rm', '--cached', '-r', '--ignore-unmatch', '--', 'secrets'], { cwd: repositoryPath })
       const commit = await this.commitLocalSnapshot(volumeId, `ASH snapshot ${manifest.generation}`)
       if (binding.mode === 'remote') await this.pushWithRetry(repositoryPath, binding.remoteBranch)
       await this.options.bindings.recordSync(volumeId, manifest.groupHashes)
@@ -172,6 +194,7 @@ export class GitSyncService {
         await this.options.runner.exec(['worktree', 'add', '--detach', '--force', stagingRoot, ref], { cwd: repositoryPath })
         const manifest = SyncManifestSchema.parse(JSON.parse(await readFile(syncManifestPath(stagingRoot), 'utf8'))) as SyncManifest
         if (manifest.volumeId !== volumeId) throw new Error('Fetched sync manifest does not belong to this volume')
+        if (manifest.groupHashes.secrets && binding.includeSecrets !== true) throw new Error('Fetched snapshot contains secrets but this volume has not enabled secrets synchronization')
         for (const [group, expected] of Object.entries(manifest.groupHashes)) {
           const actual = await hashSyncGroup(join(stagingRoot, group))
           if (actual !== expected) throw new Error(`Fetched ${group} group hash validation failed`)
@@ -193,7 +216,7 @@ export class GitSyncService {
         const binding = await this.binding(volumeId)
         const local: Partial<Record<import('@manta/shared').StorageGroupId, string>> = {}
         for (const group of Object.keys(fetched.manifest.groupHashes) as import('@manta/shared').StorageGroupId[]) local[group] = await hashSyncGroup(join(this.options.volumes.resolveVolumeRoot(volumeId), group))
-        const plan = planGroupConflicts({ base: binding.lastSyncedGroupHashes ?? {}, local, remote: fetched.manifest.groupHashes })
+        const plan = planGroupConflicts({ base: binding.lastSyncedGroupHashes ?? {}, local, remote: fetched.manifest.groupHashes, includeSecrets: binding.includeSecrets === true })
         const allowedChoices = new Map(plan.groups.map(({ group, choices }) => [group, new Set(choices)]))
         for (const [id, session] of this.imports) {
           if (session.volumeId !== volumeId) continue
@@ -221,7 +244,11 @@ export class GitSyncService {
       }
       if (!this.options.importer) throw new Error('Remote import is unavailable')
       this.validateImportDecisions(session, input.decisions)
-      try { await this.options.importer.apply({ volumeId, stagingRoot: session.stagingRoot, manifest: session.manifest, decisions: input.decisions, expectedLocalHashes: session.localHashes }) }
+      const binding = await this.binding(volumeId)
+      try {
+        if (session.manifest.groupHashes.secrets && binding.includeSecrets !== true) throw new Error('Secrets synchronization is not enabled for this volume')
+        await this.options.importer.apply({ volumeId, stagingRoot: session.stagingRoot, manifest: session.manifest, decisions: input.decisions, expectedLocalHashes: session.localHashes, includeSecrets: binding.includeSecrets === true })
+      }
       finally { this.imports.delete(input.sessionId); await this.removeStaging(volumeId, session.stagingRoot) }
     })
   }
@@ -253,7 +280,7 @@ export class GitSyncService {
     const rebuilt = !await exists(join(repositoryPath, '.git'))
     if (rebuilt) await this.options.runner.exec(['init', '--quiet'], { cwd: repositoryPath })
     const gitignorePath = join(repositoryPath, '.gitignore')
-    if (!await exists(gitignorePath)) await writeFile(gitignorePath, SAFE_IGNORE, 'utf8')
+    await writeFile(gitignorePath, safeIgnore(binding.includeSecrets === true), 'utf8')
     if (binding.mode !== 'remote' || !binding.remoteUrl) return
     try { await this.options.runner.exec(['remote', 'get-url', 'origin'], { cwd: repositoryPath }) }
     catch { await this.options.runner.exec(['remote', 'add', 'origin', binding.remoteUrl], { cwd: repositoryPath }) }
@@ -355,16 +382,17 @@ export class GitSyncService {
     }
     return path
   }
-  private async scanForSecrets(repositoryPath: string): Promise<void> {
+  private async scanForSecrets(repositoryPath: string, includeSecrets = false): Promise<void> {
+    const excludedGroups = includeSecrets ? new Set(['diagnostics', 'cache']) : SYNC_EXCLUDED_GROUPS
     const tracked = await this.options.runner.exec(['ls-files', '-z'], { cwd: repositoryPath })
-    const excluded = tracked.stdout.split('\0').filter((file) => SYNC_EXCLUDED_GROUPS.has(file.split('/')[0]))
+    const excluded = tracked.stdout.split('\0').filter((file) => excludedGroups.has(file.split('/')[0]))
     if (excluded.length) {
-      await this.options.runner.exec(['rm', '--cached', '-r', '--ignore-unmatch', '--', ...[...SYNC_EXCLUDED_GROUPS]], { cwd: repositoryPath })
+      await this.options.runner.exec(['rm', '--cached', '-r', '--ignore-unmatch', '--', ...[...excludedGroups]], { cwd: repositoryPath })
       throw new Error(`Excluded storage group is tracked and was unstaged: ${excluded.join(', ')}`)
     }
     const output = await this.options.runner.exec(['ls-files', '-z', '--others', '--cached', '--exclude-standard'], { cwd: repositoryPath })
     for (const relative of output.stdout.split('\0').filter(Boolean)) {
-      const top = relative.split('/')[0]; if (SYNC_EXCLUDED_GROUPS.has(top)) continue
+      const top = relative.split('/')[0]; if (excludedGroups.has(top) || (includeSecrets && top === 'secrets')) continue
       const filePath = join(repositoryPath, relative)
       let stat
       try { stat = await lstat(filePath) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw new Error(redactGitText((error as Error).message)) }

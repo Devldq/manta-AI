@@ -128,4 +128,34 @@ describe('storage IPC', () => {
     listeners.get('storage:agent-progress')!({}, { operationId: 'operation-1', phase: 'message-text', message: 'guess state' })
     expect(callback).toHaveBeenCalledTimes(1)
   })
+
+  it('requires a native high-risk confirmation and a one-use sender/frame/origin/volume-bound grant to enable secrets', async () => {
+    const handlers = new Map<string, Function>(); const ipc: any = { handle: (name: string, fn: Function) => handlers.set(name, fn), removeHandler: vi.fn() }
+    const services: any = { confirmGitSecrets: vi.fn(async () => true), setGitSecretsPolicy: vi.fn(async (_volumeId: string, includeSecrets: boolean) => ({ volumeId: 'v1', mode: 'local', includeSecrets, createdAt: '2026-07-13T00:00:00.000Z', updatedAt: '2026-07-13T00:00:00.000Z' })) }
+    let now = 1_000
+    registerStorageIpc({ ipcMain: ipc, trustedOrigin: 'http://127.0.0.1:4444', trustedSenderId: 9, services, now: () => now, randomId: () => 'opaque-grant-1', secretsGrantTtlMs: 100 })
+    const frame: any = { url: 'http://127.0.0.1:4444/settings', routingId: 41 }; frame.top = frame
+    const event = { sender: { id: 9 }, senderFrame: frame }
+    const granted = await handlers.get('storage:invoke')!(event, { channel: 'storage:request-git-secrets-grant', volumeId: 'v1' })
+    expect(services.confirmGitSecrets).toHaveBeenCalledWith('v1', event)
+    expect(granted).toEqual({ ok: true, kind: 'git-secrets-grant', grant: 'opaque-grant-1', expiresAt: 1100 })
+
+    const otherFrame: any = { ...frame, routingId: 42 }; otherFrame.top = otherFrame
+    await expect(handlers.get('storage:invoke')!({ ...event, senderFrame: otherFrame }, { channel: 'storage:set-git-secrets-policy', volumeId: 'v1', includeSecrets: true, grant: 'opaque-grant-1' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_GIT_SECRETS_GRANT' } })
+    await expect(handlers.get('storage:invoke')!({ ...event, sender: { id: 10 } }, { channel: 'storage:set-git-secrets-policy', volumeId: 'v1', includeSecrets: true, grant: 'opaque-grant-1' })).resolves.toMatchObject({ ok: false, error: { code: 'UNTRUSTED_SENDER' } })
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:set-git-secrets-policy', volumeId: 'v2', includeSecrets: true, grant: 'opaque-grant-1' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_GIT_SECRETS_GRANT' } })
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:set-git-secrets-policy', volumeId: 'v1', includeSecrets: true, grant: 'opaque-grant-1' })).resolves.toMatchObject({ ok: true, kind: 'git-secrets-policy', binding: { includeSecrets: true } })
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:set-git-secrets-policy', volumeId: 'v1', includeSecrets: true, grant: 'opaque-grant-1' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_GIT_SECRETS_GRANT' } })
+  })
+
+  it('rejects expired grants and cannot enable secrets through ordinary Git configuration', async () => {
+    const handlers = new Map<string, Function>(); const ipc: any = { handle: (name: string, fn: Function) => handlers.set(name, fn), removeHandler: vi.fn() }
+    const services: any = { confirmGitSecrets: vi.fn(async () => true), configureGit: vi.fn(), setGitSecretsPolicy: vi.fn() }; let now = 1_000
+    registerStorageIpc({ ipcMain: ipc, trustedOrigin: 'http://127.0.0.1:4444', services, now: () => now, randomId: () => 'opaque-grant-2', secretsGrantTtlMs: 10 })
+    const frame: any = { url: 'http://127.0.0.1:4444/', routingId: 7 }; frame.top = frame; const event = { sender: { id: 3 }, senderFrame: frame }
+    await handlers.get('storage:invoke')!(event, { channel: 'storage:request-git-secrets-grant', volumeId: 'v1' }); now = 1_011
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:set-git-secrets-policy', volumeId: 'v1', includeSecrets: true, grant: 'opaque-grant-2' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_GIT_SECRETS_GRANT' } })
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:configure-git', volumeId: 'v1', mode: 'local', includeSecrets: true })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+    expect(services.configureGit).not.toHaveBeenCalled()
+  })
 })

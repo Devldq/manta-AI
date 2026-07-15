@@ -2,7 +2,7 @@ import type { AggregateStorageCapacityMetrics, StorageGroupId, StorageOperationP
 
 export interface StorageVolumeDetails extends StorageVolumeRecord { groups: StorageGroupId[]; inventory: { bytes: number; files: number }; capacity?: StorageVolumeCapacityMetrics }
 export interface StorageGitCapability { available: boolean; version?: string; reason?: string }
-export interface StorageGitBinding { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; lastSyncedGroupHashes?: Partial<Record<StorageGroupId, string>>; lastSyncedAt?: string; lastSyncStatus?: 'succeeded'; createdAt: string; updatedAt: string }
+export interface StorageGitBinding { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; includeSecrets?: boolean; lastSyncedGroupHashes?: Partial<Record<StorageGroupId, string>>; lastSyncedAt?: string; lastSyncStatus?: 'succeeded'; createdAt: string; updatedAt: string }
 
 export interface StorageOverview {
   volumes: StorageVolumeRecord[]

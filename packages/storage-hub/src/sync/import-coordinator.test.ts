@@ -75,4 +75,18 @@ describe('ImportCoordinator', () => {
     await expect(coordinator.apply({ volumeId: 'v1', stagingRoot: staging, manifest: { schemaVersion: 1, volumeId: 'v1', generation: 1, groupHashes: { work: 'a'.repeat(64) }, createdAt: '2026-07-13T00:00:00.000Z' }, decisions: { work: 'keep-remote' }, expectedLocalHashes: { work: 'b'.repeat(64) } })).rejects.toThrow(/changed after.*planned/i)
     expect(calls).toEqual([])
   })
+
+  it('imports secrets only under an explicitly enabled binding policy', async () => {
+    const live = await directory(); const staging = await directory(); const replaced: string[] = []
+    await mkdir(join(live, 'secrets'), { recursive: true }); await writeFile(join(live, 'secrets', 'token.txt'), 'active-secret')
+    await mkdir(join(staging, 'secrets'), { recursive: true }); await writeFile(join(staging, 'secrets', 'token.txt'), 'remote-secret')
+    const remoteHash = await hashSyncGroup(join(staging, 'secrets'))
+    const coordinator = new ImportCoordinator({ resolveGroupRoot: (group) => join(live, group), replaceGroups: async (groups, preflight) => { await preflight(); replaced.push(...groups.map(({ group }) => group)) } })
+    const input = { volumeId: 'v1', stagingRoot: staging, manifest: { schemaVersion: 1 as const, volumeId: 'v1', generation: 1, groupHashes: { secrets: remoteHash }, createdAt: '2026-07-13T00:00:00.000Z' }, decisions: { secrets: 'keep-remote' as const } }
+
+    await expect(coordinator.apply(input)).rejects.toThrow(/cannot be imported/i)
+    await expect(readFile(join(live, 'secrets', 'token.txt'), 'utf8')).resolves.toBe('active-secret')
+    await expect(coordinator.apply({ ...input, includeSecrets: true })).resolves.toBeUndefined()
+    expect(replaced).toEqual(['secrets'])
+  })
 })

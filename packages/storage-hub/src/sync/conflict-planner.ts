@@ -15,10 +15,10 @@ type Hashes = Partial<Record<StorageGroupId, string>>
 const DATABASE_GROUPS = new Set<StorageGroupId>(['knowledge'])
 
 /** Plans only at storage-group granularity; database contents are never merged. */
-export function planGroupConflicts(input: { base: Hashes; local: Hashes; remote: Hashes }): ConflictPlan {
+export function planGroupConflicts(input: { base: Hashes; local: Hashes; remote: Hashes; includeSecrets?: boolean }): ConflictPlan {
   const groups: GroupConflictPlan[] = []
   for (const group of STORAGE_GROUP_IDS) {
-    if (['secrets', 'diagnostics', 'cache'].includes(group)) continue
+    if (['diagnostics', 'cache'].includes(group) || (group === 'secrets' && !input.includeSecrets)) continue
     const base = input.base[group]; const local = input.local[group]; const remote = input.remote[group]
     if (local === remote) { if (local !== undefined) groups.push({ group, state: 'unchanged', choices: ['keep-local'], defaultChoice: 'keep-local' }); continue }
     if (base === undefined && local === undefined && remote !== undefined) { groups.push({ group, state: 'remote-addition', choices: ['keep-remote'], defaultChoice: 'keep-remote' }); continue }

@@ -28,4 +28,18 @@ describe('buildVolumeSnapshot', () => {
     expect(snapshot.groupHashes).not.toHaveProperty('secrets')
     expect(snapshot).toMatchObject({ volumeId: 'volume-1', generation: 7 })
   })
+
+  it('includes secrets only when the binding policy explicitly opts in', async () => {
+    const root = await directory(); const cache = await directory(); const leases = new StorageLeaseManager()
+    await mkdir(join(root, 'secrets'), { recursive: true }); await writeFile(join(root, 'secrets', 'token.txt'), 'top-secret-value')
+
+    const enabled = await buildVolumeSnapshot({ volumeId: 'volume-1', generation: 1, volumeRoot: root, cachePath: cache, leases, includeSecrets: true })
+    await expect(readFile(join(cache, 'secrets', 'token.txt'), 'utf8')).resolves.toBe('top-secret-value')
+    expect(enabled.groupHashes.secrets).toMatch(/^[a-f0-9]{64}$/)
+
+    const disabled = await buildVolumeSnapshot({ volumeId: 'volume-1', generation: 2, volumeRoot: root, cachePath: cache, leases, includeSecrets: false })
+    await expect(readFile(join(cache, 'secrets', 'token.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(disabled.groupHashes).not.toHaveProperty('secrets')
+    await expect(readFile(join(root, 'secrets', 'token.txt'), 'utf8')).resolves.toBe('top-secret-value')
+  })
 })

@@ -90,6 +90,20 @@ function installMainStorageIpc(origin: string): void {
       if (config.mode === 'remote' && config.authRef) throw Object.assign(new Error('Authenticated Git setup is unavailable in this build. Configure a system Git credential helper, then sync.'), { code: 'CREDENTIAL_STORE_UNAVAILABLE' })
       return composition.git.bindVolume({ volumeId, mode: config.mode, remoteUrl: config.mode === 'remote' ? config.remoteUrl : undefined })
     },
+    async confirmGitSecrets(volumeId) {
+      const result = await dialog.showMessageBox(activeWindow!, {
+        type: 'warning',
+        title: 'High-risk Git secrets synchronization',
+        message: 'Sync secrets to Git for this storage volume?',
+        detail: 'Secret values will be committed to Git. Git history is hard to erase, and a private repository is not absolute safety. Disabling later removes secrets from future snapshots, but cannot erase existing Git history.',
+        buttons: ['Cancel', 'I understand, enable'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+      return result.response === 1
+    },
+    setGitSecretsPolicy: (volumeId, includeSecrets) => composition.git.setIncludeSecrets(volumeId, includeSecrets),
     async syncVolume(volumeId) {
       if (!cloudSync) throw Object.assign(new Error('Storage sync runtime is unavailable'), { code: 'SYNC_UNAVAILABLE' })
       return cloudSync.syncNow(volumeId)

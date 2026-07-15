@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { GitRemoteUrlSchema, type StorageGitImportPlan, type StorageIpcRequest, type StorageVolumeCapacityMetrics, type StorageVolumeRecord } from '@manta/shared'
 
-type GitBinding = { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; lastSyncedAt?: string; lastSyncStatus?: 'succeeded'; createdAt: string; updatedAt: string }
+type GitBinding = { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; includeSecrets?: boolean; lastSyncedAt?: string; lastSyncStatus?: 'succeeded'; createdAt: string; updatedAt: string }
 type ImportDecisions = Extract<StorageIpcRequest, { channel: 'storage:apply-git-import' }>['decisions']
 type VolumeHealth = { status: 'healthy' | 'offline' | 'unreadable' | 'conflict'; conflicts: string[]; checkedAt: string; reason?: string }
 
-export function StorageVolumeCard({ volume, bytes = 0, files = 0, capacity, onRelocate, onOpen, disabled, git, health, onConfigureGit, onSync, onPlanImport, onApplyImport }: { volume: StorageVolumeRecord; bytes?: number; files?: number; capacity?: StorageVolumeCapacityMetrics; onRelocate: () => void; onOpen: () => void; disabled: boolean; git?: { available: boolean; reason?: string; binding?: GitBinding }; health?: VolumeHealth; onConfigureGit?: (request: Extract<StorageIpcRequest, { channel: 'storage:configure-git' }>) => Promise<void> | void; onSync?: () => Promise<void> | void; onPlanImport?: () => Promise<StorageGitImportPlan>; onApplyImport?: (plan: StorageGitImportPlan, decisions: ImportDecisions) => Promise<void> }) {
+export function StorageVolumeCard({ volume, bytes = 0, files = 0, capacity, onRelocate, onOpen, disabled, git, health, onConfigureGit, onRequestGitSecretsGrant, onSetGitSecretsPolicy, onSync, onPlanImport, onApplyImport }: { volume: StorageVolumeRecord; bytes?: number; files?: number; capacity?: StorageVolumeCapacityMetrics; onRelocate: () => void; onOpen: () => void; disabled: boolean; git?: { available: boolean; reason?: string; binding?: GitBinding }; health?: VolumeHealth; onConfigureGit?: (request: Extract<StorageIpcRequest, { channel: 'storage:configure-git' }>) => Promise<void> | void; onRequestGitSecretsGrant?: () => Promise<string>; onSetGitSecretsPolicy?: (includeSecrets: boolean, grant?: string) => Promise<void>; onSync?: () => Promise<void> | void; onPlanImport?: () => Promise<StorageGitImportPlan>; onApplyImport?: (plan: StorageGitImportPlan, decisions: ImportDecisions) => Promise<void> }) {
   const [remoteUrl, setRemoteUrl] = useState(git?.binding?.remoteUrl ?? '')
   const [gitError, setGitError] = useState<string>()
   const [gitLoading, setGitLoading] = useState(false)
@@ -19,6 +19,15 @@ export function StorageVolumeCard({ volume, bytes = 0, files = 0, capacity, onRe
     try { await onConfigureGit(mode === 'local' ? { channel: 'storage:configure-git', volumeId: volume.id, mode } : { channel: 'storage:configure-git', volumeId: volume.id, mode, remoteUrl }) }
     catch (error) { setGitError((error as Error).message) } finally { setGitLoading(false) }
   }
+  const setSecretsPolicy = async (includeSecrets: boolean) => {
+    if (!onSetGitSecretsPolicy) return
+    setGitLoading(true); setGitError(undefined)
+    try {
+      const grant = includeSecrets ? await onRequestGitSecretsGrant?.() : undefined
+      if (includeSecrets && !grant) throw new Error('High-risk secrets confirmation was not granted')
+      await onSetGitSecretsPolicy(includeSecrets, grant)
+    } catch (error) { setGitError((error as Error).message) } finally { setGitLoading(false) }
+  }
   return <article aria-label={`${volume.name} volume`} style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: 12 }}>
     <strong>{volume.name}</strong><div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)', overflowWrap: 'anywhere' }}>{volume.parentPath}/.manta-ai</div><div style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: '6px 0' }}>{bytes} bytes · {files} files</div>
     {capacity && <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: '6px 0' }}>Immutable {capacity.logicalImmutableBytes === null ? 'logical unavailable' : `${capacity.logicalImmutableBytes} B logical`} / {capacity.physicalImmutableBytes === null ? 'physical unavailable' : `${capacity.physicalImmutableBytes} B physical`} · Replica/cache {capacity.replicaBytes === null ? 'unavailable' : `${capacity.replicaBytes} B`} · Cleanable {capacity.cleanableBytes === null ? 'unavailable' : `${capacity.cleanableBytes} B`}</div>}
@@ -29,6 +38,11 @@ export function StorageVolumeCard({ volume, bytes = 0, files = 0, capacity, onRe
       {git?.binding?.remoteUrl && <div style={{ overflowWrap: 'anywhere' }}>{git.binding.remoteUrl}</div>}
       {git?.binding?.lastSyncedAt && <div role="status">Last sync {git.binding.lastSyncStatus ?? 'succeeded'}: {new Date(git.binding.lastSyncedAt).toLocaleString()}</div>}
       {git?.binding && <div role="status">This volume is already bound to {git.binding.mode} Git. To use a different repository, create another storage volume.</div>}
+      {git?.binding && onSetGitSecretsPolicy && <fieldset style={{ margin: '8px 0', padding: 8 }}>
+        <legend>High-risk data</legend>
+        <label><input type="checkbox" checked={git.binding.includeSecrets === true} disabled={disabled || gitLoading} onChange={(event) => void setSecretsPolicy(event.target.checked)} /> Sync secrets to Git</label>
+        <div role="note">Git history is hard to erase. A private repository is not absolute safety. Turning this off removes secrets from the next snapshot, but does not erase existing Git history.</div>
+      </fieldset>}
       {git?.binding && onSync && <button disabled={disabled || gitLoading} onClick={() => { setGitLoading(true); setGitError(undefined); void Promise.resolve(onSync()).catch((error) => setGitError((error as Error).message)).finally(() => setGitLoading(false)) }}>Sync now</button>}
       {git?.binding?.mode === 'remote' && onPlanImport && <button disabled={disabled || gitLoading} onClick={() => {
         setGitLoading(true); setGitError(undefined)

@@ -18,6 +18,8 @@ The old volume remains a backup after a successful move. Delete it only after St
 
 Check that the volume has at most one binding, the cloud folder is online, no migration is active, and conflicts have been reviewed. Credentials are external references and are not copied into snapshots. A group moved into a volume joins its next snapshot; a group moved out is removed from later snapshots.
 
+The secrets group is excluded from Git by default. Enabling it requires the native high-risk confirmation for that exact volume; a normal Git configuration confirmation cannot enable it. If you disable it, run Sync now to commit removal from the current snapshot. Active secrets remain in ASH, but any copies already committed may remain in Git history. Treat private repositories as risk reduction, not absolute safety.
+
 ## Codex import or projection failed
 
 Run Detect and Inspect again, create a new preview, and approve that exact preview. Plans are one-use and reject stale source or target state. A failed apply records rollback evidence; use Roll back from Agent Connections. Raw MCP credential values are never accepted in portable plans.

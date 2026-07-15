@@ -18,6 +18,7 @@ function validate(binding: GitBinding & { repositoryRelativePath?: unknown }): G
   if (binding.remoteBranch !== undefined && (!binding.remoteBranch || /[\s~^:?*[\\]/.test(binding.remoteBranch) || binding.remoteBranch.includes('..') || binding.remoteBranch.includes('@{') || binding.remoteBranch.startsWith('-') || binding.remoteBranch.endsWith('/') || binding.remoteBranch.endsWith('.') || binding.remoteBranch.endsWith('.lock'))) throw new Error('Invalid Git remote branch')
   if (binding.remoteUrl && !GitRemoteUrlSchema.safeParse(binding.remoteUrl).success) throw new Error('Git remote URL is invalid or contains credentials')
   if (binding.credentialRef?.trim() === '') throw new Error('Git credential reference must not be empty')
+  if (binding.includeSecrets !== undefined && typeof binding.includeSecrets !== 'boolean') throw new Error('Invalid Git secrets policy')
   return normalized
 }
 
@@ -48,6 +49,15 @@ export class GitBindingStore {
     if (index < 0) throw new Error(`Volume ${volumeId} has no Git binding`)
     const now = new Date().toISOString()
     const updated = validate({ ...catalog.bindings[index], lastSyncedGroupHashes: groupHashes, lastSyncedAt: now, lastSyncStatus: 'succeeded', updatedAt: now })
+    const bindings = [...catalog.bindings]; bindings[index] = updated
+    await writeJsonAtomic(this.filePath, { schemaVersion: 1, bindings })
+    return updated
+  }
+
+  async setIncludeSecrets(volumeId: string, includeSecrets: boolean): Promise<GitBinding> {
+    const catalog = await this.read(); const index = catalog.bindings.findIndex((item) => item.volumeId === volumeId)
+    if (index < 0) throw new Error(`Volume ${volumeId} has no Git binding`)
+    const now = new Date().toISOString(); const updated = validate({ ...catalog.bindings[index], includeSecrets, updatedAt: now })
     const bindings = [...catalog.bindings]; bindings[index] = updated
     await writeJsonAtomic(this.filePath, { schemaVersion: 1, bindings })
     return updated

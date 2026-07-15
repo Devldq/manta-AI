@@ -28,6 +28,8 @@ export interface GitBinding {
   /** Immutable branch selected from the remote at bind time (or the local initial branch for an empty remote). */
   remoteBranch?: string
   credentialRef?: CredentialRef
+  /** High-risk opt-in. Absent and false both mean that secrets are excluded. */
+  includeSecrets?: boolean
   createdAt: string
   updatedAt: string
   /** Updated only after the snapshot commit (and remote push, if configured) succeeds. */

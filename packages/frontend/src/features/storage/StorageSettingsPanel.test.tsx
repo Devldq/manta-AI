@@ -39,6 +39,14 @@ describe('storage settings presentation', () => {
     expect(html).not.toContain('token')
   })
 
+  it('renders an accessible high-risk secrets control with the Git history warning', () => {
+    const html = renderToStaticMarkup(<StorageVolumeCard volume={{ id: 'volume-1', name: 'Private', parentPath: '/private', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }} disabled={false} onOpen={() => {}} onRelocate={() => {}} git={{ available: true, binding: { volumeId: 'volume-1', mode: 'local', includeSecrets: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' } }} onRequestGitSecretsGrant={async () => 'opaque'} onSetGitSecretsPolicy={async () => {}} />)
+    expect(html).toContain('Sync secrets to Git')
+    expect(html).toMatch(/Git history.*hard to erase/i)
+    expect(html).toMatch(/private.*not.*absolute safety/i)
+    expect(html).toContain('type="checkbox"')
+  })
+
   it('explains that an existing Git binding cannot be changed from this volume card', () => {
     const html = renderToStaticMarkup(<StorageVolumeCard volume={{ id: 'volume-1', name: 'Private', parentPath: '/private', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }} disabled={false} onOpen={() => {}} onRelocate={() => {}} git={{ available: true, binding: { volumeId: 'volume-1', mode: 'local', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' } }} onConfigureGit={() => {}} />)
     expect(html).toContain('already bound to local Git')

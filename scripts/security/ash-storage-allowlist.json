@@ -15,57 +15,73 @@
       "reason": "Reviewed Git ignore policy write under the injected ASH cache storage group; it never writes into the active synchronized volume."
     },
     {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts", "line": 113, "column": 13, "operation": "writeFile",
+      "reason": "Reviewed high-risk secrets policy ignore update limited to the disposable Git workspace under the injected ASH cache group."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts", "line": 117, "column": 49, "operation": "rm",
+      "reason": "Reviewed rollback removal limited to the disposable Git workspace ignore file when secrets policy catalog persistence fails."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts", "line": 117, "column": 96, "operation": "writeFile",
+      "reason": "Reviewed rollback restoration limited to the disposable Git workspace ignore file when secrets policy catalog persistence fails."
+    },
+    {
+      "file": "packages/storage-hub/src/sync/git/git-sync-service.ts", "line": 124, "column": 21, "operation": "rm",
+      "reason": "Reviewed immediate removal of the secrets copy only from the disposable Git cache workspace after the persisted policy is disabled."
+    },
+    {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 251,
+      "line": 279,
       "column": 11,
       "operation": "mkdir",
       "reason": "Reviewed reconstruction of a disposable Git workspace under the injected ASH cache storage group after cache cleanup or migration."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 255,
-      "column": 45,
+      "line": 283,
+      "column": 11,
       "operation": "writeFile",
       "reason": "Reviewed missing Git ignore policy restoration under the injected ASH cache storage group for the disposable workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 313,
+      "line": 358,
       "column": 64,
       "operation": "rm",
       "reason": "Reviewed rollback cleanup limited to a Git ignore file in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 314,
+      "line": 359,
       "column": 18,
       "operation": "writeFile",
       "reason": "Reviewed rollback restoration of a prior Git ignore file in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 316,
+      "line": 361,
       "column": 76,
       "operation": "rm",
       "reason": "Reviewed rollback removal of a newly created Git metadata directory in the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 167,
+      "line": 190,
       "column": 13,
       "operation": "mkdir",
       "reason": "Reviewed creation of a disposable remote-import Git worktree under the injected ASH cache group; it is never an active synchronized volume."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 181,
+      "line": 205,
       "column": 15,
       "operation": "rm",
       "reason": "Reviewed cleanup limited to a failed disposable remote-import worktree under the injected ASH cache group."
     },
     {
       "file": "packages/storage-hub/src/sync/git/git-sync-service.ts",
-      "line": 293,
+      "line": 338,
       "column": 11,
       "operation": "rm",
       "reason": "Reviewed cleanup of an opaque user-confirmation import staging worktree under the injected ASH cache group."
@@ -85,22 +101,26 @@
       "reason": "Reviewed lease-protected copy from a resolved active volume into the injected ASH cache storage group disposable snapshot workspace."
     },
     {
+      "file": "packages/storage-hub/src/sync/snapshot-builder.ts", "line": 43, "column": 40, "operation": "rm",
+      "reason": "Reviewed removal of a stale secrets copy only from the disposable snapshot cache when the volume binding policy is disabled."
+    },
+    {
       "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
-      "line": 44,
+      "line": 47,
       "column": 13,
       "operation": "rm",
       "reason": "Reviewed removal limited to a prior disposable group snapshot under the injected ASH cache storage group workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
-      "line": 51,
+      "line": 54,
       "column": 11,
       "operation": "mkdir",
       "reason": "Reviewed sync manifest parent creation under the injected ASH cache storage group disposable snapshot workspace."
     },
     {
       "file": "packages/storage-hub/src/sync/snapshot-builder.ts",
-      "line": 52,
+      "line": 55,
       "column": 11,
       "operation": "writeFile",
       "reason": "Reviewed credential-free sync manifest write under the injected ASH cache storage group disposable snapshot workspace."
@@ -323,11 +343,11 @@
       "reason": "Reviewed diagnostics persistence primitive whose mandatory root is injected from the ASH diagnostics group."
     },
     {
-      "file": "packages/desktop/src/lifecycle/createStorageVolume.ts", "line": 13, "column": 11, "operation": "mkdir",
+      "file": "packages/desktop/src/lifecycle/createStorageVolume.ts", "line": 16, "column": 13, "operation": "mkdir",
       "reason": "Reviewed Electron privileged storage-volume creation on an explicit user-selected directory after ASH path, capacity, permission, and nesting validation."
     },
     {
-      "file": "packages/desktop/src/lifecycle/createStorageVolume.ts", "line": 16, "column": 27, "operation": "rm",
+      "file": "packages/desktop/src/lifecycle/createStorageVolume.ts", "line": 23, "column": 39, "operation": "rm",
       "reason": "Reviewed Electron privileged rollback cleanup limited to the newly created ASH volume in an explicit user-selected directory."
     },
     { "file": "packages/desktop/src/lifecycle/initializeStorage.ts", "line": 21, "column": 11, "operation": "mkdir", "reason": "Reviewed Electron onboarding preparation on an explicit user-selected parent before any application persistence exists." },
@@ -354,7 +374,8 @@
     { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 37, "column": 54, "operation": "rm", "reason": "Reviewed operation-catalog lock cleanup below Electron userData in the lock holder finally path." },
     { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 60, "column": 64, "operation": "rm", "reason": "Reviewed deletion of the single application-owned relaunch intent record after verified restart recovery." },
     { "file": "packages/desktop/src/lifecycle/StorageControlStore.ts", "line": 62, "column": 88, "operation": "rename", "reason": "Reviewed quarantine of only the application-owned relaunch intent record when it cannot be parsed." },
-    { "file": "packages/desktop/src/desktop-runtime.ts", "line": 85, "column": 598, "operation": "rm", "reason": "Reviewed explicit user-requested backup deletion constrained by a Bootstrap-derived validated backup ID." },
+    { "file": "packages/desktop/src/lifecycle/createStorageVolume.ts", "line": 17, "column": 13, "operation": "mkdir", "reason": "Reviewed creation of the ASH backup control directory inside a validated newly created user-selected volume." },
+    { "file": "packages/desktop/src/desktop-runtime.ts", "line": 86, "column": 598, "operation": "rm", "reason": "Reviewed explicit user-requested backup deletion constrained by a Bootstrap-derived validated backup ID." },
     { "file": "packages/desktop/scripts/build-win.cjs", "line": 8, "column": 16, "operation": "spawnSync", "reason": "Reviewed official electron-builder directory packaging process boundary, limited to its production artifact output." },
     {
       "file": "packages/desktop/scripts/copy-assets.cjs", "line": 8, "column": 3, "operation": "mkdirSync",
@@ -489,150 +510,166 @@
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 37,
+      "line": 41,
       "column": 15,
       "operation": "rename",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 58,
+      "line": 62,
       "column": 177,
       "operation": "mkdir",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 58,
+      "line": 62,
       "column": 232,
       "operation": "rename",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 60,
+      "line": 64,
       "column": 119,
       "operation": "mkdir",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 60,
+      "line": 64,
       "column": 170,
       "operation": "rename",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 142,
+      "line": 161,
       "column": 47,
       "operation": "mkdir",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 169,
+      "line": 188,
       "column": 142,
       "operation": "rename",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 169,
+      "line": 188,
       "column": 269,
       "operation": "rm",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 170,
+      "line": 189,
       "column": 94,
       "operation": "rename",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 171,
+      "line": 190,
       "column": 132,
       "operation": "mkdir",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 83,
+      "line": 87,
       "column": 15,
       "operation": "mkdir",
       "reason": "Reviewed transactional remote-import backup parent creation below the bootstrap-derived active ASH volume."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 84,
+      "line": 88,
       "column": 15,
       "operation": "mkdir",
       "reason": "Reviewed transactional remote-import target-parent creation below the bootstrap-derived active ASH volume."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 84,
+      "line": 88,
       "column": 66,
       "operation": "rename",
       "reason": "Reviewed atomic replacement from validated cache staging into a bootstrap-derived active ASH storage group."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 86,
+      "line": 90,
       "column": 15,
       "operation": "rm",
       "reason": "Reviewed removal of a transaction-owned backup only after the imported storage group reopens and validates."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 119,
-      "column": 123,
+      "line": 132,
+      "column": 95,
       "operation": "mkdir",
       "reason": "Reviewed batch remote-import backup parent creation below the bootstrap-derived active ASH volume."
     },
     {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts", "line": 132, "column": 146, "operation": "rename",
+      "reason": "Reviewed batch atomic move of a bootstrap-derived active ASH group into its transaction-owned backup."
+    },
+    {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 119,
-      "column": 240,
+      "line": 133,
+      "column": 17,
       "operation": "mkdir",
       "reason": "Reviewed batch remote-import target parent creation below the bootstrap-derived active ASH volume."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 119,
-      "column": 291,
+      "line": 133,
+      "column": 68,
       "operation": "rename",
       "reason": "Reviewed batch atomic replacement from validated cache staging into a bootstrap-derived active ASH storage group."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 121,
-      "column": 45,
+      "line": 139,
+      "column": 43,
       "operation": "rm",
       "reason": "Reviewed batch cleanup of transaction-owned backups only after every imported storage group validates."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 124,
-      "column": 61,
+      "line": 203,
+      "column": 27,
       "operation": "rm",
       "reason": "Reviewed batch rollback removal limited to a transaction-installed active ASH group before exact backup restore."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 125,
-      "column": 62,
+      "line": 203,
+      "column": 85,
       "operation": "mkdir",
       "reason": "Reviewed batch rollback parent recreation below the bootstrap-derived active ASH volume before backup restore."
     },
     {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts", "line": 203, "column": 142, "operation": "rename",
+      "reason": "Reviewed rollback restoration of a transaction-owned backup to its bootstrap-derived active ASH group path."
+    },
+    {
       "file": "packages/storage-hub/src/migration/migration-coordinator.ts",
-      "line": 126,
-      "column": 43,
+      "line": 204,
+      "column": 13,
       "operation": "rm",
       "reason": "Reviewed batch cleanup restricted to transaction-owned cache staging below the active ASH volume."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts", "line": 221, "column": 163, "operation": "rm",
+      "reason": "Reviewed completed import cleanup limited to the transaction-owned backup after target validation."
+    },
+    {
+      "file": "packages/storage-hub/src/migration/migration-coordinator.ts", "line": 221, "column": 221, "operation": "rm",
+      "reason": "Reviewed completed import cleanup limited to transaction-owned cache staging after target validation."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-lock.ts",
@@ -657,14 +694,14 @@
     },
     {
       "file": "packages/storage-hub/src/migration/migration-lock.ts",
-      "line": 44,
-      "column": 24,
+      "line": 45,
+      "column": 26,
       "operation": "open",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."
     },
     {
       "file": "packages/storage-hub/src/migration/migration-lock.ts",
-      "line": 46,
+      "line": 53,
       "column": 153,
       "operation": "unlink",
       "reason": "Reviewed Agent Storage Hub bootstrap or migration primitive operating on manifest-managed or explicitly user-selected volume paths."

@@ -70,6 +70,15 @@ describe('GitRunner', () => {
 })
 
 describe('GitSyncService import authorization', () => {
+  it('re-checks a disabled secrets policy at apply time and invalidates the pending import', async () => {
+    const root = await directory(); const cache = `${root}.cache`; directories.push(cache); const bindings = new GitBindingStore(path.join(root, 'config')); const now = '2026-07-13T00:00:00.000Z'; let applied = false
+    await bindings.bind({ volumeId: 'primary', repositoryRelativePath: '.ash/sync/git', mode: 'local', includeSecrets: false, createdAt: now, updatedAt: now })
+    const service = new GitSyncService({ runner: new GitRunner(), bindings, volumes: { resolveVolumeRoot: () => root }, cachePath: () => cache, importer: { apply: async () => { applied = true } } as any })
+    ;(service as any).imports.set('secret-plan', { volumeId: 'primary', stagingRoot: path.join(cache, 'staging'), manifest: { schemaVersion: 1, volumeId: 'primary', generation: 1, groupHashes: { secrets: 'a'.repeat(64) }, createdAt: now }, plan: { groups: [{ group: 'secrets', state: 'remote-only', choices: ['keep-local', 'keep-remote'], defaultChoice: 'keep-local' }] }, localHashes: {}, allowedChoices: new Map([['secrets', new Set(['keep-local', 'keep-remote'])]]), expiresAt: Date.now() + 60_000 })
+    await expect(service.applyRemoteImport('primary', { sessionId: 'secret-plan', decisions: { secrets: 'keep-remote' } })).rejects.toThrow(/not enabled|disabled/i)
+    expect(applied).toBe(false)
+  })
+
   it('expires an import plan using the injected clock before it can modify live data', async () => {
     const root = await directory(); const cache = `${root}.cache`; directories.push(cache)
     const stagingRoot = path.join(cache, 'primary', '.ash', 'sync', 'import-staging', 'expired')
@@ -149,6 +158,32 @@ describe('GitSyncService import authorization', () => {
 })
 
 describe('GitSyncService', () => {
+  it('persists only the secrets inclusion policy and defaults it off', async () => {
+    const root = await directory(); const store = new GitBindingStore(path.join(root, 'config')); const now = '2026-07-13T00:00:00.000Z'
+    await store.bind({ volumeId: 'primary', repositoryRelativePath: '.ash/sync/git', mode: 'local', createdAt: now, updatedAt: now })
+    expect((await store.get('primary'))?.includeSecrets).not.toBe(true)
+    await expect(store.setIncludeSecrets('primary', true)).resolves.toMatchObject({ includeSecrets: true })
+    const persisted = await readFile(path.join(root, 'config', '.ash', 'sync', 'git-bindings.json'), 'utf8')
+    expect(persisted).toContain('"includeSecrets": true')
+    expect(persisted).not.toContain('top-secret-value')
+    await expect(store.setIncludeSecrets('primary', false)).resolves.toMatchObject({ includeSecrets: false })
+  })
+
+  it('commits opted-in secrets then removes them from the next snapshot/index without deleting live secrets', async () => {
+    const root = await directory(); const cache = `${root}.cache`; directories.push(cache); const leases = new StorageLeaseManager(); const runner = new GitRunner(); const bindings = new GitBindingStore(path.join(root, 'config'))
+    await mkdir(path.join(root, 'secrets'), { recursive: true }); await writeFile(path.join(root, 'secrets', 'token.txt'), 'top-secret-value')
+    const service = new GitSyncService({ runner, bindings, volumes: { resolveVolumeRoot: () => root }, cachePath: () => cache, snapshots: { generation: () => 1, leases } })
+    await service.bindVolume({ volumeId: 'primary', mode: 'local' }); await service.setIncludeSecrets('primary', true); await service.syncVolume('primary')
+    await expect(runner.exec(['show', 'HEAD:secrets/token.txt'], { cwd: path.join(cache, '.ash', 'sync', 'git') })).resolves.toMatchObject({ stdout: 'top-secret-value' })
+    await service.setIncludeSecrets('primary', false)
+    await expect(runner.exec(['ls-files', '--', 'secrets'], { cwd: path.join(cache, '.ash', 'sync', 'git') })).resolves.toMatchObject({ stdout: '' })
+    await expect(readFile(path.join(cache, '.ash', 'sync', 'git', 'secrets', 'token.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(path.join(root, 'secrets', 'token.txt'), 'utf8')).resolves.toBe('top-secret-value')
+    await service.syncVolume('primary')
+    await expect(runner.exec(['show', 'HEAD:secrets/token.txt'], { cwd: path.join(cache, '.ash', 'sync', 'git') })).rejects.toThrow()
+    await expect(readFile(path.join(root, 'secrets', 'token.txt'), 'utf8')).resolves.toBe('top-secret-value')
+  })
+
   function resolver(volumeId: string, root: string): { resolveVolumeRoot(id: string): string } {
     return { resolveVolumeRoot(id) { if (id !== volumeId) throw new Error(`Inactive volume ${id}`); return root } }
   }
