@@ -311,7 +311,7 @@ export class GitSyncService {
     const localBranch = (await this.options.runner.exec(['symbolic-ref', '--short', 'HEAD'], { cwd: repositoryPath })).stdout.trim()
     let output: string
     try { output = (await this.options.runner.exec(['ls-remote', '--symref', 'origin', 'HEAD', 'refs/heads/*'], { cwd: repositoryPath })).stdout }
-    catch { return localBranch }
+    catch (error) { throw error }
     const symbolic = output.split(/\r?\n/).map((line) => /^ref:\s+refs\/heads\/(.+)\s+HEAD$/.exec(line)?.[1]).find(Boolean)
     const branches = output.split(/\r?\n/).map((line) => /^[a-f0-9]+\s+refs\/heads\/(.+)$/.exec(line)?.[1]).filter((branch): branch is string => Boolean(branch)).sort()
     const branch = symbolic ?? branches[0] ?? localBranch

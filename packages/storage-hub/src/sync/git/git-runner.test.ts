@@ -25,6 +25,13 @@ function mappedRemoteRunner(real: GitRunner, remoteUrl: string, remote: string):
   } })
 }
 
+function reachableEmptyRemoteRunner(real = new GitRunner()): GitRunner {
+  return new GitRunner({ execFile: async (_binary, args, options) => {
+    if (args[0] === 'ls-remote') return { stdout: '', stderr: '' }
+    return real.exec(args, { cwd: options.cwd, env: options.env })
+  } })
+}
+
 async function seedBareRemote(real: GitRunner, remote: string, branch: string): Promise<void> {
   const source = await directory()
   await real.exec(['init', '--bare', '--quiet', `--initial-branch=${branch}`], { cwd: remote })
@@ -235,7 +242,7 @@ describe('GitSyncService', () => {
       }
     }
     const bindings = new BarrierBindingStore(path.join(root, 'config'))
-    const service = new GitSyncService({ runner: new GitRunner(), bindings, volumes: resolver('primary', root), cachePath: safeCachePath(root) })
+    const service = new GitSyncService({ runner: reachableEmptyRemoteRunner(), bindings, volumes: resolver('primary', root), cachePath: safeCachePath(root) })
 
     const remoteUrl = 'https://example.test/owner/repository.git'
     const remote = service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl })
@@ -335,6 +342,30 @@ describe('GitSyncService', () => {
     await expect(service.fetchRemoteImport('primary')).resolves.toMatchObject({ manifest: { volumeId: 'primary' } })
   }, 15_000)
 
+  it('does not persist the local branch when remote branch discovery fails transiently', async () => {
+    const root = await directory(); const cache = await directory(); const remote = await directory(); const real = new GitRunner(); const leases = new StorageLeaseManager()
+    await seedBareRemote(real, remote, 'main')
+    await mkdir(path.join(root, 'work'), { recursive: true }); await writeFile(path.join(root, 'work', 'task.md'), 'main snapshot')
+    const remoteUrl = 'https://example.test/ash.git'
+    const bindings = new GitBindingStore(path.join(root, 'config'))
+    let failDiscovery = true
+    const mapped = mappedRemoteRunner(real, remoteUrl, remote)
+    const runner = new GitRunner({ execFile: async (_binary, args, options) => {
+      if (failDiscovery && args[0] === 'ls-remote') throw new Error('temporary remote failure')
+      return mapped.exec(args, { cwd: options.cwd, env: options.env })
+    } })
+    const service = new GitSyncService({ runner, bindings, volumes: resolver('primary', root), cachePath: (id) => path.join(cache, id), snapshots: { generation: () => 4, leases } })
+
+    await expect(service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl })).rejects.toThrow('temporary remote failure')
+    await expect(bindings.get('primary')).resolves.toBeUndefined()
+
+    failDiscovery = false
+    await expect(service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl })).resolves.toMatchObject({ remoteBranch: 'main' })
+    await service.syncVolume('primary')
+    await expect(real.exec(['show-ref', '--verify', 'refs/heads/master'], { cwd: remote })).rejects.toThrow()
+    await expect(service.fetchRemoteImport('primary')).resolves.toMatchObject({ manifest: { volumeId: 'primary' } })
+  }, 15_000)
+
   it('persists the locally initialized branch for an empty remote that advertises no HEAD', async () => {
     const root = await directory(); const cache = await directory(); const remote = await directory(); const real = new GitRunner()
     await real.exec(['init', '--bare', '--quiet', '--initial-branch=trunk'], { cwd: remote })
@@ -374,7 +405,7 @@ describe('GitSyncService', () => {
 
   it('rejects a local request when the volume is already bound to a remote', async () => {
     const root = await directory()
-    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: safeCachePath(root) })
+    const service = new GitSyncService({ runner: reachableEmptyRemoteRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: safeCachePath(root) })
 
     await service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/repository.git' })
 
@@ -383,7 +414,7 @@ describe('GitSyncService', () => {
 
   it('rejects a different remote for an already-bound volume', async () => {
     const root = await directory()
-    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: safeCachePath(root) })
+    const service = new GitSyncService({ runner: reachableEmptyRemoteRunner(), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: safeCachePath(root) })
 
     await service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/first.git' })
 
@@ -392,7 +423,7 @@ describe('GitSyncService', () => {
 
   it('does not persist supplied credentials and stores only the credential reference', async () => {
     const root = await directory(); const credentials = new FakeCredentialStore()
-    const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(path.join(root, 'config')), credentials, volumes: resolver('private', root), cachePath: safeCachePath(root) })
+    const service = new GitSyncService({ runner: reachableEmptyRemoteRunner(), bindings: new GitBindingStore(path.join(root, 'config')), credentials, volumes: resolver('private', root), cachePath: safeCachePath(root) })
     const token = 'ghp_123456789012345678901234567890123456'
 
     const binding = await service.bindVolume({ volumeId: 'private', mode: 'remote', remoteUrl: 'https://example.test/owner/repository.git', credential: { ref: 'keychain:private', secret: token } })
@@ -413,7 +444,7 @@ describe('GitSyncService', () => {
     }
     const credentials = new FailingCredentialStore()
     const bindings = new GitBindingStore(path.join(root, 'config'))
-    const service = new GitSyncService({ runner: new GitRunner(), bindings, credentials, volumes: resolver('primary', root), cachePath: safeCachePath(root) })
+    const service = new GitSyncService({ runner: reachableEmptyRemoteRunner(), bindings, credentials, volumes: resolver('primary', root), cachePath: safeCachePath(root) })
     const repositoryPath = path.join(safeCachePath(root)('primary'), '.ash', 'sync', 'git')
 
     const remote = service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/repository.git', credential: { ref: 'keychain:primary', secret: 'test-secret' } })
@@ -439,7 +470,7 @@ describe('GitSyncService', () => {
     }
     const credentials = new FakeCredentialStore()
     const bindings = new FailingBindingStore(path.join(root, 'config'))
-    const service = new GitSyncService({ runner: new GitRunner(), bindings, credentials, volumes: resolver('primary', root), cachePath: safeCachePath(root) })
+    const service = new GitSyncService({ runner: reachableEmptyRemoteRunner(), bindings, credentials, volumes: resolver('primary', root), cachePath: safeCachePath(root) })
     const repositoryPath = path.join(safeCachePath(root)('primary'), '.ash', 'sync', 'git')
 
     await expect(service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/repository.git', credential: { ref: 'keychain:primary', secret: 'test-secret' } })).rejects.toThrow('catalog unavailable')
@@ -461,7 +492,7 @@ describe('GitSyncService', () => {
     class FailingBindingStore extends GitBindingStore {
       override async bind(): Promise<never> { throw new Error('catalog unavailable') }
     }
-    const service = new GitSyncService({ runner: new GitRunner(), bindings: new FailingBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: safeCachePath(root) })
+    const service = new GitSyncService({ runner: reachableEmptyRemoteRunner(), bindings: new FailingBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: safeCachePath(root) })
 
     await expect(service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/owner/repository.git' })).rejects.toThrow('catalog unavailable')
 
@@ -539,7 +570,7 @@ describe('GitSyncService', () => {
     await writeFile(path.join(root, 'knowledge', 'rag.sqlite'), 'sqlite snapshot')
     await writeFile(path.join(root, 'knowledge', 'rag.sqlite-wal'), 'do not commit')
     await writeFile(path.join(root, 'secrets', 'key.txt'), 'not synchronized')
-    const service = new GitSyncService({ runner: git, bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: safeCachePath(root), snapshots: { generation: () => 9, leases } })
+    const service = new GitSyncService({ runner: reachableEmptyRemoteRunner(git), bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: safeCachePath(root), snapshots: { generation: () => 9, leases } })
     const binding = await service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/ash.git' })
     await git.exec(['remote', 'set-url', 'origin', `file://${remote}`], { cwd: path.join(safeCachePath(root)('primary'), binding.repositoryRelativePath) })
 
@@ -556,7 +587,7 @@ describe('GitSyncService', () => {
   it('redacts an offline remote failure and retries only the push without changing active data', async () => {
     const root = await directory(); const remote = await directory(); const real = new GitRunner(); const commands: string[][] = []; const leases = new StorageLeaseManager()
     await real.exec(['init', '--bare', '--quiet'], { cwd: remote }); await mkdir(path.join(root, 'work'), { recursive: true }); await writeFile(path.join(root, 'work', 'task.md'), 'safe')
-    const runner = new GitRunner({ execFile: async (_binary, args, options) => { commands.push([...args]); return real.exec(args, { cwd: options.cwd, env: options.env }) } })
+    const runner = new GitRunner({ execFile: async (_binary, args, options) => { commands.push([...args]); if (args[0] === 'ls-remote') return { stdout: '', stderr: '' }; return real.exec(args, { cwd: options.cwd, env: options.env }) } })
     const service = new GitSyncService({ runner, bindings: new GitBindingStore(path.join(root, 'config')), volumes: resolver('primary', root), cachePath: safeCachePath(root), snapshots: { generation: () => 1, leases } })
     const binding = await service.bindVolume({ volumeId: 'primary', mode: 'remote', remoteUrl: 'https://example.test/ash.git' })
     // Simulate an offline endpoint after a previously valid configuration.
