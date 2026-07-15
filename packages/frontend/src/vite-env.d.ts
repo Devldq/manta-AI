@@ -5,6 +5,7 @@ interface Window {
     storage: {
       invoke(request: import('@manta/shared').StorageIpcRequest): Promise<import('@manta/shared').StorageIpcResponse>
       subscribeProgress(callback: (progress: import('@manta/shared').StorageOperationProgress) => void): () => void
+      subscribeAgentProgress(callback: (progress: import('@manta/shared').AgentStorageProgress) => void): () => void
     }
   }
 }

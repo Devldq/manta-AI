@@ -13,6 +13,7 @@ import { createCrossGroupBundleResources, migrateLegacyAtomicJournals, type Lega
 import { createRagUploadResources, recoverRagAssetTransactions } from './rag-upload-storage'
 import { matchesReadyRagDocument } from './rag-asset-transactions'
 import { createVolumePendingInspector } from './content-references'
+import { createAgentStorageComposition } from './agent-storage'
 
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
 export interface StorageHealthResult { ok: boolean; status: 'healthy' | 'degraded' | 'unhealthy'; warnings: LegacyRecoveryWarning[]; error?: string }
@@ -124,8 +125,9 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   }
 }
 
-export async function createBackendStorageComposition(bootstrap: BootstrapStore, options: { onProgress?: (progress: import('@manta/shared').StorageOperationProgress) => void } = {}) {
+export async function createBackendStorageComposition(bootstrap: BootstrapStore, options: { onProgress?: (progress: import('@manta/shared').StorageOperationProgress) => void; onAgentProgress?: (progress: import('./agent-storage').AgentStorageProgress) => void; deferAgentRecovery?: boolean } = {}) {
   const initialBootstrap = await bootstrap.read()
+  if (initialBootstrap?.pendingMigration && !options.deferAgentRecovery) throw new Error('Storage migration recovery must complete before Agent storage recovery')
   let runtime: BackendStorageRuntime | undefined
   let git: GitSyncService | undefined
   const hub = await createStorageHub({
@@ -176,5 +178,8 @@ export async function createBackendStorageComposition(bootstrap: BootstrapStore,
       replaceGroups: async (groups) => { await hub.migrations!.replaceGroupsFromStaging(groups) },
     }),
   })
-  return { hub, runtime, git }
+  let agents: Awaited<ReturnType<typeof createAgentStorageComposition>> | undefined
+  const activateAgents = async () => agents ??= await createAgentStorageComposition({ resolve: (group, ...segments) => runtime!.resolve(group, ...segments), environment: { CODEX_HOME: process.env.CODEX_HOME }, onProgress: options.onAgentProgress })
+  if (!options.deferAgentRecovery) await activateAgents()
+  return { hub, runtime, git, activateAgents, get agents() { if (!agents) throw new Error('Agent storage composition has not been activated after storage recovery'); return agents } }
 }

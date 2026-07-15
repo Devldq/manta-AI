@@ -22,6 +22,9 @@ export interface StorageOverview {
 
 export interface StorageBackup { id: string; volumeId: string; path: string; bytes?: number; createdAt?: string }
 export interface StorageOperation { id: string; phase: string; status?: 'running' | 'succeeded' | 'failed' | 'recovering' | string; updatedAt?: string; progress?: StorageOperationProgress; error?: { code: string; message: string } | string }
+export interface AgentConnectionState { adapters: Array<{ id: string; displayName: string; status: 'detected' | 'not-detected'; installations: Array<{ id: string; displayName: string; nativeRoots: Array<{ id: string; path: string }> }> }>; operations: import('@manta/shared').AgentOperationSummary[] }
+export interface AgentAssets { inventory: { schemaVersion: 1; installationId: string; assets: Array<{ id: string; kind: string; nativePath: string }> }; portableAssets: Array<{ schemaVersion: 1; id: string; kind: string }> }
+export interface AgentReuseMetrics { scanStatus: 'complete' | 'degraded' | 'scanning'; evidenceStatus: 'verified' | 'unavailable'; portableAssetCount: number; logicalImmutableBytes: number | null; uniqueVerifiedObjectBytes: number | null; verifiedSavedBytes: number | null; blockers?: Array<{ code: string; detail: string }> }
 export interface StorageApiError extends Error { code: string; details?: unknown }
 
 type Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
@@ -43,6 +46,10 @@ export function createStorageApi(fetchImpl: Fetch = fetch): {
   backups(): Promise<StorageBackup[]>
   gitCapabilities(): Promise<StorageGitCapability>
   gitBindings(): Promise<StorageGitBinding[]>
+  agents(): Promise<AgentConnectionState>
+  agentAssets(adapterId: string, installationId: string): Promise<AgentAssets>
+  agentReuse(): Promise<AgentReuseMetrics>
+  agentOperation(operationId: string): Promise<import('@manta/shared').AgentOperationSummary>
 } {
   async function read<T>(path: string): Promise<T> {
     const response = await fetchImpl(path, { headers: { Accept: 'application/json' } })
@@ -59,6 +66,10 @@ export function createStorageApi(fetchImpl: Fetch = fetch): {
     backups: async () => (await read<{ backups: StorageBackup[] }>('/api/storage/backups')).backups,
     gitCapabilities: () => read<StorageGitCapability>('/api/storage/git/capabilities'),
     gitBindings: async () => (await read<{ bindings: StorageGitBinding[] }>('/api/storage/git/bindings')).bindings,
+    agents: () => read<AgentConnectionState>('/api/storage/agents'),
+    agentAssets: (adapterId, installationId) => read<AgentAssets>(`/api/storage/agents/${encodeURIComponent(adapterId)}/installations/${encodeURIComponent(installationId)}/assets`),
+    agentReuse: () => read<AgentReuseMetrics>('/api/storage/agents/reuse'),
+    agentOperation: async (operationId) => (await read<{ operation: import('@manta/shared').AgentOperationSummary }>(`/api/storage/agents/operations/${encodeURIComponent(operationId)}`)).operation,
   }
 }
 

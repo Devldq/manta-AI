@@ -7,6 +7,7 @@ import { StorageOverview } from './StorageOverview'
 import { StorageVolumeCard } from './StorageVolumeCard'
 import { storageApi, type StorageBackup, type StorageGitBinding, type StorageGitCapability, type StorageOverview as Overview, type StorageVolumeDetails } from './storage-api'
 import { useStorageOperation } from './useStorageOperation'
+import { AgentConnectionsSection } from './AgentConnectionsSection'
 
 const EMPTY: Overview = { volumes: [], groups: [] }
 
@@ -46,6 +47,7 @@ export function StorageSettingsPanel() {
     if (error) return <div role="alert">{error.message} <button onClick={() => void refresh()}>Retry</button></div>
     return <>
       <StorageOverview overview={overview} onMove={moveGroup} disabled={busy} />
+      <AgentConnectionsSection />
       <h3 style={{ marginTop: 20 }}>Volumes</h3><div style={{ display: 'grid', gap: 10 }}>{volumes.map((volume) => <StorageVolumeCard key={volume.id} volume={volume} bytes={volume.inventory?.bytes} files={volume.inventory?.files} capacity={volume.capacity ?? overview.volumeCapacity?.find((item) => item.volumeId === volume.id)} disabled={busy} git={{ ...gitCapability, binding: gitBindings.find((binding) => binding.volumeId === volume.id) }} health={overview.volumeHealth?.[volume.id]} onConfigureGit={configureGit} onSync={() => syncGit(volume.id)} onPlanImport={() => planGitImport(volume.id)} onApplyImport={(plan, decisions) => applyGitImport(volume.id, plan, decisions)} onOpen={() => void run({ channel: 'storage:open-volume', volumeId: volume.id })} onRelocate={() => migrateVolume(volume)} />)}</div>
       <button disabled={busy} onClick={createVolume} style={{ marginTop: 12 }}>Create volume</button>
       <h3 style={{ marginTop: 20 }}>Automatic backups</h3>{backups.length === 0 ? <p>No backups yet.</p> : <ul>{backups.map((backup) => <li key={backup.id}>{backup.id} · {backup.bytes ?? 0} bytes <button disabled={busy} onClick={() => setDialog({ title: 'Delete backup', body: 'This permanently removes only the verified inactive backup. Active storage can never be selected.', action: () => run({ channel: 'storage:delete-backup', backupId: backup.id }) })}>Delete backup</button></li>)}</ul>}

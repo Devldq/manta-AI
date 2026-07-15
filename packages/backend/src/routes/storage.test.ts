@@ -58,4 +58,31 @@ describe('storage routes', () => {
     expect(overview.volumeHealth.v1).toMatchObject({ status: 'unreadable', reason: 'inventory-unreadable' })
     await app.close()
   })
+
+  it('exposes sanitized read-only Agent state and structured unavailable/not-found responses', async () => {
+    const base: any = { readBootstrap: async () => undefined, inventory: async () => ({ files: 0, bytes: 0, entries: [] }), listBackups: async () => [] }
+    const agents = {
+      agents: async () => ({ adapters: [{ id: 'codex', displayName: 'Codex', status: 'detected', installations: [{ id: 'codex-user', displayName: 'Codex', nativeRoots: [{ id: 'codex-home', path: '/home/.codex' }] }] }], operations: [] }),
+      assets: async (_adapterId: string, installationId: string) => { if (installationId !== 'codex-user') throw Object.assign(new Error('missing'), { code: 'AGENT_INSTALLATION_NOT_FOUND' }); return { inventory: { schemaVersion: 1, installationId, assets: [{ id: 'codex-instructions', kind: 'instructions', nativePath: '/home/.codex/AGENTS.md' }] }, portableAssets: [{ schemaVersion: 1, id: 'portable', kind: 'instructions' }] } },
+      reuse: async () => ({ scanStatus: 'complete', evidenceStatus: 'verified', portableAssetCount: 1, logicalImmutableBytes: 10, uniqueVerifiedObjectBytes: 8, verifiedSavedBytes: 2 }),
+      operation: async (id: string) => { if (id !== 'operation-1') throw Object.assign(new Error('missing'), { code: 'AGENT_OPERATION_NOT_FOUND' }); return { operationId: id, adapterId: 'codex', installationId: 'codex-user', kind: 'import', phase: 'committed', status: 'committed', verified: true, completedAt: '2026-07-15T00:00:00.000Z', operationCount: 1 } },
+    }
+    const app = await buildApp({ storage: { resolve: () => '/data' } as any, registerRoutes: false, storageApi: { ...base, agents } })
+    expect((await app.inject('/api/storage/agents')).json().data.adapters[0].status).toBe('detected')
+    expect((await app.inject('/api/storage/agents/codex/installations/codex-user/assets')).json().data.portableAssets[0].id).toBe('portable')
+    expect((await app.inject('/api/storage/agents/reuse')).json().data.verifiedSavedBytes).toBe(2)
+    const serialized = (await app.inject('/api/storage/agents/operations/operation-1')).body
+    expect(serialized).not.toContain('plan'); expect(serialized).not.toContain('backup')
+    expect((await app.inject('/api/storage/agents/codex/installations/missing/assets')).statusCode).toBe(404)
+    expect((await app.inject('/api/storage/agents/operations/missing')).statusCode).toBe(404)
+    expect((await app.inject(`/api/storage/agents/operations/${'a'.repeat(129)}`)).statusCode).toBe(404)
+    await app.close()
+
+    const unavailable = await buildApp({ storage: { resolve: () => '/data' } as any, registerRoutes: false, storageApi: base })
+    expect((await unavailable.inject('/api/storage/agents')).statusCode).toBe(503)
+    await unavailable.close()
+    const failed = await buildApp({ storage: { resolve: () => '/data' } as any, registerRoutes: false, storageApi: { ...base, agents: { ...agents, agents: async () => { throw new Error('journal unavailable') } } } })
+    const failure = await failed.inject('/api/storage/agents'); expect(failure.statusCode).toBe(503); expect(failure.json()).toEqual(expect.objectContaining({ success: false, error: expect.objectContaining({ code: 'AGENT_INTEGRATION_FAILED' }) }))
+    await failed.close()
+  })
 })

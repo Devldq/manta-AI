@@ -34,4 +34,10 @@ describe('storage API', () => {
     const api = createStorageApi(async () => new Response(JSON.stringify({ success: true, data: { volumes: [], groups: [], capacity } }), { status: 200 }))
     await expect(api.overview()).resolves.toMatchObject({ capacity: { physicalImmutableBytes: null, verifiedDedupSavedBytes: null } })
   })
+
+  it('reads Agent connections, inventories, reuse evidence, and sanitized operations', async () => {
+    const calls: string[] = []; const api = createStorageApi(async (input) => { const path = String(input); calls.push(path); const data = path.endsWith('/assets') ? { inventory: { schemaVersion: 1, installationId: 'codex-user', assets: [] }, portableAssets: [] } : path.endsWith('/reuse') ? { scanStatus: 'complete', verifiedSavedBytes: 4 } : path.includes('/operations/') ? { operation: { operationId: 'operation-1', status: 'committed' } } : { adapters: [], operations: [] }; return new Response(JSON.stringify({ success: true, data }), { status: 200 }) })
+    await api.agents(); await api.agentAssets('codex', 'codex-user'); await api.agentReuse(); await api.agentOperation('operation-1')
+    expect(calls).toEqual(['/api/storage/agents', '/api/storage/agents/codex/installations/codex-user/assets', '/api/storage/agents/reuse', '/api/storage/agents/operations/operation-1'])
+  })
 })

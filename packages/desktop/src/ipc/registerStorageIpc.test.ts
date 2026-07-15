@@ -104,4 +104,27 @@ describe('storage IPC', () => {
     const event = { senderFrame: { url: 'http://127.0.0.1:4444/' } }
     await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:configure-git', volumeId: 'v1', mode: 'remote', remoteUrl: 'https://token@evil.test/repo.git', authRef: 'C:\\secret' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
   })
+
+  it('routes Agent preview/apply/rollback by opaque IDs and binds previews to the trusted sender', async () => {
+    const handlers = new Map<string, Function>(); const ipc: any = { handle: (name: string, fn: Function) => handlers.set(name, fn), removeHandler: vi.fn() }
+    const plan = { planSessionId: 'session-1', kind: 'projection', expiresAt: '2026-07-15T01:00:00.000Z', operations: [{ id: 'create-1', kind: 'create', rootId: 'user-skills', nativePath: '/home/.agents/skills/demo/SKILL.md', expectedAfterSha256: 'a'.repeat(64) }] }
+    const result = { operationId: 'operation-1', adapterId: 'codex', installationId: 'codex-user', kind: 'projection', phase: 'committed', status: 'committed', verified: true, completedAt: '2026-07-15T00:00:01.000Z', operationCount: 1 }
+    const rolled = { ...result, phase: 'rolled-back', status: 'rolled-back' }
+    const services: any = { agentPlanProjection: vi.fn(async () => plan), agentApply: vi.fn(async () => ({ operationId: 'operation-1', result })), agentRollback: vi.fn(async () => rolled) }
+    registerStorageIpc({ ipcMain: ipc, trustedOrigin: 'http://127.0.0.1:4444', trustedSenderId: 9, services })
+    const frame: any = { url: 'http://127.0.0.1:4444/' }; frame.top = frame; const event = { sender: { id: 9 }, senderFrame: frame }
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:agent-plan-projection', adapterId: 'codex', installationId: 'codex-user', assetIds: ['portable'] })).resolves.toEqual({ ok: true, kind: 'agent-plan', plan })
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:agent-apply', planSessionId: 'session-1' })).resolves.toEqual({ ok: true, kind: 'agent-applied', operationId: 'operation-1', result })
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:agent-rollback', operationId: 'operation-1' })).resolves.toEqual({ ok: true, kind: 'agent-rolled-back', result: rolled })
+    expect(services.agentPlanProjection).toHaveBeenCalledWith('codex', 'codex-user', ['portable'], '9'); expect(services.agentApply).toHaveBeenCalledWith('session-1', '9')
+    await expect(handlers.get('storage:invoke')!(event, { channel: 'storage:agent-plan-import', adapterId: 'codex', installationId: 'codex-user', nativePath: '/forbidden' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+  })
+
+  it('delivers only schema-validated Agent progress to the renderer', () => {
+    const listeners = new Map<string, Function>(); const ipcRenderer: any = { invoke: vi.fn(), on: (channel: string, listener: Function) => listeners.set(channel, listener), removeListener: vi.fn() }; const callback = vi.fn()
+    registerStorageIpc.createRendererBridge(ipcRenderer).subscribeAgentProgress(callback)
+    listeners.get('storage:agent-progress')!({}, { operationId: 'operation-1', phase: 'applying', status: 'running', operationsCompleted: 0, operationsTotal: 1 })
+    listeners.get('storage:agent-progress')!({}, { operationId: 'operation-1', phase: 'message-text', message: 'guess state' })
+    expect(callback).toHaveBeenCalledTimes(1)
+  })
 })

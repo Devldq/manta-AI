@@ -215,7 +215,8 @@ export async function createAgentStorageComposition(options: AgentStorageOptions
     return found
   }
   const preview = (plan: AdapterPlan, senderId: string): AgentPlanPreview => {
-    const planSessionId = randomUUID(); const expiresAt = Math.min(Date.parse(plan.expiresAt), now().getTime() + (options.sessionTtlMs ?? 5 * 60_000)); sessions.set(planSessionId, { senderId, plan, expiresAt })
+    const currentTime = now().getTime(); for (const [id, session] of sessions) if (session.expiresAt <= currentTime || (session.senderId === senderId && session.plan.kind === plan.kind)) sessions.delete(id)
+    const planSessionId = randomUUID(); const expiresAt = Math.min(Date.parse(plan.expiresAt), currentTime + (options.sessionTtlMs ?? 5 * 60_000)); sessions.set(planSessionId, { senderId, plan, expiresAt })
     return { planSessionId, kind: plan.kind, expiresAt: new Date(expiresAt).toISOString(), operations: publicOperations(plan) }
   }
   const readModel = {
@@ -235,11 +236,12 @@ export async function createAgentStorageComposition(options: AgentStorageOptions
     async previewImport(adapterId: string, installationId: string, senderId: string) { return preview(await coordinator.planImport(adapterId, await installation(adapterId, installationId)), senderId) },
     async previewProjection(adapterId: string, installationId: string, assetIds: readonly string[], senderId: string) { return preview(await coordinator.planProjection(adapterId, { schemaVersion: 1, assetIds: [...assetIds] }, await installation(adapterId, installationId)), senderId) },
     async apply(planSessionId: string, senderId: string) {
+      const currentTime = now().getTime(); for (const [id, candidate] of sessions) if (candidate.expiresAt <= currentTime && id !== planSessionId) sessions.delete(id)
       const session = sessions.get(planSessionId)
       if (!session) throw Object.assign(new Error('Plan session is unknown or reused'), { code: 'AGENT_PLAN_SESSION_INVALID' })
       if (session.senderId !== senderId) throw Object.assign(new Error('Plan session belongs to a foreign sender'), { code: 'AGENT_PLAN_SESSION_INVALID' })
       sessions.delete(planSessionId)
-      if (session.expiresAt <= now().getTime()) throw Object.assign(new Error('Plan session has expired'), { code: 'AGENT_PLAN_SESSION_INVALID' })
+      if (session.expiresAt <= currentTime) throw Object.assign(new Error('Plan session has expired'), { code: 'AGENT_PLAN_SESSION_INVALID' })
       const approved = coordinator.approve(session.plan); const operationId = approved.approval.operationId; const total = approved.operations.length
       options.onProgress?.({ operationId, phase: 'applying', status: 'running', operationsCompleted: 0, operationsTotal: total })
       try { const result = await coordinator.apply(approved); const summary = resultSummary(session.plan, result); options.onProgress?.({ operationId, phase: 'completed', status: 'completed', operationsCompleted: total, operationsTotal: total }); return { operationId, result: summary } }
