@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { AdapterRegistry } from '../adapter-registry'
 import { ProjectionCoordinator } from '../projection-coordinator'
 import { CodexAdapter, parseMcpServers, renderMcpServer, type CodexPortableAsset, type CodexPortableAssetRepository, type CodexSecretRepository } from './index'
+import { discoverSkillsWithHooks } from './skills'
 
 const roots: string[] = []
 async function temporary(): Promise<string> { const root = await mkdtemp(join(tmpdir(), 'ash-codex-')); roots.push(root); return root }
@@ -65,6 +66,11 @@ describe('Codex detection and inventory', () => {
     const instance = adapter(home).adapter; await expect(instance.inspect((await instance.detect())[0])).rejects.toThrow(/manifest|SKILL|linked|ordinary/i)
   })
 
+  it('fails closed when a skill directory ancestor identity changes during traversal', async () => {
+    const home = await temporary(); const skillRoot = join(home, '.agents', 'skills'); const skill = join(skillRoot, 'racing'); const moved = join(skillRoot, 'moved'); await mkdir(skill, { recursive: true }); await writeFile(join(skill, 'SKILL.md'), 'approved'); let replaced = false
+    await expect(discoverSkillsWithHooks(skillRoot, { afterDirectoryRead: async (path) => { if (path !== skill || replaced) return; replaced = true; await rename(skill, moved); await mkdir(skill); await writeFile(join(skill, 'SKILL.md'), 'replacement') } })).rejects.toThrow(/identity|changed|ancestor|traversal/i)
+  })
+
   it('uses the same bounded deterministic asset id for a long skill name in inspect and import', async () => {
     const home = await temporary(); const name = `skill-${'x'.repeat(120)}`; const skill = join(home, '.agents', 'skills', name); await mkdir(skill, { recursive: true }); await mkdir(join(home, '.codex')); await writeFile(join(skill, 'SKILL.md'), 'long skill')
     const { adapter: instance, assets } = adapter(home); const target = (await instance.detect())[0]; const inventoryId = (await instance.inspect(target)).assets[0].id; expect(inventoryId.length).toBeLessThanOrEqual(128); expect(inventoryId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
@@ -119,6 +125,11 @@ describe('Codex MCP secret separation', () => {
     '[mcp_servers.bad]\ncommand = "tool"\ncwd = 42\n',
     '[mcp_servers.bad]\ncommand = "tool"\nhttp_headers = { Authorization = "literal" }\n',
     '[mcp_servers.bad]\nurl = "https://example.test"\nenv = { TOKEN = "literal" }\n',
+    '[mcp_servers]\nbad = "unsupported"\n',
+    'mcp_servers.bad.command = "tool"\n',
+    '[ "mcp_servers" ]\nbad = "unsupported"\n',
+    '[mcp_servers . bad]\ncommand = "tool"\n',
+    'mcp_servers . bad . command = "tool"\n',
   ])('fails closed for incompatible or mistyped MCP metadata', (source) => { expect(() => parseMcpServers(source)).toThrow(/MCP|TOML|type|transport|redefined|unsupported/i) })
 })
 
@@ -159,6 +170,14 @@ describe('Codex projection', () => {
 
   it('creates a previously absent config.toml without parsing the coordinator nonce claim as TOML', async () => {
     const home = await temporary(); await mkdir(join(home, '.codex')); await mkdir(join(home, '.agents', 'skills'), { recursive: true }); const { adapter: instance, assets } = adapter(home); assets.values.set('mcp-new', { schemaVersion: 1, id: 'mcp-new', kind: 'mcp-server', name: 'new', metadata: { transport: 'stdio', command: 'tool' } }); const target = (await instance.detect())[0]; const state = join(await temporary(), 'state'); const coordinator = new ProjectionCoordinator({ stateRoot: state, coordinationRoot: state, registry: new AdapterRegistry([instance]), now: () => new Date('2026-07-15T00:01:00.000Z') }); await coordinator.apply(coordinator.approve(await coordinator.planProjection('codex', { schemaVersion: 1, assetIds: ['mcp-new'] }, target))); expect(await readFile(join(home, '.codex', 'config.toml'), 'utf8')).toBe('[mcp_servers.new]\ncommand = "tool"\n')
+  })
+
+  it('plans modify rather than create for an existing zero-byte config.toml', async () => {
+    const home = await temporary(); await mkdir(join(home, '.codex')); await mkdir(join(home, '.agents', 'skills'), { recursive: true }); await writeFile(join(home, '.codex', 'config.toml'), ''); const { adapter: instance, assets } = adapter(home); assets.values.set('mcp-new', { schemaVersion: 1, id: 'mcp-new', kind: 'mcp-server', name: 'new', metadata: { transport: 'stdio', command: 'tool' } }); const plan = await instance.planProjection({ schemaVersion: 1, assetIds: ['mcp-new'] }, (await instance.detect())[0]); expect(plan.operations).toMatchObject([{ id: 'project-mcp-config', kind: 'modify' }])
+  })
+
+  it('surfaces existing different global guidance as an approved modify with distinct before and after evidence', async () => {
+    const home = await temporary(); const codex = join(home, '.codex'); await mkdir(codex); await mkdir(join(home, '.agents', 'skills'), { recursive: true }); await writeFile(join(codex, 'AGENTS.md'), 'native guidance'); const { adapter: instance, assets } = adapter(home); assets.values.set('guidance', { schemaVersion: 1, id: 'guidance', kind: 'instructions', name: 'AGENTS.md', files: [{ relativePath: 'AGENTS.md', bytes: new TextEncoder().encode('portable guidance'), sha256: sha256('portable guidance') }] }); const target = (await instance.detect())[0]; const state = join(await temporary(), 'state'); const coordinator = new ProjectionCoordinator({ stateRoot: state, coordinationRoot: state, registry: new AdapterRegistry([instance]), now: () => new Date('2026-07-15T00:01:00.000Z') }); const plan = await coordinator.planProjection('codex', { schemaVersion: 1, assetIds: ['guidance'] }, target); const operation = plan.operations[0]; expect(operation.kind).toBe('modify'); expect(operation.expectedBeforeSha256).not.toBe(operation.expectedAfterSha256); expect(operation.expectedBeforeIdentity).toMatch(/^[A-Za-z0-9._-]+$/)
   })
 
   it('falls back from clone to copy in place, reports the strategy, and preserves the coordinator claim identity', async () => {

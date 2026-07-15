@@ -25,13 +25,14 @@ function inline(value: string): Record<string, string> {
   for (const part of body.split(',')) { const match = part.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*(.*?)\s*$/); if (!match || !SAFE.test(match[1])) throw new Error('Unsupported MCP TOML inline entry'); result[match[1]] = string(match[2]) }
   return result
 }
+function referencesMcpRoot(value: string): boolean { return /^(?:mcp_servers|"mcp_servers"|'mcp_servers')(?:\.|$)/.test(value.trim().replace(/\s*\.\s*/g, '.')) }
 
 export function parseMcpServers(source: string): ParsedServer[] {
   const lines = source.split(/(?<=\n)/); const raw = new Map<string, Record<string, unknown>>(); let current: { server: string; child?: string } | undefined
   for (const line of lines) {
     const header = line.trimEnd().match(HEADER)
-    if (header) { const parsed = header[1].match(MCP_HEADER); current = parsed ? { server: parsed[1] ?? parsed[2], ...(parsed[3] ? { child: parsed[3] } : {}) } : undefined; if (header[1].startsWith('mcp_servers.') && !current) throw new Error('Unsupported MCP TOML table'); if (current && raw.has(`${current.server}:${current.child ?? ''}`)) throw new Error('Duplicate MCP TOML table'); if (current) raw.set(`${current.server}:${current.child ?? ''}`, {}); continue }
-    if (!current || !line.trim() || line.trimStart().startsWith('#')) continue
+    if (header) { const parsed = header[1].match(MCP_HEADER); current = parsed ? { server: parsed[1] ?? parsed[2], ...(parsed[3] ? { child: parsed[3] } : {}) } : undefined; if (referencesMcpRoot(header[1]) && !current) throw new Error('Unsupported MCP TOML table'); if (current && raw.has(`${current.server}:${current.child ?? ''}`)) throw new Error('Duplicate MCP TOML table'); if (current) raw.set(`${current.server}:${current.child ?? ''}`, {}); continue }
+    if (!current || !line.trim() || line.trimStart().startsWith('#')) { if (!current && referencesMcpRoot(line.split('=', 1)[0])) throw new Error('Unsupported dotted MCP TOML assignment'); continue }
     const match = line.trimEnd().match(KEY); if (!match) throw new Error('Unsupported MCP TOML assignment')
     const table = raw.get(`${current.server}:${current.child ?? ''}`)!; if (Object.hasOwn(table, match[1])) throw new Error('Duplicate MCP TOML key')
     const allowed = current.child ? [] : ['command', 'args', 'env', 'env_vars', 'url', 'bearer_token_env_var', 'http_headers', 'env_http_headers', 'cwd', 'startup_timeout_sec', 'tool_timeout_sec', 'enabled', 'required', 'enabled_tools', 'disabled_tools', 'oauth_resource', 'oauth_resource_metadata_url']; if (!current.child && !allowed.includes(match[1])) throw new Error(`Unsupported MCP TOML key: ${match[1]}`)

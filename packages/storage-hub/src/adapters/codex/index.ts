@@ -8,7 +8,7 @@ import { appendMcpServers, parseMcpServers, renderMcpServer, type PortableMcpSer
 import { discoverSkills, listSkillFilePaths } from './skills'
 import { readOrdinaryNoFollow, readOrdinarySnapshotNoFollow, withOrdinaryNoFollowWritable } from './native-io'
 
-export * from './detect'; export * from './instructions'; export * from './mcp'; export * from './skills'
+export * from './detect'; export * from './instructions'; export * from './mcp'; export { discoverSkills, listSkillFilePaths } from './skills'; export type { NativeSkill, NativeSkillFile } from './skills'
 export type CodexPortableAssetKind = 'skill' | 'instructions' | 'mcp-server'
 export interface CodexPortableFile { readonly relativePath: string; readonly bytes: Uint8Array; readonly sha256: string }
 export interface CodexPortableAsset { readonly schemaVersion: 1; readonly id: string; readonly kind: CodexPortableAssetKind; readonly name: string; readonly files?: readonly CodexPortableFile[]; readonly metadata?: PortableMcpServer | Readonly<Record<string, unknown>>; readonly secretReferenceIds?: readonly string[] }
@@ -61,7 +61,7 @@ export class CodexAdapter implements AgentAdapter {
         const file = asset.files?.[0]; if (!file || hash(file.bytes) !== file.sha256) throw new Error('Malformed instructions asset'); const nativePath = join(root(target, 'codex-home'), asset.name); const stat = await exists(nativePath); operations.push({ id: 'project-instructions', kind: stat ? 'modify' : 'create', rootId: 'codex-home', nativePath, expectedAfterSha256: file.sha256 })
       } else { const metadata = asset.metadata as PortableMcpServer; if (metadata.secretBindings?.some((binding) => binding.field.startsWith('url.'))) throw new Error(`MCP URL secret binding is unresolved for ${asset.name}`); if (mcp.some((item) => item.name === asset.name)) throw new Error(`Duplicate selected MCP server conflict: ${asset.name}`); mcp.push({ name: asset.name, metadata }) }
     }
-    if (mcp.length) { const path = join(root(target, 'codex-home'), 'config.toml'); const before = await exists(path) ? (await readOrdinaryNative(path)).toString('utf8') : ''; const after = appendMcpServers(before, mcp); operations.push({ id: 'project-mcp-config', kind: before ? 'modify' : 'create', rootId: 'codex-home', nativePath: path, expectedAfterSha256: hash(after) }) }
+    if (mcp.length) { const path = join(root(target, 'codex-home'), 'config.toml'); const existing = await exists(path); const before = existing ? (await readOrdinaryNative(path)).toString('utf8') : ''; const after = appendMcpServers(before, mcp); operations.push({ id: 'project-mcp-config', kind: existing ? 'modify' : 'create', rootId: 'codex-home', nativePath: path, expectedAfterSha256: hash(after) }) }
     return { ...(this.#plan('projection', target, operations) as ProjectionPlan), selection: { ...structuredClone(selection), assetDigests } }
   }
 
