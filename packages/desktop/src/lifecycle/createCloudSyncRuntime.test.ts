@@ -5,7 +5,7 @@ describe('createCloudSyncRuntime', () => {
   it('polls health before startup sync, blocks unhealthy volumes, and serializes a manual request through the same scheduler', async () => {
     const sync = vi.fn(async () => {})
     const runtime = createCloudSyncRuntime({
-      volumes: async () => [{ volumeId: 'cloud', root: '/icloud/.manta-ai' }, { volumeId: 'local', root: '/local/.manta-ai' }],
+      volumes: async () => [{ volumeId: 'cloud', root: '/icloud/manta-ai-data' }, { volumeId: 'local', root: '/local/manta-ai-data' }],
       inspect: async (root) => ({ root, status: root.includes('icloud') ? 'unreadable' as const : 'healthy' as const, conflicts: [], checkedAt: '2026-07-13T00:00:00.000Z' }),
       sync,
       pollIntervalMs: 60_000,
@@ -26,7 +26,7 @@ describe('createCloudSyncRuntime', () => {
 
   it('returns a real manual Git failure after retaining the health snapshot', async () => {
     const runtime = createCloudSyncRuntime({
-      volumes: async () => [{ volumeId: 'one', root: '/one/.manta-ai' }],
+      volumes: async () => [{ volumeId: 'one', root: '/one/manta-ai-data' }],
       inspect: async (root) => ({ root, status: 'healthy', conflicts: [], checkedAt: '2026-07-13T00:00:00.000Z' }),
       sync: async () => { throw new Error('remote unavailable') },
       pollIntervalMs: 60_000,

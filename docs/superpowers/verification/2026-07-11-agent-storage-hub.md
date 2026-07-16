@@ -6,7 +6,7 @@ Verified on 2026-07-15 and completed on 2026-07-16 from branch `codex/agent-stor
 
 | Requirement | Evidence | Result |
 |---|---|---|
-| Phase 1.1: required first-run location and fixed `.manta-ai` name | `storage-foundation.acceptance.test.ts`; `storage-onboarding.e2e.ts`; `verify:ash:phase1` | Pass |
+| Phase 1.1: required first-run location and fixed `manta-ai-data` name | `storage-foundation.acceptance.test.ts`; `storage-onboarding.e2e.ts`; `verify:ash:phase1` | Pass |
 | Phase 1.2: all seven groups routed; no `.manta-data` or runtime repository `.manta` writes | storage foundation acceptance; Backend runtime tests; `storage:audit` over 337 production files | Pass |
 | Phase 1.3: durable browser localStorage/IndexedDB removed or migrated | Frontend browser storage and legacy RAG migration tests; `browser-rag-storage.e2e.ts` | Pass |
 | Phase 1.4: Storage shows volume/group paths, sizes, counts, and states | Storage API, settings panel, desktop E2E, Phase 1 endpoint checks, rendered inspection | Pass |
@@ -46,9 +46,9 @@ The root `test` script sets Turbo concurrency to one so the required literal `pn
 
 ## Rendered inspection evidence
 
-- Before the final package-only fixes, the packaged onboarding rendered readable Simplified Chinese labels, enabled confirmation after folder selection, created the fixed `.manta-ai` root, and relaunched.
+- Before the final package-only fixes, the packaged onboarding rendered readable Simplified Chinese labels, enabled confirmation after folder selection, created the fixed `manta-ai-data` root, and relaunched.
 - The packaged Storage tab rendered the Default volume, its path and capacity, Open/Migrate/Git controls, and all seven groups as healthy.
-- The first Agent Connections inspection exposed a real error, and the first hidden post-fix run exposed an empty-conversation refetch loop. After fixing TOML literal-string parsing and bounding the fallback request, the final hidden packaged renderer responded in 0.5 seconds and remained idle (1.44 renderer CPU seconds over a 5-second profile rather than the prior sustained 100%). Storage showed one healthy volume, all seven groups healthy with file/size metrics, capacity and savings metrics, and the Default `.manta-ai` volume with Open/Migrate, Git, Create volume, and automatic-backup controls.
+- The first Agent Connections inspection exposed a real error, and the first hidden post-fix run exposed an empty-conversation refetch loop. After fixing TOML literal-string parsing and bounding the fallback request, the final hidden packaged renderer responded in 0.5 seconds and remained idle (1.44 renderer CPU seconds over a 5-second profile rather than the prior sustained 100%). Storage showed one healthy volume, all seven groups healthy with file/size metrics, capacity and savings metrics, and the Default `manta-ai-data` volume with Open/Migrate, Git, Create volume, and automatic-backup controls.
 - The final Agent Connections render showed Codex `Status: detected`, sanitized `.codex` and `.agents\skills` roots, native Skill import checkboxes, portable Skills/Instructions/MCP server sections with preview controls, and the secret-literals warning. Screenshots were inspected without exposing credentials, then removed; the packaged app was stopped with no process left running.
 - The final package smoke compensates at the release boundary by starting the actual packaged main/server and requiring successful real TCP responses from both conversations and workspaces routed-storage APIs. Desktop E2E separately covers onboarding, migration, restart, and browser-to-ASH persistence.
 

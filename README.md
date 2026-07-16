@@ -10,7 +10,7 @@ Manta 是一个 **AI Native 智能体应用平台**。每个 Agent 不再只是�
 
 ## Agent Storage Hub
 
-Manta AI uses Agent Storage Hub (ASH) to route its seven internal storage groups into user-selected `.manta-ai` volumes. First launch requires a parent directory; Storage settings then expose volume health, capacity, migration, Git synchronization, deduplication, and Codex asset connections. Explicit project and Agent output paths remain outside ASH.
+Manta AI uses Agent Storage Hub (ASH) to route its seven internal storage groups into user-selected `manta-ai-data` volumes. First launch requires a parent directory; Storage settings then expose volume health, capacity, migration, Git synchronization, deduplication, and Codex asset connections. Explicit project and Agent output paths remain outside ASH.
 
 - [ASH user guide](docs/guides/agent-storage-hub.md)
 - [ASH developer and packaging guide](docs/development/agent-storage-hub.md)
@@ -151,7 +151,7 @@ Manta 的杀手级特性：通过日志、会话、上下文三个系统联动�
 **日志元数据**：每条日志自动携带 `conversationId`、`messageId`、`stepIndex`、`toolCallId`、`toolName`，可精确定位到任意会话的任意步骤。
 
 **持久化策略**：
-- 全局日志：`<诊断组路径>/system.log`（默认位于所选存储父目录的 `.manta-ai/diagnostics` 下，NDJSON 格式，可 grep/jq 分析）
+- 全局日志：`<诊断组路径>/system.log`（默认位于所选存储父目录的 `manta-ai-data/diagnostics` 下，NDJSON 格式，可 grep/jq 分析）
 - 会话专属日志：`<诊断组路径>/conversations/<id>/log.ndjson`（按会话隔离）
 - 内存缓存 10000 条，支持实时 WebSocket 推送
 

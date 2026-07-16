@@ -1,14 +1,14 @@
 # Agent Storage Hub user guide
 
-Agent Storage Hub (ASH) keeps Manta AI's internal persistent data in user-selected storage volumes. A volume is always stored in a directory named `.manta-ai` below the parent directory you choose. Project files and explicit Agent output directories are not redirected.
+Agent Storage Hub (ASH) keeps Manta AI's internal persistent data in user-selected storage volumes. A volume is always stored in a directory named `manta-ai-data` below the parent directory you choose. Project files and explicit Agent output directories are not redirected.
 
 ## First launch
 
 1. Select a parent directory in the required onboarding window. The choice cannot be skipped; you can quit without creating data.
-2. Confirm the location. Manta creates `<parent>/.manta-ai` with all seven storage groups: extensions, knowledge, work, config, secrets, diagnostics, and cache.
+2. Confirm the location. Manta creates `<parent>/manta-ai-data` with all seven storage groups: extensions, knowledge, work, config, secrets, diagnostics, and cache.
 3. Manta starts the backend only after the volume is initialized and healthy.
 
-Do not select an existing active volume, a directory inside another `.manta-ai`, or a location without sufficient free space. Cloud-backed folders are ordinary local folders to ASH; the cloud provider remains responsible for network synchronization.
+Do not select an existing active volume, a directory inside another `manta-ai-data`, or a location without sufficient free space. Cloud-backed folders are ordinary local folders to ASH; the cloud provider remains responsible for network synchronization.
 
 ## Storage settings
 

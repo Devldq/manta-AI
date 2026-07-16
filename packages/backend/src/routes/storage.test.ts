@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { buildApp } from '../app'
 
 describe('storage routes', () => {
+  it('returns platform-correct storage group paths for Windows volume parents', async () => {
+    const bootstrap: any = { generation: 1, volumes: [{ id: 'v1', name: 'Windows', parentPath: 'C:\\Data', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], groupAssignments: { extensions:'v1',knowledge:'v1',work:'v1',config:'v1',secrets:'v1',diagnostics:'v1',cache:'v1' } }
+    const app = await buildApp({ storage: { resolve: () => 'C:\\Data\\manta-ai-data' } as any, registerRoutes: false, storageApi: { readBootstrap: async () => bootstrap, inventory: async () => ({ files: 0, bytes: 0, entries: [] }), listBackups: async () => [] } })
+
+    const overview = (await app.inject('/api/storage/overview')).json().data
+
+    expect(overview.groups[0].path).toBe('C:\\Data\\manta-ai-data\\extensions')
+    await app.close()
+  })
+
   it('returns complete per-volume and aggregate capacity without deriving savings from group inventory', async () => {
     const bootstrap: any = { generation: 1, volumes: [{ id: 'v1', name: 'One', parentPath: '/one', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }, { id: 'v2', name: 'Two', parentPath: '/two', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], groupAssignments: { extensions:'v1',knowledge:'v1',work:'v1',config:'v1',secrets:'v2',diagnostics:'v2',cache:'v2' } }
     const volume = (volumeId: string, logical: number, physical: number) => ({ volumeId, scanStatus: 'complete' as const, logicalImmutableBytes: logical, physicalImmutableBytes: physical, verifiedDedupSavedBytes: logical - physical, replicaBytes: 2, cleanableBytes: 1, scannedAt: '2026-07-14T00:00:00.000Z', blockers: [] })
@@ -16,9 +26,10 @@ describe('storage routes', () => {
 
   it('exposes overview, volumes, operation status, and backups from injected ASH services', async () => {
     const bootstrap: any = { generation: 3, volumes: [{ id: 'v1', name: 'Default', parentPath: '/data', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], groupAssignments: { extensions:'v1',knowledge:'v1',work:'v1',config:'v1',secrets:'v1',diagnostics:'v1',cache:'v1' }, pendingMigration: { id: 'op1', phase: 'copying' } }
-    const app = await buildApp({ storage: { resolve: () => '/data/.manta-ai', close: async()=>{}, quiesce:async()=>{}, checkpoint:async()=>{}, healthCheck:async()=>({ok:true,status:'healthy',warnings:[]}) } as any, registerRoutes: false, storageApi: { readBootstrap: async () => bootstrap, inventory: async () => ({ files: 2, bytes: 12, entries: [] }), getOperation: async (id) => id==='failed-op'?{id,status:'failed',error:'disk lost'}:undefined, listOperations: async () => [{ id:'op-running', status:'running', phase:'copying', updatedAt:'2026-01-01T00:00:02.000Z' }, { id:'op-old', status:'succeeded', phase:'completed', updatedAt:'2026-01-01T00:00:01.000Z' }], listBackups: async () => [{ id: 'b1', operationId:'op1', kind:'group', groupId:'work', volumeId: 'v1', createdAt: '2026-01-01T00:00:00.000Z', bytes: 5 }] } })
+    const app = await buildApp({ storage: { resolve: () => '/data/manta-ai-data', close: async()=>{}, quiesce:async()=>{}, checkpoint:async()=>{}, healthCheck:async()=>({ok:true,status:'healthy',warnings:[]}) } as any, registerRoutes: false, storageApi: { readBootstrap: async () => bootstrap, inventory: async () => ({ files: 2, bytes: 12, entries: [] }), getOperation: async (id) => id==='failed-op'?{id,status:'failed',error:'disk lost'}:undefined, listOperations: async () => [{ id:'op-running', status:'running', phase:'copying', updatedAt:'2026-01-01T00:00:02.000Z' }, { id:'op-old', status:'succeeded', phase:'completed', updatedAt:'2026-01-01T00:00:01.000Z' }], listBackups: async () => [{ id: 'b1', operationId:'op1', kind:'group', groupId:'work', volumeId: 'v1', createdAt: '2026-01-01T00:00:00.000Z', bytes: 5 }] } })
     const overview=(await app.inject('/api/storage/overview')).json().data
     expect(overview.totalBytes).toBe(12)
+    expect(overview.groups[0].path).toBe('/data/manta-ai-data/extensions')
     expect(overview.operation.id).toBe('op-running')
     expect(overview.operations.map((operation:any)=>operation.id)).toEqual(['op-running','op-old'])
     expect((await app.inject('/api/storage/volumes')).json().data.volumes[0].id).toBe('v1')
@@ -30,7 +41,7 @@ describe('storage routes', () => {
 
   it('exposes only typed, credential-free Git binding state for active volumes', async () => {
     const bootstrap: any = { generation: 1, volumes: [{ id: 'v1', name: 'Default', parentPath: '/data', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], groupAssignments: { extensions:'v1',knowledge:'v1',work:'v1',config:'v1',secrets:'v1',diagnostics:'v1',cache:'v1' } }
-    const app = await buildApp({ storage: { resolve: () => '/data/.manta-ai' } as any, registerRoutes: false, storageApi: {
+    const app = await buildApp({ storage: { resolve: () => '/data/manta-ai-data' } as any, registerRoutes: false, storageApi: {
       readBootstrap: async () => bootstrap, inventory: async () => ({ files: 0, bytes: 0, entries: [] }), listBackups: async () => [],
       git: {
         capability: async () => ({ available: true, version: '2.47.1' }),
@@ -50,7 +61,7 @@ describe('storage routes', () => {
 
   it('exposes volume folder health separately from backend health so the settings page can explain why automatic sync is paused', async () => {
     const bootstrap: any = { generation: 1, volumes: [{ id: 'v1', name: 'iCloud', parentPath: '/icloud', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], groupAssignments: { extensions:'v1',knowledge:'v1',work:'v1',config:'v1',secrets:'v1',diagnostics:'v1',cache:'v1' } }
-    const app = await buildApp({ storage: { resolve: () => '/icloud/.manta-ai' } as any, registerRoutes: false, storageApi: {
+    const app = await buildApp({ storage: { resolve: () => '/icloud/manta-ai-data' } as any, registerRoutes: false, storageApi: {
       readBootstrap: async () => bootstrap, inventory: async () => ({ files: 0, bytes: 0, entries: [] }), listBackups: async () => [],
       volumeHealth: async () => ({ v1: { status: 'unreadable', reason: 'inventory-unreadable', conflicts: [], checkedAt: '2026-07-13T00:00:00.000Z' } }),
     } })

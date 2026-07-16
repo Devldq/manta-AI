@@ -89,6 +89,6 @@ export async function runDesktop(): Promise<void> {
 
 if (process.env.MANTA_PACKAGE_SMOKE === '1') {
   void runPackageSmoke().then(() => process.exit(0), (error) => { process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`); process.exit(1) })
-} else if (require.main === module) {
+} else if (require.main === module || require.main?.filename === 'electron') {
   void runDesktop()
 }

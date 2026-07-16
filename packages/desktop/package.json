@@ -5,7 +5,7 @@
   "description": "Manta AI desktop application with Agent Storage Hub-managed local assets",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "pnpm build && electron dist/main.js",
+    "dev": "pnpm build && node scripts/run-dev.cjs",
     "build": "node scripts/clean.cjs && tsc && node scripts/copy-assets.cjs",
     "prepare-packaged-runtime": "node scripts/prepare-packaged-runtime.cjs",
     "package:dir": "pnpm build && pnpm prepare-packaged-runtime && node scripts/package-smoke.cjs --prepared",
@@ -13,7 +13,7 @@
     "build:win": "pnpm build && pnpm prepare-packaged-runtime && node scripts/build-win.cjs && node scripts/package-smoke.cjs --prepared",
     "build:linux": "pnpm build && electron-builder --linux",
     "typecheck": "tsc --noEmit",
-    "test:clean": "node --test scripts/clean.test.cjs scripts/copy-assets.test.cjs",
+    "test:clean": "node --test scripts/clean.test.cjs scripts/copy-assets.test.cjs scripts/run-dev.test.cjs",
     "test:e2e:ash": "pnpm --filter @manta/frontend build && pnpm build && vitest run --config vitest.e2e.config.ts",
     "test": "pnpm test:clean && vitest run --coverage --coverage.reporter=text-summary --coverage.reporter=json --coverage.exclude=**/*.test.ts --coverage.exclude=**/dist/** --coverage.exclude=**/.package-staging/** --coverage.exclude=**/release/** --coverage.exclude=**/release-*/** --coverage.exclude=**/coverage/**"
   },

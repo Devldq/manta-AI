@@ -1,12 +1,30 @@
 import { randomUUID } from 'node:crypto'
-import { open, readFile, rename, unlink } from 'node:fs/promises'
+import { link, open, readFile, rename, unlink } from 'node:fs/promises'
 import { powershell } from '../platform/powershell'
 
 interface LockOwner { token: string; pid: number; processIdentity: string; createdAt: string }
 export interface ProcessInspection { alive: boolean; identity?: string }
 export interface MigrationFileLock { release(): Promise<void> }
-export interface MigrationLockOptions { breakStale?: boolean; afterCreate?: () => Promise<void>; inspectProcess?: (pid: number) => Promise<ProcessInspection>; waitTimeoutMs?: number; retryDelayMs?: number }
+export type MigrationFileLockErrorCode = 'IDENTITY_UNAVAILABLE' | 'LOCK_HELD' | 'OWNERSHIP_CHANGED' | 'UNKNOWN_OWNER'
+export class MigrationFileLockError extends Error {
+  constructor(readonly code: MigrationFileLockErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'MigrationFileLockError'
+  }
+}
+export interface MigrationLockOptions {
+  breakStale?: boolean
+  afterCreate?: () => Promise<void>
+  inspectProcess?: (pid: number) => Promise<ProcessInspection>
+  waitTimeoutMs?: number
+  retryDelayMs?: number
+  /** Fault-injection seam used to exercise filesystems without hard-link support. */
+  publishLink?: (candidatePath: string, lockPath: string) => Promise<void>
+  /** Fault-injection seam at the portable fallback's fail-closed owner window. */
+  afterFallbackCreate?: () => Promise<void>
+}
 let selfInspection: Promise<ProcessInspection> | undefined
+const HARD_LINK_UNSUPPORTED_CODES = new Set(['ENOSYS', 'ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EXDEV'])
 
 function parseOwner(text: string): LockOwner | undefined {
   try { const value = JSON.parse(text) as Partial<LockOwner>; return typeof value.token === 'string' && Number.isInteger(value.pid) && typeof value.processIdentity === 'string' && typeof value.createdAt === 'string' ? value as LockOwner : undefined } catch { return undefined }
@@ -24,33 +42,96 @@ export async function inspectProcess(pid: number): Promise<ProcessInspection> {
 }
 
 async function removeOwned(path: string, token: string, required: boolean): Promise<boolean> {
-  const current = await ownerAt(path); if (!current) { if (required) throw new Error('Storage mapping transaction lock has unknown owner'); return false } if (current.token !== token) return false
+  const current = await ownerAt(path); if (!current) { if (required) throw new MigrationFileLockError('UNKNOWN_OWNER', 'Storage mapping transaction lock has unknown owner'); return false } if (current.token !== token) return false
   const claimed = `${path}.claim-${token}`
   try { await rename(path, claimed) } catch (error) { if (!required && (error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error }
   const moved = await ownerAt(claimed)
-  if (moved?.token !== token) { await rename(claimed, path).catch(() => undefined); if (required) throw new Error('Storage mapping transaction lock ownership changed'); return false }
+  if (moved?.token !== token) { await rename(claimed, path).catch(() => undefined); if (required) throw new MigrationFileLockError('OWNERSHIP_CHANGED', 'Storage mapping transaction lock ownership changed'); return false }
   await unlink(claimed); return true
+}
+
+function hardLinksUnsupported(error: unknown): boolean {
+  return HARD_LINK_UNSUPPORTED_CODES.has((error as NodeJS.ErrnoException).code ?? '')
+}
+
+async function publishOwnerWithPortableFallback(lockPath: string, ownerText: string, afterCreate?: () => Promise<void>): Promise<void> {
+  const canonical = await open(lockPath, 'wx')
+  let publicationFailed = false
+  let publicationError: unknown
+  try {
+    // Until sync completes this canonical file is intentionally unknown. Stale
+    // recovery always fails closed for unknown owners, so no second holder can
+    // enter while portable filesystems publish the complete owner in place.
+    await afterCreate?.()
+    await canonical.writeFile(ownerText)
+    await canonical.sync()
+  } catch (error) {
+    publicationFailed = true
+    publicationError = error
+  }
+  try { await canonical.close() }
+  catch (closeError) {
+    if (!publicationFailed) {
+      // The complete owner is already synced. Keep the valid canonical so the
+      // returned holder can release it by token instead of reopening a race.
+      return
+    }
+    await canonical.close().catch(() => undefined)
+    publicationError = new AggregateError([publicationError, closeError], 'Portable lock publication and close both failed')
+  }
+  if (publicationFailed) {
+    try { await unlink(lockPath) }
+    catch (cleanupError) {
+      if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new AggregateError([publicationError, cleanupError], 'Portable lock publication failed and its exclusive canonical could not be cleaned')
+      }
+    }
+    throw publicationError
+  }
+}
+
+async function publishOwner(lockPath: string, owner: LockOwner, options: MigrationLockOptions): Promise<void> {
+  const candidatePath = `${lockPath}.candidate-${owner.token}`
+  const ownerText = JSON.stringify(owner)
+  let candidate
+  try {
+    candidate = await open(candidatePath, 'wx')
+    await candidate.writeFile(ownerText)
+    await candidate.sync()
+    await candidate.close()
+    candidate = undefined
+    await options.afterCreate?.()
+    // A hard link publishes the already-complete owner without ever exposing an
+    // empty/corrupt canonical lock and, unlike rename on POSIX, never replaces it.
+    try { await (options.publishLink ?? link)(candidatePath, lockPath) }
+    catch (error) {
+      if (!hardLinksUnsupported(error)) throw error
+      await publishOwnerWithPortableFallback(lockPath, ownerText, options.afterFallbackCreate)
+    }
+  } finally {
+    await candidate?.close().catch(() => undefined)
+    await unlink(candidatePath).catch(() => undefined)
+  }
 }
 
 export async function acquireMigrationFileLock(bootstrapPath: string, input: boolean | MigrationLockOptions = {}): Promise<MigrationFileLock> {
   const options = typeof input === 'boolean' ? { breakStale: input } : input; const inspect = options.inspectProcess ?? inspectProcess; const lockPath = `${bootstrapPath}.migration.lock`
   if (options.breakStale) {
     const owner = await ownerAt(lockPath)
-    if (!owner) { try { await readFile(lockPath); throw new Error('Storage mapping transaction lock has unknown owner') } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error } }
-    else { const processState = await inspect(owner.pid); if (processState.alive && !processState.identity) throw new Error('Storage mapping transaction process identity is unavailable; refusing stale recovery'); if (processState.alive && processState.identity === owner.processIdentity) throw new Error('Storage mapping transaction lock is already held'); await removeOwned(lockPath, owner.token, true) }
+    if (!owner) { try { await readFile(lockPath); throw new MigrationFileLockError('UNKNOWN_OWNER', 'Storage mapping transaction lock has unknown owner') } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error } }
+    else { const processState = await inspect(owner.pid); if (processState.alive && !processState.identity) throw new MigrationFileLockError('IDENTITY_UNAVAILABLE', 'Storage mapping transaction process identity is unavailable; refusing stale recovery'); if (processState.alive && processState.identity === owner.processIdentity) throw new MigrationFileLockError('LOCK_HELD', 'Storage mapping transaction lock is already held'); await removeOwned(lockPath, owner.token, true) }
   }
-  const self = await (options.inspectProcess ? inspect(process.pid) : (selfInspection ??= inspectProcess(process.pid))); if (!self.alive || !self.identity) throw new Error('Storage mapping transaction process identity is unavailable')
-  let handle; const deadline = Date.now() + (options.waitTimeoutMs ?? 0)
-  while (!handle) {
-    try { handle = await open(lockPath, 'wx') }
+  const self = await (options.inspectProcess ? inspect(process.pid) : (selfInspection ??= inspectProcess(process.pid))); if (!self.alive || !self.identity) throw new MigrationFileLockError('IDENTITY_UNAVAILABLE', 'Storage mapping transaction process identity is unavailable')
+  const owner: LockOwner = { token: randomUUID(), pid: process.pid, processIdentity: self.identity, createdAt: new Date().toISOString() }
+  const deadline = Date.now() + (options.waitTimeoutMs ?? 0)
+  while (true) {
+    try { await publishOwner(lockPath, owner, options); break }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      if (Date.now() >= deadline) throw new Error('Storage mapping transaction lock is already held', { cause: error })
+      if (Date.now() >= deadline) throw new MigrationFileLockError('LOCK_HELD', 'Storage mapping transaction lock is already held', { cause: error })
       await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs ?? 10))
     }
   }
-  const owner: LockOwner = { token: randomUUID(), pid: process.pid, processIdentity: self.identity, createdAt: new Date().toISOString() }
-  try { await options.afterCreate?.(); await handle.writeFile(JSON.stringify(owner)); await handle.sync() } catch (error) { await handle.close(); await unlink(lockPath).catch(() => undefined); throw error }
   let released = false
-  return { release: async () => { if (released) return; released = true; await handle.close(); await removeOwned(lockPath, owner.token, false) } }
+  return { release: async () => { if (released) return; released = true; await removeOwned(lockPath, owner.token, false) } }
 }

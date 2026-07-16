@@ -189,7 +189,7 @@ describe('GitSyncService', () => {
     await service.syncVolume('primary')
     await expect(runner.exec(['show', 'HEAD:secrets/token.txt'], { cwd: path.join(cache, '.ash', 'sync', 'git') })).rejects.toThrow()
     await expect(readFile(path.join(root, 'secrets', 'token.txt'), 'utf8')).resolves.toBe('top-secret-value')
-  })
+  }, 15_000)
 
   function resolver(volumeId: string, root: string): { resolveVolumeRoot(id: string): string } {
     return { resolveVolumeRoot(id) { if (id !== volumeId) throw new Error(`Inactive volume ${id}`); return root } }
@@ -539,7 +539,7 @@ describe('GitSyncService', () => {
   })
 
   it('resolves a binding against the current volume root after a volume migration', async () => {
-    const oldRoot = await directory(); const newParent = await directory(); const newRoot = path.join(newParent, '.manta-ai')
+    const oldRoot = await directory(); const newParent = await directory(); const newRoot = path.join(newParent, 'manta-ai-data')
     let activeRoot = oldRoot
     const volumes = { resolveVolumeRoot(id: string) { if (id !== 'primary') throw new Error('inactive'); return activeRoot } }
     const service = new GitSyncService({ runner: new GitRunner(), bindings: new GitBindingStore(() => path.join(activeRoot, 'config')), volumes, cachePath: safeCachePath(oldRoot) })

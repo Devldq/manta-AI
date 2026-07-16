@@ -55,6 +55,9 @@ coverage/
 .manta/plugin-marketplace/
 .manta/plugins/
 
+# ASH runtime volumes can contain local secrets and user data
+manta-ai-data/
+
 
 
 .*

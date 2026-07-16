@@ -2,7 +2,7 @@
 
 ## Onboarding does not continue
 
-The parent directory is mandatory. Confirm it exists or can be created, is writable, is not inside another `.manta-ai`, does not already contain an active `.manta-ai`, and has sufficient free space. Quitting onboarding does not initialize or start the Backend.
+The parent directory is mandatory. Confirm it exists or can be created, is writable, is not inside another `manta-ai-data`, does not already contain an active `manta-ai-data`, and has sufficient free space. Quitting onboarding does not initialize or start the Backend.
 
 ## A cloud volume is offline or has conflicts
 
@@ -26,4 +26,4 @@ Run Detect and Inspect again, create a new preview, and approve that exact previ
 
 ## Collecting safe diagnostics
 
-Record the Manta version, operating system, Storage status/error text, volume and group IDs, operation ID, and whether the path is local or cloud-backed. Do not attach the secrets group, `.env` files, Git credentials, MCP tokens, an entire `.manta-ai` volume, or `ash-bootstrap.json`. Developers should reproduce with the commands in [ASH development and packaging](../development/agent-storage-hub.md) and include only sanitized command output.
+Record the Manta version, operating system, Storage status/error text, volume and group IDs, operation ID, and whether the path is local or cloud-backed. Do not attach the secrets group, `.env` files, Git credentials, MCP tokens, an entire `manta-ai-data` volume, or `ash-bootstrap.json`. Developers should reproduce with the commands in [ASH development and packaging](../development/agent-storage-hub.md) and include only sanitized command output.

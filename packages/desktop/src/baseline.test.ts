@@ -8,6 +8,16 @@ describe('desktop package manifest', () => {
     expect(manifest.main).toBe('dist/main.js')
   })
 
+  it('starts when Electron CLI owns require.main', () => {
+    const entry = readFileSync(resolve(__dirname, 'main.ts'), 'utf8')
+    expect(entry).toContain("require.main?.filename === 'electron'")
+  })
+
+  it('uses the ABI-safe development launcher', () => {
+    const manifest = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8')) as { scripts: { dev: string } }
+    expect(manifest.scripts.dev).toContain('node scripts/run-dev.cjs')
+  })
+
   it('packages the mandatory onboarding HTML and all ASH runtime resources', () => {
     const manifest = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8')) as { scripts: { build: string } }
     const builder = readFileSync(resolve(__dirname, '..', 'electron-builder.yml'), 'utf8')

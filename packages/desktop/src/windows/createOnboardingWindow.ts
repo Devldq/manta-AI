@@ -9,7 +9,7 @@ export function onboardingPageUrl(): string {
 export function createOnboardingWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 720,
-    height: 620,
+    height: 760,
     resizable: false,
     closable: true,
     show: false,

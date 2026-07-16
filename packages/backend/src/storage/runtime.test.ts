@@ -77,7 +77,7 @@ describe('backend lifecycle', () => {
     const base = mkdtempSync(join(tmpdir(), 'manta-capacity-git-blocker-')); const parent = join(base, 'volume'); mkdirSync(parent)
     const bootstrap = new BootstrapStore(join(base, 'bootstrap.json')); const now = new Date().toISOString(); const groups = ['config', 'secrets', 'extensions', 'knowledge', 'work', 'diagnostics', 'cache'] as StorageGroupId[]
     await bootstrap.write({ schemaVersion: 1, generation: 1, volumes: [{ id: 'default', name: 'Default', parentPath: parent, createdAt: now, updatedAt: now }], groupAssignments: Object.fromEntries(groups.map((id) => [id, 'default'])) as Record<StorageGroupId, string> })
-    const stagingRoot = join(parent, '.manta-ai', 'cache', 'git-sync', 'default', '.ash', 'sync', 'import-staging')
+    const stagingRoot = join(parent, 'manta-ai-data', 'cache', 'git-sync', 'default', '.ash', 'sync', 'import-staging')
     mkdirSync(join(stagingRoot, '..'), { recursive: true }); writeFileSync(stagingRoot, 'not a directory')
     const { createBackendStorageComposition } = await import('./runtime'); const composition = await createBackendStorageComposition(bootstrap, { deferAgentRecovery: true })
     const metrics = await composition.hub.capacityMetrics(); const result = metrics.volumes.find((item) => item.volumeId === 'default')

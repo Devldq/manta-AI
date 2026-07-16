@@ -18,9 +18,9 @@
     "violations": ["repository runtime root"]
   },
   {
-    "name": "does not reject the canonical manta-ai folder literal",
+    "name": "does not reject the canonical manta-ai-data folder literal",
     "file": "packages/sample/src/legal.ts",
-    "source": "export const canonicalRuntimeRoot = '.manta-ai'",
+    "source": "export const canonicalRuntimeRoot = 'manta-ai-data'",
     "violations": []
   },
   {

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { constants } from 'node:fs'
 import { chmod, lstat, mkdir, open, readFile, readdir } from 'node:fs/promises'
-import { dirname, join, parse, resolve } from 'node:path'
+import { dirname, isAbsolute, join, parse, resolve } from 'node:path'
 import { AdapterRegistry, AssetManifestStore, CodexAdapter, ProjectionCoordinator, VolumeObjectStore, type AdapterJournalPhase, type AdapterPlan, type AdapterResult, type AgentInstallation, type CodexPortableAsset, type CodexPortableAssetKind, type CodexPortableAssetRepository, type CodexPortableAssetSummary, type CodexSecretRepository, type PreviewFileOperation } from '@manta/storage-hub'
 import type { StorageGroupId } from '@manta/shared'
 
@@ -45,7 +45,16 @@ export interface AgentStorageIoHooks {
 interface DirectoryIdentity { path: string; identity: string }
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0
 function statIdentity(value: { dev: number | bigint; ino: number | bigint; birthtimeNs?: bigint }): string { return `${value.dev}:${value.ino}:${value.birthtimeNs ?? ''}` }
-function ancestorPaths(path: string): string[] { const absolute = resolve(path); const root = parse(absolute).root; const relative = absolute.slice(root.length).split(/[\\/]/).filter(Boolean); const paths = [root]; for (const part of relative) paths.push(join(paths.at(-1)!, part)); return paths }
+function canonicalSystemAncestorPath(path: string): string {
+  const absolute = resolve(path)
+  // macOS exposes /var and /tmp as root-owned compatibility aliases below /private.
+  // Fold only those exact system prefixes; realpath(path) would also trust attacker-controlled links below the storage root.
+  if (process.platform === 'darwin') {
+    for (const alias of ['/var', '/tmp']) if (absolute === alias || absolute.startsWith(`${alias}/`)) return `/private${absolute}`
+  }
+  return absolute
+}
+function ancestorPaths(path: string): string[] { const absolute = canonicalSystemAncestorPath(path); const root = parse(absolute).root; const relative = absolute.slice(root.length).split(/[\\/]/).filter(Boolean); const paths = [root]; for (const part of relative) paths.push(join(paths.at(-1)!, part)); return paths }
 async function snapshotDirectoryChain(path: string): Promise<readonly DirectoryIdentity[]> {
   const result: DirectoryIdentity[] = []
   for (const current of ancestorPaths(path)) { const value = await lstat(current, { bigint: true }); if (!value.isDirectory() || value.isSymbolicLink()) throw new Error(`Storage ancestor is linked or not an ordinary directory: ${current}`); result.push({ path: current, identity: statIdentity(value) }) }
@@ -60,6 +69,16 @@ async function ensureOrdinaryDirectory(parent: string, directory: string, mode?:
   await assertDirectoryChain(before)
   const value = await lstat(directory, { bigint: true }); if (!value.isDirectory() || value.isSymbolicLink()) throw new Error('Storage directory is linked or not an ordinary directory')
   if (mode !== undefined && process.platform !== 'win32') { await chmod(directory, mode); const secured = await lstat(directory); if ((secured.mode & 0o777) !== mode) throw new Error('Storage directory permissions are not private') }
+}
+async function ensureOrdinaryChildDirectory(parent: string, directory: string): Promise<void> {
+  if (resolve(dirname(directory)) !== resolve(parent)) throw new Error('Codex directory must be a direct child of its verified parent')
+  const before = await lstat(parent, { bigint: true })
+  if (!before.isDirectory() || before.isSymbolicLink()) throw new Error('Codex directory parent is linked or not an ordinary directory')
+  try { await mkdir(directory) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+  const after = await lstat(parent, { bigint: true })
+  if (!after.isDirectory() || after.isSymbolicLink() || statIdentity(after) !== statIdentity(before)) throw new Error('Codex directory parent identity changed')
+  const created = await lstat(directory)
+  if (!created.isDirectory() || created.isSymbolicLink()) throw new Error('Codex directory is linked or not an ordinary directory')
 }
 async function readOrdinaryNoFollow(path: string, operation: 'descriptor-read', hooks?: AgentStorageIoHooks): Promise<string> {
   const ancestors = await snapshotDirectoryChain(dirname(path)); await hooks?.afterAncestorSnapshot?.(operation, path); await assertDirectoryChain(ancestors)
@@ -249,6 +268,19 @@ export interface AgentStorageOptions {
   onProgress?: (progress: AgentStorageProgress) => void
 }
 
+async function prepareCodexUserSkillRoot(homeDirectory: string, environment: Readonly<Record<string, string | undefined>>): Promise<void> {
+  const configuredHome = environment.CODEX_HOME
+  if (configuredHome && !isAbsolute(configuredHome)) return
+  const codexHome = resolve(configuredHome || join(homeDirectory, '.codex'))
+  let installed
+  try { installed = await lstat(codexHome) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
+  if (!installed.isDirectory() || installed.isSymbolicLink()) return
+
+  const agentsRoot = join(homeDirectory, '.agents')
+  await ensureOrdinaryChildDirectory(homeDirectory, agentsRoot)
+  await ensureOrdinaryChildDirectory(agentsRoot, join(agentsRoot, 'skills'))
+}
+
 function publicInstallation(value: AgentInstallation) { return { id: value.id, displayName: value.displayName, nativeRoots: value.nativeRoots.map((root) => ({ id: root.id, path: root.path })) } }
 function publicOperations(plan: AdapterPlan): AgentPlanPreview['operations'] { return plan.operations.map(({ id, kind, rootId, nativePath, expectedBeforeSha256, expectedAfterSha256 }) => ({ id, kind, rootId, nativePath, ...(expectedBeforeSha256 ? { expectedBeforeSha256 } : {}), ...(expectedAfterSha256 ? { expectedAfterSha256 } : {}) })) }
 function resultSummary(plan: AdapterPlan, result: AdapterResult): AgentOperationSummary {
@@ -268,7 +300,9 @@ function durableOperationSummary(value: NonNullable<Awaited<ReturnType<Projectio
 export async function createAgentStorageComposition(options: AgentStorageOptions) {
   const now = options.now ?? (() => new Date()); const assets = new AshCodexPortableAssetRepository(options.resolve('extensions')); const secrets = new AshCodexSecretRepository(options.resolve('secrets'))
   const environment = Object.freeze({ CODEX_HOME: options.environment?.CODEX_HOME })
-  const adapter = new CodexAdapter({ environment: { homeDirectory: options.homeDirectory ?? homedir(), env: environment }, assets, secrets, now })
+  const homeDirectory = options.homeDirectory ?? homedir()
+  await prepareCodexUserSkillRoot(homeDirectory, environment)
+  const adapter = new CodexAdapter({ environment: { homeDirectory, env: environment }, assets, secrets, now })
   const registry = new AdapterRegistry([adapter])
   const coordinator = new ProjectionCoordinator({ stateRoot: options.resolve('config', 'agent-coordination', 'state'), coordinationRoot: options.resolve('config', 'agent-coordination', 'locks'), registry, now })
   await coordinator.recoverPending()

@@ -26,13 +26,13 @@ async function createVolume(store: BootstrapStore, parentPath: string, id: strin
 }
 
 describe('ASH Phase 1 storage-foundation acceptance', () => {
-  it('routes exactly seven groups below the selected .manta-ai parent', async () => {
+  it('routes exactly seven groups below the selected manta-ai-data parent', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'ash-accept-first-launch-'))
     const bootstrapPath = join(parent, 'user-data', 'ash-bootstrap.json')
     const store = new BootstrapStore(bootstrapPath)
     const volume = await createVolume(store, parent, 'first')
     expect((await store.read())?.groupAssignments).toEqual(Object.fromEntries(STORAGE_GROUP_IDS.map((id) => [id, volume.id])))
-    for (const group of STORAGE_GROUP_IDS) await expect(access(join(parent, '.manta-ai', group))).resolves.toBeUndefined()
+    for (const group of STORAGE_GROUP_IDS) await expect(access(join(parent, 'manta-ai-data', group))).resolves.toBeUndefined()
     expect((await new BootstrapStore(bootstrapPath).read())?.volumes[0].parentPath).toBe(parent)
   })
 

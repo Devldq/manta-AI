@@ -19,7 +19,7 @@ describe('Claude plugin isolated import', () => {
     }))
     const before = Object.fromEntries([...Object.keys(external), 'HOME', 'USERPROFILE'].map((key) => [key, process.env[key]]))
     Object.assign(process.env, external, { HOME: externalHome, USERPROFILE: externalHome, SECRET_HOST_VALUE: 'must-not-leak' })
-    const resolve = (group: string, ...segments: string[]) => join(root, '.manta-ai', group, ...segments)
+    const resolve = (group: string, ...segments: string[]) => join(root, 'manta-ai-data', group, ...segments)
     const installResource = createClaudeInstallResource(resolve('extensions'))
     const observed: Array<{ home?: string; config?: string; cwd: string }> = []
     const result = await runWithStorageResolver({ resolve }, () => installClaudePlugin('demo@claude-plugins-official', {
@@ -41,12 +41,12 @@ describe('Claude plugin isolated import', () => {
         return { stdout: 'ok', stderr: '' }
       },
     }))
-    expect(result.plugin.installPath).toBe(join(root, '.manta-ai', 'extensions', 'plugins', 'claude.demo'))
+    expect(result.plugin.installPath).toBe(join(root, 'manta-ai-data', 'extensions', 'plugins', 'claude.demo'))
     expect(existsSync(join(result.plugin.installPath!, '.claude-plugin', 'plugin.json'))).toBe(true)
     expect(readdirSync(externalHome)).toEqual([])
     for (const directory of Object.values(external)) expect(readdirSync(directory)).toEqual([])
-    expect(readdirSync(join(root, '.manta-ai', 'extensions', '.ash-cli-staging'))).toEqual([])
-    const assets = readdirSync(join(root, '.manta-ai', '.ash', 'assets')).map((name) => JSON.parse(readFileSync(join(root, '.manta-ai', '.ash', 'assets', name), 'utf8')))
+    expect(readdirSync(join(root, 'manta-ai-data', 'extensions', '.ash-cli-staging'))).toEqual([])
+    const assets = readdirSync(join(root, 'manta-ai-data', '.ash', 'assets')).map((name) => JSON.parse(readFileSync(join(root, 'manta-ai-data', '.ash', 'assets', name), 'utf8')))
     expect(assets).toHaveLength(1); expect(assets[0].entries.every((entry: { path: string }) => !/registry|plugin-marketplace|ash-cli-staging/.test(entry.path))).toBe(true)
     expect(observed.length).toBeGreaterThanOrEqual(3)
     expect(() => installResource.checkpoint()).not.toThrow()
@@ -55,7 +55,7 @@ describe('Claude plugin isolated import', () => {
   })
 
   it('leaves no partial active package or registry when marketplace snapshot publication fails', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-claude-snapshot-fail-')); const resolve = (group: string, ...segments: string[]) => join(root, '.manta-ai', group, ...segments)
+    const root = mkdtempSync(join(tmpdir(), 'manta-claude-snapshot-fail-')); const resolve = (group: string, ...segments: string[]) => join(root, 'manta-ai-data', group, ...segments)
     await expect(runWithStorageResolver({ resolve }, () => installClaudePlugin('demo@claude-plugins-official', {
       claudeBin: 'fake-claude', marketplaceCache: null, snapshotPackage: async () => { throw new Error('snapshot fault') },
       execute: async (_bin, args, options) => {

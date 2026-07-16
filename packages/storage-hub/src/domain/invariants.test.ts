@@ -51,11 +51,11 @@ describe('storage bootstrap invariants', () => {
 })
 
 describe('volumeRoot', () => {
-  it('uses .manta-ai below the selected Windows parent', () => {
-    expect(volumeRoot('C:/Users/me')).toBe('C:\\Users\\me\\.manta-ai')
+  it('uses manta-ai-data below the selected Windows parent', () => {
+    expect(volumeRoot('C:/Users/me')).toBe('C:\\Users\\me\\manta-ai-data')
   })
 
-  it('uses .manta-ai below the selected POSIX parent', () => {
-    expect(volumeRoot('/Users/me')).toBe('/Users/me/.manta-ai')
+  it('uses manta-ai-data below the selected POSIX parent', () => {
+    expect(volumeRoot('/Users/me')).toBe('/Users/me/manta-ai-data')
   })
 })

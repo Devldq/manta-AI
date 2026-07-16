@@ -959,7 +959,7 @@ function SettingsTab() {
         </h2>
         <div style={{ borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--color-border)' }}>
           <InfoRow label="版本" value="Manta v2.0.0" />
-          <InfoRow label="数据目录" value="已配置的 ASH 卷（.manta-ai）" />
+          <InfoRow label="数据目录" value="已配置的 ASH 卷（manta-ai-data）" />
           <InfoRow label="会话存储" value="ASH work/conversations" />
         </div>
       </section>
@@ -971,7 +971,7 @@ function SettingsTab() {
         </h2>
         <div style={{ borderRadius: '8px', padding: '14px', border: '1px solid var(--color-border)' }}>
           <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginBottom: '12px', lineHeight: '1.5' }}>
-            管理 ASH 卷与存储组，所有内部数据统一保存在所选父目录下的 <code style={{ fontFamily: 'var(--font-mono)' }}>.manta-ai</code>。
+            管理 ASH 卷与存储组，所有内部数据统一保存在所选父目录下的 <code style={{ fontFamily: 'var(--font-mono)' }}>manta-ai-data</code>。
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button

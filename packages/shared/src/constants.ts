@@ -22,10 +22,13 @@ export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse
 // ─── 数据目录 ───────────────────────────────────────────────
 
 /** 默认数据根目录名 */
-export const DEFAULT_DATA_DIR_NAME = '.manta-ai'
+export const DEFAULT_DATA_DIR_NAME = 'manta-ai-data'
 
 /** ASH always creates a volume below the user-selected parent directory. */
-export const ASH_VOLUME_DIR_NAME = '.manta-ai'
+export const ASH_VOLUME_DIR_NAME = DEFAULT_DATA_DIR_NAME
+
+/** Previous ASH volume directory name, retained only for the one-time Desktop upgrade. */
+export const LEGACY_ASH_VOLUME_DIR_NAME = '.manta-ai'
 
 /** Stable logical storage groups. Every group is assigned to one active volume. */
 export const STORAGE_GROUP_IDS = [

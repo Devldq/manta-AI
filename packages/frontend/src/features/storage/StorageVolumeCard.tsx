@@ -1,9 +1,16 @@
 import { useState } from 'react'
-import { GitRemoteUrlSchema, type StorageGitImportPlan, type StorageIpcRequest, type StorageVolumeCapacityMetrics, type StorageVolumeRecord } from '@manta/shared'
+import { ASH_VOLUME_DIR_NAME, GitRemoteUrlSchema, type StorageGitImportPlan, type StorageIpcRequest, type StorageVolumeCapacityMetrics, type StorageVolumeRecord } from '@manta/shared'
 
 type GitBinding = { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; includeSecrets?: boolean; lastSyncedAt?: string; lastSyncStatus?: 'succeeded'; createdAt: string; updatedAt: string }
 type ImportDecisions = Extract<StorageIpcRequest, { channel: 'storage:apply-git-import' }>['decisions']
 type VolumeHealth = { status: 'healthy' | 'offline' | 'unreadable' | 'conflict'; conflicts: string[]; checkedAt: string; reason?: string }
+
+function displayVolumeRoot(parentPath: string): string {
+  const windows = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(parentPath)
+  const separator = windows ? '\\' : '/'
+  const parent = windows ? parentPath.replace(/[\\/]+$/, '') : parentPath.replace(/\/+$/, '')
+  return `${parent}${separator}${ASH_VOLUME_DIR_NAME}`
+}
 
 export function StorageVolumeCard({ volume, bytes = 0, files = 0, capacity, onRelocate, onOpen, disabled, git, health, onConfigureGit, onRequestGitSecretsGrant, onSetGitSecretsPolicy, onSync, onPlanImport, onApplyImport }: { volume: StorageVolumeRecord; bytes?: number; files?: number; capacity?: StorageVolumeCapacityMetrics; onRelocate: () => void; onOpen: () => void; disabled: boolean; git?: { available: boolean; reason?: string; binding?: GitBinding }; health?: VolumeHealth; onConfigureGit?: (request: Extract<StorageIpcRequest, { channel: 'storage:configure-git' }>) => Promise<void> | void; onRequestGitSecretsGrant?: () => Promise<string>; onSetGitSecretsPolicy?: (includeSecrets: boolean, grant?: string) => Promise<void>; onSync?: () => Promise<void> | void; onPlanImport?: () => Promise<StorageGitImportPlan>; onApplyImport?: (plan: StorageGitImportPlan, decisions: ImportDecisions) => Promise<void> }) {
   const [remoteUrl, setRemoteUrl] = useState(git?.binding?.remoteUrl ?? '')
@@ -29,7 +36,7 @@ export function StorageVolumeCard({ volume, bytes = 0, files = 0, capacity, onRe
     } catch (error) { setGitError((error as Error).message) } finally { setGitLoading(false) }
   }
   return <article aria-label={`${volume.name} volume`} style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: 12 }}>
-    <strong>{volume.name}</strong><div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)', overflowWrap: 'anywhere' }}>{volume.parentPath}/.manta-ai</div><div style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: '6px 0' }}>{bytes} bytes · {files} files</div>
+    <strong>{volume.name}</strong><div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)', overflowWrap: 'anywhere' }}>{displayVolumeRoot(volume.parentPath)}</div><div style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: '6px 0' }}>{bytes} bytes · {files} files</div>
     {capacity && <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', margin: '6px 0' }}>Immutable {capacity.logicalImmutableBytes === null ? 'logical unavailable' : `${capacity.logicalImmutableBytes} B logical`} / {capacity.physicalImmutableBytes === null ? 'physical unavailable' : `${capacity.physicalImmutableBytes} B physical`} · Replica/cache {capacity.replicaBytes === null ? 'unavailable' : `${capacity.replicaBytes} B`} · Cleanable {capacity.cleanableBytes === null ? 'unavailable' : `${capacity.cleanableBytes} B`}</div>}
     <button disabled={disabled} onClick={onOpen}>Open</button> <button disabled={disabled} onClick={onRelocate}>Migrate volume</button>
     {health && health.status !== 'healthy' && <div role="alert" style={{ marginTop: 8 }}>Automatic sync paused: this folder is {health.status}.{health.reason ? ` (${health.reason})` : ''}{health.conflicts.length ? ` Conflicts: ${health.conflicts.join(', ')}` : ''}</div>}

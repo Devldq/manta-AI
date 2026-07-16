@@ -127,7 +127,7 @@ describe('extension storage transactions', () => {
   })
 
   it('recovers an install interrupted after commit but before its snapshot completes', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-extension-awaiting-crash-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-awaiting-crash-')); const volumeRoot = join(root, 'manta-ai-data'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
     mkdirSync(source, { recursive: true }); mkdirSync(destination, { recursive: true }); mkdirSync(join(extensionsRoot, 'plugin-registry')); writeFileSync(join(source, 'plugin.yaml'), 'new'); writeFileSync(join(destination, 'plugin.yaml'), 'old'); writeFileSync(registry, 'old-registry')
     let snapshotStarted = false
     await expect(withLeasedExtensionInstall({ extensionsRoot, source, destination, registryWrites: new Map([[registry, 'new-registry']]), fault: (phase) => { if (phase === 'awaiting-snapshot') throw new Error('process died') } }, async () => { snapshotStarted = true })).rejects.toThrow(/process died/)
@@ -137,7 +137,7 @@ describe('extension storage transactions', () => {
   })
 
   it('rolls back on restart after a snapshot publishes but before its keep decision is acknowledged', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-extension-published-crash-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
+    const root = mkdtempSync(join(tmpdir(), 'manta-extension-published-crash-')); const volumeRoot = join(root, 'manta-ai-data'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
     mkdirSync(source, { recursive: true }); mkdirSync(destination, { recursive: true }); mkdirSync(join(extensionsRoot, 'plugin-registry')); writeFileSync(join(source, 'plugin.yaml'), 'new'); writeFileSync(join(destination, 'plugin.yaml'), 'old'); writeFileSync(registry, 'old-registry')
     let manifestId = ''
     await expect(withLeasedExtensionInstall({ extensionsRoot, source, destination, registryWrites: new Map([[registry, 'new-registry']]), fault: (phase) => { if (phase === 'after-snapshot-publish') throw new Error('process died') } }, async () => {

@@ -1,10 +1,12 @@
 import type { AshBootstrap } from '@manta/shared'
 import type { RelaunchIntent } from './StorageControlStore'
+import type { OnboardingProgressReporter, OnboardingProgressStepId } from '../onboarding/progress-contract'
 interface MantaServerHandle { readonly port: number; quiesce(): Promise<void>; close(): Promise<void>; healthCheck(): Promise<{ ok: boolean; error?: string }> }
 
 export interface StartupFailure { ok: false; error: { code: string; message: string; retryable: boolean } }
 export interface DesktopLifecycleDependencies {
   readBootstrap(): Promise<AshBootstrap | undefined>
+  preflightStorage(...bootstraps: AshBootstrap[]): Promise<void>
   recover(): Promise<unknown>
   composeStorage(): Promise<{ runtime: unknown; hub: { migrations?: unknown } }>
   startServer(options: { storage: unknown; bundledSeedRoot: string }): Promise<MantaServerHandle>
@@ -31,14 +33,34 @@ export class DesktopLifecycleController {
   }
   retry(): Promise<{ ok: true } | StartupFailure> { return this.start() }
 
+  continueAfterOnboarding(onProgress?: OnboardingProgressReporter): Promise<{ ok: true } | StartupFailure> {
+    return this.starting ??= this.doContinueAfterOnboarding(onProgress).finally(() => { this.starting = undefined })
+  }
+
+  private async doContinueAfterOnboarding(onProgress?: OnboardingProgressReporter): Promise<{ ok: true } | StartupFailure> {
+    try {
+      await this.bootOnce(true, onProgress)
+      return { ok: true }
+    } catch (error) {
+      await this.closeFailedServer()
+      await this.resetAfterFailedStart()
+      return this.failure(error)
+    }
+  }
+
   private async doStart(): Promise<{ ok: true } | StartupFailure> {
     let intent: RelaunchIntent | undefined
     try {
-      intent = await this.deps.readRelaunchIntent().catch((error) => { throw Object.assign(error as Error, { code: 'RELAUNCH_INTENT_INVALID' }) })
+      const bootstrap = await this.deps.readBootstrap()
+      if (!bootstrap) { await this.deps.openOnboarding(); return { ok: true } }
+      await this.deps.preflightStorage(bootstrap)
+      const candidateIntent = await this.deps.readRelaunchIntent().catch((error) => { throw Object.assign(error as Error, { code: 'RELAUNCH_INTENT_INVALID' }) })
+      if (candidateIntent) await this.deps.preflightStorage(candidateIntent.previous, candidateIntent.current)
+      intent = candidateIntent
       if (intent && intent.phase !== 'awaiting-new-process-health') {
         await this.deps.rollbackRelaunchIntent(intent); await this.deps.resetComposition(); await this.bootOnce(true); await this.deps.clearRelaunchIntent(); return { ok:true }
       }
-      await this.bootOnce(Boolean(intent)); if (intent) { await this.deps.completeRelaunchOperation(intent.operationId); await this.deps.clearRelaunchIntent() } return { ok: true }
+      await this.bootOnce(Boolean(intent), undefined, bootstrap); if (intent) { await this.deps.completeRelaunchOperation(intent.operationId); await this.deps.clearRelaunchIntent() } return { ok: true }
     } catch (firstError) {
       await this.closeFailedServer()
       await this.resetAfterFailedStart()
@@ -51,12 +73,31 @@ export class DesktopLifecycleController {
     }
   }
 
-  private async bootOnce(requireInitialized: boolean): Promise<void> {
-    if (!await this.deps.readBootstrap()) { if (requireInitialized) throw new Error('Relaunch recovery Bootstrap is missing'); await this.deps.openOnboarding(); return }
-    await this.deps.recover(); const composition = await this.deps.composeStorage()
-    this.server = await this.deps.startServer({ storage: composition.runtime, bundledSeedRoot: this.deps.seedRoot })
-    const health = await this.server.healthCheck(); if (!health.ok) throw Object.assign(new Error(health.error ?? 'Storage health check failed'), { code: 'STORAGE_UNHEALTHY' })
-    await this.deps.openMain(`http://127.0.0.1:${this.server.port}`)
+  private async bootOnce(requireInitialized: boolean, onProgress?: OnboardingProgressReporter, preparedBootstrap?: AshBootstrap): Promise<void> {
+    const bootstrap = preparedBootstrap ?? await this.deps.readBootstrap()
+    if (!bootstrap) { if (requireInitialized) throw new Error('Relaunch recovery Bootstrap is missing'); await this.deps.openOnboarding(); return }
+    if (!preparedBootstrap) await this.deps.preflightStorage(bootstrap)
+    const composition = await this.runProgressStep('initialize-services', onProgress, async () => {
+      await this.deps.recover()
+      return this.deps.composeStorage()
+    })
+    await this.runProgressStep('start-backend', onProgress, async () => {
+      this.server = await this.deps.startServer({ storage: composition.runtime, bundledSeedRoot: this.deps.seedRoot })
+      const health = await this.server.healthCheck()
+      if (!health.ok) throw Object.assign(new Error(health.error ?? 'Storage health check failed'), { code: 'STORAGE_UNHEALTHY' })
+    })
+    await this.runProgressStep('open-main', onProgress, () => this.deps.openMain(`http://127.0.0.1:${this.server!.port}`))
+  }
+  private async runProgressStep<T>(step: OnboardingProgressStepId, report: OnboardingProgressReporter | undefined, operation: () => Promise<T>): Promise<T> {
+    report?.({ step, state: 'active' })
+    try {
+      const result = await operation()
+      report?.({ step, state: 'complete' })
+      return result
+    } catch (error) {
+      report?.({ step, state: 'failed' })
+      throw error
+    }
   }
   private async closeFailedServer(): Promise<void> { if (this.server) { try { await this.server.close() } catch { /* preserve authoritative startup error */ } this.server=undefined } }
   /** Release every runtime owned by a failed boot before a retry can recover again. */

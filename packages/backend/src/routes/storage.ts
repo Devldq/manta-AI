@@ -1,5 +1,7 @@
 import type { AggregateStorageCapacityMetrics, AshBootstrap, StorageVolumeCapacityMetrics } from '@manta/shared'
 import { STORAGE_GROUP_IDS, type StorageGroupId } from '@manta/shared'
+import { posix, win32 } from 'node:path'
+import { isWindowsPath, volumeRoot } from '@manta/storage-hub'
 import type { FastifyInstance, FastifyReply } from 'fastify'
 
 export interface StorageGitApi {
@@ -7,6 +9,11 @@ export interface StorageGitApi {
   bindings(): Promise<Array<{ volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; includeSecrets?: boolean; lastSyncedGroupHashes?: Partial<Record<StorageGroupId, string>>; lastSyncedAt?: string; lastSyncStatus?: 'succeeded'; createdAt: string; updatedAt: string }>>
   status(volumeId: string): Promise<string>
   history(volumeId: string): Promise<string>
+}
+
+function storageGroupPath(parentPath: string, groupId: StorageGroupId): string {
+  const root = volumeRoot(parentPath)
+  return isWindowsPath(parentPath) ? win32.join(root, groupId) : posix.join(root, groupId)
 }
 
 export interface StorageAgentReadApi {
@@ -43,8 +50,8 @@ export async function storageRoutes(app: FastifyInstance, options: StorageApiCon
       const volume = bootstrap.volumes.find((candidate) => candidate.id === volumeId)
       try {
         const inventory = await options.inventory({ groupId: id })
-        return { id, volumeId, path: volume ? `${volume.parentPath}/.manta-ai/${id}` : '', bytes: inventory.bytes, files: inventory.files, health: health.ok ? health.status : 'unhealthy' }
-      } catch { return { id, volumeId, path: volume ? `${volume.parentPath}/.manta-ai/${id}` : '', bytes: 0, files: 0, health: 'unhealthy' } }
+        return { id, volumeId, path: volume ? storageGroupPath(volume.parentPath, id) : '', bytes: inventory.bytes, files: inventory.files, health: health.ok ? health.status : 'unhealthy' }
+      } catch { return { id, volumeId, path: volume ? storageGroupPath(volume.parentPath, id) : '', bytes: 0, files: 0, health: 'unhealthy' } }
     }))
     const logicalBytes = groups.reduce((sum, item) => sum + item.bytes, 0)
     const volumeInventories = await Promise.all(bootstrap.volumes.map((volume) => options.inventory({ volumeId: volume.id })))

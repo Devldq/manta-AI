@@ -1,20 +1,36 @@
-import { access, chmod, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, chmod, mkdir, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { join, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { mkdtemp } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import { AshCodexPortableAssetRepository, AshCodexSecretRepository, createAgentStorageComposition } from './agent-storage'
 
-async function roots() {
-  const root = await mkdtemp(join(tmpdir(), 'manta-agent-storage-'))
-  const volume = join(root, '.manta-ai')
+async function roots(baseDirectory = tmpdir()) {
+  const root = await mkdtemp(join(baseDirectory, 'manta-agent-storage-'))
+  const volume = join(root, 'manta-ai-data')
   const extensions = join(volume, 'extensions')
   const secrets = join(volume, 'secrets')
   await mkdir(extensions, { recursive: true }); await mkdir(secrets, { recursive: true })
-  return { volume, extensions, secrets }
+  return { root, volume, extensions, secrets }
 }
 
 describe('ASH Codex portable asset repository', () => {
+  it.runIf(process.platform === 'darwin')('accepts the macOS /var tmpdir alias as a canonical system ancestor', async () => {
+    await expect(realpath('/var')).resolves.toBe('/private/var')
+    const { root, extensions } = await roots('/var/tmp'); const repository = new AshCodexPortableAssetRepository(extensions)
+
+    try { await expect(repository.import({ schemaVersion: 1, id: 'darwin-tmpdir', kind: 'mcp-server', name: 'macOS tmpdir', metadata: {} })).resolves.toEqual(expect.objectContaining({ id: 'darwin-tmpdir' })) }
+    finally { await rm(root, { recursive: true, force: true }) }
+  })
+
+  it.runIf(process.platform === 'darwin')('accepts the macOS /tmp alias as a canonical system ancestor', async () => {
+    await expect(realpath('/tmp')).resolves.toBe('/private/tmp')
+    const { root, extensions } = await roots('/tmp'); const repository = new AshCodexPortableAssetRepository(extensions)
+
+    try { await expect(repository.import({ schemaVersion: 1, id: 'darwin-short-tmpdir', kind: 'mcp-server', name: 'macOS /tmp', metadata: {} })).resolves.toEqual(expect.objectContaining({ id: 'darwin-short-tmpdir' })) }
+    finally { await rm(root, { recursive: true, force: true }) }
+  })
+
   it('persists immutable assets and reuses duplicate file content through volume-local CAS', async () => {
     const { volume, extensions } = await roots()
     const repository = new AshCodexPortableAssetRepository(extensions)
@@ -114,6 +130,28 @@ describe('ASH Codex secret repository', () => {
 })
 
 describe('Agent storage composition', () => {
+  it('prepares the documented Codex user skill root when Codex is installed', async () => {
+    const { volume, extensions, secrets } = await roots(); const home = join(volume, 'home'); await mkdir(join(home, '.codex'), { recursive: true })
+    const composition = await createAgentStorageComposition({ resolve: (group, ...segments) => join(group === 'extensions' ? extensions : group === 'secrets' ? secrets : join(volume, group), ...segments), homeDirectory: home, environment: {} })
+
+    await expect(access(join(home, '.agents', 'skills'))).resolves.toBeUndefined()
+    await expect(composition.readModel.agents()).resolves.toEqual({ adapters: [expect.objectContaining({ id: 'codex', status: 'detected', installations: [expect.objectContaining({ id: 'codex-user' })] })], operations: [] })
+  })
+
+  it('accepts a trailing separator on the Codex home directory', async () => {
+    const { volume, extensions, secrets } = await roots(); const home = join(volume, 'home'); await mkdir(join(home, '.codex'), { recursive: true })
+
+    await expect(createAgentStorageComposition({ resolve: (group, ...segments) => join(group === 'extensions' ? extensions : group === 'secrets' ? secrets : join(volume, group), ...segments), homeDirectory: `${home}${sep}`, environment: {} })).resolves.toBeDefined()
+    await expect(access(join(home, '.agents', 'skills'))).resolves.toBeUndefined()
+  })
+
+  it('refuses to prepare Codex skills through a linked .agents directory', async () => {
+    const { volume, extensions, secrets } = await roots(); const home = join(volume, 'home'); const outside = join(volume, 'outside'); await mkdir(join(home, '.codex'), { recursive: true }); await mkdir(outside)
+    try { await symlink(outside, join(home, '.agents'), process.platform === 'win32' ? 'junction' : 'dir') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM') return; throw error }
+    await expect(createAgentStorageComposition({ resolve: (group, ...segments) => join(group === 'extensions' ? extensions : group === 'secrets' ? secrets : join(volume, group), ...segments), homeDirectory: home, environment: {} })).rejects.toThrow(/linked|ordinary directory/i)
+    await expect(readdir(outside)).resolves.toEqual([])
+  })
+
   it('keeps CAS byte metrics independent while withholding materialization strategy evidence when no durable projection journal exists', async () => {
     const { volume, extensions, secrets } = await roots(); const home = join(volume, 'home'); await mkdir(join(home, '.codex'), { recursive: true }); await mkdir(join(home, '.agents', 'skills'), { recursive: true })
     const composition = await createAgentStorageComposition({ resolve: (group, ...segments) => join(group === 'extensions' ? extensions : group === 'secrets' ? secrets : join(volume, group), ...segments), homeDirectory: home, environment: {} })

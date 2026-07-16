@@ -14,15 +14,23 @@ export interface StorageHubResolver {
   resolve(group: StorageGroupId, ...segments: string[]): string
 }
 
+function isBootstrapStore(value: AshBootstrap | BootstrapStore): value is BootstrapStore {
+  return typeof (value as BootstrapStore).read === 'function'
+    && typeof (value as BootstrapStore).write === 'function'
+    && typeof (value as BootstrapStore).update === 'function'
+}
+
 export async function createStorageHub(options: {
   bootstrap: AshBootstrap | BootstrapStore
   createDrivers?: (storage: StorageHubResolver) => Map<StorageGroupId, StorageGroupDriver>
   capacityPending?: (volumeId: string, volumeRoot: string) => Promise<PendingContentReferences & { complete: true }> | (PendingContentReferences & { complete: true })
   capacityAllocation?: (object: VerifiedContentObject) => CapacityAllocationEvidence
 } & Partial<Omit<MigrationCoordinatorOptions, 'store' | 'leases' | 'drivers'>> & { drivers?: Map<StorageGroupId, StorageGroupDriver> }) {
-  const value = options.bootstrap instanceof BootstrapStore ? await options.bootstrap.read() : options.bootstrap
+  let store: BootstrapStore | undefined
+  let value: AshBootstrap | undefined
+  if (isBootstrapStore(options.bootstrap)) { store = options.bootstrap; value = await store.read() }
+  else value = options.bootstrap
   if (!value) throw new Error('Bootstrap does not exist')
-  const store = options.bootstrap instanceof BootstrapStore ? options.bootstrap : undefined
   const registry = new VolumeRegistry(value); const router = new StoragePathRouter(registry); const leases = new StorageLeaseManager()
   const base = {
     resolve: (group: StorageGroupId, ...segments: string[]) => router.resolve(group, ...segments),

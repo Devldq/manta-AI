@@ -38,6 +38,6 @@ The inspectable executable is `packages/desktop/release/win-unpacked/Manta.exe`.
 Start-Process -FilePath (Resolve-Path 'packages/desktop/release/win-unpacked/Manta.exe')
 ```
 
-For a visual release check, use an isolated user-data profile and verify the required onboarding screen, `.manta-ai` wording, disabled confirmation before selection, successful main-window launch, Storage volume/group metrics, migration controls, Git/cloud status, and Agent Connections preview/apply/rollback controls. Do not commit `release`, `.package-staging`, coverage, Turbo logs, user-data profiles, `.manta-ai` volumes, credentials, or smoke markers.
+For a visual release check, use an isolated user-data profile and verify the required onboarding screen, `manta-ai-data` wording, disabled confirmation before selection, successful main-window launch, Storage volume/group metrics, migration controls, Git/cloud status, and Agent Connections preview/apply/rollback controls. Do not commit `release`, `.package-staging`, coverage, Turbo logs, user-data profiles, `manta-ai-data` volumes, credentials, or smoke markers.
 
 Release installers continue to use `packages/desktop/electron-builder.yml`; local directory smoke is unsigned and deliberately avoids release-signing dependencies.

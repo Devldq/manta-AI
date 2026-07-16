@@ -29,7 +29,11 @@ test('copyAssets emits an executable browser onboarding bundle', async () => {
 
 test('onboarding source contains readable Simplified Chinese controls', () => {
   const html = readFileSync(join(__dirname, '..', 'src', 'onboarding', 'index.html'), 'utf8')
-  for (const label of ['设置 Agent Storage Hub', '选择文件夹', '创建并启动', '退出', '尚未选择']) {
+  for (const label of ['设置 Manta AI 数据位置', '选择文件夹', '创建并启动', '退出', '尚未选择存储位置', '初始化进度']) {
     assert.match(html, new RegExp(label))
+  }
+  const source = readFileSync(join(__dirname, '..', 'src', 'onboarding', 'progress-model.ts'), 'utf8')
+  for (const label of ['创建 7 个数据分组', '提交 Bootstrap 配置', '初始化 ASH 与 Codex 服务', '启动 Backend 并完成健康检查']) {
+    assert.match(source, new RegExp(label))
   }
 })

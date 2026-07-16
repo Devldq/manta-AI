@@ -7,7 +7,7 @@ import { installImmutableExtensionPackage } from './immutable-extension-install'
 
 describe('immutable extension installation', () => {
   it('publishes an asset manifest whose equal package files share one CAS object', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-immutable-install-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo')
+    const root = mkdtempSync(join(tmpdir(), 'manta-immutable-install-')); const volumeRoot = join(root, 'manta-ai-data'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo')
     mkdirSync(source); writeFileSync(join(source, 'one.txt'), 'same'); writeFileSync(join(source, 'two.txt'), 'same')
     const result = await installImmutableExtensionPackage({ extensionsRoot, source, destination, kind: 'plugin', logicalId: 'plugin-existing', version: '1.0.0' })
     expect(result.manifest.entries).toHaveLength(2); expect(new Set(result.manifest.entries.map((entry) => entry.hash))).toHaveLength(1)
@@ -17,21 +17,21 @@ describe('immutable extension installation', () => {
   })
 
   it('restores previous package and registry when snapshot publication fails', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-immutable-fault-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
+    const root = mkdtempSync(join(tmpdir(), 'manta-immutable-fault-')); const volumeRoot = join(root, 'manta-ai-data'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
     mkdirSync(source, { recursive: true }); mkdirSync(destination, { recursive: true }); mkdirSync(join(extensionsRoot, 'plugin-registry')); writeFileSync(join(source, 'plugin.yaml'), 'new'); writeFileSync(join(destination, 'plugin.yaml'), 'old'); writeFileSync(registry, 'old-registry')
     await expect(installImmutableExtensionPackage({ extensionsRoot, source, destination, kind: 'plugin', logicalId: 'plugin-existing', version: '2.0.0', registryWrites: new Map([[registry, 'new-registry']]), snapshotPackage: async () => { throw new Error('snapshot fault') } })).rejects.toThrow(/snapshot fault/)
     expect(readFileSync(join(destination, 'plugin.yaml'), 'utf8')).toBe('old'); expect(readFileSync(registry, 'utf8')).toBe('old-registry')
   })
 
   it('cleans a first package and registry when snapshot publication fails', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-immutable-first-fault-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
+    const root = mkdtempSync(join(tmpdir(), 'manta-immutable-first-fault-')); const volumeRoot = join(root, 'manta-ai-data'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'demo'); const registry = join(extensionsRoot, 'plugin-registry', 'demo.json')
     mkdirSync(source); writeFileSync(join(source, 'plugin.yaml'), 'new')
     await expect(installImmutableExtensionPackage({ extensionsRoot, source, destination, kind: 'plugin', logicalId: 'plugin-new', version: '1.0.0', registryWrites: new Map([[registry, 'new-registry']]), snapshotPackage: async () => { throw new Error('snapshot fault') } })).rejects.toThrow(/snapshot fault/)
     expect(existsSync(destination)).toBe(false); expect(existsSync(registry)).toBe(false)
   })
 
   it('holds one exclusive lease until the async snapshot decides to keep or roll back', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-immutable-lease-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const destination = join(extensionsRoot, 'plugins', 'demo'); const sourceA = join(root, 'source-a'); const sourceB = join(root, 'source-b')
+    const root = mkdtempSync(join(tmpdir(), 'manta-immutable-lease-')); const volumeRoot = join(root, 'manta-ai-data'); const extensionsRoot = join(volumeRoot, 'extensions'); const destination = join(extensionsRoot, 'plugins', 'demo'); const sourceA = join(root, 'source-a'); const sourceB = join(root, 'source-b')
     mkdirSync(sourceA); mkdirSync(sourceB); mkdirSync(destination, { recursive: true }); writeFileSync(join(destination, 'plugin.yaml'), 'old'); writeFileSync(join(sourceA, 'plugin.yaml'), 'a'); writeFileSync(join(sourceB, 'plugin.yaml'), 'b')
     let entered!: () => void; const snapshotEntered = new Promise<void>((resolve) => { entered = resolve })
     let rejectSnapshot!: (error: Error) => void; const decision = new Promise<never>((_resolve, reject) => { rejectSnapshot = reject })

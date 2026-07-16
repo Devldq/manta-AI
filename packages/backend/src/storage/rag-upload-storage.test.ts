@@ -21,7 +21,7 @@ describe('RAG original document storage', () => {
   })
 
   it('publishes one CAS object and separate manifests for equal uploads with different document IDs', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-cas-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-cas-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge')
     mkdirSync(knowledge, { recursive: true })
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     const first = await storage.ingest(Readable.from('same'), 'a.txt', async () => 'a', { volumeRoot, documentId: 'doc-a' })
@@ -34,7 +34,7 @@ describe('RAG original document storage', () => {
   })
 
   it('does not publish a document manifest when processing fails and retains recoverable content', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-cas-fail-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-cas-fail-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge')
     mkdirSync(knowledge, { recursive: true })
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await expect(storage.ingest(Readable.from('recover me'), 'a.txt', async () => { throw new Error('pipeline failed') }, { volumeRoot, documentId: 'doc-failed' })).rejects.toThrow(/pipeline failed/)
@@ -44,7 +44,7 @@ describe('RAG original document storage', () => {
   })
 
   it('does not expose an asset manifest while the RAG pipeline is still running', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-private-stage-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-private-stage-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await storage.ingest(Readable.from('private until committed'), 'a.txt', async () => {
       await expect(new AssetManifestStore(volumeRoot).read('document.doc-private')).rejects.toThrow()
@@ -54,7 +54,7 @@ describe('RAG original document storage', () => {
   })
 
   it('never publishes a prepared-only transaction during restart recovery and keeps its ordinary source', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-prepared-recovery-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-prepared-recovery-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await expect(storage.ingest(Readable.from('recoverable ordinary source'), 'a.txt', async () => 'not-called', {
       volumeRoot, documentId: 'doc-prepared', fault: (phase) => { if (phase === 'after-prepared') throw new Error('simulated crash') },
@@ -71,7 +71,7 @@ describe('RAG original document storage', () => {
   })
 
   it('does not garbage-collect the recoverable ordinary source owned by a prepared asset transaction', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-prepared-gc-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-prepared-gc-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await expect(storage.ingest(Readable.from('retain through gc'), 'a.txt', async () => undefined, {
       volumeRoot, documentId: 'doc-retained', fault: (phase) => { if (phase === 'after-prepared') throw new Error('crash') },
@@ -81,7 +81,7 @@ describe('RAG original document storage', () => {
   })
 
   it('does not let a successful equal-byte asset cleanup delete another prepared transaction source', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-shared-prepared-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-shared-prepared-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await expect(storage.ingest(Readable.from('shared recovery bytes'), 'failed.txt', async () => undefined, {
       volumeRoot, documentId: 'doc-prepared-owner', fault: (phase) => { if (phase === 'after-prepared') throw new Error('crash') },
@@ -94,7 +94,7 @@ describe('RAG original document storage', () => {
   })
 
   it('durably advances and publishes a prepared transaction only when the exact pipeline record is authoritative', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-authoritative-recovery-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-authoritative-recovery-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await expect(storage.ingest(Readable.from('database committed before crash'), 'a.txt', async () => undefined, {
       volumeRoot, documentId: 'doc-authoritative', fault: (phase) => { if (phase === 'after-prepared') throw new Error('crash') },
@@ -107,7 +107,7 @@ describe('RAG original document storage', () => {
   })
 
   it('publishes only a durably pipeline-committed transaction during restart recovery', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-committed-recovery-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-committed-recovery-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     let processed = false
     await expect(storage.ingest(Readable.from('publish after restart'), 'a.txt', async () => { processed = true; return 'done' }, {
@@ -122,7 +122,7 @@ describe('RAG original document storage', () => {
   })
 
   it('returns pipeline success when post-publication cleanup fails and recovery retries it idempotently', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-cleanup-recovery-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-cleanup-recovery-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     const completed = await storage.ingest(Readable.from('business success'), 'a.txt', async () => 'accepted', {
       volumeRoot, documentId: 'doc-cleanup', fault: (phase) => { if (phase === 'before-cleanup') throw new Error('cleanup unavailable') },
@@ -138,7 +138,7 @@ describe('RAG original document storage', () => {
   })
 
   it('rejects tampered root-relative journals and linked transaction ancestors', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-journal-safe-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-journal-safe-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge'); mkdirSync(knowledge, { recursive: true })
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await expect(storage.ingest(Readable.from('tamper target'), 'a.txt', async () => undefined, {
       volumeRoot, documentId: 'doc-tampered', fault: (phase) => { if (phase === 'after-prepared') throw new Error('crash') },
@@ -154,7 +154,7 @@ describe('RAG original document storage', () => {
   })
 
   it('does not publish a manifest when post-pipeline publication fails', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-manifest-fail-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-manifest-fail-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge')
     mkdirSync(knowledge, { recursive: true }); let processed = false
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await expect(storage.ingest(Readable.from('recover me'), 'a.txt', async () => { processed = true }, { volumeRoot, documentId: 'doc-failed', beforePublish: () => { throw new Error('manifest fault') } })).rejects.toThrow(/manifest fault/)
@@ -163,7 +163,7 @@ describe('RAG original document storage', () => {
   })
 
   it('does not delete an idempotent pre-existing manifest when a retry pipeline fails', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-existing-manifest-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-existing-manifest-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge')
     mkdirSync(knowledge, { recursive: true }); const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await storage.ingest(Readable.from('same'), 'a.txt', async () => 'ok', { volumeRoot, documentId: 'doc-stable' })
     await expect(storage.ingest(Readable.from('same'), 'a.txt', async () => { throw new Error('retry failed') }, { volumeRoot, documentId: 'doc-stable' })).rejects.toThrow(/retry failed/)
@@ -250,7 +250,7 @@ describe('RAG original document storage', () => {
   })
 
   it('serializes an async GC decision with a new prepared owner without deadlocking or losing its source', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-rag-async-lock-')); const volumeRoot = join(root, '.manta-ai'); const knowledge = join(volumeRoot, 'knowledge')
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-async-lock-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge')
     const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
     await expect(storage.ingest(Readable.from('async lock bytes'), 'old.txt', async () => { throw new Error('old failure') })).rejects.toThrow('old failure')
     const hash = readdirSync(join(knowledge, 'documents'))[0]!

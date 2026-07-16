@@ -28,7 +28,7 @@ describe('MigrationCoordinator', () => {
     const { coordinator, initial, store, target } = await fixture(point)
     await expect(coordinator.relocateVolume('v1', target)).rejects.toThrow(/injected/)
     expect((await store.read())?.groupAssignments).toEqual(initial.groupAssignments)
-    await expect(access(join(target, '.manta-ai'))).rejects.toThrow()
+    await expect(access(join(target, 'manta-ai-data'))).rejects.toThrow()
   })
 
   it('restores previous mapping after post-commit verification failure and keeps source backup', async () => {
@@ -214,7 +214,7 @@ describe('MigrationCoordinator', () => {
   })
 
   it.each(['planned', 'quiescing', 'copying', 'validating'] as const)('recovers persisted precommit phase %s idempotently', async (phase) => {
-    const { initial, source, store, target } = await fixture(); const id = `recover-${phase}`; const final = volumeRoot(target); const staging = join(target, `.manta-ai.migrating-${id}`); await mkdir(phase === 'validating' ? final : staging, { recursive: true }); await writeFile(join(phase === 'validating' ? final : staging, 'orphan'), 'x')
+    const { initial, source, store, target } = await fixture(); const id = `recover-${phase}`; const final = volumeRoot(target); const staging = join(target, `manta-ai-data.migrating-${id}`); await mkdir(phase === 'validating' ? final : staging, { recursive: true }); await writeFile(join(phase === 'validating' ? final : staging, 'orphan'), 'x')
     await store.write({ ...initial, generation: 2, previous: { generation: 1, volumes: initial.volumes, groupAssignments: initial.groupAssignments }, pendingMigration: { id, kind: 'volume', sourceVolumeId: 'v1', targetParentPath: target, groups, sourceGeneration: 1, targetGeneration: 2, phase, filesCompleted: 0, filesTotal: 1, bytesCompleted: 0, bytesTotal: 1 } })
     const coordinator = new MigrationCoordinator({ store, leases: new StorageLeaseManager(), drivers: new Map(groups.map((group) => [group, driver(group)])) }); expect((await coordinator.recoverPending())?.volumes[0].parentPath).toBe(source); expect((await coordinator.recoverPending())?.pendingMigration).toBeUndefined()
     await expect(access(phase === 'validating' ? final : staging)).rejects.toThrow()

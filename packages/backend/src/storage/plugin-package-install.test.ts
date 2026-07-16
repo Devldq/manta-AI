@@ -11,7 +11,7 @@ function filesUnder(root: string): string[] {
 
 describe('immutable plugin package installation', () => {
   it('commits package, prepared registry identity, and CAS while excluding the registry', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-plugin-package-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'business-id'); mkdirSync(source); writeFileSync(join(source, 'plugin.yaml'), 'shared-bytes')
+    const root = mkdtempSync(join(tmpdir(), 'manta-plugin-package-')); const volumeRoot = join(root, 'manta-ai-data'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'business-id'); mkdirSync(source); writeFileSync(join(source, 'plugin.yaml'), 'shared-bytes')
     const resolve = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
     const installed = await runWithStorageResolver({ resolve }, () => installPluginPackage({ extensionsRoot, source, destination, manifest: { id: 'business-id', name: 'Demo', version: '1.0.0' } }))
     const registry = JSON.parse(readFileSync(join(extensionsRoot, 'plugin-registry', `${installed.id}.json`), 'utf8'))
@@ -21,7 +21,7 @@ describe('immutable plugin package installation', () => {
   })
 
   it('restores the previous package and registry on snapshot failure while preserving the prepared ID', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-plugin-update-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'business-id'); mkdirSync(source); const resolve = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
+    const root = mkdtempSync(join(tmpdir(), 'manta-plugin-update-')); const volumeRoot = join(root, 'manta-ai-data'); const extensionsRoot = join(volumeRoot, 'extensions'); const source = join(root, 'source'); const destination = join(extensionsRoot, 'plugins', 'business-id'); mkdirSync(source); const resolve = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
     writeFileSync(join(source, 'plugin.yaml'), 'v1'); const first = await runWithStorageResolver({ resolve }, () => installPluginPackage({ extensionsRoot, source, destination, manifest: { id: 'business-id', name: 'Demo', version: '1.0.0' } }))
     writeFileSync(join(source, 'plugin.yaml'), 'v2')
     await expect(runWithStorageResolver({ resolve }, () => installPluginPackage({ extensionsRoot, source, destination, manifest: { id: 'business-id', name: 'Demo', version: '2.0.0' }, snapshotPackage: async () => { throw new Error('snapshot fault') } }))).rejects.toThrow(/snapshot fault/)
@@ -30,13 +30,13 @@ describe('immutable plugin package installation', () => {
   })
 
   it('deduplicates equal package bytes without merging plugin identities', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-plugin-dedup-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const resolve = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
+    const root = mkdtempSync(join(tmpdir(), 'manta-plugin-dedup-')); const volumeRoot = join(root, 'manta-ai-data'); const extensionsRoot = join(volumeRoot, 'extensions'); const resolve = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
     for (const id of ['one', 'two']) { const source = join(root, id); mkdirSync(source); writeFileSync(join(source, 'plugin.yaml'), 'equal'); await runWithStorageResolver({ resolve }, () => installPluginPackage({ extensionsRoot, source, destination: join(extensionsRoot, 'plugins', id), manifest: { id, name: id, version: '1' } })) }
     const objects = filesUnder(join(volumeRoot, '.ash', 'objects')); expect(objects).toHaveLength(1); expect(objects[0].split(/[\\/]/).at(-1)).toMatch(/^[a-f0-9]{64}$/); expect(readdirSync(join(volumeRoot, '.ash', 'assets'))).toHaveLength(2)
   })
 
   it('restores a scanned active package when source and destination are equal and snapshot fails', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'manta-plugin-managed-import-')); const volumeRoot = join(root, '.manta-ai'); const extensionsRoot = join(volumeRoot, 'extensions'); const active = join(extensionsRoot, 'plugins', 'scanned'); mkdirSync(active, { recursive: true }); writeFileSync(join(active, 'plugin.yaml'), 'original'); const resolve = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
+    const root = mkdtempSync(join(tmpdir(), 'manta-plugin-managed-import-')); const volumeRoot = join(root, 'manta-ai-data'); const extensionsRoot = join(volumeRoot, 'extensions'); const active = join(extensionsRoot, 'plugins', 'scanned'); mkdirSync(active, { recursive: true }); writeFileSync(join(active, 'plugin.yaml'), 'original'); const resolve = (group: string, ...segments: string[]) => join(volumeRoot, group, ...segments)
     await expect(runWithStorageResolver({ resolve }, () => installPluginPackage({ extensionsRoot, source: active, destination: active, manifest: { id: 'scanned', name: 'Scanned', version: '1' }, snapshotPackage: async () => { throw new Error('snapshot fault') } }))).rejects.toThrow(/snapshot fault/)
     expect(readFileSync(join(active, 'plugin.yaml'), 'utf8')).toBe('original'); expect(readdirSync(join(extensionsRoot, 'plugin-registry'))).toEqual([])
   })

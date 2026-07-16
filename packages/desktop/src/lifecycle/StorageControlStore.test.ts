@@ -8,7 +8,7 @@ describe('StorageControlStore', () => {
   it('durably keeps running, succeeded, and failed operations after a new instance opens the catalog', async () => {
     const root = await mkdtemp(join(tmpdir(), 'ash-control-')); const first = new StorageControlStore(root)
     await first.startOperation('op-running', 'volume'); await first.recordProgress({ operationId:'op-running', phase:'copying', filesCompleted:1,filesTotal:2,bytesCompleted:4,bytesTotal:8,message:'copying' })
-    await first.startOperation('op-ok', 'group'); await first.completeOperation('op-ok', [{ kind:'group', operationId:'op-ok', groupId:'work', sourcePath:'C:/A', targetPath:'C:/B', backupPath:'C:/A/.manta-ai/.ash-backups/op-ok/work' }])
+    await first.startOperation('op-ok', 'group'); await first.completeOperation('op-ok', [{ kind:'group', operationId:'op-ok', groupId:'work', sourcePath:'C:/A', targetPath:'C:/B', backupPath:'C:/A/manta-ai-data/.ash-backups/op-ok/work' }])
     await first.startOperation('op-fail', 'volume'); await first.failOperation('op-fail', new Error('disk lost'))
     const reopened = new StorageControlStore(root)
     expect((await reopened.getOperation('op-running'))?.status).toBe('running')
