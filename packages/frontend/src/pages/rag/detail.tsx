@@ -444,9 +444,9 @@ function EmbeddingSettingsPanel({
 }) {
   const store = useRAGDetailStore()
   const [provider, setProvider] = useState<'openai' | 'local'>(
-    kb?.config.embeddingConfig?.provider || 'openai'
+    kb?.config.embeddingConfig?.provider || (ragConfig?.globalProvider as 'openai' | 'local') || 'openai'
   )
-  const [model, setModel] = useState(kb?.config.embeddingConfig?.model || '')
+  const [model, setModel] = useState(kb?.config.embeddingConfig?.model || ragConfig?.globalModel || '')
   const [apiKey, setApiKey] = useState(kb?.config.embeddingConfig?.apiKey || '')
   const [baseUrl, setBaseUrl] = useState(kb?.config.embeddingConfig?.baseUrl || '')
   const [dimensions, setDimensions] = useState(kb?.config.embeddingConfig?.dimensions || kb?.config.dimensions || 1536)
@@ -455,12 +455,18 @@ function EmbeddingSettingsPanel({
   useEffect(() => {
     if (!kb) return
     const ec = kb.config.embeddingConfig
-    setProvider(ec?.provider || 'openai')
-    setModel(ec?.model || '')
+    const effectiveProvider = ec?.provider || (ragConfig?.globalProvider as 'openai' | 'local') || 'openai'
+    const effectiveModel = ec?.model || ragConfig?.globalModel || ''
+    const selectedModel = ragConfig?.availableProviders
+      ?.find((item) => item.id === effectiveProvider)
+      ?.models.find((item) => item.id === effectiveModel)
+
+    setProvider(effectiveProvider)
+    setModel(effectiveModel)
     setApiKey(ec?.apiKey || '')
     setBaseUrl(ec?.baseUrl || '')
-    setDimensions(ec?.dimensions || kb.config.dimensions || 1536)
-  }, [kb])
+    setDimensions(selectedModel?.dimensions || ec?.dimensions || kb.config.dimensions || 1536)
+  }, [kb, ragConfig])
 
   // 切换 provider 时自动选择默认模型并更新维度
   useEffect(() => {
@@ -483,7 +489,6 @@ function EmbeddingSettingsPanel({
   const currentProvider = ragConfig?.availableProviders?.find((p) => p.id === provider)
   const modelOptions = currentProvider?.models || []
   const ragConfigLoading = store.ragConfigLoading
-  const ragConfigError = !ragConfig && !ragConfigLoading
 
   async function handleSave() {
     if (!kb) return
@@ -571,24 +576,17 @@ function EmbeddingSettingsPanel({
             </SelectContent>
           </Select>
         ) : (
-          <div className="space-y-2">
-            <input
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="输入模型名称，如 nomic-embed-text"
-              className="w-full px-3 py-2 rounded-lg text-xs outline-none"
-              style={{
-                background: 'var(--color-surface)',
-                border: '1px solid var(--color-border)',
-                color: 'var(--color-text-primary)',
-              }}
-            />
-            {provider === 'local' && ragConfigError && (
-              <p className="text-[10px]" style={{ color: 'var(--color-status-failed)' }}>
-                未检测到本地 Ollama 模型。请确认 ollama 已运行，且已安装 embedding 模型。
-              </p>
-            )}
+          <div
+            className="px-3 py-2 rounded-lg text-xs"
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-status-failed)',
+            }}
+          >
+            {provider === 'local'
+              ? '未检测到本地 Embedding 模型，请确认 Ollama 已启动并安装 Embedding 模型。'
+              : '当前 Provider 没有可用的 Embedding 模型。'}
           </div>
         )}
       </div>
@@ -666,7 +664,7 @@ function EmbeddingSettingsPanel({
       <div className="flex items-center gap-2 pt-2">
         <button
           onClick={handleSave}
-          disabled={store.configSaving}
+          disabled={store.configSaving || !modelOptions.some((item) => item.id === model)}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
           style={{
             background: saved ? 'var(--color-status-done)' : 'var(--color-accent)',

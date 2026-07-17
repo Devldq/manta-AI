@@ -25,7 +25,11 @@ import {
   buildRAGUserMessage,
 } from '@manta/rag'
 import type { DocumentMetadata } from '@manta/rag'
-import { createEmbeddingService, getAvailableEmbeddingModels } from '../core/engine/rag/embedding-service.js'
+import {
+  createEmbeddingService,
+  getAvailableEmbeddingModels,
+  resolveEffectiveEmbeddingSelection,
+} from '../core/engine/rag/embedding-service.js'
 import { getEmbeddingConfig, saveEmbeddingConfig } from '../core/engine/rag/embedding-config-store'
 import { getLLMConfig, getLLMProfiles } from '../core/llm/config-store'
 import { profileToLLMConfig } from '../core/llm/types'
@@ -115,6 +119,18 @@ function tryFallbackToLocalOllama(): { model: string; baseUrl: string; dimension
   }
 }
 
+async function requireAvailableEmbeddingModel(provider: 'openai' | 'local', model: string) {
+  const available = await getAvailableEmbeddingModels()
+  const selected = available[provider].find((candidate) => candidate.id === model)
+  if (!selected) {
+    throw Errors.VALIDATION_ERROR(
+      'embeddingConfig.model',
+      `模型 ${model} 不是当前可用的 Embedding 模型`,
+    )
+  }
+  return selected
+}
+
 // ─── 注册插件 ─────────────────────────────────────────────────
 
 export async function ragRoutes(app: FastifyInstance) {
@@ -201,12 +217,33 @@ export async function ragRoutes(app: FastifyInstance) {
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
+      let embeddingConfig = kb.config.embeddingConfig
+      let embeddingDimensions: number | undefined
+      if (body.embeddingConfig) {
+        const provider = body.embeddingConfig.provider || embeddingConfig?.provider
+        const model = body.embeddingConfig.model || embeddingConfig?.model
+        if (!provider || !['openai', 'local'].includes(provider)) {
+          throw Errors.VALIDATION_ERROR('embeddingConfig.provider', 'provider 必须是 openai 或 local')
+        }
+        if (!model) {
+          throw Errors.VALIDATION_ERROR('embeddingConfig.model', '必须选择 Embedding 模型')
+        }
+        const selected = await requireAvailableEmbeddingModel(provider, model)
+        embeddingDimensions = selected.dimensions
+        embeddingConfig = {
+          ...embeddingConfig,
+          ...body.embeddingConfig,
+          provider,
+          model,
+          dimensions: selected.dimensions,
+        }
+      }
+
       const newConfig = {
         ...kb.config,
         ...body,
-        embeddingConfig: body.embeddingConfig
-          ? { ...kb.config.embeddingConfig, ...body.embeddingConfig }
-          : kb.config.embeddingConfig,
+        ...(embeddingDimensions ? { dimensions: embeddingDimensions } : {}),
+        embeddingConfig,
         hybridSearch: body.hybridSearch
           ? { ...kb.config.hybridSearch, ...body.hybridSearch }
           : kb.config.hybridSearch,
@@ -800,17 +837,9 @@ export async function ragRoutes(app: FastifyInstance) {
       const { getAvailableEmbeddingModels: getModels } = await import('../core/engine/rag/embedding-service.js')
       const { local, openai } = await getModels()
 
-      let globalProvider = config.provider
-      let globalModel = config.model
-
-      if (globalProvider === 'local' && local.length > 0) {
-        if (!globalModel || !local.find(m => m.id === globalModel)) {
-          globalModel = local[0].id
-        }
-      } else if (globalProvider === 'local' && local.length === 0) {
-        globalProvider = 'openai'
-        globalModel = openai[0]?.id ?? 'text-embedding-3-small'
-      }
+      const effectiveSelection = resolveEffectiveEmbeddingSelection(config, { local, openai })
+      const globalProvider = effectiveSelection.provider
+      const globalModel = effectiveSelection.model
 
       const availableProviders: Array<{
         id: string
@@ -825,7 +854,7 @@ export async function ragRoutes(app: FastifyInstance) {
         availableProviders.push({
           id: 'local',
           name: 'Ollama (本地)',
-          models: local.map((m) => ({ id: m.id, name: m.name })),
+          models: local,
         })
       }
       if (availableProviders.length === 0) {
@@ -882,12 +911,13 @@ export async function ragRoutes(app: FastifyInstance) {
       // ollama / lm-studio → 'local', 其余 → 'openai'
       const embeddingProvider: 'openai' | 'local' =
         profile.provider === 'ollama' || profile.provider === 'lm-studio' ? 'local' : 'openai'
+      const selected = await requireAvailableEmbeddingModel(embeddingProvider, profile.model)
       saveEmbeddingConfig({
         provider: embeddingProvider,
         model: profile.model,
         baseUrl: profile.baseUrl || undefined,
         apiKey: profile.apiKey || undefined,
-        dimensions: body.dimensions ?? (embeddingProvider === 'local' ? 768 : 1536),
+        dimensions: selected.dimensions,
       })
       return reply.send(apiSuccess({ profileId: body.profileId, provider: embeddingProvider, model: profile.model }))
     } catch (err) {
@@ -907,13 +937,14 @@ export async function ragRoutes(app: FastifyInstance) {
       if (!model) {
         return reply.status(400).send({ success: false, error: 'model 不能为空' })
       }
+      const selected = await requireAvailableEmbeddingModel(provider, model)
       const payload = {
         provider,
         model,
         baseUrl: typeof body.baseUrl === 'string' && body.baseUrl.trim() ? body.baseUrl.trim() : undefined,
         apiKey: typeof body.apiKey === 'string' && body.apiKey.trim() ? body.apiKey.trim() : undefined,
         clearApiKey: body.clearApiKey === true,
-        dimensions: typeof body.dimensions === 'number' ? body.dimensions : undefined,
+        dimensions: selected.dimensions,
       }
       saveEmbeddingConfig(payload)
       return reply.send(apiSuccess({ config: payload }))

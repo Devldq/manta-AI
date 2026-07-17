@@ -156,6 +156,12 @@ export interface OllamaModel {
   digest: string
 }
 
+export interface AvailableEmbeddingModel {
+  id: string
+  name: string
+  dimensions: number
+}
+
 import { exec as execCallback } from 'node:child_process'
 
 /** 执行 ollama list 获取本地已安装模型 */
@@ -203,22 +209,54 @@ function parseSize(sizeStr: string): number {
   return Math.round(value * (multipliers[unit] || 1))
 }
 
-/**
- * 获取可用的 embedding 模型列表
- * - 本地模型：动态读取 ollama list，维度由调用方配置
- * - OpenAI：返回常用模型供参考
- */
-export async function getAvailableEmbeddingModels(): Promise<{
-  local: { id: string; name: string }[]
-  openai: { id: string; name: string; dimensions: number }[]
-}> {
-  const localModels = await listLocalOllamaModels()
+/** 读取 Ollama 模型能力，只返回可用于 embedding 的模型信息。 */
+export async function inspectLocalOllamaEmbeddingModel(
+  model: string,
+  options: { baseUrl?: string; fetchImpl?: typeof fetch } = {},
+): Promise<AvailableEmbeddingModel | null> {
+  const baseUrl = (options.baseUrl || 'http://127.0.0.1:11434').replace(/\/$/, '')
+  const fetchImpl = options.fetchImpl || fetch
 
-  // 本地模型：列出所有 ollama 模型，维度由用户自行指定
-  const local = localModels.map((m) => ({
-    id: m.name,
-    name: `${m.name} (本地)`,
-  }))
+  try {
+    const response = await fetchImpl(`${baseUrl}/api/show`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+      signal: AbortSignal.timeout(3000),
+    })
+    if (!response.ok) return null
+
+    const data = await response.json() as {
+      capabilities?: string[]
+      model_info?: Record<string, unknown>
+    }
+    if (!data.capabilities?.includes('embedding')) return null
+
+    const dimensions = Object.entries(data.model_info || {})
+      .find(([key, value]) => key.endsWith('.embedding_length') && typeof value === 'number')?.[1]
+    if (typeof dimensions !== 'number' || !Number.isSafeInteger(dimensions) || dimensions <= 0) return null
+
+    return { id: model, name: `${model} (本地)`, dimensions }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 获取可用的 embedding 模型列表。
+ * 本地模型需同时存在于 ollama list 且声明 embedding capability。
+ */
+export async function getAvailableEmbeddingModels(options: {
+  listModels?: typeof listLocalOllamaModels
+  inspectModel?: typeof inspectLocalOllamaEmbeddingModel
+} = {}): Promise<{
+  local: AvailableEmbeddingModel[]
+  openai: AvailableEmbeddingModel[]
+}> {
+  const localModels = await (options.listModels || listLocalOllamaModels)()
+  const inspectModel = options.inspectModel || inspectLocalOllamaEmbeddingModel
+  const inspected = await Promise.all(localModels.map((model) => inspectModel(model.name)))
+  const local = inspected.filter((model): model is AvailableEmbeddingModel => model !== null)
 
   const openai = [
     { id: 'text-embedding-3-small', name: 'text-embedding-3-small', dimensions: 1536 },
@@ -227,6 +265,29 @@ export async function getAvailableEmbeddingModels(): Promise<{
   ]
 
   return { local, openai }
+}
+
+export function resolveEffectiveEmbeddingSelection(
+  config: { provider: 'openai' | 'local'; model: string; apiKey?: string },
+  models: { local: AvailableEmbeddingModel[]; openai: AvailableEmbeddingModel[] },
+): { provider: 'openai' | 'local'; model: string } {
+  if (config.provider === 'openai' && !config.apiKey && models.local.length > 0) {
+    return { provider: 'local', model: models.local[0].id }
+  }
+
+  const configuredModels = models[config.provider]
+  if (configuredModels.some((model) => model.id === config.model)) {
+    return { provider: config.provider, model: config.model }
+  }
+  if (configuredModels.length > 0) {
+    return { provider: config.provider, model: configuredModels[0].id }
+  }
+
+  const fallbackProvider = config.provider === 'local' ? 'openai' : 'local'
+  return {
+    provider: fallbackProvider,
+    model: models[fallbackProvider][0]?.id || config.model,
+  }
 }
 
 // ─── 工厂函数 ───────────────────────────────────────────────

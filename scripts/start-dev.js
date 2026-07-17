@@ -66,15 +66,37 @@ function waitForBackend(retries = 30, delay = 1000) {
   });
 }
 
+function startSharedWatcher() {
+  return new Promise((resolve, reject) => {
+    console.log('[Dev] Starting shared...');
+    const shared = spawn('pnpm', ['dev'], {
+      cwd: `${BASE_DIR}/packages/shared`,
+      stdio: ['inherit', 'pipe', 'pipe'],
+      shell: true,
+    });
+    let ready = false;
+
+    const forward = (stream, chunk) => {
+      stream.write(chunk);
+      if (!ready && chunk.toString().includes('Watching for file changes')) {
+        ready = true;
+        resolve(shared);
+      }
+    };
+    shared.stdout.on('data', (chunk) => forward(process.stdout, chunk));
+    shared.stderr.on('data', (chunk) => forward(process.stderr, chunk));
+    shared.once('error', reject);
+    shared.once('exit', (code) => {
+      if (!ready) reject(new Error(`Shared watcher exited before it was ready (code ${code})`));
+    });
+  });
+}
+
 async function main() {
   const bootstrapPath = resolveBootstrapPath();
 
-  console.log('[Dev] Starting shared...');
-  const shared = spawn('pnpm', ['dev'], {
-    cwd: `${BASE_DIR}/packages/shared`,
-    stdio: 'inherit',
-    shell: true,
-  });
+  // Backend 会监听 shared/dist。先等 shared 首次编译结束，避免启动期间被强制重启并遗留存储锁。
+  await startSharedWatcher();
 
   console.log('[Dev] Starting backend...');
   const backend = spawn('pnpm', ['dev'], {
