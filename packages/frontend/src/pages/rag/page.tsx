@@ -5,6 +5,7 @@ import { Library, Plus, Search, MoreHorizontal, Trash2, FileText, Layers, Edit2 
 import { useRAGStore, type KnowledgeBaseSummary } from '@/stores/rag-store'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
+import { getKnowledgeBaseDirectoryPreview } from './directory-preview'
 
 // ─── 格式化时间 ───────────────────────────────────────────────
 function formatRelativeTime(dateStr: string): string {
@@ -358,6 +359,7 @@ function KBCard({
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const directoryPreview = getKnowledgeBaseDirectoryPreview(kb.directory ?? [])
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -469,11 +471,42 @@ function KBCard({
 
       {/* 描述 */}
       <p
-        className="text-xs mb-4 line-clamp-2"
+        className="text-xs mb-3 line-clamp-2"
         style={{ color: 'var(--color-text-muted)' }}
       >
         {kb.description || '暂无描述'}
       </p>
+
+      {/* 目录 */}
+      <div
+        className="mb-4 rounded-lg px-3 py-2"
+        style={{ background: 'var(--color-background)', border: '1px solid var(--color-border)' }}
+      >
+        <div className="text-[10px] font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+          目录
+        </div>
+        {directoryPreview.visible.length === 0 ? (
+          <div className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>暂无文档</div>
+        ) : (
+          <div className="space-y-1">
+            {directoryPreview.visible.map((fileName, index) => (
+              <div
+                key={`${fileName}-${index}`}
+                title={fileName}
+                className="truncate text-[10px]"
+                style={{ color: 'var(--color-text-muted)' }}
+              >
+                {fileName}
+              </div>
+            ))}
+            {directoryPreview.remaining > 0 && (
+              <div className="text-[10px]" style={{ color: 'var(--color-text-secondary)' }}>
+                还有 {directoryPreview.remaining} 个文档
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 底部 */}
       <div className="flex items-center justify-between">
@@ -534,7 +567,8 @@ export default function RagPage() {
       const q = searchQuery.toLowerCase()
       return (
         kb.name.toLowerCase().includes(q) ||
-        kb.description.toLowerCase().includes(q)
+        kb.description.toLowerCase().includes(q) ||
+        (kb.directory ?? []).some((fileName) => fileName.toLowerCase().includes(q))
       )
     })
     .sort(

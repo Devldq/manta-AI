@@ -5,95 +5,87 @@
  * 会显示此弹窗请求用户授权。
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-
-interface ApprovalRequest {
-  id: string
-  type: 'read' | 'write' | 'shell'
-  path?: string
-  command?: string
-  requestedBy: string
-  createdAt: number
-}
+import {
+  mergePendingApproval,
+  removePendingApproval,
+  replacePendingApprovals,
+  type PendingApproval,
+} from './approval-state'
 
 interface ApprovalDialogProps {
   onRespond?: (requestId: string, action: 'approve' | 'deny') => void
 }
 
 export function ApprovalDialog({ onRespond }: ApprovalDialogProps) {
-  const [requests, setRequests] = useState<ApprovalRequest[]>([])
-  const [currentRequest, setCurrentRequest] = useState<ApprovalRequest | null>(null)
-  const [respondedIds, setRespondedIds] = useState<Set<string>>(new Set())
+  const [requests, setRequests] = useState<PendingApproval[]>([])
+  const [respondingId, setRespondingId] = useState<string | null>(null)
+  const currentRequest = requests[0] ?? null
 
-  // 连接到 SSE 端点
-  const connectSSE = useCallback(() => {
-    const eventSource = new EventSource('/api/approval/sse')
+  useEffect(() => {
+    let disposed = false
+    let eventSource: EventSource | null = null
 
-    eventSource.onopen = () => {
-      console.log('[ApprovalDialog] SSE 连接已建立')
-    }
+    const connectSSE = () => {
+      if (disposed) return
+      eventSource = new EventSource('/api/approval/sse')
 
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
+      eventSource.onopen = () => {
+        console.log('[ApprovalDialog] SSE 连接已建立')
+      }
 
-        if (data.type === 'connected') {
-          console.log('[ApprovalDialog] SSE 连接成功，连接 ID:', data.connectionId)
-        } else if (data.type === 'approval-request') {
-          // 收到授权请求
-          const request: ApprovalRequest = data.request
-          
-          // 如果已经响应过，忽略
-          if (respondedIds.has(request.id)) {
-            return
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+
+          if (data.type === 'connected') {
+            console.log('[ApprovalDialog] SSE 连接成功，连接 ID:', data.connectionId)
+          } else if (data.type === 'approval-snapshot') {
+            setRequests(replacePendingApprovals(data.requests ?? []))
+          } else if (data.type === 'approval-request') {
+            const request: PendingApproval = data.request
+            setRequests((previous) => mergePendingApproval(previous, request))
+          } else if (data.type === 'approval-response') {
+            const { id, status } = data.request
+            console.log(`[ApprovalDialog] 授权请求 ${id} 已${status === 'approved' ? '批准' : '拒绝'}`)
+            setRequests((previous) => removePendingApproval(previous, id))
           }
-
-          console.log('[ApprovalDialog] 收到授权请求:', request)
-          setRequests((prev) => [...prev, request])
-          
-          // 如果没有当前显示的请求，显示这个
-          if (!currentRequest) {
-            setCurrentRequest(request)
-          }
-        } else if (data.type === 'approval-response') {
-          // 授权请求已响应（可能是其他客户端响应的）
-          const { id, status } = data.request
-          console.log(`[ApprovalDialog] 授权请求 ${id} 已${status === 'approved' ? '批准' : '拒绝'}`)
-          
-          // 从待处理列表中移除
-          setRequests((prev) => prev.filter((r) => r.id !== id))
-          if (currentRequest?.id === id) {
-            setCurrentRequest(null)
-          }
+        } catch (error) {
+          console.error('[ApprovalDialog] 解析 SSE 消息失败:', error)
         }
-      } catch (error) {
-        console.error('[ApprovalDialog] 解析 SSE 消息失败:', error)
+      }
+
+      eventSource.onerror = (error) => {
+        console.error('[ApprovalDialog] SSE 连接错误:', error)
+        // EventSource 会使用服务端 retry 或浏览器默认退避自动重连。
       }
     }
 
-    eventSource.onerror = (error) => {
-      console.error('[ApprovalDialog] SSE 连接错误:', error)
-      eventSource.close()
-      
-      // 5 秒后重连
-      setTimeout(connectSSE, 5000)
-    }
-
-    return eventSource
-  }, [currentRequest, respondedIds])
-
-  // 组件挂载时连接 SSE
-  useEffect(() => {
-    const eventSource = connectSSE()
+    // 先恢复 REST 快照，再连接 SSE。SSE 建连快照会覆盖两者之间发生的状态变化。
+    void fetch('/api/approval/pending')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('加载待处理授权请求失败')
+        return response.json() as Promise<{ requests?: PendingApproval[] }>
+      })
+      .then((data) => {
+        if (!disposed) setRequests(replacePendingApprovals(data.requests ?? []))
+      })
+      .catch((error) => {
+        if (!disposed) console.error('[ApprovalDialog] 恢复待处理请求失败:', error)
+      })
+      .finally(connectSSE)
 
     return () => {
-      eventSource.close()
+      disposed = true
+      eventSource?.close()
     }
-  }, [connectSSE])
+  }, [])
 
   // 响应授权请求
   const handleRespond = async (requestId: string, action: 'approve' | 'deny') => {
+    if (respondingId) return
+    setRespondingId(requestId)
     try {
       const response = await fetch(`/api/approval/${requestId}/respond`, {
         method: 'POST',
@@ -107,30 +99,17 @@ export function ApprovalDialog({ onRespond }: ApprovalDialogProps) {
         throw new Error('响应授权请求失败')
       }
 
-      // 标记为已响应
-      setRespondedIds((prev) => new Set([...prev, requestId]))
-
-      // 从待处理列表中移除
-      setRequests((prev) => prev.filter((r) => r.id !== requestId))
-      
-      if (currentRequest?.id === requestId) {
-        setCurrentRequest(null)
-      }
+      setRequests((previous) => removePendingApproval(previous, requestId))
 
       // 回调
       onRespond?.(requestId, action)
     } catch (error) {
       console.error('[ApprovalDialog] 响应授权请求失败:', error)
       alert('响应授权请求失败，请重试')
+    } finally {
+      setRespondingId(null)
     }
   }
-
-  // 当有请求待处理且当前没有显示的请求时，显示第一个
-  useEffect(() => {
-    if (!currentRequest && requests.length > 0) {
-      setCurrentRequest(requests[0])
-    }
-  }, [requests, currentRequest])
 
   // 如果没有待处理的请求，不渲染任何内容
   if (!currentRequest) {
@@ -183,12 +162,14 @@ export function ApprovalDialog({ onRespond }: ApprovalDialogProps) {
         <div style={buttonContainerStyle}>
           <button
             style={denyButtonStyle}
+            disabled={respondingId === currentRequest.id}
             onClick={() => handleRespond(currentRequest.id, 'deny')}
           >
             拒绝
           </button>
           <button
             style={approveButtonStyle}
+            disabled={respondingId === currentRequest.id}
             onClick={() => handleRespond(currentRequest.id, 'approve')}
           >
             允许

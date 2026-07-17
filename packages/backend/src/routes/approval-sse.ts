@@ -5,6 +5,20 @@
 import { FastifyPluginAsync } from 'fastify'
 import { approvalManager } from '../core/security/ApprovalManager'
 
+export function createPendingApprovalSnapshot() {
+  return {
+    type: 'approval-snapshot' as const,
+    requests: approvalManager.getPendingRequests().map((request) => ({
+      id: request.id,
+      type: request.type,
+      path: request.path,
+      command: request.command,
+      requestedBy: request.requestedBy,
+      createdAt: request.createdAt,
+    })),
+  }
+}
+
 const approvalSSERoutes: FastifyPluginAsync = async (fastify) => {
   /**
    * GET /api/approval/sse - SSE 端点，用于接收授权请求
@@ -31,22 +45,8 @@ const approvalSSERoutes: FastifyPluginAsync = async (fastify) => {
     }
     reply.raw.write(`data: ${JSON.stringify(initEvent)}\n\n`)
 
-    // 发送所有待处理的授权请求
-    const pendingRequests = approvalManager.getPendingRequests()
-    for (const request of pendingRequests) {
-      const requestEvent = {
-        type: 'approval-request',
-        request: {
-          id: request.id,
-          type: request.type,
-          path: request.path,
-          command: request.command,
-          requestedBy: request.requestedBy,
-          createdAt: request.createdAt,
-        },
-      }
-      reply.raw.write(`data: ${JSON.stringify(requestEvent)}\n\n`)
-    }
+    // 每次连接（含浏览器自动重连）都发送权威快照，用于清除本地已失效请求。
+    reply.raw.write(`data: ${JSON.stringify(createPendingApprovalSnapshot())}\n\n`)
 
     // 保持连接打开，直到客户端断开
     request.raw.on('close', () => {

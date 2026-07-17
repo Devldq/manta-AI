@@ -8,6 +8,7 @@ export interface KnowledgeBaseSummary {
   name: string
   description: string
   providerId: string
+  directory: string[]
   documentCount: number
   chunkCount: number
   createdAt: string

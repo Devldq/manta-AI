@@ -52,6 +52,7 @@ export interface KnowledgeBase {
   description: string
   providerId: string
   config: KnowledgeBaseConfig
+  directory: string[]
   documentCount: number
   chunkCount: number
   createdAt: string
@@ -93,9 +94,16 @@ const participants = () => [{ name: 'metadata', root: resolveStoragePath('knowle
 function readKnowledgeBase(id: string): KnowledgeBase | null {
   const committed = readCrossGroupBundle(participants(), `knowledge-base-${id}`, (bundle) => ({ metadata: bundle.read('metadata', `knowledge-bases/${id}.json`), secret: bundle.read('secret', `knowledge-base-api-keys/${id}.json`) }))
   const kb = committed?.metadata ? JSON.parse(committed.metadata) as KnowledgeBase : readJsonFile<KnowledgeBase>(getFilePath(id))
-  if (!kb?.config.embeddingConfig) return kb
+  if (!kb) return null
+  const normalized = {
+    ...kb,
+    directory: Array.isArray(kb.directory)
+      ? kb.directory.filter((name): name is string => typeof name === 'string')
+      : [],
+  }
+  if (!normalized.config.embeddingConfig) return normalized
   const secret = committed?.secret ? JSON.parse(committed.secret) as { apiKey?: string } : readJsonFile<{ apiKey?: string }>(getSecretPath(id))
-  return { ...kb, config: { ...kb.config, embeddingConfig: { ...kb.config.embeddingConfig, apiKey: secret?.apiKey } } }
+  return { ...normalized, config: { ...normalized.config, embeddingConfig: { ...normalized.config.embeddingConfig, apiKey: secret?.apiKey } } }
 }
 
 function persistKnowledgeBase(kb: KnowledgeBase, clearApiKey = false): void {
@@ -150,7 +158,7 @@ export function listKnowledgeBases(search?: string): KnowledgeBase[] {
     if (data) {
       if (search) {
         const q = search.toLowerCase()
-        if (!data.name.toLowerCase().includes(q) && !data.description?.toLowerCase().includes(q)) {
+        if (!data.name.toLowerCase().includes(q) && !data.description?.toLowerCase().includes(q) && !data.directory.some((name) => name.toLowerCase().includes(q))) {
           continue
         }
       }
@@ -180,6 +188,7 @@ export function createKnowledgeBase(input: CreateKnowledgeBaseInput): KnowledgeB
     description: input.description || '',
     providerId: input.providerId || 'sqlite-vec',
     config,
+    directory: [],
     documentCount: 0,
     chunkCount: 0,
     createdAt: timestamp,
@@ -206,6 +215,44 @@ export function updateKnowledgeBase(id: string, patch: UpdateKnowledgeBaseInput)
 
   kb.updatedAt = now()
   persistKnowledgeBase(kb, patch.clearEmbeddingApiKey === true)
+  return kb
+}
+
+interface KnowledgeBaseDocumentCounts {
+  documentCount: number
+  chunkCount: number
+}
+
+export function recordKnowledgeBaseDocumentAdded(
+  id: string,
+  fileName: string,
+  counts: KnowledgeBaseDocumentCounts,
+): KnowledgeBase | null {
+  const kb = readKnowledgeBase(id)
+  if (!kb) return null
+  kb.directory = [...kb.directory, fileName]
+  kb.documentCount = counts.documentCount
+  kb.chunkCount = counts.chunkCount
+  kb.updatedAt = now()
+  persistKnowledgeBase(kb)
+  return kb
+}
+
+export function recordKnowledgeBaseDocumentRemoved(
+  id: string,
+  fileName: string,
+  counts: KnowledgeBaseDocumentCounts,
+): KnowledgeBase | null {
+  const kb = readKnowledgeBase(id)
+  if (!kb) return null
+  const directory = [...kb.directory]
+  const index = directory.indexOf(fileName)
+  if (index >= 0) directory.splice(index, 1)
+  kb.directory = directory
+  kb.documentCount = counts.documentCount
+  kb.chunkCount = counts.chunkCount
+  kb.updatedAt = now()
+  persistKnowledgeBase(kb)
   return kb
 }
 

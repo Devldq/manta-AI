@@ -34,6 +34,7 @@ import { createRagUploadStorage } from '../storage/rag-upload-storage'
 import { resolveStoragePath } from '../storage/path-routing'
 import { readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { recordUploadedRagDocument, removeRagDocumentAndRecordDirectory } from './rag-directory'
 
 // ─── Embedding Service 工厂 ─────────────────────────────────────
 // 从 KB 配置或环境变量构建 embedding 服务，传入 rag 包
@@ -349,10 +350,7 @@ export async function ragRoutes(app: FastifyInstance) {
 
       const provider = getSQLiteVecProvider()
       const stats = await provider.getStats(kbId)
-      updateKnowledgeBase(kbId, {
-        documentCount: stats.documentCount,
-        chunkCount: stats.chunkCount,
-      })
+      recordUploadedRagDocument(kbId, fileName, stats)
 
       // 清除 pending 标记（addDocument 已写入 ready 记录）
       pendingDocId = null
@@ -433,13 +431,8 @@ export async function ragRoutes(app: FastifyInstance) {
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getSQLiteVecProvider()
-      await provider.removeDocument(id, docId)
-
-      const stats = await provider.getStats(id)
-      updateKnowledgeBase(id, {
-        documentCount: stats.documentCount,
-        chunkCount: stats.chunkCount,
-      })
+      const removed = await removeRagDocumentAndRecordDirectory(id, docId, provider)
+      if (!removed) throw Errors.NOT_FOUND('文档', docId)
 
       return reply.send(apiSuccess({ success: true }))
     } catch (err) {

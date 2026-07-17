@@ -26,6 +26,7 @@ export interface KnowledgeBaseDetail {
   name: string
   description: string
   providerId: string
+  directory: string[]
   config: KnowledgeBaseConfig
   documentCount: number
   chunkCount: number
