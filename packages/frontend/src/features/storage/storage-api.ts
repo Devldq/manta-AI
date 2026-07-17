@@ -20,7 +20,7 @@ export interface StorageOverview {
   operations?: StorageOperation[]
 }
 
-export interface StorageBackup { id: string; volumeId: string; path: string; bytes?: number; createdAt?: string }
+export interface StorageBackup { id: string; operationId?: string; kind?: string; groupId?: string; volumeId?: string; path?: string; bytes: number; createdAt: string }
 export interface StorageOperation { id: string; phase: string; status?: 'running' | 'succeeded' | 'failed' | 'recovering' | string; updatedAt?: string; progress?: StorageOperationProgress; error?: { code: string; message: string } | string }
 export interface AgentConnectionState { adapters: Array<{ id: string; displayName: string; status: 'detected' | 'not-detected'; installations: Array<{ id: string; displayName: string; nativeRoots: Array<{ id: string; path: string }> }> }>; operations: import('@manta/shared').AgentOperationReadSummary[] }
 export interface AgentAssets { inventory: { schemaVersion: 1; installationId: string; assets: Array<{ id: string; kind: string; nativePath: string }> }; portableAssets: Array<{ schemaVersion: 1; id: string; kind: string }> }

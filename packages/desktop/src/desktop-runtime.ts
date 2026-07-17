@@ -25,6 +25,11 @@ interface BackendModule {
 
 const importEsm = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>
 
+export async function openPathOrThrow(path: string): Promise<void> {
+  const error = await shell.openPath(path)
+  if (error) throw new Error(error)
+}
+
 let activeWindow: BrowserWindow | undefined
 let onboardingWindow: BrowserWindow | undefined
 let onboardingHandoff = false
@@ -65,7 +70,7 @@ function registerLegacyIpc(): () => void {
   ipcMain.handle('download-update', async (event) => { trusted(event, activeWindow); const value = getUpdater(); if (!value) return { success: false, error: 'Updates are available only in packaged builds' }; try { await value.downloadUpdate(); return { success: true } } catch (error) { return { success: false, error: (error as Error).message } } })
   ipcMain.handle('install-update', (event) => { trusted(event, activeWindow); getUpdater()?.quitAndInstall(false, true) })
   ipcMain.handle('check-for-updates', async (event) => { trusted(event, activeWindow); const value = getUpdater(); if (!value) return { success: false, error: 'Updates are available only in packaged builds' }; try { const result = await value.checkForUpdates(); return { success: true, updateInfo: result?.updateInfo } } catch (error) { return { success: false, error: (error as Error).message } } })
-  ipcMain.handle('app:openDataDir', async (event) => { trusted(event, activeWindow); const bootstrap = await new BootstrapStore(bootstrapPath()).read(); if (!bootstrap?.volumes[0]) return { success: false }; await shell.openPath(volumeRoot(bootstrap.volumes[0].parentPath)); return { success: true } })
+  ipcMain.handle('app:openDataDir', async (event) => { trusted(event, activeWindow); const bootstrap = await new BootstrapStore(bootstrapPath()).read(); if (!bootstrap?.volumes[0]) return { success: false }; await openPathOrThrow(volumeRoot(bootstrap.volumes[0].parentPath)); return { success: true } })
   ipcMain.handle('app:resetSystem', (event) => { trusted(event, activeWindow); return { success: false, error: 'Use Storage settings to migrate or remove managed data safely' } })
   return () => { for (const name of names) ipcMain.removeHandler(name) }
 }
@@ -84,7 +89,7 @@ function installMainStorageIpc(origin: string): void {
     createVolume: (name, selectionId, event) => createStorageVolume({ name, parentPath: selections.consume(selectionId, selectionBinding(event, 'createVolume')), bootstrap: new BootstrapStore(bootstrapPath()) }),
     async relocateVolume(id, selectionId, event) { const target=selections.consume(selectionId, selectionBinding(event, 'migrateVolume')); return startTrackedMigration('volume',id,(operationId)=>migrations.relocateVolume(id,target,operationId)) },
     moveGroup: (group, target) => startTrackedMigration('group',group,(operationId)=>migrations.moveGroup(group,target,operationId)),
-    async openVolume(id) { const bootstrap = await new BootstrapStore(bootstrapPath()).read(); const volume = bootstrap?.volumes.find((item) => item.id === id); if (!volume) throw new Error('Unknown volume'); await shell.openPath(volumeRoot(volume.parentPath)) },
+    async openVolume(id) { const bootstrap = await new BootstrapStore(bootstrapPath()).read(); const volume = bootstrap?.volumes.find((item) => item.id === id); if (!volume) throw new Error('Unknown volume'); await openPathOrThrow(volumeRoot(volume.parentPath)) },
     async deleteBackup(id) { const active=await new BootstrapStore(bootstrapPath()).read(); if(!active) throw new Error('Storage is not initialized'); const operations=await controlStore().listOperations(); const matches=(await Promise.all(operations.map(async(operation)=>(await trustedBackupRefs(operation,active)).map((ref)=>({operation,ref}))))).flat().filter(({ref})=>`${ref.operationId}--${ref.kind==='group'?ref.groupId:ref.volumeId}`===id); if (matches.length!==1) throw new Error('Unknown or active backup'); await assertDeletableBackup(matches[0].ref,matches[0].operation,active); await rm(matches[0].ref.backupPath,{recursive:true,force:true}) },
     async configureGit(volumeId, config) {
       const capability = await composition.git.capability()

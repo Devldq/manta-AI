@@ -1,6 +1,6 @@
 /* AI start: 设置弹窗 — 包含主题选择和系统设置两个 Tab */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'react'
 import React from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -45,6 +45,151 @@ interface PluginManifest {
 
 type TabType = 'theme' | 'settings' | 'llm' | 'storage'
 type FilterMode = 'all' | 'light' | 'dark'
+type SettingsShellStyle = React.CSSProperties & Record<`--${string}`, string>
+
+const FOCUSABLE_SELECTOR = 'summary, button, a[href], area[href], input, select, textarea, iframe, object, embed, audio[controls], video[controls], [contenteditable="true"], [tabindex]'
+const SETTINGS_TABS: { key: TabType; label: string }[] = [
+  { key: 'theme', label: '◐ 主题' },
+  { key: 'settings', label: '◌ 设置' },
+  { key: 'llm', label: '⬡ AI 模型' },
+  { key: 'storage', label: 'Storage' },
+]
+
+export function getNextSettingsTab(current: TabType, key: string): TabType | null {
+  const currentIndex = SETTINGS_TABS.findIndex((tab) => tab.key === current)
+  let nextIndex: number
+  if (key === 'ArrowRight') nextIndex = (currentIndex + 1) % SETTINGS_TABS.length
+  else if (key === 'ArrowLeft') nextIndex = (currentIndex - 1 + SETTINGS_TABS.length) % SETTINGS_TABS.length
+  else if (key === 'Home') nextIndex = 0
+  else if (key === 'End') nextIndex = SETTINGS_TABS.length - 1
+  else return null
+  return SETTINGS_TABS[nextIndex]!.key
+}
+
+export function getSettingsShellTheme(
+  activeTab: TabType,
+  colorMode: 'light' | 'dark',
+): React.CSSProperties {
+  if (activeTab !== 'storage') return {}
+
+  const commandPalette = {
+    '--color-accent': '#047857',
+    '--color-accent-hover': '#065f46',
+    '--color-text-inverse': '#ffffff',
+  }
+
+  return (colorMode === 'dark' ? {
+    ...commandPalette,
+    '--color-background': '#0a0a14',
+    '--color-surface': '#141420',
+    '--color-surface-elevated': '#1e1e2e',
+    '--color-border': '#2a2a3a',
+    '--color-border-subtle': '#1a1a2a',
+    '--color-text-primary': '#e8e8e8',
+    '--color-text-secondary': '#a0a0a0',
+    '--color-text-muted': '#8a8a94',
+    '--color-accent-subtle': '#0f2a22',
+    '--color-selection-foreground': '#6ee7b7',
+    '--color-status-done': '#34d399',
+    '--color-status-pending': '#fbbf24',
+    '--color-status-failed': '#f97066',
+    '--color-status-running': '#38bdf8',
+    '--color-status-archived': '#8a8a94',
+    '--color-status-planning': '#a0a0a0',
+  } : {
+    ...commandPalette,
+    '--color-background': '#f8f6f0',
+    '--color-surface': '#ffffff',
+    '--color-surface-elevated': '#ffffff',
+    '--color-border': '#e0ddd5',
+    '--color-border-subtle': '#ece9e1',
+    '--color-text-primary': '#1a1a1a',
+    '--color-text-secondary': '#5a5a5a',
+    '--color-text-muted': '#66645f',
+    '--color-accent-subtle': '#e8f5e9',
+    '--color-selection-foreground': '#047857',
+    '--color-status-done': '#047857',
+    '--color-status-pending': '#92400e',
+    '--color-status-failed': '#b42318',
+    '--color-status-running': '#0369a1',
+    '--color-status-archived': '#66645f',
+    '--color-status-planning': '#475569',
+  }) as SettingsShellStyle
+}
+
+function isSettingsModalTabbable(element: HTMLElement): boolean {
+  if (element.tabIndex < 0 || element.hasAttribute('disabled') || element.matches(':disabled')) return false
+  if (element.tagName === 'INPUT' && element.getAttribute('type')?.toLowerCase() === 'hidden') return false
+
+  const view = element.ownerDocument.defaultView
+  for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+    if (
+      current.hasAttribute('hidden')
+      || current.hasAttribute('inert')
+      || current.getAttribute('aria-hidden') === 'true'
+    ) return false
+
+    const style = view?.getComputedStyle(current)
+    if (style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse') return false
+
+    if (current.tagName === 'DETAILS' && !current.hasAttribute('open')) {
+      const firstSummary = Array.from(current.children).find((child) => child.tagName === 'SUMMARY')
+      if (element !== firstSummary) return false
+    }
+  }
+
+  if (element.tagName === 'SUMMARY') {
+    const details = element.parentElement
+    if (details?.tagName !== 'DETAILS') return false
+    const firstSummary = Array.from(details.children).find((child) => child.tagName === 'SUMMARY')
+    if (element !== firstSummary) return false
+  }
+  return true
+}
+
+export function getSettingsModalTabbableElements(dialog: HTMLElement): HTMLElement[] {
+  return [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(isSettingsModalTabbable)
+}
+
+export function trapSettingsModalTabFocus(
+  event: Pick<KeyboardEvent, 'shiftKey' | 'preventDefault'>,
+  dialog: HTMLElement,
+  active: Element | null,
+): void {
+  const controls = getSettingsModalTabbableElements(dialog)
+  if (controls.length === 0) {
+    event.preventDefault()
+    dialog.focus()
+    return
+  }
+  const first = controls[0]!
+  const last = controls[controls.length - 1]!
+  const activeIndex = controls.indexOf(active as HTMLElement)
+  if (activeIndex === -1) {
+    event.preventDefault()
+    ;(event.shiftKey ? last : first).focus()
+  } else if (event.shiftKey && activeIndex === 0) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && activeIndex === controls.length - 1) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+export function isNestedSettingsModalEvent(target: EventTarget | null, dialog: HTMLElement): boolean {
+  if (!target || typeof (target as Element).closest !== 'function') return false
+  const eventDialog = (target as Element).closest('[role="dialog"][aria-modal="true"]')
+  return !!eventDialog && eventDialog !== dialog
+}
+
+export function restoreSettingsModalOpener(opener: HTMLElement | null): void {
+  if (opener?.isConnected) opener.focus()
+}
+
+export function shouldCloseSettingsBackdrop(target: EventTarget, currentTarget: EventTarget): boolean {
+  return target === currentTarget
+}
 
 interface SettingsModalProps {
   open: boolean
@@ -56,6 +201,9 @@ interface SettingsModalProps {
 export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>('theme')
   const [mounted, setMounted] = useState(false)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+  const tabRefs = useRef<Partial<Record<TabType, HTMLButtonElement | null>>>({})
 
   // AI: 确保客户端挂载后再渲染 Portal
   useEffect(() => {
@@ -64,18 +212,63 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
 
   // AI: 点击遮罩关闭
   function handleBackdropClick(e: React.MouseEvent) {
-    if (e.target === e.currentTarget) onClose()
+    if (shouldCloseSettingsBackdrop(e.target, e.currentTarget)) onClose()
   }
 
-  // AI: ESC 关闭
+  function handleTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, key: TabType) {
+    const nextTab = getNextSettingsTab(key, event.key)
+    if (!nextTab) return
+
+    event.preventDefault()
+    setActiveTab(nextTab)
+    tabRefs.current[nextTab]?.focus()
+  }
+
+  useLayoutEffect(() => {
+    if (!open || !mounted || typeof document === 'undefined') return
+    const active = document.activeElement
+    openerRef.current = typeof HTMLElement !== 'undefined' && active instanceof HTMLElement && active !== document.body
+      ? active
+      : null
+    tabRefs.current[activeTab]?.focus()
+    return () => {
+      const opener = openerRef.current
+      openerRef.current = null
+      restoreSettingsModalOpener(opener)
+    }
+  }, [mounted, open])
+
   useEffect(() => {
-    if (!open) return
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+    if (!open || !mounted || typeof window === 'undefined') return
+    const revealActiveTab = () => {
+      tabRefs.current[activeTab]?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    }
+    revealActiveTab()
+    window.addEventListener('resize', revealActiveTab)
+    return () => window.removeEventListener('resize', revealActiveTab)
+  }, [activeTab, mounted, open])
+
+  // AI: 键盘焦点留在 Settings 内；子级操作对话框在 capture 阶段优先处理。
+  useEffect(() => {
+    if (!open || !mounted || typeof document === 'undefined') return
+    function handleKeyDown(event: KeyboardEvent) {
+      const dialog = dialogRef.current
+      if (!dialog) return
+      if (isNestedSettingsModalEvent(event.target, dialog)) return
+
+      if (event.key === 'Tab') {
+        trapSettingsModalTabFocus(event, dialog, document.activeElement)
+        return
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [open, onClose])
+  }, [mounted, open, onClose])
 
   if (!open || !mounted) return null
 
@@ -91,10 +284,14 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backdropFilter: 'blur(4px)',
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        tabIndex={-1}
         style={{
           width: '780px',
           maxWidth: '95vw',
@@ -102,46 +299,67 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
           maxHeight: '720px',
           background: 'var(--color-background)',
           border: '1px solid var(--color-border)',
-          borderRadius: '16px',
+          borderRadius: 'var(--radius-lg)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.4)',
+          ...getSettingsShellTheme(activeTab, colorMode),
         }}
       >
         {/* AI: 弹窗 Header */}
         <div
+          className="settings-header"
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '0 20px',
+            gap: '8px',
+            padding: '6px clamp(8px, 2.5vw, 20px)',
             borderBottom: '1px solid var(--color-border)',
             flexShrink: 0,
-            height: '52px',
+            minHeight: '52px',
           }}
         >
           {/* AI: Tabs */}
-          <div style={{ display: 'flex', gap: '4px' }}>
-            {([
-              { key: 'theme', label: '◐ 主题' },
-              { key: 'settings', label: '◌ 设置' },
-              { key: 'llm', label: '⬡ AI 模型' },
-              { key: 'storage', label: 'Storage' },
-            ] as { key: TabType; label: string }[]).map(({ key, label }) => (
+          <div
+            className="settings-tabs"
+            role="tablist"
+            aria-label="Settings sections"
+            style={{
+              display: 'flex',
+              gap: '4px',
+              flex: '1 1 auto',
+              minWidth: 0,
+              overflowX: 'auto',
+              whiteSpace: 'nowrap',
+              scrollbarWidth: 'thin',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
+            {SETTINGS_TABS.map(({ key, label }) => (
               <button
                 key={key}
+                className="settings-tab"
+                ref={(node) => { tabRefs.current[key] = node }}
+                type="button"
+                id={`settings-tab-${key}`}
+                role="tab"
+                aria-selected={activeTab === key}
+                aria-controls={`settings-panel-${key}`}
+                tabIndex={activeTab === key ? 0 : -1}
                 onClick={() => setActiveTab(key)}
+                onKeyDown={(event) => handleTabKeyDown(event, key)}
                 style={{
                   padding: '6px 14px',
                   borderRadius: '8px',
                   fontSize: '13px',
                   fontWeight: activeTab === key ? 600 : 400,
-                  color: activeTab === key ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)',
-                  background: activeTab === key ? 'var(--color-accent)' : 'transparent',
+                  color: activeTab === key ? 'var(--color-selection-foreground, var(--color-accent))' : 'var(--color-text-secondary)',
+                  background: activeTab === key ? 'var(--color-accent-subtle)' : 'transparent',
                   border: 'none',
                   cursor: 'pointer',
-                  transition: 'all 0.15s',
+                  transition: 'background-color var(--duration-fast) var(--ease-out-quart), color var(--duration-fast) var(--ease-out-quart)',
+                  flexShrink: 0,
                 }}
               >
                 {label}
@@ -150,8 +368,10 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
           </div>
 
           {/* AI: 亮暗切换 + 关闭 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div className="settings-utilities" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
             <div
+              role="group"
+              aria-label="Color mode"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -163,14 +383,18 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
               }}
             >
               <button
+                type="button"
+                className="settings-color-mode__button"
+                aria-label="Light mode"
+                aria-pressed={colorMode === 'light'}
                 onClick={() => onColorModeChange('light')}
                 style={{
                   padding: '4px 10px',
                   borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: 500,
-                  color: colorMode === 'light' ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)',
-                  background: colorMode === 'light' ? 'var(--color-accent)' : 'transparent',
+                  color: colorMode === 'light' ? 'var(--color-selection-foreground, var(--color-accent))' : 'var(--color-text-secondary)',
+                  background: colorMode === 'light' ? 'var(--color-accent-subtle)' : 'transparent',
                   border: 'none',
                   cursor: 'pointer',
                   display: 'flex',
@@ -179,17 +403,21 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
                 }}
               >
                 <span>☀</span>
-                <span>亮色</span>
+                <span className="settings-color-mode__label">亮色</span>
               </button>
               <button
+                type="button"
+                className="settings-color-mode__button"
+                aria-label="Dark mode"
+                aria-pressed={colorMode === 'dark'}
                 onClick={() => onColorModeChange('dark')}
                 style={{
                   padding: '4px 10px',
                   borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: 500,
-                  color: colorMode === 'dark' ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)',
-                  background: colorMode === 'dark' ? 'var(--color-accent)' : 'transparent',
+                  color: colorMode === 'dark' ? 'var(--color-selection-foreground, var(--color-accent))' : 'var(--color-text-secondary)',
+                  background: colorMode === 'dark' ? 'var(--color-accent-subtle)' : 'transparent',
                   border: 'none',
                   cursor: 'pointer',
                   display: 'flex',
@@ -198,10 +426,13 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
                 }}
               >
                 <span>☾</span>
-                <span>暗色</span>
+                <span className="settings-color-mode__label">暗色</span>
               </button>
             </div>
             <button
+              type="button"
+              className="settings-close-button"
+              aria-label="Close settings"
               onClick={onClose}
               style={{
                 width: '28px',
@@ -224,7 +455,21 @@ export function SettingsModal({ open, onClose, colorMode, onColorModeChange }: S
         </div>
 
         {/* AI: Tab 内容区（可滚动） */}
-        <div style={{ flex: 1, overflow: 'hidden' }}>
+        {SETTINGS_TABS.filter(({ key }) => key !== activeTab).map(({ key }) => (
+          <div
+            key={key}
+            id={`settings-panel-${key}`}
+            role="tabpanel"
+            aria-labelledby={`settings-tab-${key}`}
+            hidden
+          />
+        ))}
+        <div
+          id={`settings-panel-${activeTab}`}
+          role="tabpanel"
+          aria-labelledby={`settings-tab-${activeTab}`}
+          style={{ flex: 1, overflow: 'hidden' }}
+        >
           {activeTab === 'theme' && (
             <ThemeTab colorMode={colorMode} onColorModeChange={onColorModeChange} />
           )}
