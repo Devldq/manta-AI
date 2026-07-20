@@ -9,6 +9,11 @@
       "cache": false,
       "persistent": true
     },
+    "@manta/desktop#dev": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "persistent": true
+    },
     "typecheck": {
       "dependsOn": ["^build"]
     },
