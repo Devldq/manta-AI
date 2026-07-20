@@ -520,8 +520,8 @@ function EmbeddingSettingsPanel({
         <label className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>Provider</label>
         <div className="flex gap-2">
           {(ragConfig?.availableProviders || [
-            { id: 'openai', name: 'OpenAI' },
-            { id: 'local', name: 'Ollama (本地)' },
+            { id: 'openai', name: 'OpenAI', source: 'catalog' },
+            { id: 'local', name: 'Ollama (本地)', source: 'discovered' },
           ]).map((p) => (
             <button
               key={p.id}
@@ -546,10 +546,17 @@ function EmbeddingSettingsPanel({
       {/* 模型选择 */}
       <div className="space-y-2">
         <label className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>模型</label>
+        {!ragConfigLoading && currentProvider && (
+          <p className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+            {currentProvider.source === 'discovered'
+              ? '以下模型由本机 Ollama 扫描并校验能力后获得。'
+              : '以下为 OpenAI 官方模型目录，并非本机扫描结果。'}
+          </p>
+        )}
         {ragConfigLoading ? (
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs" style={{ color: 'var(--color-text-muted)' }}>
             <Loader2 size={12} className="animate-spin" />
-            <span>正在读取本地模型…</span>
+            <span>正在读取 Embedding 模型…</span>
           </div>
         ) : modelOptions.length > 0 ? (
           <Select

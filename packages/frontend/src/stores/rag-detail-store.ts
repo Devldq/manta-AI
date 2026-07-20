@@ -97,12 +97,14 @@ export interface EmbeddingModelOption {
   id: string
   name: string
   dimensions: number
+  deprecated?: boolean
 }
 
 /** Embedding Provider */
 export interface EmbeddingProviderOption {
   id: 'openai' | 'local'
   name: string
+  source: 'catalog' | 'discovered'
   models: EmbeddingModelOption[]
 }
 

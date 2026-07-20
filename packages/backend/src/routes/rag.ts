@@ -844,21 +844,23 @@ export async function ragRoutes(app: FastifyInstance) {
       const availableProviders: Array<{
         id: string
         name: string
-        models: Array<{ id: string; name: string; dimensions?: number }>
+        source: 'catalog' | 'discovered'
+        models: Array<{ id: string; name: string; dimensions?: number; deprecated?: boolean }>
       }> = []
 
       if (openai.length > 0) {
-        availableProviders.push({ id: 'openai', name: 'OpenAI', models: openai })
+        availableProviders.push({ id: 'openai', name: 'OpenAI', source: 'catalog', models: openai })
       }
       if (local.length > 0) {
         availableProviders.push({
           id: 'local',
           name: 'Ollama (本地)',
+          source: 'discovered',
           models: local,
         })
       }
       if (availableProviders.length === 0) {
-        availableProviders.push({ id: 'openai', name: 'OpenAI', models: openai })
+        availableProviders.push({ id: 'openai', name: 'OpenAI', source: 'catalog', models: openai })
       }
 
       // LLM profiles（供问答 Tab 模型选择 + embedding 匹配）
@@ -953,7 +955,7 @@ export async function ragRoutes(app: FastifyInstance) {
     }
   })
 
-  // ─── 扫描指定 provider 的可用模型 ───
+  // ─── 获取指定 provider 的模型；本地为扫描结果，OpenAI 为官方目录 ───
   app.get('/api/rag/embedding-models', async (request, reply) => {
     try {
       const query = request.query as Record<string, string>
@@ -961,7 +963,11 @@ export async function ragRoutes(app: FastifyInstance) {
       const { getAvailableEmbeddingModels: getModels } = await import('../core/engine/rag/embedding-service.js')
       const { local, openai } = await getModels()
       const models = provider === 'local' ? local : openai
-      return reply.send(apiSuccess({ provider, models }))
+      return reply.send(apiSuccess({
+        provider,
+        source: provider === 'local' ? 'discovered' : 'catalog',
+        models,
+      }))
     } catch (err) {
       return apiError(reply, err)
     }

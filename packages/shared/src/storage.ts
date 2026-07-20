@@ -55,6 +55,13 @@ export function aggregateStorageCapacityMetrics(volumes: StorageVolumeCapacityMe
 export interface StorageVolumeRecord {
   id: string
   name: string
+  /**
+   * Exact directory that contains the ASH manifest and storage groups.
+   *
+   * Older Bootstrap files only have `parentPath`; for those records the
+   * volume root remains `<parentPath>/manta-ai-data`.
+   */
+  rootPath?: string
   parentPath: string
   createdAt: string
   updatedAt: string
@@ -63,6 +70,7 @@ export interface StorageVolumeRecord {
 export const StorageVolumeRecordSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
+  rootPath: z.string().min(1).optional(),
   parentPath: z.string().min(1),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,

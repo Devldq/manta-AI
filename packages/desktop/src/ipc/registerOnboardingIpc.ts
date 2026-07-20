@@ -11,7 +11,7 @@ export interface OnboardingIpcDependencies {
   app: Pick<App, 'quit'>
   selections: SelectionStore
   bootstrapPath: string
-  initializeStorage(input: { parentPath: string; bootstrapPath: string; onProgress?: OnboardingProgressReporter }): Promise<unknown>
+  initializeStorage(input: { directoryPath: string; bootstrapPath: string; onProgress?: OnboardingProgressReporter }): Promise<unknown>
   completeInitialization(onProgress: OnboardingProgressReporter): Promise<{ ok: true } | { ok: false; error: { code: string; message: string; retryable?: boolean } }>
   onInitialized(): void
   /** Exact file URL loaded by the isolated onboarding BrowserWindow. */
@@ -43,7 +43,7 @@ function structuredError(error: unknown) {
 /** Privileged first-run surface. Every call is pinned to the canonical onboarding main frame. */
 export function registerOnboardingIpc(deps: OnboardingIpcDependencies): () => void {
   const window = () => deps.getWindow()
-  let selectedParentPath: string | undefined
+  let selectedDirectoryPath: string | undefined
   deps.ipcMain.handle('onboarding:state', async (event) => {
     trusted(event, window(), deps.onboardingUrl)
     const initialized = Boolean(await new BootstrapStore(deps.bootstrapPath).read())
@@ -54,23 +54,23 @@ export function registerOnboardingIpc(deps: OnboardingIpcDependencies): () => vo
     trusted(event, target, deps.onboardingUrl)
     const result = await deps.dialog.showOpenDialog(target!, {
       properties: ['openDirectory', 'createDirectory'],
-      title: '选择 Manta AI 数据父目录',
+      title: '选择 Manta AI 数据文件夹',
     })
     if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true }
-    selectedParentPath = undefined
+    selectedDirectoryPath = undefined
     return { ok: true, selectionId: deps.selections.issue(result.filePaths[0], selectionBinding(event, 'initialization')) }
   })
   deps.ipcMain.handle('onboarding:initialize', async (event, input) => {
     const target = window()
     trusted(event, target, deps.onboardingUrl)
     try {
-      selectedParentPath ??= deps.selections.consume(String(input?.selectionId ?? ''), selectionBinding(event, 'initialization'))
+      selectedDirectoryPath ??= deps.selections.consume(String(input?.selectionId ?? ''), selectionBinding(event, 'initialization'))
       const canonicalUrl = new URL(deps.onboardingUrl).href
       const onProgress: OnboardingProgressReporter = (progress) => {
         if (!target || target.webContents.isDestroyed() || target.webContents.mainFrame.url !== canonicalUrl) return
         target.webContents.send('onboarding:progress', progress)
       }
-      await deps.initializeStorage({ parentPath: selectedParentPath, bootstrapPath: deps.bootstrapPath, onProgress })
+      await deps.initializeStorage({ directoryPath: selectedDirectoryPath, bootstrapPath: deps.bootstrapPath, onProgress })
       const result = await deps.completeInitialization(onProgress)
       if (!result.ok) return result
       deps.onInitialized()
@@ -84,7 +84,7 @@ export function registerOnboardingIpc(deps: OnboardingIpcDependencies): () => vo
     deps.app.quit()
   })
   return () => {
-    selectedParentPath = undefined
+    selectedDirectoryPath = undefined
     for (const name of ['onboarding:state', 'onboarding:select-parent', 'onboarding:initialize', 'onboarding:quit']) deps.ipcMain.removeHandler(name)
   }
 }

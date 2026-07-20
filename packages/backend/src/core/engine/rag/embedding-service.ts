@@ -160,7 +160,20 @@ export interface AvailableEmbeddingModel {
   id: string
   name: string
   dimensions: number
+  deprecated?: boolean
 }
+
+/** OpenAI 模型来自官方目录，不是运行时扫描结果。 */
+export const OPENAI_EMBEDDING_MODEL_CATALOG: AvailableEmbeddingModel[] = [
+  { id: 'text-embedding-3-small', name: 'text-embedding-3-small', dimensions: 1536 },
+  { id: 'text-embedding-3-large', name: 'text-embedding-3-large', dimensions: 3072 },
+  {
+    id: 'text-embedding-ada-002',
+    name: 'text-embedding-ada-002（旧版）',
+    dimensions: 1536,
+    deprecated: true,
+  },
+]
 
 import { exec as execCallback } from 'node:child_process'
 
@@ -258,11 +271,7 @@ export async function getAvailableEmbeddingModels(options: {
   const inspected = await Promise.all(localModels.map((model) => inspectModel(model.name)))
   const local = inspected.filter((model): model is AvailableEmbeddingModel => model !== null)
 
-  const openai = [
-    { id: 'text-embedding-3-small', name: 'text-embedding-3-small', dimensions: 1536 },
-    { id: 'text-embedding-3-large', name: 'text-embedding-3-large', dimensions: 3072 },
-    { id: 'text-embedding-ada-002', name: 'text-embedding-ada-002', dimensions: 1536 },
-  ]
+  const openai = OPENAI_EMBEDDING_MODEL_CATALOG
 
   return { local, openai }
 }

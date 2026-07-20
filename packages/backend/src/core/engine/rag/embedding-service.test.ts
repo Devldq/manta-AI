@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   getAvailableEmbeddingModels,
   inspectLocalOllamaEmbeddingModel,
+  OPENAI_EMBEDDING_MODEL_CATALOG,
   resolveEffectiveEmbeddingSelection,
   type OllamaModel,
 } from './embedding-service'
@@ -57,5 +58,20 @@ describe('Ollama embedding model discovery', () => {
     )
 
     expect(selection).toEqual({ provider: 'local', model: 'qwen3-embedding:0.6b' })
+  })
+})
+
+describe('OpenAI embedding model catalog', () => {
+  it('identifies the legacy model instead of presenting it as a discovered current model', () => {
+    expect(OPENAI_EMBEDDING_MODEL_CATALOG).toEqual([
+      { id: 'text-embedding-3-small', name: 'text-embedding-3-small', dimensions: 1536 },
+      { id: 'text-embedding-3-large', name: 'text-embedding-3-large', dimensions: 3072 },
+      {
+        id: 'text-embedding-ada-002',
+        name: 'text-embedding-ada-002（旧版）',
+        dimensions: 1536,
+        deprecated: true,
+      },
+    ])
   })
 })

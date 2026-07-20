@@ -10,7 +10,7 @@ Manta 是一个 **AI Native 智能体应用平台**。每个 Agent 不再只是�
 
 ## Agent Storage Hub
 
-Manta AI uses Agent Storage Hub (ASH) to route its seven internal storage groups into user-selected `manta-ai-data` volumes. First launch requires a parent directory; Storage settings then expose volume health, capacity, migration, Git synchronization, deduplication, and Codex asset connections. Explicit project and Agent output paths remain outside ASH.
+Manta AI uses Agent Storage Hub (ASH) to route its seven internal storage groups into user-selected data directories. On first launch, select either an empty directory for new data or an existing complete Manta AI data directory to reconnect it directly. Storage settings then expose volume health, capacity, migration, Git synchronization, deduplication, and Codex asset connections. Explicit project and Agent output paths remain outside ASH.
 
 - [ASH user guide](docs/guides/agent-storage-hub.md)
 - [ASH developer and packaging guide](docs/development/agent-storage-hub.md)

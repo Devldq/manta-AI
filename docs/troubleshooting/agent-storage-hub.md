@@ -2,7 +2,7 @@
 
 ## Onboarding does not continue
 
-The parent directory is mandatory. Confirm it exists or can be created, is writable, is not inside another `manta-ai-data`, does not already contain an active `manta-ai-data`, and has sufficient free space. Quitting onboarding does not initialize or start the Backend.
+The data directory is mandatory. Confirm it exists or can be created, is writable, is either empty or a complete active Manta AI data volume, is not inside another active volume, and has sufficient free space. Select the data directory itself rather than its parent. Quitting onboarding does not initialize or start the Backend.
 
 ## A cloud volume is offline or has conflicts
 

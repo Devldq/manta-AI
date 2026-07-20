@@ -8,6 +8,11 @@ const bootstrap = (parentPath: string): AshBootstrap => ({ schemaVersion: 1, gen
 
 describe('StoragePathRouter', () => {
   it.each([['/parent', path.posix.join('/parent', 'manta-ai-data', 'work', 'a', 'b')], ['C:\\parent', path.win32.join('C:\\parent', 'manta-ai-data', 'work', 'a', 'b')], ['\\\\server\\share', path.win32.join('\\\\server\\share', 'manta-ai-data', 'work', 'a', 'b')]])('routes POSIX, drive, and UNC parents beneath the group root', (parent, expected) => expect(new StoragePathRouter(new VolumeRegistry(bootstrap(parent))).resolve('work', 'a', 'b')).toBe(expected))
+  it('routes new exact-directory records directly beneath the selected directory', () => {
+    const value = bootstrap('/legacy-parent')
+    value.volumes[0].rootPath = '/selected/data-folder'
+    expect(new StoragePathRouter(new VolumeRegistry(value)).resolve('work', 'a')).toBe('/selected/data-folder/work/a')
+  })
   it.each([['..'], ['../escape'], ['/absolute'], ['C:\\absolute'], ['\\\\server\\share'], ['bad\0name']])('rejects unsafe segment %s', (segment) => expect(() => new StoragePathRouter(new VolumeRegistry(bootstrap('/parent'))).resolve('work', segment)).toThrow())
   it('rejects case-equivalent nested active volume roots', () => expect(() => new VolumeRegistry({ ...bootstrap('C:\\Data'), volumes: [...bootstrap('C:\\Data').volumes, { ...bootstrap('C:\\Data').volumes[0], id: 'v2', parentPath: 'c:\\data\\MANTA-AI-DATA\\nested' }] })).toThrow())
   it('keeps source and target paths contained in their group root', () => {

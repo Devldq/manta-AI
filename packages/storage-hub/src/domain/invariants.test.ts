@@ -58,4 +58,8 @@ describe('volumeRoot', () => {
   it('uses manta-ai-data below the selected POSIX parent', () => {
     expect(volumeRoot('/Users/me')).toBe('/Users/me/manta-ai-data')
   })
+
+  it('uses an exact directory from new volume records without appending a child name', () => {
+    expect(volumeRoot({ parentPath: '/Users/me', rootPath: '/Volumes/Manta Archive' })).toBe('/Volumes/Manta Archive')
+  })
 })

@@ -257,7 +257,11 @@ export async function withPreparedVolumeRoot<T>(
 export async function upgradeBootstrapVolumeDirectories(...bootstraps: AshBootstrap[]): Promise<void> {
   const parents = new Map<string, string>()
   for (const bootstrap of bootstraps) {
-    for (const volume of bootstrap.volumes) if (!parents.has(volume.parentPath)) parents.set(volume.parentPath, volume.id)
+    for (const volume of bootstrap.volumes) {
+      // Exact-directory records already point at their final root and must not
+      // be reinterpreted as a legacy parent directory during startup.
+      if (!volume.rootPath && !parents.has(volume.parentPath)) parents.set(volume.parentPath, volume.id)
+    }
   }
   for (const [parentPath, volumeId] of parents) {
     const { legacyRoot, currentRoot } = legacyVolumeUpgradePaths(parentPath)

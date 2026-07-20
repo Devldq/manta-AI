@@ -1,8 +1,8 @@
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { initializeStorage, previewStorageParent } from './initializeStorage'
+import { initializeStorage, initializeStorageDirectory, previewStorageParent } from './initializeStorage'
 
 const STORAGE_GROUPS = ['extensions', 'knowledge', 'work', 'config', 'secrets', 'diagnostics', 'cache'] as const
 
@@ -25,6 +25,42 @@ async function createCompleteVolume(root: string, volumeId: string, sentinel: st
 }
 
 describe('storage initialization', () => {
+  it('initializes directly inside the empty directory selected in onboarding', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'ash-exact-directory-'))
+    const directory = join(parent, 'chosen-data-folder')
+    const bootstrapPath = join(parent, 'control', 'ash-bootstrap.json')
+    await mkdir(directory)
+
+    const result = await initializeStorageDirectory({ directoryPath: directory, bootstrapPath, minimumFreeBytes: 1 })
+
+    expect(result.volume).toMatchObject({ parentPath: dirname(directory), rootPath: directory })
+    for (const group of STORAGE_GROUPS) await expect(stat(join(directory, group))).resolves.toBeTruthy()
+    await expect(stat(join(directory, 'manta-ai-data'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(JSON.parse(await readFile(bootstrapPath, 'utf8')).volumes[0].rootPath).toBe(directory)
+  })
+
+  it('reconnects an existing complete data directory selected directly', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'ash-exact-existing-'))
+    const directory = join(parent, 'my-long-used-manta-data')
+    await createCompleteVolume(directory, 'existing-volume', 'preserve-me')
+
+    const result = await initializeStorageDirectory({ directoryPath: directory, bootstrapPath: join(parent, 'bootstrap.json'), minimumFreeBytes: Number.MAX_SAFE_INTEGER })
+
+    expect(result.volume).toMatchObject({ id: 'existing-volume', rootPath: directory })
+    await expect(readFile(join(directory, 'legacy-sentinel.txt'), 'utf8')).resolves.toBe('preserve-me')
+  })
+
+  it('rejects a non-empty ordinary directory without modifying its files', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'ash-exact-foreign-'))
+    const directory = join(parent, 'chosen-data-folder')
+    await mkdir(directory)
+    await writeFile(join(directory, 'user-file.txt'), 'keep-me')
+
+    await expect(initializeStorageDirectory({ directoryPath: directory, bootstrapPath: join(parent, 'bootstrap.json'), minimumFreeBytes: 1 })).rejects.toMatchObject({ code: 'TARGET_EXISTS' })
+
+    await expect(readFile(join(directory, 'user-file.txt'), 'utf8')).resolves.toBe('keep-me')
+  })
+
   it('creates manta-ai-data and all seven groups under an iCloud-like chosen parent', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'iCloud Drive-'))
     const bootstrapPath = join(parent, 'control', 'ash-bootstrap.json')

@@ -100,7 +100,7 @@ describe('registerOnboardingIpc', () => {
     expect(h.app.quit).not.toHaveBeenCalled()
   })
 
-  it('reuses the canonical consumed parent only for retries in the same trusted window', async () => {
+  it('reuses the canonical consumed data directory only for retries in the same trusted window', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'ash-onboarding-retry-'))
     const h = harness(join(directory, 'ash-bootstrap.json'))
     h.dialog.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [directory] })
@@ -111,7 +111,7 @@ describe('registerOnboardingIpc', () => {
     await expect(h.handlers.get('onboarding:initialize')!(h.trustedEvent, selection)).resolves.toEqual({ ok: true })
 
     expect(h.initializeStorage).toHaveBeenCalledTimes(2)
-    expect(h.initializeStorage.mock.calls[0][0].parentPath).toBe(directory)
-    expect(h.initializeStorage.mock.calls[1][0].parentPath).toBe(directory)
+    expect(h.initializeStorage.mock.calls[0][0].directoryPath).toBe(directory)
+    expect(h.initializeStorage.mock.calls[1][0].directoryPath).toBe(directory)
   })
 })

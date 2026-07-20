@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { access, mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { access, mkdir, readFile, readdir, rename, rm, rmdir, stat, statfs, writeFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { ASH_VOLUME_DIR_NAME, type AshBootstrap, type StorageVolumeRecord } from '@manta/shared'
-import { BootstrapStore, STORAGE_GROUP_IDS, volumeRoot, writeJsonAtomic } from '@manta/storage-hub'
+import { BootstrapStore, comparableVolumeRoot, STORAGE_GROUP_IDS, volumeRoot, writeJsonAtomic } from '@manta/storage-hub'
 import type { OnboardingProgressReporter, OnboardingProgressStepId } from '../onboarding/progress-contract'
 import { withPreparedVolumeRoot } from './LegacyVolumeUpgrade'
 
 const STAGING_PREFIX = `${ASH_VOLUME_DIR_NAME}.initializing-`
 const PROBE_PREFIX = `${ASH_VOLUME_DIR_NAME}-probe-`
-const QUARANTINE_PREFIX = `${ASH_VOLUME_DIR_NAME}.quarantine-`
 const MARKER = '.ash-initialization.json'
 interface InitializationMarker { schemaVersion: 1; transactionId: string; finalRoot: string; createdAt: string }
 interface VolumeManifest { schemaVersion: 1; volumeId: string; name: string; state: 'active' | 'backup' | 'archived'; groups: string[]; generation: number; createdAt: string; updatedAt: string }
@@ -64,8 +63,10 @@ export async function previewStorageParent(parentPath: string, minimumFreeBytes 
   }
 }
 
-function bootstrapFor(parentPath: string, manifest: VolumeManifest): { bootstrap: AshBootstrap; volume: StorageVolumeRecord } {
-  const volume = { id: manifest.volumeId, name: manifest.name, parentPath, createdAt: manifest.createdAt, updatedAt: manifest.updatedAt }
+interface StorageVolumeLocation { parentPath: string; rootPath?: string }
+
+function bootstrapFor(location: StorageVolumeLocation, manifest: VolumeManifest): { bootstrap: AshBootstrap; volume: StorageVolumeRecord } {
+  const volume = { id: manifest.volumeId, name: manifest.name, ...location, createdAt: manifest.createdAt, updatedAt: manifest.updatedAt }
   return { volume, bootstrap: { schemaVersion: 1, generation: manifest.generation, volumes: [volume], groupAssignments: Object.fromEntries(STORAGE_GROUP_IDS.map((id) => [id, volume.id])) as AshBootstrap['groupAssignments'] } }
 }
 async function readCompleteManifest(root: string): Promise<VolumeManifest> {
@@ -78,15 +79,19 @@ async function commitBootstrap(store: BootstrapStore, expected: AshBootstrap): P
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const current = await store.read().catch(() => undefined)
     if (current) {
-      if (current.volumes[0]?.id === expected.volumes[0]?.id && current.generation === expected.generation) return
+      const currentVolume = current.volumes[0]
+      const expectedVolume = expected.volumes[0]
+      const currentRoot = currentVolume && comparableVolumeRoot(currentVolume)
+      const expectedRoot = expectedVolume && comparableVolumeRoot(expectedVolume)
+      if (currentVolume?.id === expectedVolume?.id && current.generation === expected.generation && currentRoot?.flavor === expectedRoot?.flavor && currentRoot?.path === expectedRoot?.path) return
       throw new StorageInitializationError('BOOTSTRAP_CONFLICT', 'Another storage location is already initialized')
     }
     try { await store.write(expected) } catch { await new Promise((resolve) => setTimeout(resolve, 5)) }
   }
   const current = await store.read(); if (current?.volumes[0]?.id !== expected.volumes[0]?.id) throw new StorageInitializationError('BOOTSTRAP_COMMIT_FAILED', 'Unable to atomically commit storage Bootstrap')
 }
-async function recoverFinal(parentPath: string, finalRoot: string, store: BootstrapStore) {
-  const result = bootstrapFor(parentPath, await readCompleteManifest(finalRoot)); await commitBootstrap(store, result.bootstrap); return result
+async function recoverFinal(location: StorageVolumeLocation, finalRoot: string, store: BootstrapStore) {
+  const result = bootstrapFor(location, await readCompleteManifest(finalRoot)); await commitBootstrap(store, result.bootstrap); return result
 }
 async function exists(path: string): Promise<boolean> { try { await access(path); return true } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error } }
 
@@ -105,24 +110,29 @@ async function runProgressStep<T>(step: OnboardingProgressStepId, report: Onboar
 async function verifyCommittedStorage(finalRoot: string, store: BootstrapStore, expected: AshBootstrap): Promise<void> {
   const manifest = await readCompleteManifest(finalRoot)
   const actual = await store.read()
-  if (!actual || actual.generation !== expected.generation || actual.volumes[0]?.id !== manifest.volumeId || actual.volumes[0]?.id !== expected.volumes[0]?.id) {
+  const actualVolume = actual?.volumes[0]
+  const expectedVolume = expected.volumes[0]
+  const actualRoot = actualVolume && comparableVolumeRoot(actualVolume)
+  const expectedRoot = expectedVolume && comparableVolumeRoot(expectedVolume)
+  if (!actual || actual.generation !== expected.generation || actualVolume?.id !== manifest.volumeId || actualVolume?.id !== expectedVolume?.id || actualRoot?.flavor !== expectedRoot?.flavor || actualRoot?.path !== expectedRoot?.path) {
     throw new StorageInitializationError('STORAGE_VERIFICATION_FAILED', 'Initialized storage did not pass Bootstrap readback verification')
   }
 }
 
-async function scanOwnedStaging(parentPath: string, finalRoot: string, store: BootstrapStore): Promise<ReturnType<typeof bootstrapFor> | undefined> {
-  for (const name of await readdir(parentPath)) {
-    if (!name.startsWith(STAGING_PREFIX)) continue
-    const staging = join(parentPath, name); let marker: InitializationMarker
+async function scanOwnedStaging(containerPath: string, finalRoot: string, store: BootstrapStore, location: StorageVolumeLocation, stagingPrefix = STAGING_PREFIX, replaceEmptyFinal = false): Promise<ReturnType<typeof bootstrapFor> | undefined> {
+  for (const name of await readdir(containerPath)) {
+    if (!name.startsWith(stagingPrefix)) continue
+    const staging = join(containerPath, name); let marker: InitializationMarker
     try { marker = JSON.parse(await readFile(join(staging, MARKER), 'utf8')) as InitializationMarker } catch { continue }
-    if (marker.schemaVersion !== 1 || marker.finalRoot !== finalRoot || name !== `${STAGING_PREFIX}${marker.transactionId}`) continue
+    if (marker.schemaVersion !== 1 || marker.finalRoot !== finalRoot || name !== `${stagingPrefix}${marker.transactionId}`) continue
     try {
       await readCompleteManifest(staging)
+      if (replaceEmptyFinal && await exists(finalRoot) && (await readdir(finalRoot)).length === 0) await rmdir(finalRoot)
       if (!await exists(finalRoot)) { try { await rename(staging, finalRoot) } catch (error) { if (!await exists(finalRoot)) throw error } }
-      const result = await recoverFinal(parentPath, finalRoot, store); if (await exists(staging)) await rm(staging, { recursive: true, force: true }); return result
+      const result = await recoverFinal(location, finalRoot, store); if (await exists(staging)) await rm(staging, { recursive: true, force: true }); return result
     } catch {
       if (Date.now() - Date.parse(marker.createdAt) < 5 * 60_000) continue
-      const quarantine = join(parentPath, `${QUARANTINE_PREFIX}${marker.transactionId}-${randomUUID()}`)
+      const quarantine = join(containerPath, `${basename(finalRoot)}.quarantine-${marker.transactionId}-${randomUUID()}`)
       try { await rename(staging, quarantine) } catch { /* never delete or mutate an unproven foreign directory */ }
     }
   }
@@ -135,8 +145,9 @@ export async function initializeStorage(options: { parentPath: string; bootstrap
   try {
     const parentPath = await normalizeStorageParent(options.parentPath)
     return await withPreparedVolumeRoot(parentPath, async (finalRoot) => {
+      const location = { parentPath }
       const store = new BootstrapStore(options.bootstrapPath)
-      const staged = await scanOwnedStaging(parentPath, finalRoot, store)
+      const staged = await scanOwnedStaging(parentPath, finalRoot, store, location)
       if (staged) {
         options.onProgress?.({ step: 'validate-parent', state: 'complete' })
         validationSettled = true
@@ -144,7 +155,7 @@ export async function initializeStorage(options: { parentPath: string; bootstrap
       }
       if (await exists(finalRoot)) {
         try {
-          const recovered = await recoverFinal(parentPath, finalRoot, store)
+          const recovered = await recoverFinal(location, finalRoot, store)
           options.onProgress?.({ step: 'validate-parent', state: 'complete' })
           validationSettled = true
           return recovered
@@ -171,7 +182,7 @@ export async function initializeStorage(options: { parentPath: string; bootstrap
         try { await rename(staging, finalRoot); committed = true }
         catch (error) {
           if (!await exists(finalRoot)) throw error
-          const result = await recoverFinal(parentPath, finalRoot, store)
+          const result = await recoverFinal(location, finalRoot, store)
           await rm(staging, { recursive: true, force: true })
           return result
         }
@@ -186,6 +197,105 @@ export async function initializeStorage(options: { parentPath: string; bootstrap
       throw error
     }
     })
+  } catch (error) {
+    if (!validationSettled) options.onProgress?.({ step: 'validate-parent', state: 'failed' })
+    throw error
+  }
+}
+
+/**
+ * Initializes or reconnects the exact directory selected in onboarding.
+ *
+ * Unlike the legacy parent-based API above, this function never appends a
+ * fixed child name. A non-empty directory is accepted only when it is already
+ * a complete active ASH volume; an empty directory is populated transactionally
+ * through a sibling staging directory.
+ */
+export async function initializeStorageDirectory(options: { directoryPath: string; bootstrapPath: string; minimumFreeBytes?: number; name?: string; onProgress?: OnboardingProgressReporter; validationHooks?: StorageValidationHooks }): Promise<{ bootstrap: AshBootstrap; volume: StorageVolumeRecord }> {
+  options.onProgress?.({ step: 'validate-parent', state: 'active' })
+  let validationSettled = false
+  let selectedDirectoryRemoved = false
+  let staging = ''
+  try {
+    const finalRoot = await normalizeStorageParent(options.directoryPath)
+    const containerPath = dirname(finalRoot)
+    const location: StorageVolumeLocation = { parentPath: containerPath, rootPath: finalRoot }
+    const store = new BootstrapStore(options.bootstrapPath)
+    const stagingPrefix = `${basename(finalRoot)}.initializing-`
+
+    const staged = await scanOwnedStaging(containerPath, finalRoot, store, location, stagingPrefix, true)
+    if (staged) {
+      options.onProgress?.({ step: 'validate-parent', state: 'complete' })
+      validationSettled = true
+      return staged
+    }
+
+    const entries = await readdir(finalRoot)
+    if (entries.length > 0) {
+      try {
+        const recovered = await recoverFinal(location, finalRoot, store)
+        options.onProgress?.({ step: 'validate-parent', state: 'complete' })
+        validationSettled = true
+        return recovered
+      } catch (error) {
+        if (error instanceof StorageInitializationError) throw error
+        throw new StorageInitializationError('TARGET_EXISTS', `${finalRoot} is not empty and is not a recoverable Manta AI data directory: ${(error as Error).message}`)
+      }
+    }
+
+    await validateStorageParentForCreation(finalRoot, options.minimumFreeBytes, options.validationHooks)
+    options.onProgress?.({ step: 'validate-parent', state: 'complete' })
+    validationSettled = true
+
+    const transactionId = randomUUID()
+    staging = join(containerPath, `${stagingPrefix}${transactionId}`)
+    const now = new Date().toISOString()
+    const volume: StorageVolumeRecord = { id: randomUUID(), name: options.name ?? 'Default', ...location, createdAt: now, updatedAt: now }
+    const bootstrap: AshBootstrap = { schemaVersion: 1, generation: 1, volumes: [volume], groupAssignments: Object.fromEntries(STORAGE_GROUP_IDS.map((id) => [id, volume.id])) as AshBootstrap['groupAssignments'] }
+    let committed = false
+    try {
+      await runProgressStep('create-volume', options.onProgress, async () => {
+        await mkdir(staging)
+        await writeJsonAtomic(join(staging, MARKER), { schemaVersion: 1, transactionId, finalRoot, createdAt: now })
+      })
+      await runProgressStep('create-groups', options.onProgress, async () => {
+        for (const group of STORAGE_GROUP_IDS) await mkdir(join(staging, group))
+        await mkdir(join(staging, '.ash-backups'))
+      })
+      await runProgressStep('write-manifest', options.onProgress, () => writeJsonAtomic(join(staging, 'ash-volume.json'), { schemaVersion: 1, volumeId: volume.id, name: volume.name, state: 'active', groups: [...STORAGE_GROUP_IDS], generation: 1, createdAt: now, updatedAt: now }))
+      const racedResult = await runProgressStep('commit-bootstrap', options.onProgress, async () => {
+        const currentEntries = await readdir(finalRoot)
+        if (currentEntries.length > 0) {
+          const result = await recoverFinal(location, finalRoot, store)
+          await rm(staging, { recursive: true, force: true })
+          return result
+        }
+        await rmdir(finalRoot)
+        selectedDirectoryRemoved = true
+        try {
+          await rename(staging, finalRoot)
+          committed = true
+          selectedDirectoryRemoved = false
+        } catch (error) {
+          if (await exists(finalRoot)) {
+            const result = await recoverFinal(location, finalRoot, store)
+            await rm(staging, { recursive: true, force: true })
+            selectedDirectoryRemoved = false
+            return result
+          }
+          throw error
+        }
+        await commitBootstrap(store, bootstrap)
+        return undefined
+      })
+      const result = racedResult ?? { bootstrap, volume }
+      await runProgressStep('verify-storage', options.onProgress, () => verifyCommittedStorage(finalRoot, store, result.bootstrap))
+      return result
+    } catch (error) {
+      if (!committed && staging) await rm(staging, { recursive: true, force: true }).catch(() => {})
+      if (selectedDirectoryRemoved) await mkdir(finalRoot, { recursive: true }).catch(() => {})
+      throw error
+    }
   } catch (error) {
     if (!validationSettled) options.onProgress?.({ step: 'validate-parent', state: 'failed' })
     throw error

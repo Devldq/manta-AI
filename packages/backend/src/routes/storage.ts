@@ -1,4 +1,4 @@
-import type { AggregateStorageCapacityMetrics, AshBootstrap, StorageVolumeCapacityMetrics } from '@manta/shared'
+import type { AggregateStorageCapacityMetrics, AshBootstrap, StorageVolumeCapacityMetrics, StorageVolumeRecord } from '@manta/shared'
 import { STORAGE_GROUP_IDS, type StorageGroupId } from '@manta/shared'
 import { posix, win32 } from 'node:path'
 import { isWindowsPath, volumeRoot } from '@manta/storage-hub'
@@ -11,9 +11,9 @@ export interface StorageGitApi {
   history(volumeId: string): Promise<string>
 }
 
-function storageGroupPath(parentPath: string, groupId: StorageGroupId): string {
-  const root = volumeRoot(parentPath)
-  return isWindowsPath(parentPath) ? win32.join(root, groupId) : posix.join(root, groupId)
+function storageGroupPath(volume: StorageVolumeRecord, groupId: StorageGroupId): string {
+  const root = volumeRoot(volume)
+  return isWindowsPath(root) ? win32.join(root, groupId) : posix.join(root, groupId)
 }
 
 export interface StorageAgentReadApi {
@@ -50,8 +50,8 @@ export async function storageRoutes(app: FastifyInstance, options: StorageApiCon
       const volume = bootstrap.volumes.find((candidate) => candidate.id === volumeId)
       try {
         const inventory = await options.inventory({ groupId: id })
-        return { id, volumeId, path: volume ? storageGroupPath(volume.parentPath, id) : '', bytes: inventory.bytes, files: inventory.files, health: health.ok ? health.status : 'unhealthy' }
-      } catch { return { id, volumeId, path: volume ? storageGroupPath(volume.parentPath, id) : '', bytes: 0, files: 0, health: 'unhealthy' } }
+        return { id, volumeId, path: volume ? storageGroupPath(volume, id) : '', bytes: inventory.bytes, files: inventory.files, health: health.ok ? health.status : 'unhealthy' }
+      } catch { return { id, volumeId, path: volume ? storageGroupPath(volume, id) : '', bytes: 0, files: 0, health: 'unhealthy' } }
     }))
     const logicalBytes = groups.reduce((sum, item) => sum + item.bytes, 0)
     const volumeInventories = await Promise.all(bootstrap.volumes.map((volume) => options.inventory({ volumeId: volume.id })))

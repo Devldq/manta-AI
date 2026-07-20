@@ -515,6 +515,12 @@ describe('storage settings presentation', () => {
     expect(html).not.toContain('1 file')
   })
 
+  it('shows the exact directory selected by new onboarding records', () => {
+    const html = renderToStaticMarkup(<StorageVolumeCard volume={{ id: 'volume-1', name: 'Exact', parentPath: '/Users/example', rootPath: '/Volumes/My Manta Data', createdAt: '', updatedAt: '' }} disabled={false} onOpen={() => {}} onRelocate={() => {}} />)
+    expect(html).toContain('/Volumes/My Manta Data')
+    expect(html).not.toContain('/Volumes/My Manta Data/manta-ai-data')
+  })
+
   it('avoids repeating global capacity facts when only one volume exists', () => {
     const CompactVolumeCard = StorageVolumeCard as any
     const html = renderToStaticMarkup(<CompactVolumeCard

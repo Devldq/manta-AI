@@ -3,6 +3,12 @@ const assert = require('node:assert/strict')
 const { EventEmitter } = require('node:events')
 const { run, runDev } = require('./run-dev.cjs')
 
+test('desktop development builds the frontend before Electron starts', () => {
+  const { scripts } = require('../package.json')
+  assert.match(scripts.dev, /--filter @manta\/frontend build/)
+  assert.ok(scripts.dev.indexOf('--filter @manta/frontend build') < scripts.dev.indexOf('node scripts/run-dev.cjs'))
+})
+
 function deferred() {
   let resolve
   const promise = new Promise((resolvePromise) => { resolve = resolvePromise })

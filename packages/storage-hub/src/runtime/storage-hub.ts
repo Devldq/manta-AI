@@ -38,18 +38,18 @@ export async function createStorageHub(options: {
     resolveVolumeRoot: (volumeId: string) => {
       const volume = value.volumes.find((item) => item.id === volumeId)
       if (!volume) throw new Error('Volume not found')
-      return volumeRoot(volume.parentPath)
+      return volumeRoot(volume)
     },
     inventory: async (scope?: { volumeId?: string; groupId?: StorageGroupId }) => {
       if (scope?.groupId) return inventoryTree(router.resolve(scope.groupId))
       const volume = scope?.volumeId ? value.volumes.find((item) => item.id === scope.volumeId) : value.volumes[0]
       if (!volume) throw new Error('Volume not found')
-      return inventoryTree(volumeRoot(volume.parentPath))
+      return inventoryTree(volumeRoot(volume))
     },
     capacityMetrics: async () => {
       if (typeof options.capacityPending !== 'function') throw new Error('Capacity metrics require mandatory pending-operation composition')
       const volumes = await Promise.all(value.volumes.map((volume) => {
-        const root = volumeRoot(volume.parentPath)
+        const root = volumeRoot(volume)
         return measureVolumeCapacity(root, { volumeId: volume.id, pending: () => options.capacityPending!(volume.id, root), allocation: options.capacityAllocation })
       }))
       return { volumes, aggregate: aggregateStorageCapacityMetrics(volumes) }

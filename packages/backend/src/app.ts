@@ -3,7 +3,7 @@ import cors from '@fastify/cors'
 import multipart from '@fastify/multipart'
 import type { StorageHealthResult, StorageResolver } from './storage/runtime'
 import { existsSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runWithDiagnosticsOwner, type RuntimeDiagnosticsWriter } from './storage/runtime-diagnostics'
 import { runWithStorageResolver } from './storage/path-routing'
@@ -41,14 +41,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(ragStagingRoutes, new RagStagingStore())
   if (!isDev) {
     const frontendDist = options.frontendDist ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../frontend/dist')
-    if (existsSync(frontendDist)) {
-      const { default: fastifyStatic } = await import('@fastify/static')
-      await app.register(fastifyStatic, { root: frontendDist, prefix: '/', wildcard: false })
-      app.setNotFoundHandler((request, reply) => {
-        if (!request.url.startsWith('/api/')) return reply.sendFile('index.html')
-        return reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } })
-      })
-    }
+    const frontendEntry = join(frontendDist, 'index.html')
+    if (!existsSync(frontendEntry)) throw Object.assign(new Error(`Frontend assets are missing: ${frontendEntry}`), { code: 'FRONTEND_ASSETS_MISSING' })
+    const { default: fastifyStatic } = await import('@fastify/static')
+    await app.register(fastifyStatic, { root: frontendDist, prefix: '/', wildcard: false })
+    app.setNotFoundHandler((request, reply) => {
+      if (!request.url.startsWith('/api/')) return reply.sendFile('index.html')
+      return reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } })
+    })
   }
   if (options.registerRoutes !== false) {
     const routeModules = await Promise.all([

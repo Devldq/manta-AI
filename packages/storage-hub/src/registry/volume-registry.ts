@@ -15,7 +15,7 @@ export class VolumeRegistry {
 
   constructor(bootstrap: AshBootstrap) {
     this.bootstrap = validateBootstrap(bootstrap)
-    const roots = this.bootstrap.volumes.map((volume) => comparableVolumeRoot(volume.parentPath))
+    const roots = this.bootstrap.volumes.map((volume) => comparableVolumeRoot(volume))
     for (let left = 0; left < roots.length; left += 1) {
       for (let right = left + 1; right < roots.length; right += 1) {
         if (roots[left].flavor === roots[right].flavor

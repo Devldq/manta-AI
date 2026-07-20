@@ -97,7 +97,7 @@ choose.addEventListener('click', async () => {
   rows = createProgressRows()
   renderRows()
   progressPanel.hidden = true
-  showStatus('已选择数据保存位置，确认后将创建 manta-ai-data。')
+  showStatus('已选择数据文件夹。空文件夹将用于新建数据，已有的 Manta AI 数据文件夹将直接连接。')
   setControls()
 })
 

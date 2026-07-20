@@ -15,8 +15,9 @@ export class StoragePathRouter {
   resolve(group: StorageGroupId, ...segments: string[]): string {
     segments.forEach(validateSegment)
     const volume = this.registry.volumeFor(group)
-    const paths = isWindowsPath(volume.parentPath) ? win32 : posix
-    const root = paths.join(volumeRoot(volume.parentPath), group)
+    const volumePath = volumeRoot(volume)
+    const paths = isWindowsPath(volumePath) ? win32 : posix
+    const root = paths.join(volumePath, group)
     const resolved = paths.resolve(root, ...segments)
     const relative = paths.relative(root, resolved)
     if (relative === '..' || relative.startsWith(`..${paths.sep}`) || paths.isAbsolute(relative)) throw new StorageInvariantError('Storage path escapes its group root')

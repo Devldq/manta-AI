@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { BootstrapStore, STORAGE_GROUP_IDS, volumeRoot } from '@manta/storage-hub'
 import { createBackendStorageComposition, startServer } from '@manta/backend'
 import { DesktopLifecycleController } from '../src/lifecycle/DesktopLifecycleController'
-import { initializeStorage } from '../src/lifecycle/initializeStorage'
+import { initializeStorageDirectory } from '../src/lifecycle/initializeStorage'
 import type { OnboardingProgressEvent } from '../src/onboarding/progress-contract'
 import { upgradeBootstrapVolumeDirectories } from '../src/lifecycle/LegacyVolumeUpgrade'
 
@@ -42,16 +42,18 @@ describe('desktop ASH onboarding E2E', () => {
     expect(composition).toBeUndefined()
     expect(windows).toEqual([{ kind: 'onboarding' }])
 
-    const initialized = await initializeStorage({ parentPath: join(directory, 'cloud-parent'), bootstrapPath, onProgress: (event) => progress.push(event) })
-    expect(initialized.volume.parentPath).toBe(join(directory, 'cloud-parent'))
-    for (const group of STORAGE_GROUP_IDS) await expect(access(join(volumeRoot(initialized.volume.parentPath), group))).resolves.toBeUndefined()
-    await expect(new BootstrapStore(bootstrapPath).read()).resolves.toMatchObject({ volumes: [{ id: initialized.volume.id, parentPath: initialized.volume.parentPath }] })
+    const selectedDirectory = join(directory, 'my-manta-data')
+    await mkdir(selectedDirectory)
+    const initialized = await initializeStorageDirectory({ directoryPath: selectedDirectory, bootstrapPath, onProgress: (event) => progress.push(event) })
+    expect(initialized.volume.rootPath).toBe(selectedDirectory)
+    for (const group of STORAGE_GROUP_IDS) await expect(access(join(volumeRoot(initialized.volume), group))).resolves.toBeUndefined()
+    await expect(new BootstrapStore(bootstrapPath).read()).resolves.toMatchObject({ volumes: [{ id: initialized.volume.id, rootPath: selectedDirectory }] })
 
     await expect(controller.continueAfterOnboarding((event) => progress.push(event))).resolves.toEqual({ ok: true })
     expect(listenerStarted).toBe(true)
     const main = windows.find((entry) => entry.kind === 'main')
     expect(main?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
-    await expect(fetch(`${main!.url}/api/health`).then((response) => response.json())).resolves.toMatchObject({ success: true, data: { status: 'ok', dataDir: join(volumeRoot(initialized.volume.parentPath), 'config') } })
+    await expect(fetch(`${main!.url}/api/health`).then((response) => response.json())).resolves.toMatchObject({ success: true, data: { status: 'ok', dataDir: join(volumeRoot(initialized.volume), 'config') } })
     await expect(fetch(`${main!.url}/`).then((response) => response.text())).resolves.toContain('ASH desktop fixture')
 
     expect(progress).toEqual([

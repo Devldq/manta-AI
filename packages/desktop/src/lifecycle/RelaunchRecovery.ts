@@ -11,8 +11,8 @@ async function canonical(path:string):Promise<string>{try{return await realpath(
 async function intersectsActive(candidate:string,activeRoots:string[]):Promise<boolean>{const actual=await canonical(candidate);for(const root of activeRoots){const canonicalRoot=await canonical(root);if(contains(canonicalRoot,actual)||contains(actual,canonicalRoot))return true}return false}
 
 export function buildBackupRefs(id:string,kind:'volume'|'group',before:AshBootstrap,after:AshBootstrap,value:string):BackupRef[]{
-  if(kind==='volume'){const old=before.volumes.find((item)=>item.id===value);const current=after.volumes.find((item)=>item.id===value);if(!old||!current)throw new Error('Relocated volume is missing');return[{kind:'volume',operationId:id,volumeId:value,sourcePath:volumeRoot(old.parentPath),targetPath:volumeRoot(current.parentPath),backupPath:volumeRoot(old.parentPath)}]}
-  const group=value as StorageGroupId;const old=before.volumes.find((item)=>item.id===before.groupAssignments[group]);const current=after.volumes.find((item)=>item.id===after.groupAssignments[group]);if(!old||!current)throw new Error('Moved group volume is missing');const sourcePath=join(volumeRoot(old.parentPath),group);return[{kind:'group',operationId:id,groupId:group,sourcePath,targetPath:join(volumeRoot(current.parentPath),group),backupPath:join(volumeRoot(old.parentPath),'.ash-backups',id,group)}]
+  if(kind==='volume'){const old=before.volumes.find((item)=>item.id===value);const current=after.volumes.find((item)=>item.id===value);if(!old||!current)throw new Error('Relocated volume is missing');return[{kind:'volume',operationId:id,volumeId:value,sourcePath:volumeRoot(old),targetPath:volumeRoot(current),backupPath:volumeRoot(old)}]}
+  const group=value as StorageGroupId;const old=before.volumes.find((item)=>item.id===before.groupAssignments[group]);const current=after.volumes.find((item)=>item.id===after.groupAssignments[group]);if(!old||!current)throw new Error('Moved group volume is missing');const sourcePath=join(volumeRoot(old),group);return[{kind:'group',operationId:id,groupId:group,sourcePath,targetPath:join(volumeRoot(current),group),backupPath:join(volumeRoot(old),'.ash-backups',id,group)}]
 }
 
 /** Re-derive persisted paths from trusted Bootstrap snapshots; never grant I/O authority to catalog JSON. */
@@ -23,7 +23,7 @@ export async function trustedBackupRefs(operation:StorageOperationRecord,active:
     if(active.generation===context.previous.generation&&stored.kind==='volume'&&samePath(stored.backupPath,expected.targetPath))return[{...expected,backupPath:expected.targetPath}]
     return[]
   })
-  const activeRoots=active.volumes.map((volume)=>volumeRoot(volume.parentPath))
+  const activeRoots=active.volumes.map((volume)=>volumeRoot(volume))
   return (await Promise.all(refs.map(async(ref)=>{
     // A group migration intentionally leaves its recovery backup under the
     // old volume.  The volume can remain active for the other groups, so the
@@ -31,11 +31,11 @@ export async function trustedBackupRefs(operation:StorageOperationRecord,active:
     // impossible to list or remove this exact, operation-scoped backup.
     if(ref.kind==='group') {
       const old=context.previous.volumes.find((volume)=>volume.id===context.previous.groupAssignments[ref.groupId])
-      const expectedRoot=old&&join(volumeRoot(old.parentPath),'.ash-backups',operation.id,ref.groupId)
+      const expectedRoot=old&&join(volumeRoot(old),'.ash-backups',operation.id,ref.groupId)
       if(!expectedRoot||!samePath(ref.backupPath,expectedRoot)) return undefined
       // If an attacker turns the scoped backup into an alias of a live group,
       // canonical containment catches it before it reaches destructive I/O.
-      const activeGroupRoots=Object.entries(active.groupAssignments).map(([group,id])=>{const volume=active.volumes.find((item)=>item.id===id);return volume?join(volumeRoot(volume.parentPath),group):undefined}).filter((value):value is string=>Boolean(value))
+      const activeGroupRoots=Object.entries(active.groupAssignments).map(([group,id])=>{const volume=active.volumes.find((item)=>item.id===id);return volume?join(volumeRoot(volume),group):undefined}).filter((value):value is string=>Boolean(value))
       return (await intersectsActive(ref.backupPath,activeGroupRoots))?undefined:ref
     }
     return (await intersectsActive(ref.backupPath,activeRoots))?undefined:ref
@@ -63,9 +63,9 @@ export async function validateRelaunchIntent(intent:RelaunchIntent,active:AshBoo
 export async function assertDeletableBackup(ref:BackupRef,operation:StorageOperationRecord,active:AshBootstrap):Promise<void>{
   const safe=await trustedBackupRefs(operation,active)
   if(!safe.some((value)=>identical(value,ref))) throw new Error('Refusing to delete an untrusted or active backup')
-  if(ref.kind==='volume' && await intersectsActive(ref.backupPath,active.volumes.map((volume)=>volumeRoot(volume.parentPath)))) throw new Error('Refusing to delete an active storage root')
+  if(ref.kind==='volume' && await intersectsActive(ref.backupPath,active.volumes.map((volume)=>volumeRoot(volume)))) throw new Error('Refusing to delete an active storage root')
   if(ref.kind==='group') {
-    const liveGroups=Object.entries(active.groupAssignments).map(([group,id])=>{const volume=active.volumes.find((item)=>item.id===id);return volume&&join(volumeRoot(volume.parentPath),group)}).filter((value):value is string=>Boolean(value))
+    const liveGroups=Object.entries(active.groupAssignments).map(([group,id])=>{const volume=active.volumes.find((item)=>item.id===id);return volume&&join(volumeRoot(volume),group)}).filter((value):value is string=>Boolean(value))
     if(await intersectsActive(ref.backupPath,liveGroups)) throw new Error('Refusing to delete an active storage group')
   }
 }
@@ -83,6 +83,6 @@ export async function restoreRelaunchIntent(intent:RelaunchIntent,bootstrapPath:
       await writeJsonAtomic(join(expected.targetPath,'ash-volume.json'),{schemaVersion:1,volumeId:ref.volumeId,name:intent.current.volumes.find((item)=>item.id===ref.volumeId)?.name??ref.volumeId,state:'backup',groups:Object.entries(intent.current.groupAssignments).filter(([,id])=>id===ref.volumeId).map(([id])=>id),generation:intent.current.generation,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});rollbackRefs.push({...expected,backupPath:expected.targetPath})
     }
   }
-  const now=new Date().toISOString();for(const volume of intent.previous.volumes){const groups=Object.entries(intent.previous.groupAssignments).filter(([,id])=>id===volume.id).map(([id])=>id);await writeJsonAtomic(join(volumeRoot(volume.parentPath),'ash-volume.json'),{schemaVersion:1,volumeId:volume.id,name:volume.name,state:groups.length?'active':'archived',groups,generation:intent.previous.generation,createdAt:volume.createdAt,updatedAt:now})}
+  const now=new Date().toISOString();for(const volume of intent.previous.volumes){const groups=Object.entries(intent.previous.groupAssignments).filter(([,id])=>id===volume.id).map(([id])=>id);await writeJsonAtomic(join(volumeRoot(volume),'ash-volume.json'),{schemaVersion:1,volumeId:volume.id,name:volume.name,state:groups.length?'active':'archived',groups,generation:intent.previous.generation,createdAt:volume.createdAt,updatedAt:now})}
   await new BootstrapStore(bootstrapPath).write(intent.previous);await controls.markRolledBack(intent.operationId,rollbackRefs);await controls.writeIntent({...intent,backupRefs:rollbackRefs,phase:'old-location-retry',attempt:1})
 }

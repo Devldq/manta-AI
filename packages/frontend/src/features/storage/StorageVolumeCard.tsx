@@ -56,7 +56,9 @@ interface StorageVolumeCardProps {
   onApplyImport?: (plan: StorageGitImportPlan, decisions: ImportDecisions) => Promise<void>
 }
 
-function displayVolumeRoot(parentPath: string): string {
+function displayVolumeRoot(volume: StorageVolumeRecord): string {
+  if (volume.rootPath) return volume.rootPath
+  const { parentPath } = volume
   const windows = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(parentPath)
   const separator = windows ? '\\' : '/'
   const parent = windows ? parentPath.replace(/[\\/]+$/, '') : parentPath.replace(/\/+$/, '')
@@ -97,7 +99,7 @@ export function StorageVolumeCard({
   const restoreImportFocusRef = useRef(false)
   const remoteHelpId = `storage-git-remote-help-${useId()}`
   const remoteErrorId = `storage-git-remote-error-${useId()}`
-  const volumeRoot = displayVolumeRoot(volume.parentPath)
+  const volumeRoot = displayVolumeRoot(volume)
   const gitState = git?.binding
     ? git.binding.mode
     : git?.available
