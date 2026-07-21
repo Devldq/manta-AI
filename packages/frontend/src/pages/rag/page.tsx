@@ -1,7 +1,7 @@
 /* 知识库管理页 — /rag */
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Library, Plus, Search, MoreHorizontal, Trash2, FileText, Layers, Edit2 } from 'lucide-react'
+import { Library, Plus, Search, MoreHorizontal, Trash2, FileText, Layers, Edit2, Loader2 } from 'lucide-react'
 import { useRAGStore, type KnowledgeBaseSummary } from '@/stores/rag-store'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
@@ -25,28 +25,83 @@ function CreateKBModal({
 }: {
   open: boolean
   onClose: () => void
-  onCreate: (name: string, desc: string) => void
+  onCreate: (input: {
+    name: string
+    description: string
+    config: {
+      embeddingConfig: { provider: 'openai' | 'local'; model: string }
+      qaModelProfileId?: string
+      multimodalModelProfileId?: string
+      accessControl: { requiresAuthorization: boolean }
+    }
+  }) => Promise<boolean>
 }) {
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
+  const [embeddingProvider, setEmbeddingProvider] = useState<'openai' | 'local'>('local')
+  const [embeddingModel, setEmbeddingModel] = useState('')
+  const [qaModelProfileId, setQaModelProfileId] = useState('')
+  const [multimodalModelProfileId, setMultimodalModelProfileId] = useState('')
+  const [requiresAuthorization, setRequiresAuthorization] = useState(false)
+  const [modelConfig, setModelConfig] = useState<{
+    availableProviders: Array<{ id: 'openai' | 'local'; name: string; models: Array<{ id: string; name: string; dimensions?: number }> }>
+    llmProfiles: Array<{ id: string; name: string; model: string; provider?: string; isDefault?: boolean }>
+  } | null>(null)
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (open) {
       setName('')
       setDesc('')
+      setRequiresAuthorization(false)
+      setFormError('')
+      setLoadingModels(true)
+      fetch('/api/rag/config')
+        .then((response) => response.json())
+        .then((json) => {
+          if (!json.success) throw new Error(json.error?.message || '模型配置加载失败')
+          const data = json.data
+          setModelConfig(data)
+          setEmbeddingProvider(data.globalProvider)
+          setEmbeddingModel(data.globalModel)
+          const defaultProfile = data.llmProfiles?.find((profile: { isDefault?: boolean }) => profile.isDefault) || data.llmProfiles?.[0]
+          setQaModelProfileId(defaultProfile?.id || '')
+          setMultimodalModelProfileId('')
+        })
+        .catch((error) => setFormError(error instanceof Error ? error.message : String(error)))
+        .finally(() => setLoadingModels(false))
       setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [open])
 
   if (!open) return null
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!name.trim()) return
-    onCreate(name.trim(), desc.trim())
-    onClose()
+    if (!name.trim() || !embeddingModel || submitting) return
+    setSubmitting(true)
+    setFormError('')
+    const created = await onCreate({
+      name: name.trim(),
+      description: desc.trim(),
+      config: {
+        embeddingConfig: { provider: embeddingProvider, model: embeddingModel },
+        ...(qaModelProfileId ? { qaModelProfileId } : {}),
+        ...(multimodalModelProfileId ? { multimodalModelProfileId } : {}),
+        accessControl: { requiresAuthorization },
+      },
+    })
+    setSubmitting(false)
+    if (created) onClose()
+    else setFormError('创建失败，请检查 Qdrant 和模型服务是否可用')
   }
+
+  const embeddingModels = modelConfig?.availableProviders.flatMap((provider) =>
+    provider.models.map((model) => ({ ...model, providerId: provider.id, providerName: provider.name })),
+  ) || []
 
   return (
     <div
@@ -55,7 +110,7 @@ function CreateKBModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md mx-4 rounded-xl p-6"
+        className="w-full max-w-xl max-h-[85vh] overflow-y-auto mx-4 rounded-xl p-6"
         style={{
           background: 'var(--color-background)',
           border: '1px solid var(--color-border)',
@@ -110,6 +165,70 @@ function CreateKBModal({
             }}
           />
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <div>
+              <label htmlFor="kb-embedding-model" className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                Embedding 模型 *
+              </label>
+              <select
+                id="kb-embedding-model"
+                value={`${embeddingProvider}:${embeddingModel}`}
+                onChange={(event) => {
+                  const selected = embeddingModels.find((model) => `${model.providerId}:${model.id}` === event.target.value)
+                  if (selected) {
+                    setEmbeddingProvider(selected.providerId)
+                    setEmbeddingModel(selected.id)
+                  }
+                }}
+                disabled={loadingModels}
+                className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)' }}
+              >
+                {embeddingModels.map((model) => (
+                  <option key={`${model.providerId}:${model.id}`} value={`${model.providerId}:${model.id}`}>
+                    {model.name} · {model.dimensions || '?'}维
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="kb-qa-model" className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                问答模型
+              </label>
+              <select id="kb-qa-model" value={qaModelProfileId} onChange={(event) => setQaModelProfileId(event.target.value)} disabled={loadingModels} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)' }}>
+                <option value="">跟随系统默认</option>
+                {modelConfig?.llmProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="kb-multimodal-model" className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                多模态模型
+              </label>
+              <select id="kb-multimodal-model" value={multimodalModelProfileId} onChange={(event) => setMultimodalModelProfileId(event.target.value)} disabled={loadingModels} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)' }}>
+                <option value="">暂不启用</option>
+                {modelConfig?.llmProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="kb-access-policy" className="block text-xs font-medium mb-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                访问授权
+              </label>
+              <select id="kb-access-policy" value={requiresAuthorization ? 'required' : 'open'} onChange={(event) => setRequiresAuthorization(event.target.value === 'required')} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)' }}>
+                <option value="open">无需额外授权</option>
+                <option value="required">访问前需要授权</option>
+              </select>
+            </div>
+          </div>
+
+          <p className="text-[11px] mb-4" style={{ color: 'var(--color-text-muted)' }}>
+            向量数据固定存储在本机 Qdrant；Embedding 模型创建后决定 collection 维度。
+          </p>
+
+          {formError && <div role="alert" className="mb-4 px-3 py-2 rounded-lg text-xs" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.1)' }}>{formError}</div>}
+
           <div className="flex justify-end gap-2">
             <button
               type="button"
@@ -125,15 +244,16 @@ function CreateKBModal({
             </button>
             <button
               type="submit"
-              disabled={!name.trim()}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-opacity"
+              disabled={!name.trim() || !embeddingModel || submitting || loadingModels}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-opacity"
               style={{
                 background: 'var(--color-accent)',
                 color: 'var(--color-text-inverse)',
-                opacity: name.trim() ? 1 : 0.5,
+                opacity: name.trim() && embeddingModel && !submitting && !loadingModels ? 1 : 0.5,
               }}
             >
-              创建
+              {submitting && <Loader2 size={13} className="animate-spin" />}
+              {submitting ? '创建中...' : '创建'}
             </button>
           </div>
         </form>
@@ -402,7 +522,7 @@ function KBCard({
               className="text-[10px]"
               style={{ color: 'var(--color-text-muted)' }}
             >
-              {kb.providerId || 'sqlite-vec'}
+              {kb.providerId || 'qdrant'}
             </span>
           </div>
         </div>
@@ -576,16 +696,17 @@ export default function RagPage() {
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     )
 
-  async function handleCreate(name: string, desc: string) {
-    const ok = await createKnowledgeBase({ name, description: desc })
+  async function handleCreate(input: Parameters<typeof createKnowledgeBase>[0]) {
+    const ok = await createKnowledgeBase(input)
     if (ok) {
       // 创建成功后跳转到详情页
       const state = useRAGStore.getState()
-      const created = state.knowledgeBases.find((kb) => kb.name === name)
+      const created = state.knowledgeBases.find((kb) => kb.name === input.name)
       if (created) {
         navigate(`/rag/${created.id}`)
       }
     }
+    return ok
   }
 
   async function handleEdit(id: string, name: string, desc: string) {

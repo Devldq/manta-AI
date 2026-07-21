@@ -102,6 +102,12 @@ async function restoreNodeAbi(snapshot) {
   await rm(snapshot.directory, { recursive: true, force: true })
 }
 
+async function rebuildForNode(runtime) {
+  const env = { ...process.env }
+  for (const name of ['npm_config_runtime', 'npm_config_target', 'npm_config_disturl']) delete env[name]
+  await run(command, ['--filter', '@manta/rag', 'rebuild', 'better-sqlite3'], { env }, runtime)
+}
+
 async function rebuildForElectron(runtime) {
   const electronVersion = require('electron/package.json').version
   await run(command, ['--filter', '@manta/rag', 'rebuild', 'better-sqlite3'], {
@@ -114,6 +120,13 @@ async function rebuildForElectron(runtime) {
   }, runtime)
 }
 
+async function signElectronNativeBinary(runtime = {}) {
+  if ((runtime.platform ?? process.platform) !== 'darwin') return
+  // dyld can reject a freshly rebuilt addon with CODESIGNING/Invalid Page even
+  // when codesign --verify succeeds, so replace the linker signature explicitly.
+  await run('codesign', ['--force', '--sign', '-', nativeBinary], {}, runtime)
+}
+
 async function launchElectron(runtime) {
   await run(require('electron'), ['dist/main.js'], {}, runtime)
 }
@@ -124,7 +137,7 @@ function interruptedError(signal) {
   return error
 }
 
-async function runDev(deps = { snapshotNodeAbi, rebuildForElectron, launchElectron, restoreNodeAbi }, runtime = {}) {
+async function runDev(deps = { rebuildForNode, snapshotNodeAbi, rebuildForElectron, signElectronNativeBinary, launchElectron, restoreNodeAbi }, runtime = {}) {
   const signalGuard = createSignalGuard(runtime.signalSource)
   const childRuntime = { ...runtime, signalGuard }
   let snapshot
@@ -133,10 +146,14 @@ async function runDev(deps = { snapshotNodeAbi, rebuildForElectron, launchElectr
   let restoreError
 
   try {
+    await deps.rebuildForNode?.(childRuntime)
+    if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
     snapshot = await deps.snapshotNodeAbi()
     hasSnapshot = true
     if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
     await deps.rebuildForElectron(childRuntime)
+    if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
+    await deps.signElectronNativeBinary?.(childRuntime)
     if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
     await deps.launchElectron(childRuntime)
     if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
@@ -160,6 +177,6 @@ async function runDev(deps = { snapshotNodeAbi, rebuildForElectron, launchElectr
   if (restoreError !== undefined) throw restoreError
 }
 
-module.exports = { run, runDev }
+module.exports = { rebuildForNode, run, runDev, signElectronNativeBinary }
 
 if (require.main === module) runDev().catch((error) => { console.error(error); process.exitCode = 1 })

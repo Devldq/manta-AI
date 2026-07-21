@@ -45,8 +45,7 @@ export interface RAGProvider {
   deleteKnowledgeBase(id: string): Promise<void>
   addDocument(knowledgeBaseId: string, document: DocumentMetadata, chunks: DocumentChunk[]): Promise<void>
   removeDocument(knowledgeBaseId: string, documentId: string): Promise<void>
-  /** 关键词检索 */
-  search(knowledgeBaseId: string, query: string, options?: SearchOptions): Promise<RetrievalResult[]>
+  vectorSearch(knowledgeBaseId: string, queryEmbedding: number[], options?: SearchOptions): Promise<RetrievalResult[]>
   getStats(knowledgeBaseId: string): Promise<KnowledgeBaseStats>
   checkpoint(): Promise<void>
   integrityCheck(): Promise<{ ok: boolean; error?: string }>

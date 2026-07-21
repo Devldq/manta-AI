@@ -121,8 +121,8 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
 function defaultStartupHooks(bundledSeedRoot?: string): ServerStartupHooks {
   return {
     async cleanupStaleRag() {
-      const { getSQLiteVecProvider } = await import('@manta/rag')
-      const provider = getSQLiteVecProvider()
+      const { getQdrantProvider } = await import('@manta/rag')
+      const provider = getQdrantProvider()
       await provider.initialize()
       await provider.cleanupStaleDocuments()
     },

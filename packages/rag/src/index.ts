@@ -1,7 +1,7 @@
 /**
  * @manta/rag — 核心 RAG 引擎
  *
- * 数据库读写（SQLite 向量库）、文档解析、文档切分、检索
+ * 数据库读写（Qdrant 向量库）、文档解析、文档切分、检索
  * Embedding 模型配置、API 路由等由调用方负责
  */
 
@@ -28,7 +28,18 @@ export {
   ChunkingStrategyFactory,
 } from './chunking-strategy'
 
-// ─── 向量存储（数据库读写 + 检索）─────────────────────
+// ─── 向量存储（Qdrant 数据库读写 + 检索）──────────────
+export {
+  QdrantProvider,
+  createQdrantProvider,
+  configureQdrantProvider,
+  getQdrantProvider,
+  resetQdrantProvider,
+} from './qdrant-provider'
+export type { QdrantProviderOptions } from './qdrant-provider'
+
+// Legacy symbols remain exported only so historical test sources still compile.
+// Production composition and every backend route use QdrantProvider exclusively.
 export {
   SQLiteVecProvider,
   createSQLiteVecProvider,

@@ -1,6 +1,6 @@
 import type { StorageGroupId } from '@manta/shared'
 import { STORAGE_GROUP_IDS } from '@manta/shared'
-import { EmbeddingCacheManager, configureSQLiteVecProvider, resetSQLiteVecProvider } from '@manta/rag'
+import { EmbeddingCacheManager, configureQdrantProvider, resetQdrantProvider } from '@manta/rag'
 import { BootstrapStore, createStorageHub, GitBindingStore, GitRunner, GitSyncService, ImportCoordinator, volumeRoot, type StorageGroupDriver } from '@manta/storage-hub'
 import { createClaudeInstallResource, createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner, type PluginMarketplaceCache } from '../core/storage/plugin/marketplace'
 import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } from './group-drivers'
@@ -39,7 +39,7 @@ export interface BackendRuntimeOptions {
 export function createBackendStorageRuntime(storage: StorageResolver, options: BackendRuntimeOptions = {}): BackendStorageRuntime {
   recoverExtensionTransactions(storage.resolve('extensions'))
   const legacyRecoveryWarnings = migrateLegacyAtomicJournals(join(storage.resolve('secrets'), '.transactions'), STORAGE_GROUP_IDS.map((id) => storage.resolve(id)), storage.resolve('diagnostics', 'legacy-recovery'))
-  const provider = configureSQLiteVecProvider(storage.resolve('knowledge', 'rag'))
+  const provider = configureQdrantProvider()
   const cache = new EmbeddingCacheManager(storage.resolve('knowledge', 'rag', 'cache'))
   const diagnosticsWriter = new RuntimeDiagnosticsWriter(storage.resolve('diagnostics'))
   const marketplaceScheduler = createClaudeMarketplaceRuntimeOwner(
@@ -109,7 +109,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
         ...[...lifecycles.values()].map((lifecycle) => lifecycle.dispose()),
       ])
       let resetError: unknown
-      try { await resetSQLiteVecProvider() } catch (error) { resetError = error }
+      try { await resetQdrantProvider() } catch (error) { resetError = error }
       const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map((result) => result.reason)
       if (resetError) errors.push(resetError)
       if (errors.length === 1) throw errors[0]

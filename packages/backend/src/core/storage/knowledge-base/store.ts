@@ -44,6 +44,14 @@ export interface KnowledgeBaseConfig {
   }
   /** 分块配置（用于文档处理时生效） */
   chunkingConfig?: ChunkingConfig
+  /** 知识问答默认使用的模型配置 */
+  qaModelProfileId?: string
+  /** 文档理解/OCR 默认使用的多模态模型配置 */
+  multimodalModelProfileId?: string
+  /** 知识库的访问授权策略 */
+  accessControl?: {
+    requiresAuthorization: boolean
+  }
 }
 
 export interface KnowledgeBase {
@@ -186,7 +194,7 @@ export function createKnowledgeBase(input: CreateKnowledgeBaseInput): KnowledgeB
     id,
     name: input.name,
     description: input.description || '',
-    providerId: input.providerId || 'sqlite-vec',
+    providerId: input.providerId || 'qdrant',
     config,
     directory: [],
     documentCount: 0,

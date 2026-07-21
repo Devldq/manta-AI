@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { EventEmitter } = require('node:events')
-const { run, runDev } = require('./run-dev.cjs')
+const { rebuildForNode, run, runDev, signElectronNativeBinary } = require('./run-dev.cjs')
 
 test('desktop development builds the frontend before Electron starts', () => {
   const { scripts } = require('../package.json')
@@ -24,12 +24,66 @@ function createChild(onKill = () => {}) {
 test('restores the Node ABI after Electron exits', async () => {
   const calls = []
   await runDev({
+    rebuildForNode: async () => { calls.push('node-rebuild') },
     snapshotNodeAbi: async () => { calls.push('snapshot'); return 'backup' },
     rebuildForElectron: async () => { calls.push('rebuild') },
+    signElectronNativeBinary: async () => { calls.push('sign') },
     launchElectron: async () => { calls.push('launch') },
     restoreNodeAbi: async (backup) => { calls.push(`restore:${backup}`) },
   })
-  assert.deepEqual(calls, ['snapshot', 'rebuild', 'launch', 'restore:backup'])
+  assert.deepEqual(calls, ['node-rebuild', 'snapshot', 'rebuild', 'sign', 'launch', 'restore:backup'])
+})
+
+test('rebuilds the Node ABI without Electron npm configuration', async () => {
+  const signalSource = new EventEmitter()
+  let child
+  let invocation
+  const rebuilding = rebuildForNode({
+    signalSource,
+    spawn: (file, args, options) => {
+      invocation = { file, args, options }
+      child = createChild()
+      return child
+    },
+  })
+
+  child.emit('close', 0, null)
+  await rebuilding
+  assert.match(invocation.file, /pnpm(?:\.cmd)?$/)
+  assert.deepEqual(invocation.args, ['--filter', '@manta/rag', 'rebuild', 'better-sqlite3'])
+  assert.equal(invocation.options.env.npm_config_runtime, undefined)
+  assert.equal(invocation.options.env.npm_config_target, undefined)
+  assert.equal(invocation.options.env.npm_config_disturl, undefined)
+})
+
+test('ad-hoc signs the rebuilt native binary on macOS', async () => {
+  const signalSource = new EventEmitter()
+  let child
+  let invocation
+  const signing = signElectronNativeBinary({
+    platform: 'darwin',
+    signalSource,
+    spawn: (file, args) => {
+      invocation = { file, args }
+      child = createChild()
+      return child
+    },
+  })
+
+  child.emit('close', 0, null)
+  await signing
+  assert.equal(invocation.file, 'codesign')
+  assert.deepEqual(invocation.args.slice(0, 3), ['--force', '--sign', '-'])
+  assert.match(invocation.args[3], /better_sqlite3\.node$/)
+})
+
+test('does not codesign native binaries outside macOS', async () => {
+  let spawned = false
+  await signElectronNativeBinary({
+    platform: 'linux',
+    spawn: () => { spawned = true },
+  })
+  assert.equal(spawned, false)
 })
 
 test('restores the Node ABI when Electron rebuild fails', async () => {

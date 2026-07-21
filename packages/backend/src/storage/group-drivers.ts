@@ -1,7 +1,7 @@
 import { inventoryTree, type StorageGroupDriver } from '@manta/storage-hub'
 import type { StorageGroupId } from '@manta/shared'
-import type { EmbeddingCacheManager, SQLiteVecProvider } from '@manta/rag'
-import { EmbeddingCacheManager as Cache, SQLiteVecProvider as Provider } from '@manta/rag'
+import type { EmbeddingCacheManager, QdrantProvider } from '@manta/rag'
+import { EmbeddingCacheManager as Cache, QdrantProvider as Provider } from '@manta/rag'
 import { join } from 'node:path'
 
 async function allSettledOrThrow(label: string, operations: Array<() => void | Promise<void>>): Promise<void> {
@@ -84,15 +84,15 @@ export function createGroupDriver(id: StorageGroupId, resources: ManagedResource
 }
 
 export interface KnowledgeCandidateFactory {
-  provider(root: string): SQLiteVecProvider
+  provider(root: string): QdrantProvider
   cache(root: string): EmbeddingCacheManager
 }
 
 export function createKnowledgeDriver(
-  provider: SQLiteVecProvider,
+  provider: QdrantProvider,
   cache: EmbeddingCacheManager,
   candidates: KnowledgeCandidateFactory = {
-    provider: (root) => new Provider(root),
+    provider: (_root) => new Provider(),
     cache: (root) => new Cache(root),
   },
   resources: ManagedResource[] = [],

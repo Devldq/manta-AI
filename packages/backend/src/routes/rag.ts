@@ -17,7 +17,7 @@ import {
 import type { CreateKnowledgeBaseInput, UpdateKnowledgeBaseInput, KnowledgeBaseConfig, ChunkingConfig } from '../core/storage/knowledge-base/store.js'
 import { apiSuccess, apiError, Errors } from '../core/api/error-handler.js'
 import {
-  getSQLiteVecProvider,
+  getQdrantProvider,
   createDocumentPipeline,
   inferMimeType,
   extractChatContext,
@@ -155,20 +155,52 @@ export async function ragRoutes(app: FastifyInstance) {
         throw Errors.VALIDATION_ERROR('name', '知识库名称不能为空')
       }
 
+      const available = await getAvailableEmbeddingModels()
+      const requestedEmbedding = body.config?.embeddingConfig as KnowledgeBaseConfig['embeddingConfig'] | undefined
+      const globalEmbedding = getEmbeddingConfig()
+      const effective = requestedEmbedding?.provider && requestedEmbedding?.model
+        ? { provider: requestedEmbedding.provider, model: requestedEmbedding.model }
+        : resolveEffectiveEmbeddingSelection(globalEmbedding, available)
+      const selectedEmbedding = await requireAvailableEmbeddingModel(effective.provider, effective.model)
+
+      const requestedProfileIds = [
+        body.config?.qaModelProfileId,
+        body.config?.multimodalModelProfileId,
+      ].filter((id): id is string => typeof id === 'string' && id.length > 0)
+      if (requestedProfileIds.length > 0) {
+        const profiles = getLLMProfiles().profiles
+        const availableProfileIds = new Set(profiles.map((profile) => profile.id))
+        const missingProfileId = requestedProfileIds.find((id) => !availableProfileIds.has(id))
+        if (missingProfileId) {
+          throw Errors.VALIDATION_ERROR('config.modelProfileId', `模型配置 ${missingProfileId} 不存在`)
+        }
+      }
+
       const input: CreateKnowledgeBaseInput = {
         name: body.name.trim(),
         description: body.description?.trim(),
-        providerId: body.providerId,
-        config: body.config,
+        providerId: 'qdrant',
+        config: {
+          ...body.config,
+          dimensions: selectedEmbedding.dimensions,
+          embeddingConfig: {
+            ...globalEmbedding,
+            ...requestedEmbedding,
+            provider: effective.provider,
+            model: effective.model,
+            dimensions: selectedEmbedding.dimensions,
+          },
+        },
       }
 
       const knowledgeBase = createKnowledgeBase(input)
 
       try {
-        const provider = getSQLiteVecProvider()
+        const provider = getQdrantProvider()
         await provider.createKnowledgeBase(knowledgeBase.id, knowledgeBase.name, knowledgeBase.config)
       } catch (err) {
-        console.warn('向量库注册失败（不影响知识库创建）:', err)
+        deleteKnowledgeBase(knowledgeBase.id)
+        throw err
       }
 
       return reply.status(201).send(apiSuccess({ knowledgeBase }))
@@ -229,6 +261,12 @@ export async function ragRoutes(app: FastifyInstance) {
           throw Errors.VALIDATION_ERROR('embeddingConfig.model', '必须选择 Embedding 模型')
         }
         const selected = await requireAvailableEmbeddingModel(provider, model)
+        if (selected.dimensions !== kb.config.dimensions) {
+          throw Errors.VALIDATION_ERROR(
+            'embeddingConfig.model',
+            `Qdrant Collection 已固定为 ${kb.config.dimensions} 维，不能切换到 ${selected.dimensions} 维模型；请新建知识库后重新处理文档`,
+          )
+        }
         embeddingDimensions = selected.dimensions
         embeddingConfig = {
           ...embeddingConfig,
@@ -262,16 +300,14 @@ export async function ragRoutes(app: FastifyInstance) {
   app.delete('/api/rag/knowledge-bases/:id', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
+      const kb = getKnowledgeBase(id)
+      if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
-      try {
-        const provider = getSQLiteVecProvider()
-        await provider.deleteKnowledgeBase(id)
-      } catch (err) {
-        console.warn('向量库删除失败:', err)
-      }
+      const provider = getQdrantProvider()
+      await provider.deleteKnowledgeBase(id)
 
       const deleted = deleteKnowledgeBase(id)
-      if (!deleted) throw Errors.NOT_FOUND('知识库', id)
+      if (!deleted) throw new Error(`知识库 ${id} 的 Qdrant Collection 已删除，但元数据删除失败`)
       return reply.send(apiSuccess({ success: true }))
     } catch (err) {
       return apiError(reply, err)
@@ -288,7 +324,7 @@ export async function ragRoutes(app: FastifyInstance) {
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
-      const provider = getSQLiteVecProvider()
+      const provider = getQdrantProvider()
       const documents = await provider.getDocuments(id)
       return reply.send(apiSuccess({ documents }))
     } catch (err) {
@@ -328,7 +364,7 @@ export async function ragRoutes(app: FastifyInstance) {
       const chunkOverlap = reqChunkOverlap || kb.config.chunkingConfig?.overlap || 50
 
       const embeddingService = buildEmbeddingService(kb.config)
-      const ragProvider = getSQLiteVecProvider()
+      const ragProvider = getQdrantProvider()
 
       const sendEvent = (event: any) => {
         if (streamProgress && reply.raw.writable) {
@@ -366,8 +402,8 @@ export async function ragRoutes(app: FastifyInstance) {
           sourcePath: document.relativePath,
           sourceSha256: document.sha256,
         }
-        const sqliteProvider = getSQLiteVecProvider()
-        await sqliteProvider.insertPendingDocument(kbId, metadata)
+        const qdrantProvider = getQdrantProvider()
+        await qdrantProvider.insertPendingDocument(kbId, metadata)
         pendingDocId = docId
         pendingKbId = kbId
         const pipeline = createDocumentPipeline({
@@ -385,7 +421,7 @@ export async function ragRoutes(app: FastifyInstance) {
       }, { volumeRoot: dirname(resolveStoragePath('knowledge')), documentId: docId })
       const result = stored.result
 
-      const provider = getSQLiteVecProvider()
+      const provider = getQdrantProvider()
       const stats = await provider.getStats(kbId)
       recordUploadedRagDocument(kbId, fileName, stats)
 
@@ -416,8 +452,8 @@ export async function ragRoutes(app: FastifyInstance) {
       // 处理失败：更新文档状态为 error
       if (pendingDocId && pendingKbId) {
         try {
-          const sqliteProvider = getSQLiteVecProvider()
-          await sqliteProvider.updateDocumentStatus(pendingDocId, 'error', errMsg)
+          const qdrantProvider = getQdrantProvider()
+          await qdrantProvider.updateDocumentStatus(pendingDocId, 'error', errMsg)
         } catch { /* ignore status update error */ }
       }
 
@@ -450,7 +486,7 @@ export async function ragRoutes(app: FastifyInstance) {
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
-      const provider = getSQLiteVecProvider()
+      const provider = getQdrantProvider()
       const doc = await provider.getDocument(docId)
       if (!doc) throw Errors.NOT_FOUND('文档', docId)
 
@@ -467,7 +503,7 @@ export async function ragRoutes(app: FastifyInstance) {
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
-      const provider = getSQLiteVecProvider()
+      const provider = getQdrantProvider()
       const removed = await removeRagDocumentAndRecordDirectory(id, docId, provider)
       if (!removed) throw Errors.NOT_FOUND('文档', docId)
 
@@ -488,7 +524,7 @@ export async function ragRoutes(app: FastifyInstance) {
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
-      const provider = getSQLiteVecProvider()
+      const provider = getQdrantProvider()
       const doc = await provider.getDocument(docId)
       if (!doc) throw Errors.NOT_FOUND('文档', docId)
 
@@ -582,45 +618,17 @@ export async function ragRoutes(app: FastifyInstance) {
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
-      const provider = getSQLiteVecProvider()
+      const provider = getQdrantProvider()
 
-      const vectorThreshold = body.threshold || kb.config.similarityThreshold || 0.3
-      const keywordThreshold = 0.1
-      const topK = body.topK || kb.config.topK || 5
-
-      // ── 主检索：向量语义检索（embedding 由外部配置传入） ──
-      let results: any[] = []
-      try {
-        const embeddingService = buildEmbeddingService(kb.config)
-        const queryEmbedding = await embeddingService.embed(query)
-        results = await provider.vectorSearch(id, queryEmbedding, {
-          topK,
-          threshold: vectorThreshold,
-          includeMetadata: true,
-        })
-      } catch (err) {
-        console.warn('向量检索失败，回退到关键词匹配:', err)
-      }
-
-      // ── 补充：关键词匹配 ──
-      try {
-        const keywordResults = await provider.search(id, query, {
-          topK: topK * 2,
-          threshold: keywordThreshold,
-          includeMetadata: true,
-        })
-        const existingIds = new Set(results.map((r: any) => r.chunk.id))
-        for (const kr of keywordResults) {
-          if (!existingIds.has(kr.chunk.id)) {
-            results.push(kr)
-          }
-        }
-      } catch (err) {
-        console.warn('关键词匹配补充失败:', err)
-      }
-
-      results.sort((a: any, b: any) => b.score - a.score)
-      results = results.slice(0, topK)
+      const vectorThreshold = body.threshold ?? kb.config.similarityThreshold ?? 0.3
+      const topK = body.topK ?? kb.config.topK ?? 5
+      const embeddingService = buildEmbeddingService(kb.config)
+      const queryEmbedding = await embeddingService.embed(query)
+      const results = await provider.vectorSearch(id, queryEmbedding, {
+        topK,
+        threshold: vectorThreshold,
+        includeMetadata: true,
+      })
 
       return reply.send(apiSuccess({
         query,
@@ -649,38 +657,16 @@ export async function ragRoutes(app: FastifyInstance) {
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       // ── 1. 检索相关 chunks ──
-      const provider = getSQLiteVecProvider()
-      const vectorThreshold = kb.config.similarityThreshold || 0.3
+      const provider = getQdrantProvider()
+      const vectorThreshold = kb.config.similarityThreshold ?? 0.3
       const topK = 5
-
-      let allResults: any[] = []
-      try {
-        const embeddingService = buildEmbeddingService(kb.config)
-        const queryEmbedding = await embeddingService.embed(question)
-        allResults = await provider.vectorSearch(id, queryEmbedding, {
-          topK,
-          threshold: vectorThreshold,
-          includeMetadata: true,
-        })
-      } catch (err) {
-        console.warn('向量检索失败:', err)
-      }
-
-      // 补充关键词检索
-      try {
-        const keywordResults = await provider.search(id, question, {
-          topK: topK * 2,
-          threshold: 0.1,
-          includeMetadata: true,
-        })
-        const existingIds = new Set(allResults.map((r: any) => r.chunk.id))
-        for (const kr of keywordResults) {
-          if (!existingIds.has(kr.chunk.id)) allResults.push(kr)
-        }
-      } catch { /* ignore */ }
-
-      allResults.sort((a: any, b: any) => b.score - a.score)
-      allResults = allResults.slice(0, topK)
+      const embeddingService = buildEmbeddingService(kb.config)
+      const queryEmbedding = await embeddingService.embed(question)
+      const allResults = await provider.vectorSearch(id, queryEmbedding, {
+        topK,
+        threshold: vectorThreshold,
+        includeMetadata: true,
+      })
 
       // ── 2. 构建 RAG 上下文 + prompt ──
       const context = extractChatContext(allResults)
@@ -691,7 +677,7 @@ export async function ragRoutes(app: FastifyInstance) {
       const { streamText } = await import('ai')
       let modelConfig = getLLMConfig()
 
-      const profileId = body.profileId as string | undefined
+      const profileId = (body.profileId as string | undefined) || kb.config.qaModelProfileId
       if (profileId) {
         try {
           const profilesConfig = getLLMProfiles()
@@ -775,7 +761,7 @@ export async function ragRoutes(app: FastifyInstance) {
       const kb = getKnowledgeBase(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
-      const provider = getSQLiteVecProvider()
+      const provider = getQdrantProvider()
       const stats = await provider.getStats(id)
 
       return reply.send(apiSuccess({
@@ -864,7 +850,7 @@ export async function ragRoutes(app: FastifyInstance) {
       }
 
       // LLM profiles（供问答 Tab 模型选择 + embedding 匹配）
-      let llmProfiles: Array<{ id: string; name: string; model: string; isDefault?: boolean }> = []
+      let llmProfiles: Array<{ id: string; name: string; model: string; provider: string; isDefault?: boolean }> = []
       let embeddingProfileId: string | null = null
       try {
         const profilesConfig = getLLMProfiles()
@@ -872,6 +858,7 @@ export async function ragRoutes(app: FastifyInstance) {
           id: p.id,
           name: p.name,
           model: p.model,
+          provider: p.provider,
           isDefault: p.isDefault,
         }))
         // 匹配当前 embedding 配置对应的 profile

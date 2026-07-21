@@ -5,7 +5,7 @@ import { formatFileCount, formatStorageBytes } from './storage-ui'
 
 export const STORAGE_GROUPS = [
   ['extensions', 'Extensions', 'Skills, plugins, and the plugin marketplace'],
-  ['knowledge', 'Knowledge', 'Documents, RAG metadata, SQLite, vectors, and embeddings'],
+  ['knowledge', 'Knowledge', 'Documents, RAG metadata, Qdrant vectors, and embeddings'],
   ['work', 'Work data', 'Sessions, tasks, workflows, and agent work data'],
   ['config', 'Configuration', 'Preferences and non-sensitive application settings'],
   ['secrets', 'Secrets', 'Credential references and protected local secrets'],
