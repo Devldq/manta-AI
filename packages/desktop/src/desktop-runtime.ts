@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { rm } from 'node:fs/promises'
+import { access, mkdir, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { BootstrapStore, inspectFolderHealth, inventoryTree, volumeRoot } from '@manta/storage-hub'
 import { DesktopLifecycleController } from './lifecycle/DesktopLifecycleController'
 import { initializeStorageDirectory } from './lifecycle/initializeStorage'
@@ -25,6 +26,123 @@ interface BackendModule {
 
 const importEsm = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>
 
+interface ManagedQdrant {
+  url: string
+  owned: boolean
+  stop(): Promise<void>
+}
+
+const delay = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+async function qdrantReady(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${url.replace(/\/$/, '')}/collections`, { signal: AbortSignal.timeout(750) })
+    if (!response.ok) return false
+    const body = await response.json() as { result?: { collections?: unknown[] } }
+    return Array.isArray(body.result?.collections)
+  } catch {
+    return false
+  }
+}
+
+function exposeQdrantUrl(url: string): () => void {
+  const previousUrl = process.env.QDRANT_URL
+  process.env.QDRANT_URL = url
+  return () => {
+    if (process.env.QDRANT_URL !== url) return
+    if (previousUrl === undefined) delete process.env.QDRANT_URL
+    else process.env.QDRANT_URL = previousUrl
+  }
+}
+
+function localQdrantBinary(): string {
+  if (process.env.MANTA_QDRANT_BINARY) return process.env.MANTA_QDRANT_BINARY
+  const executable = process.platform === 'win32' ? 'qdrant.exe' : 'qdrant'
+  if (app.isPackaged) return join(process.resourcesPath, 'qdrant', executable)
+  const os = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : process.platform
+  return join(__dirname, '..', '.qdrant', `${os}-${process.arch}`, executable)
+}
+
+async function stopChild(child: ChildProcess, exited: () => boolean, exitPromise: Promise<void>): Promise<void> {
+  if (exited()) return
+  child.kill('SIGTERM')
+  await Promise.race([exitPromise, delay(5_000)])
+  if (!exited()) {
+    child.kill('SIGKILL')
+    await Promise.race([exitPromise, delay(1_000)])
+  }
+}
+
+async function startManagedQdrant(): Promise<ManagedQdrant> {
+  const configuredUrl = process.env.QDRANT_URL?.replace(/\/$/, '')
+  if (configuredUrl) {
+    if (!await qdrantReady(configuredUrl)) {
+      throw Object.assign(new Error(`配置的 Qdrant 不可用：${configuredUrl}`), { code: 'QDRANT_EXTERNAL_UNAVAILABLE' })
+    }
+    return { url: configuredUrl, owned: false, async stop() {} }
+  }
+
+  const url = 'http://127.0.0.1:6333'
+  if (await qdrantReady(url)) {
+    const restoreEnvironment = exposeQdrantUrl(url)
+    return { url, owned: false, async stop() { restoreEnvironment() } }
+  }
+
+  const binary = localQdrantBinary()
+  try { await access(binary) } catch {
+    throw Object.assign(new Error(`本地 Qdrant binary 不存在：${binary}。请重新执行 pnpm dev:desktop 或重新安装 Manta。`), { code: 'QDRANT_BINARY_MISSING' })
+  }
+
+  const root = join(app.getPath('userData'), 'qdrant')
+  const storage = join(root, 'storage')
+  const snapshots = join(root, 'snapshots')
+  await Promise.all([mkdir(storage, { recursive: true }), mkdir(snapshots, { recursive: true })])
+
+  const child = spawn(binary, [], {
+    cwd: root,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      QDRANT__SERVICE__HOST: '127.0.0.1',
+      QDRANT__SERVICE__HTTP_PORT: '6333',
+      QDRANT__SERVICE__GRPC_PORT: '6334',
+      QDRANT__STORAGE__STORAGE_PATH: storage,
+      QDRANT__STORAGE__SNAPSHOTS_PATH: snapshots,
+      QDRANT__TELEMETRY_DISABLED: 'true',
+    },
+  })
+  let output = ''
+  let didExit = false
+  let spawnError: Error | undefined
+  const append = (chunk: Buffer) => { output = `${output}${chunk.toString('utf8')}`.slice(-8_000) }
+  child.stdout?.on('data', append)
+  child.stderr?.on('data', append)
+  child.once('error', (error) => { spawnError = error })
+  const exitPromise = new Promise<void>((resolve) => child.once('close', () => { didExit = true; resolve() }))
+
+  const deadline = Date.now() + 15_000
+  while (Date.now() < deadline) {
+    if (await qdrantReady(url)) {
+      const restoreEnvironment = exposeQdrantUrl(url)
+      return {
+        url,
+        owned: true,
+        async stop() {
+          try { await stopChild(child, () => didExit, exitPromise) }
+          finally { restoreEnvironment() }
+        },
+      }
+    }
+    if (spawnError || didExit) break
+    await delay(100)
+  }
+
+  await stopChild(child, () => didExit, exitPromise)
+  const detail = spawnError?.message || output.trim() || '启动超时，未监听 6333 端口'
+  throw Object.assign(new Error(`本地 Qdrant 启动失败：${detail}`), { code: 'QDRANT_START_FAILED' })
+}
+
 export async function openPathOrThrow(path: string): Promise<void> {
   const error = await shell.openPath(path)
   if (error) throw new Error(error)
@@ -35,6 +153,7 @@ let onboardingWindow: BrowserWindow | undefined
 let onboardingHandoff = false
 let composition: any
 let cloudSync: ReturnType<typeof createCloudSyncRuntime> | undefined
+let qdrant: ManagedQdrant | undefined
 let disposeStorageIpc: (() => void) | undefined
 let disposeLegacyIpc: (() => void) | undefined
 let quitting = false
@@ -135,7 +254,7 @@ let disposeOnboarding: (() => void) | undefined
 const controller = new DesktopLifecycleController({
   async readBootstrap() { return new BootstrapStore(bootstrapPath()).read() },
   preflightStorage: (...bootstraps) => upgradeBootstrapVolumeDirectories(...bootstraps),
-  async recover() { const bootstrapStore=new BootstrapStore(bootstrapPath()); const before=await bootstrapStore.read(); const journal=before?.pendingMigration; const trackedKind=journal&&trackedRecoveredMigrationKind(journal); const backend = await importEsm('@manta/backend'); composition = await (backend as BackendModule).createBackendStorageComposition(bootstrapStore, { deferAgentRecovery: true, onAgentProgress: (progress: unknown) => activeWindow?.webContents.send('storage:agent-progress', progress), onProgress: (raw: unknown) => { const progress=raw as StorageOperationProgress; if(shouldTrackStorageProgress(progress)){const prior=progressTails.get(progress.operationId) ?? Promise.resolve(); const next=prior.then(()=>controlStore().recordProgress(progress)); progressTails.set(progress.operationId,next.catch(()=>{})); void next.catch(()=>{})} activeWindow?.webContents.send('storage:progress',progress) } }); try { await composition.hub.migrations?.recoverPending(); await composition.activateAgents(); if (journal&&trackedKind) { await controlStore().startOperation(journal.id,trackedKind); const after=await bootstrapStore.read(); if (['planned','quiescing','copying','validating'].includes(journal.phase) || !before?.previous || !after) await controlStore().failOperation(journal.id,new Error('Migration rolled back during startup recovery')); else { const previous={schemaVersion:1 as const,...before.previous}; const value=trackedKind==='volume'?journal.sourceVolumeId:journal.groups[0]; await controlStore().completeOperation(journal.id,buildBackupRefs(journal.id,trackedKind,previous,after,value),{previous,current:after}) } }
+  async recover() { const bootstrapStore=new BootstrapStore(bootstrapPath()); qdrant ??= await startManagedQdrant(); const before=await bootstrapStore.read(); const journal=before?.pendingMigration; const trackedKind=journal&&trackedRecoveredMigrationKind(journal); const backend = await importEsm('@manta/backend'); composition = await (backend as BackendModule).createBackendStorageComposition(bootstrapStore, { deferAgentRecovery: true, onAgentProgress: (progress: unknown) => activeWindow?.webContents.send('storage:agent-progress', progress), onProgress: (raw: unknown) => { const progress=raw as StorageOperationProgress; if(shouldTrackStorageProgress(progress)){const prior=progressTails.get(progress.operationId) ?? Promise.resolve(); const next=prior.then(()=>controlStore().recordProgress(progress)); progressTails.set(progress.operationId,next.catch(()=>{})); void next.catch(()=>{})} activeWindow?.webContents.send('storage:progress',progress) } }); try { await composition.hub.migrations?.recoverPending(); await composition.activateAgents(); if (journal&&trackedKind) { await controlStore().startOperation(journal.id,trackedKind); const after=await bootstrapStore.read(); if (['planned','quiescing','copying','validating'].includes(journal.phase) || !before?.previous || !after) await controlStore().failOperation(journal.id,new Error('Migration rolled back during startup recovery')); else { const previous={schemaVersion:1 as const,...before.previous}; const value=trackedKind==='volume'?journal.sourceVolumeId:journal.groups[0]; await controlStore().completeOperation(journal.id,buildBackupRefs(journal.id,trackedKind,previous,after,value),{previous,current:after}) } }
     cloudSync = createCloudSyncRuntime({
       volumes: async () => {
         const [bootstrap, bindings] = await Promise.all([bootstrapStore.read(), composition.git.listBindings()])
@@ -157,7 +276,7 @@ const controller = new DesktopLifecycleController({
   rollbackRelaunchIntent: (intent) => restoreRelaunchIntent(intent,bootstrapPath(),controlStore()),
   completeRelaunchOperation: (id) => controlStore().markSucceeded(id),
   clearRelaunchIntent: () => controlStore().clearIntent(),
-  async resetComposition() { cloudSync?.dispose(); cloudSync=undefined; const current=composition; composition=undefined; if (current?.runtime) await current.runtime.close().catch(()=>{}) },
+  async resetComposition() { cloudSync?.dispose(); cloudSync=undefined; const current=composition; composition=undefined; if (current?.runtime) await current.runtime.close().catch(()=>{}); const currentQdrant=qdrant; qdrant=undefined; await currentQdrant?.stop() },
   quit: () => app.quit(), relaunch: () => app.relaunch(), seedRoot: app.isPackaged ? process.resourcesPath : join(__dirname, '../../..'),
 })
 

@@ -18,7 +18,7 @@ const repositoryDir = resolve(projectDir, '..', '..')
 const releaseDir = join(projectDir, 'release', 'win-unpacked')
 const resources = join(releaseDir, 'resources')
 const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-const required = ['app.asar', join('frontend', 'dist'), join('backend', 'dist'), join('storage-hub', 'dist'), join('rag', 'dist'), '.manta', join('app.asar.unpacked', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')]
+const required = ['app.asar', join('frontend', 'dist'), join('backend', 'dist'), join('storage-hub', 'dist'), join('rag', 'dist'), '.manta', join('qdrant', 'qdrant.exe'), join('app.asar.unpacked', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')]
 const providerPackages = ['@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core']
 const nativePackages = ['better-sqlite3']
 const nativeBinary = join(dirname(require.resolve('better-sqlite3')), '..', 'build', 'Release', 'better_sqlite3.node')
@@ -205,6 +205,7 @@ async function packageDirectory() {
       cp(join(repositoryDir, 'packages', 'storage-hub', 'dist'), join(resources, 'storage-hub', 'dist'), { recursive: true, dereference: true }),
       cp(join(repositoryDir, 'packages', 'rag', 'dist'), join(resources, 'rag', 'dist'), { recursive: true, dereference: true }),
       cp(join(repositoryDir, '.manta'), join(resources, '.manta'), { recursive: true, dereference: true }),
+      cp(join(projectDir, '.qdrant', 'win-x64'), join(resources, 'qdrant'), { recursive: true, dereference: true }),
     ])
     // The returned stream is only resolved after its finish event by the public
     // @electron/asar API; this is the completion boundary we verify below.
