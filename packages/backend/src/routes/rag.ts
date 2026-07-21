@@ -24,7 +24,7 @@ import {
   buildRAGSystemPrompt,
   buildRAGUserMessage,
 } from '@manta/rag'
-import type { DocumentMetadata } from '@manta/rag'
+import type { DocumentMetadata, PipelineResult } from '@manta/rag'
 import {
   createEmbeddingService,
   getAvailableEmbeddingModels,
@@ -39,6 +39,11 @@ import { resolveStoragePath } from '../storage/path-routing'
 import { readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { recordUploadedRagDocument, removeRagDocumentAndRecordDirectory } from './rag-directory'
+import { retryContentStoreLease } from '../storage/content-store-lease-retry'
+
+/** 仅表示当前 backend 进程中仍真实运行的 RAG pipeline。进程重启后为空。 */
+const activeRagDocumentIds = new Set<string>()
+const readKnowledgeBaseForRequest = (id: string) => retryContentStoreLease(() => getKnowledgeBase(id))
 
 // ─── Embedding Service 工厂 ─────────────────────────────────────
 // 从 KB 配置或环境变量构建 embedding 服务，传入 rag 包
@@ -141,7 +146,7 @@ export async function ragRoutes(app: FastifyInstance) {
   app.get('/api/rag/knowledge-bases', async (request, reply) => {
     try {
       const search = (request.query as Record<string, string>).search
-      const knowledgeBases = listKnowledgeBases(search)
+      const knowledgeBases = await retryContentStoreLease(() => listKnowledgeBases(search))
       return reply.send(apiSuccess({ knowledgeBases }))
     } catch (err) {
       return apiError(reply, err)
@@ -157,7 +162,7 @@ export async function ragRoutes(app: FastifyInstance) {
 
       const available = await getAvailableEmbeddingModels()
       const requestedEmbedding = body.config?.embeddingConfig as KnowledgeBaseConfig['embeddingConfig'] | undefined
-      const globalEmbedding = getEmbeddingConfig()
+      const globalEmbedding = await retryContentStoreLease(() => getEmbeddingConfig())
       const effective = requestedEmbedding?.provider && requestedEmbedding?.model
         ? { provider: requestedEmbedding.provider, model: requestedEmbedding.model }
         : resolveEffectiveEmbeddingSelection(globalEmbedding, available)
@@ -168,7 +173,7 @@ export async function ragRoutes(app: FastifyInstance) {
         body.config?.multimodalModelProfileId,
       ].filter((id): id is string => typeof id === 'string' && id.length > 0)
       if (requestedProfileIds.length > 0) {
-        const profiles = getLLMProfiles().profiles
+        const profiles = (await retryContentStoreLease(() => getLLMProfiles())).profiles
         const availableProfileIds = new Set(profiles.map((profile) => profile.id))
         const missingProfileId = requestedProfileIds.find((id) => !availableProfileIds.has(id))
         if (missingProfileId) {
@@ -193,13 +198,13 @@ export async function ragRoutes(app: FastifyInstance) {
         },
       }
 
-      const knowledgeBase = createKnowledgeBase(input)
+      const knowledgeBase = await retryContentStoreLease(() => createKnowledgeBase(input))
 
       try {
         const provider = getQdrantProvider()
         await provider.createKnowledgeBase(knowledgeBase.id, knowledgeBase.name, knowledgeBase.config)
       } catch (err) {
-        deleteKnowledgeBase(knowledgeBase.id)
+        await retryContentStoreLease(() => deleteKnowledgeBase(knowledgeBase.id))
         throw err
       }
 
@@ -212,7 +217,7 @@ export async function ragRoutes(app: FastifyInstance) {
   app.get('/api/rag/knowledge-bases/:id', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
-      const knowledgeBase = getKnowledgeBase(id)
+      const knowledgeBase = await readKnowledgeBaseForRequest(id)
       if (!knowledgeBase) throw Errors.NOT_FOUND('知识库', id)
       return reply.send(apiSuccess({ knowledgeBase }))
     } catch (err) {
@@ -233,7 +238,7 @@ export async function ragRoutes(app: FastifyInstance) {
       if (body.documentCount !== undefined) patch.documentCount = body.documentCount
       if (body.chunkCount !== undefined) patch.chunkCount = body.chunkCount
 
-      const knowledgeBase = updateKnowledgeBase(id, patch)
+      const knowledgeBase = await retryContentStoreLease(() => updateKnowledgeBase(id, patch))
       if (!knowledgeBase) throw Errors.NOT_FOUND('知识库', id)
       return reply.send(apiSuccess({ knowledgeBase }))
     } catch (err) {
@@ -246,7 +251,7 @@ export async function ragRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string }
       const body = request.body as Record<string, any>
 
-      const kb = getKnowledgeBase(id)
+      const kb = await readKnowledgeBaseForRequest(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       let embeddingConfig = kb.config.embeddingConfig
@@ -290,7 +295,7 @@ export async function ragRoutes(app: FastifyInstance) {
           : kb.config.chunkingConfig,
       }
 
-      const updated = updateKnowledgeBase(id, { config: newConfig })
+      const updated = await retryContentStoreLease(() => updateKnowledgeBase(id, { config: newConfig }))
       return reply.send(apiSuccess({ knowledgeBase: updated }))
     } catch (err) {
       return apiError(reply, err)
@@ -300,13 +305,13 @@ export async function ragRoutes(app: FastifyInstance) {
   app.delete('/api/rag/knowledge-bases/:id', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
-      const kb = getKnowledgeBase(id)
+      const kb = await readKnowledgeBaseForRequest(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getQdrantProvider()
       await provider.deleteKnowledgeBase(id)
 
-      const deleted = deleteKnowledgeBase(id)
+      const deleted = await retryContentStoreLease(() => deleteKnowledgeBase(id))
       if (!deleted) throw new Error(`知识库 ${id} 的 Qdrant Collection 已删除，但元数据删除失败`)
       return reply.send(apiSuccess({ success: true }))
     } catch (err) {
@@ -321,11 +326,18 @@ export async function ragRoutes(app: FastifyInstance) {
   app.get('/api/rag/knowledge-bases/:id/documents', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
-      const kb = getKnowledgeBase(id)
+      const kb = await readKnowledgeBaseForRequest(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getQdrantProvider()
-      const documents = await provider.getDocuments(id)
+      let documents = await provider.getDocuments(id)
+      const interrupted = documents.filter(
+        (document) => (document.status === 'processing' || document.status === 'pending') && !activeRagDocumentIds.has(document.id),
+      )
+      for (const document of interrupted) {
+        await provider.updateDocumentStatus(document.id, 'error', '处理已中断，请重试')
+      }
+      if (interrupted.length > 0) documents = await provider.getDocuments(id)
       return reply.send(apiSuccess({ documents }))
     } catch (err) {
       return apiError(reply, err)
@@ -336,10 +348,11 @@ export async function ragRoutes(app: FastifyInstance) {
     let streamProgress = false
     let pendingDocId: string | null = null
     let pendingKbId: string | null = null
+    let activeDocId: string | null = null
     try {
       const { id: kbId } = request.params as { id: string }
 
-      const kb = getKnowledgeBase(kbId)
+      const kb = await readKnowledgeBaseForRequest(kbId)
       if (!kb) throw Errors.NOT_FOUND('知识库', kbId)
 
       const query = request.query as Record<string, string>
@@ -363,7 +376,7 @@ export async function ragRoutes(app: FastifyInstance) {
       const chunkSize = reqChunkSize || kb.config.chunkingConfig?.chunkSize || 512
       const chunkOverlap = reqChunkOverlap || kb.config.chunkingConfig?.overlap || 50
 
-      const embeddingService = buildEmbeddingService(kb.config)
+      const embeddingService = await retryContentStoreLease(() => buildEmbeddingService(kb.config))
       const ragProvider = getQdrantProvider()
 
       const sendEvent = (event: any) => {
@@ -390,7 +403,7 @@ export async function ragRoutes(app: FastifyInstance) {
         documentsRoot: resolveStoragePath('knowledge', 'documents'),
       })
       const docId = uuidv4()
-      const stored = await uploadStorage.ingest(data.file, fileName, async (stagedPath, document) => {
+      const stored = await uploadStorage.ingest<PipelineResult>(data.file, fileName, async (stagedPath, document) => {
         const buffer = await readFile(stagedPath)
         const metadata: DocumentMetadata = {
           id: docId,
@@ -403,7 +416,15 @@ export async function ragRoutes(app: FastifyInstance) {
           sourceSha256: document.sha256,
         }
         const qdrantProvider = getQdrantProvider()
-        await qdrantProvider.insertPendingDocument(kbId, metadata)
+        activeDocId = docId
+        activeRagDocumentIds.add(docId)
+        try {
+          await qdrantProvider.insertPendingDocument(kbId, metadata)
+        } catch (error) {
+          activeRagDocumentIds.delete(docId)
+          activeDocId = null
+          throw error
+        }
         pendingDocId = docId
         pendingKbId = kbId
         const pipeline = createDocumentPipeline({
@@ -418,21 +439,47 @@ export async function ragRoutes(app: FastifyInstance) {
           },
         })
         return pipeline.process(buffer, metadata, kbId)
-      }, { volumeRoot: dirname(resolveStoragePath('knowledge')), documentId: docId })
+      }, { volumeRoot: dirname(resolveStoragePath('knowledge')), documentId: docId }, async (document) => {
+        const documents = await ragProvider.getDocuments(kbId)
+        const existing = documents.find((candidate) => candidate.status === 'ready' && candidate.sourceSha256 === document.sha256)
+        if (!existing) return undefined
+        return {
+          result: {
+            document: existing,
+            chunks: [],
+            chunkCount: existing.chunkCount ?? 0,
+            processingTimeMs: 0,
+          },
+        }
+      })
       const result = stored.result
 
-      const provider = getQdrantProvider()
-      const stats = await provider.getStats(kbId)
-      recordUploadedRagDocument(kbId, fileName, stats)
-
-      // 清除 pending 标记（addDocument 已写入 ready 记录）
+      // Pipeline 已成功，后续清理不能把新文档重新标成 error。
       pendingDocId = null
+
+      const documents = await ragProvider.getDocuments(kbId)
+      const supersededFailedDocIds = documents
+        .filter((candidate) => candidate.status === 'error' && candidate.sourceSha256 === stored.sha256 && candidate.id !== result.document.id)
+        .map((candidate) => candidate.id)
+      for (const failedDocId of supersededFailedDocIds) {
+        try {
+          await ragProvider.removeDocument(kbId, failedDocId)
+        } catch (error) {
+          console.warn(`[RAG] 无法清理已被成功重试替代的失败文档 [docId=${failedDocId}]:`, error)
+        }
+      }
+      if (!stored.reused) {
+        const provider = getQdrantProvider()
+        const stats = await provider.getStats(kbId)
+        await recordUploadedRagDocument(kbId, fileName, stats)
+      }
 
       sendEvent({
         type: 'done',
         document: result.document,
         chunkCount: result.chunkCount,
         processingTimeMs: result.processingTimeMs,
+        reused: stored.reused,
       })
 
       if (streamProgress) {
@@ -444,6 +491,7 @@ export async function ragRoutes(app: FastifyInstance) {
         document: result.document,
         chunkCount: result.chunkCount,
         processingTimeMs: result.processingTimeMs,
+        reused: stored.reused,
       }))
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
@@ -476,6 +524,8 @@ export async function ragRoutes(app: FastifyInstance) {
         return
       }
       return apiError(reply, err)
+    } finally {
+      if (activeDocId) activeRagDocumentIds.delete(activeDocId)
     }
   })
 
@@ -483,7 +533,7 @@ export async function ragRoutes(app: FastifyInstance) {
     try {
       const { id, docId } = request.params as { id: string; docId: string }
 
-      const kb = getKnowledgeBase(id)
+      const kb = await readKnowledgeBaseForRequest(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getQdrantProvider()
@@ -500,7 +550,7 @@ export async function ragRoutes(app: FastifyInstance) {
     try {
       const { id, docId } = request.params as { id: string; docId: string }
 
-      const kb = getKnowledgeBase(id)
+      const kb = await readKnowledgeBaseForRequest(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getQdrantProvider()
@@ -521,7 +571,7 @@ export async function ragRoutes(app: FastifyInstance) {
     try {
       const { id, docId } = request.params as { id: string; docId: string }
 
-      const kb = getKnowledgeBase(id)
+      const kb = await readKnowledgeBaseForRequest(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getQdrantProvider()
@@ -545,7 +595,7 @@ export async function ragRoutes(app: FastifyInstance) {
   app.post('/api/rag/knowledge-bases/:id/chunk-preview', async (request: FastifyRequest, reply) => {
     try {
       const { id: kbId } = request.params as { id: string }
-      const kb = getKnowledgeBase(kbId)
+      const kb = await readKnowledgeBaseForRequest(kbId)
       if (!kb) throw Errors.NOT_FOUND('知识库', kbId)
 
       const data = await request.file()
@@ -615,14 +665,14 @@ export async function ragRoutes(app: FastifyInstance) {
 
       if (!query) throw Errors.VALIDATION_ERROR('query', '检索关键词不能为空')
 
-      const kb = getKnowledgeBase(id)
+      const kb = await readKnowledgeBaseForRequest(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getQdrantProvider()
 
       const vectorThreshold = body.threshold ?? kb.config.similarityThreshold ?? 0.3
       const topK = body.topK ?? kb.config.topK ?? 5
-      const embeddingService = buildEmbeddingService(kb.config)
+      const embeddingService = await retryContentStoreLease(() => buildEmbeddingService(kb.config))
       const queryEmbedding = await embeddingService.embed(query)
       const results = await provider.vectorSearch(id, queryEmbedding, {
         topK,
@@ -653,14 +703,14 @@ export async function ragRoutes(app: FastifyInstance) {
 
       if (!question) throw Errors.VALIDATION_ERROR('question', '问题不能为空')
 
-      const kb = getKnowledgeBase(id)
+      const kb = await readKnowledgeBaseForRequest(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       // ── 1. 检索相关 chunks ──
       const provider = getQdrantProvider()
       const vectorThreshold = kb.config.similarityThreshold ?? 0.3
       const topK = 5
-      const embeddingService = buildEmbeddingService(kb.config)
+      const embeddingService = await retryContentStoreLease(() => buildEmbeddingService(kb.config))
       const queryEmbedding = await embeddingService.embed(question)
       const allResults = await provider.vectorSearch(id, queryEmbedding, {
         topK,
@@ -680,7 +730,7 @@ export async function ragRoutes(app: FastifyInstance) {
       const profileId = (body.profileId as string | undefined) || kb.config.qaModelProfileId
       if (profileId) {
         try {
-          const profilesConfig = getLLMProfiles()
+          const profilesConfig = await retryContentStoreLease(() => getLLMProfiles())
           const found = profilesConfig.profiles.find((p) => p.id === profileId)
           if (found) {
             modelConfig = profileToLLMConfig(found)
@@ -758,7 +808,7 @@ export async function ragRoutes(app: FastifyInstance) {
   app.get('/api/rag/knowledge-bases/:id/stats', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
-      const kb = getKnowledgeBase(id)
+      const kb = await readKnowledgeBaseForRequest(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = getQdrantProvider()
@@ -780,14 +830,14 @@ export async function ragRoutes(app: FastifyInstance) {
   app.get('/api/rag/knowledge-bases/:id/embedding-check', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
-      const kb = getKnowledgeBase(id)
+      const kb = await readKnowledgeBaseForRequest(id)
       if (!kb) throw Errors.NOT_FOUND('知识库', id)
 
       const provider = kb.config.embeddingConfig?.provider || 'openai'
       const model = kb.config.embeddingConfig?.model || 'unknown'
 
       try {
-        const embeddingService = buildEmbeddingService(kb.config)
+        const embeddingService = await retryContentStoreLease(() => buildEmbeddingService(kb.config))
         const testEmbedding = await embeddingService.embed('test')
         const available = Array.isArray(testEmbedding) && testEmbedding.length > 0
         return reply.send(apiSuccess({
@@ -815,7 +865,7 @@ export async function ragRoutes(app: FastifyInstance) {
 
   app.get('/api/rag/config', async (_request, reply) => {
     try {
-      const config = getEmbeddingConfig()
+      const config = await retryContentStoreLease(() => getEmbeddingConfig())
       const { createDocumentParserFactory } = await import('@manta/rag')
       const factory = createDocumentParserFactory()
       const supportedTypes = factory.getSupportedMimeTypes()
@@ -853,7 +903,7 @@ export async function ragRoutes(app: FastifyInstance) {
       let llmProfiles: Array<{ id: string; name: string; model: string; provider: string; isDefault?: boolean }> = []
       let embeddingProfileId: string | null = null
       try {
-        const profilesConfig = getLLMProfiles()
+        const profilesConfig = await retryContentStoreLease(() => getLLMProfiles())
         llmProfiles = profilesConfig.profiles.map((p) => ({
           id: p.id,
           name: p.name,
@@ -862,7 +912,7 @@ export async function ragRoutes(app: FastifyInstance) {
           isDefault: p.isDefault,
         }))
         // 匹配当前 embedding 配置对应的 profile
-        const ec = getEmbeddingConfig()
+        const ec = await retryContentStoreLease(() => getEmbeddingConfig())
         const match = profilesConfig.profiles.find((p) =>
           p.model === ec.model &&
           (ec.provider === 'local' ? p.provider === 'ollama' : p.provider === 'openai' || p.provider === 'openai-compatible' || p.provider === 'anthropic')
@@ -892,7 +942,7 @@ export async function ragRoutes(app: FastifyInstance) {
       if (!body.profileId) {
         return reply.status(400).send({ success: false, error: 'profileId 不能为空' })
       }
-      const profiles = getLLMProfiles()
+      const profiles = await retryContentStoreLease(() => getLLMProfiles())
       const profile = profiles.profiles.find(p => p.id === body.profileId)
       if (!profile) {
         return reply.status(404).send({ success: false, error: 'Profile 不存在' })
@@ -901,13 +951,13 @@ export async function ragRoutes(app: FastifyInstance) {
       const embeddingProvider: 'openai' | 'local' =
         profile.provider === 'ollama' || profile.provider === 'lm-studio' ? 'local' : 'openai'
       const selected = await requireAvailableEmbeddingModel(embeddingProvider, profile.model)
-      saveEmbeddingConfig({
+      await retryContentStoreLease(() => saveEmbeddingConfig({
         provider: embeddingProvider,
         model: profile.model,
         baseUrl: profile.baseUrl || undefined,
         apiKey: profile.apiKey || undefined,
         dimensions: selected.dimensions,
-      })
+      }))
       return reply.send(apiSuccess({ profileId: body.profileId, provider: embeddingProvider, model: profile.model }))
     } catch (err) {
       return apiError(reply, err)
@@ -935,7 +985,7 @@ export async function ragRoutes(app: FastifyInstance) {
         clearApiKey: body.clearApiKey === true,
         dimensions: selected.dimensions,
       }
-      saveEmbeddingConfig(payload)
+      await retryContentStoreLease(() => saveEmbeddingConfig(payload))
       return reply.send(apiSuccess({ config: payload }))
     } catch (err) {
       return apiError(reply, err)

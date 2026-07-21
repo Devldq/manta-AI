@@ -2,6 +2,10 @@ import type { FastifyInstance } from 'fastify'
 import type { RagStagingStore } from '../storage/rag-staging-store'
 
 function message(error: unknown): string { return error instanceof Error ? error.message : 'RAG staging failed' }
+function contentDisposition(fileName: string): string {
+  const encoded = encodeURIComponent(fileName).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+  return `attachment; filename="document"; filename*=UTF-8''${encoded}`
+}
 
 /** Renderer queue API: bytes are durable only after this cache-group endpoint succeeds. */
 export async function ragStagingRoutes(app: FastifyInstance, store: RagStagingStore): Promise<void> {
@@ -26,7 +30,7 @@ export async function ragStagingRoutes(app: FastifyInstance, store: RagStagingSt
     catch (error) { return reply.status(400).send({ success: false, error: { code: 'RAG_STAGE_LIST_FAILED', message: message(error) } }) }
   })
   app.get<{ Params: { kbId: string; id: string } }>('/api/storage/rag-staging/:kbId/:id/content', async (request, reply) => {
-    try { const entry = await store.read(request.params.kbId, request.params.id); return reply.type(entry.type).header('Content-Disposition', `attachment; filename="${entry.name.replaceAll('"', '')}"`).send(await import('node:fs').then(({ createReadStream }) => createReadStream(store.pathFor(request.params.kbId, entry.id)))) }
+    try { const entry = await store.read(request.params.kbId, request.params.id); return reply.type(entry.type).header('Content-Disposition', contentDisposition(entry.name)).send(await import('node:fs').then(({ createReadStream }) => createReadStream(store.pathFor(request.params.kbId, entry.id)))) }
     catch (error) { return reply.status(404).send({ success: false, error: { code: 'RAG_STAGE_NOT_FOUND', message: message(error) } }) }
   })
   app.delete<{ Params: { kbId: string; id: string } }>('/api/storage/rag-staging/:kbId/:id', async (request, reply) => {

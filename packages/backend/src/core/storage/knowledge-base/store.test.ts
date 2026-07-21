@@ -2,7 +2,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { withVolumeContentStoreLease } from '@manta/storage-hub'
 import { runWithStorageResolver } from '../../../storage/path-routing'
+import { retryContentStoreLease } from '../../../storage/content-store-lease-retry'
 import {
   createKnowledgeBase,
   getKnowledgeBase,
@@ -66,5 +68,25 @@ describe('knowledge base directory', () => {
     recordKnowledgeBaseDocumentAdded(product.id, '需求说明.md', { documentCount: 1, chunkCount: 1 })
 
     expect(listKnowledgeBases('经营报告').map((kb) => kb.id)).toEqual([finance.id])
+  }))
+
+  it('waits for an async content publisher before reading sync knowledge metadata', async () => fixture(async (root) => {
+    const kb = createKnowledgeBase({ name: '并发资料' })
+    let releasePublisher!: () => void
+    let publisherEntered!: () => void
+    const publisherGate = new Promise<void>((resolve) => { releasePublisher = resolve })
+    const entered = new Promise<void>((resolve) => { publisherEntered = resolve })
+    const publisher = withVolumeContentStoreLease(root, async () => {
+      publisherEntered()
+      await publisherGate
+    })
+    await entered
+
+    const reading = retryContentStoreLease(() => getKnowledgeBase(kb.id), { timeoutMs: 1_000, retryIntervalMs: 5 })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    releasePublisher()
+
+    await expect(reading).resolves.toMatchObject({ id: kb.id, name: '并发资料' })
+    await publisher
   }))
 })

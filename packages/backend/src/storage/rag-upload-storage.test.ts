@@ -9,6 +9,26 @@ import { cleanupRagOrphans, createRagUploadStorage, recoverRagAssetTransactions 
 import { matchesReadyRagDocument } from './rag-asset-transactions'
 
 describe('RAG original document storage', () => {
+  it('reuses a completed equal-content document before invoking the pipeline or publishing another manifest', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-reuse-ready-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge')
+    mkdirSync(knowledge, { recursive: true })
+    const storage = createRagUploadStorage({ cacheUploadsRoot: join(volumeRoot, 'cache', 'uploads'), documentsRoot: join(knowledge, 'documents') })
+    let processed = false
+    const reused = await storage.ingest(
+      Readable.from('already processed'),
+      'duplicate.txt',
+      async () => { processed = true; return 'processed-again' },
+      { volumeRoot, documentId: 'doc-duplicate' },
+      async (document) => ({ result: `ready:${document.sha256}` }),
+    )
+
+    expect(processed).toBe(false)
+    expect(reused.reused).toBe(true)
+    expect(reused.result).toBe(`ready:${reused.sha256}`)
+    await expect(new AssetManifestStore(volumeRoot).read('document.doc-duplicate')).rejects.toThrow()
+    expect(existsSync(join(knowledge, '.asset-transactions'))).toBe(false)
+  })
+
   it('requires exact ready document identity, hash, and asset reference for crash recovery', () => {
     const record = { documentId: 'doc-exact', assetId: 'document.doc-exact', hash: 'a'.repeat(64) }
     const ready = { id: 'doc-exact', status: 'ready', sourceSha256: 'a'.repeat(64), sourcePath: 'asset:document.doc-exact' }

@@ -3,6 +3,7 @@ import {
   recordKnowledgeBaseDocumentAdded,
   recordKnowledgeBaseDocumentRemoved,
 } from '../core/storage/knowledge-base/store'
+import { retryContentStoreLease } from '../storage/content-store-lease-retry'
 
 interface RagDirectoryProvider {
   getDocument(documentId: string): Promise<Pick<DocumentMetadata, 'name'> | null>
@@ -10,12 +11,13 @@ interface RagDirectoryProvider {
   getStats(knowledgeBaseId: string): Promise<KnowledgeBaseStats>
 }
 
-export function recordUploadedRagDocument(
+export async function recordUploadedRagDocument(
   knowledgeBaseId: string,
   fileName: string,
   counts: Pick<KnowledgeBaseStats, 'documentCount' | 'chunkCount'>,
-): void {
-  if (!recordKnowledgeBaseDocumentAdded(knowledgeBaseId, fileName, counts)) {
+): Promise<void> {
+  const recorded = await retryContentStoreLease(() => recordKnowledgeBaseDocumentAdded(knowledgeBaseId, fileName, counts))
+  if (!recorded) {
     throw new Error(`Knowledge base not found while recording document upload: ${knowledgeBaseId}`)
   }
 }
@@ -29,7 +31,8 @@ export async function removeRagDocumentAndRecordDirectory(
   if (!document) return null
   await provider.removeDocument(knowledgeBaseId, documentId)
   const stats = await provider.getStats(knowledgeBaseId)
-  if (!recordKnowledgeBaseDocumentRemoved(knowledgeBaseId, document.name, stats)) {
+  const recorded = await retryContentStoreLease(() => recordKnowledgeBaseDocumentRemoved(knowledgeBaseId, document.name, stats))
+  if (!recorded) {
     throw new Error(`Knowledge base not found while recording document deletion: ${knowledgeBaseId}`)
   }
   return document

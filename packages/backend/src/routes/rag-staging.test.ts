@@ -9,6 +9,22 @@ import { RagStagingStore } from '../storage/rag-staging-store'
 import { runWithStorageResolver } from '../storage/path-routing'
 
 describe('RAG cache staging routes', () => {
+  it('streams staged content with a header-safe UTF-8 filename', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-route-utf8-'))
+    const app = Fastify(); await app.register(multipart); await app.register(ragStagingRoutes, new RagStagingStore()); app.addHook('onRequest', (_request, _reply, done) => runWithStorageResolver({ resolve: (_group, ...segments) => join(root, ...segments) }, done))
+    const boundary = 'rag-staging-utf8-boundary'
+    const payload = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="文档.md"\r\nContent-Type: text/markdown\r\n\r\nUTF-8 content\r\n--${boundary}--\r\n`)
+    const uploaded = await app.inject({ method: 'POST', url: '/api/storage/rag-staging/kb-utf8', headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload })
+    const entry = uploaded.json().data.entry
+
+    const restored = await app.inject(`/api/storage/rag-staging/kb-utf8/${entry.id}/content`)
+
+    expect(restored.statusCode).toBe(200)
+    expect(restored.body).toBe('UTF-8 content')
+    expect(restored.headers['content-disposition']).toContain("filename*=UTF-8''")
+    await app.close()
+  })
+
   it('uploads, restores, claims, reads and deletes an ASH cache object', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-rag-route-'))
     const app = Fastify(); await app.register(multipart); await app.register(ragStagingRoutes, new RagStagingStore()); app.addHook('onRequest', (_request, _reply, done) => runWithStorageResolver({ resolve: (_group, ...segments) => join(root, ...segments) }, done))

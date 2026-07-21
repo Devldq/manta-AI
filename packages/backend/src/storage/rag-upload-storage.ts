@@ -21,6 +21,7 @@ export interface StoredRagDocument {
   safeName: string
 }
 export interface RagUploadAssetOptions { volumeRoot: string; documentId: string; beforePublish?: (assetId: string) => void | Promise<void>; fault?: (point: RagAssetFaultPoint) => void | Promise<void> }
+export interface RagUploadReuse<T> { result: T }
 const activeUploads = new Map<string, number>()
 
 function safeUploadName(input: string): string {
@@ -32,7 +33,7 @@ function safeUploadName(input: string): string {
 export function createRagUploadStorage(options: RagUploadStorageOptions) {
   const maxBytes = options.maxBytes ?? 50 * 1024 * 1024
   return {
-    async ingest<T>(source: Readable, originalName: string, processStaged: (stagedPath: string, document: StoredRagDocument) => Promise<T>, asset?: RagUploadAssetOptions): Promise<StoredRagDocument & { result: T }> {
+    async ingest<T>(source: Readable, originalName: string, processStaged: (stagedPath: string, document: StoredRagDocument) => Promise<T>, asset?: RagUploadAssetOptions, reuseCompleted?: (document: StoredRagDocument) => Promise<RagUploadReuse<T> | undefined>): Promise<StoredRagDocument & { result: T; reused: boolean }> {
       activeUploads.set(options.cacheUploadsRoot, (activeUploads.get(options.cacheUploadsRoot) ?? 0) + 1)
       durableMkdir(options.cacheUploadsRoot)
       const stagedPath = join(options.cacheUploadsRoot, `${randomUUID()}.upload`)
@@ -65,6 +66,14 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
           if (!existsSync(absolutePath)) { try { durableCopy(stagedPath, absolutePath, { exclusive: true, expectedHash: sha256 }) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error } }
           durableFsyncFile(absolutePath, sha256)
         })
+        const reused = await reuseCompleted?.(document)
+        if (reused) {
+          await withRagHashLock(knowledgeRoot, sha256, () => {
+            durableRemove(orphanPath)
+            try { if (!readdirSync(orphanRoot).length) durableRemove(orphanRoot) } catch { /* another owner is changing */ }
+          })
+          return { result: reused.result, ...document, reused: true }
+        }
         const stagedAsset = asset
           ? await createContentAssetService({ volumeRoot: asset.volumeRoot, trustedStagingRoot: options.cacheUploadsRoot, beforePublish: asset.beforePublish }).stageDocument({ documentId: asset.documentId, source: stagedPath, name: safeName })
           : undefined
@@ -90,7 +99,7 @@ export function createRagUploadStorage(options: RagUploadStorageOptions) {
             try { if (!readdirSync(orphanRoot).length) durableRemove(orphanRoot) } catch { /* another owner is changing */ }
           })
         }
-        return { result, ...document }
+        return { result, ...document, reused: false }
       } finally {
         durableRemove(stagedPath)
         const remaining = (activeUploads.get(options.cacheUploadsRoot) ?? 1) - 1

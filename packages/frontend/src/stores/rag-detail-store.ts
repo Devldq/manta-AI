@@ -20,6 +20,15 @@ let docPollTimer: ReturnType<typeof setTimeout> | null = null
 /** Worker 活跃标记 —— 防止 processStagedFiles 重入 */
 let workersActive = false
 
+/** 当前知识库仍在写入 canonical staging 的任务。批处理必须等它完成。 */
+const stagingWrites = new Map<string, Promise<void>>()
+export const MAX_RAG_BATCH_CONCURRENCY = 5
+
+function normalizeBatchConcurrency(value: number | undefined): number {
+  const requested = Number.isFinite(value) ? Math.trunc(value!) : 1
+  return Math.max(1, Math.min(requested, MAX_RAG_BATCH_CONCURRENCY))
+}
+
 /** 知识库详情 */
 export interface KnowledgeBaseDetail {
   id: string
@@ -71,6 +80,19 @@ export interface StagedFile {
   type: string
   /** 相对路径（文件夹上传时保留目录结构） */
   relativePath?: string
+}
+
+function applyCanonicalStagedFiles(
+  current: StagedFile[],
+  uploaded: StagedFile[],
+  persisted: Awaited<ReturnType<typeof saveStagedFiles>>,
+): StagedFile[] {
+  const byLocalId = new Map(uploaded.map((file, index) => [file.id, persisted[index]]))
+  const canonical = current.map((file) => {
+    const remote = byLocalId.get(file.id)
+    return remote ? { ...file, id: remote.id, name: remote.name, size: remote.size, type: remote.type } : file
+  })
+  return [...new Map(canonical.map((file) => [file.id, file])).values()]
 }
 
 /** 暂存文件处理进度 */
@@ -128,6 +150,7 @@ export interface DocumentInfo {
   chunkCount?: number
   status: 'pending' | 'processing' | 'ready' | 'error'
   error?: string
+  sourceSha256?: string
 }
 
 /** 文档分块 */
@@ -541,7 +564,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
 
             // 如果批处理中且 workers 未活跃（刷新恢复阶段），更新进度
             const { batchProcessing, batchActiveFiles, batchTotal, stagedFiles } = get()
-            if (batchProcessing) {
+            if (batchProcessing && !workersActive) {
               if (batchActiveFiles.length === 0) {
                 // 首次恢复：用后端 processing docs 填充 activeFiles
                 const processingDocs = docs.filter(
@@ -926,13 +949,20 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     // File bytes become recoverable only after the cache API acknowledges
     // them.  On offline failure they remain visibly local and are retried by
     // the next add/process action; no browser durable store is claimed.
-    if (kbId) void saveStagedFiles(kbId, staged).then((persisted) => {
-      const byLocalId = new Map(staged.map((file, index) => [file.id, persisted[index]]))
-      set((state) => ({ stagedFiles: state.stagedFiles.map((file) => {
-        const remote = byLocalId.get(file.id)
-        return remote ? { ...file, id: remote.id, name: remote.name, size: remote.size, type: remote.type } : file
-      }) }))
-    }).catch((error) => console.warn('[RAG Batch] staged cache upload retained for retry', error))
+    if (kbId) {
+      const previousWrite = stagingWrites.get(kbId) ?? Promise.resolve()
+      const write = previousWrite.catch(() => {}).then(() => saveStagedFiles(kbId, staged)).then((persisted) => {
+        set((state) => {
+          return { stagedFiles: applyCanonicalStagedFiles(state.stagedFiles, staged, persisted) }
+        })
+      })
+      stagingWrites.set(kbId, write)
+      void write.catch((error) => console.warn('[RAG Batch] staged cache upload retained for retry', error))
+      void write.then(
+        () => { if (stagingWrites.get(kbId) === write) stagingWrites.delete(kbId) },
+        () => { if (stagingWrites.get(kbId) === write) stagingWrites.delete(kbId) },
+      )
+    }
   },
 
   removeStagedFile: (id: string) => {
@@ -988,33 +1018,53 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
   },
 
   updateChunkingConfig: (config: Partial<ChunkingConfig>) => {
-    set((s) => ({ chunkingConfig: { ...s.chunkingConfig, ...config } }))
+    set((s) => ({
+      chunkingConfig: {
+        ...s.chunkingConfig,
+        ...config,
+        ...(config.batchConcurrency === undefined ? {} : { batchConcurrency: normalizeBatchConcurrency(config.batchConcurrency) }),
+      },
+    }))
   },
 
   processStagedFiles: async (kbId: string, options?: { alreadyCompleted?: number }) => {
     // 防止重入：如果 workers 已在运行，直接返回
     if (workersActive) return
 
-    const { stagedFiles, chunkingConfig } = get()
+    // addStagedFiles 会异步把临时浏览器 ID 换成 content hash。处理前必须
+    // 等待这次写入，否则成功文件无法按 canonical ID 从队列中删除。
+    await stagingWrites.get(kbId)?.catch(() => {})
+    let { stagedFiles, chunkingConfig } = get()
+    if (stagedFiles.some((file) => !/^[a-f0-9]{64}$/.test(file.id))) {
+      try {
+        const persisted = await saveStagedFiles(kbId, stagedFiles)
+        stagedFiles = applyCanonicalStagedFiles(stagedFiles, stagedFiles, persisted)
+        set({ stagedFiles })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '暂存文件尚未保存完成'
+        set({ batchProcessing: false, batchErrors: [message] })
+        return
+      }
+    }
     if (stagedFiles.length === 0) return
 
     workersActive = true
     const alreadyCompleted = options?.alreadyCompleted ?? 0
+    const concurrency = Math.min(normalizeBatchConcurrency(chunkingConfig.batchConcurrency), stagedFiles.length)
+    chunkingConfig = { ...chunkingConfig, batchConcurrency: concurrency }
 
     // 保存批处理元数据到 IndexedDB（用于刷新后恢复）
     await saveBatchMeta({
       kbId,
       processingStarted: true,
       totalFiles: stagedFiles.length + alreadyCompleted,
-      concurrency: chunkingConfig.batchConcurrency || 1,
+      concurrency,
       chunkingConfig: { ...chunkingConfig },
       startedAt: new Date().toISOString(),
     }).catch(() => {})
     // Claim only canonical IDs. A local offline file will fail naturally when
     // upload starts and remains in memory for a visible retry.
     await claimStagedFiles(kbId, stagedFiles.filter((file) => /^[a-f0-9]{64}$/.test(file.id)).map((file) => file.id), `batch-${kbId}`).catch(() => {})
-
-    const concurrency = Math.max(1, Math.min(chunkingConfig.batchConcurrency || 1, 50, stagedFiles.length))
 
     // 初始化每个暂存文件的进度：pending 0%
     const initialProgress: Record<string, StagedFileProgress> = {}
@@ -1155,6 +1205,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
               }
             }
           }
+          if (!fileDone) throw new Error('处理连接提前结束，未收到完成状态')
         } catch (err) {
           const message = String(err)
           console.error(`[RAG Batch] 文件处理异常 [文件=${sf.name}]:`, err)
@@ -1167,6 +1218,14 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
           try {
             await removeStagedFileById(sf.id, kbId)
             completedStageIds.add(sf.id)
+            set((state) => {
+              const progress = { ...state.stagedFileProgress }
+              delete progress[sf.id]
+              return {
+                stagedFiles: state.stagedFiles.filter((file) => file.id !== sf.id),
+                stagedFileProgress: progress,
+              }
+            })
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Unable to remove staged cache file'
             errors.push(`${sf.name}: ${message}`)
@@ -1193,13 +1252,17 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     await get().fetchDocuments(kbId, { silent: true })
     await get().fetchKnowledgeBase(kbId)
 
+    const remainingFiles = stagedFiles.filter((file) => !completedStageIds.has(file.id))
+    const retainedProgress = Object.fromEntries(
+      remainingFiles.map((file) => [file.id, get().stagedFileProgress[file.id] ?? { stage: 'error', progress: 0, error: '处理未完成' }]),
+    )
     set({
       batchProcessing: false,
       batchDone: true,
       batchErrors: errors,
-      stagedFiles: stagedFiles.filter((file) => !completedStageIds.has(file.id)),
+      stagedFiles: remainingFiles,
       batchActiveFiles: [],
-      stagedFileProgress: {},
+      stagedFileProgress: retainedProgress,
     })
 
     workersActive = false
@@ -1214,10 +1277,8 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
     // 清除 IndexedDB 中的批处理数据
     if (errors.length === 0) await clearAllForKb(kbId).catch((error: unknown) => console.warn('[RAG Batch] staged cache clear retained for retry', error))
 
-    // 短暂展示完成后清理
-    setTimeout(() => {
-      set({ batchDone: false })
-    }, 2000)
+    // 成功提示短暂展示；失败提示保留，直到用户明确关闭或重试。
+    if (errors.length === 0) setTimeout(() => set({ batchDone: false }), 2000)
   },
 
   /** 刷新页面后恢复未完成的批处理会话 */
@@ -1228,9 +1289,20 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       // 没有批处理元数据 —— 可能只有暂存文件（用户还没点执行）
       if (!meta || !meta.processingStarted) {
         const persistedFiles = await loadStagedFiles(kbId)
-        if (persistedFiles.length > 0) {
+        const completedHashes = new Set(
+          get().documents
+            .filter((document) => document.status === 'ready' && document.sourceSha256)
+            .map((document) => document.sourceSha256!),
+        )
+        const completedIds = persistedFiles.filter((file) => completedHashes.has(file.id)).map((file) => file.id)
+        const pendingFiles = persistedFiles.filter((file) => !completedHashes.has(file.id))
+        if (completedIds.length > 0) {
+          const removed = await removeStagedFilesById(kbId, completedIds)
+          if (removed.failures.length > 0) console.warn('[RAG Batch] completed staged cache cleanup retained for retry', removed.failures)
+        }
+        if (pendingFiles.length > 0) {
           set({
-            stagedFiles: persistedFiles.map((f) => ({
+            stagedFiles: pendingFiles.map((f) => ({
               id: f.id,
               file: f.file,
               name: f.name,
@@ -1240,6 +1312,8 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
             })),
             chunkingConfig: meta?.chunkingConfig ?? get().chunkingConfig,
           })
+        } else {
+          set({ stagedFiles: [], stagedFileProgress: {} })
         }
         return
       }
@@ -1253,7 +1327,7 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       }
 
       // 同步 chunkingConfig
-      set({ chunkingConfig: { ...meta.chunkingConfig } })
+      set({ chunkingConfig: { ...meta.chunkingConfig, batchConcurrency: normalizeBatchConcurrency(meta.chunkingConfig.batchConcurrency) } })
 
       // 获取后端文档列表，判断哪些文件已在处理中
       invalidateCache(`rag-docs:${kbId}`)
@@ -1261,32 +1335,49 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       try {
         const res = await fetch(`/api/rag/knowledge-bases/${kbId}/documents`)
         const json = await res.json()
-        if (json.success && json.data?.documents) {
-          backendDocs = json.data.documents
-          set({ documents: backendDocs })
+        if (!res.ok || !json.success || !Array.isArray(json.data?.documents)) {
+          throw new Error(json.error?.message ?? `HTTP ${res.status}`)
         }
-      } catch { /* ignore */ }
+        backendDocs = json.data.documents
+        set({ documents: backendDocs, docsError: null })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '文档状态读取失败'
+        set({
+          stagedFiles: persistedFiles.map((file) => ({ id: file.id, file: file.file, name: file.name, size: file.size, type: file.type, relativePath: file.relativePath })),
+          stagedFileProgress: Object.fromEntries(persistedFiles.map((file) => [file.id, { stage: 'error' as const, progress: 0, error: `无法确认后端状态: ${message}` }])),
+          batchProcessing: false,
+          batchTotal: meta.totalFiles,
+          batchActiveFiles: [],
+          batchErrors: [`恢复已暂停: ${message}`],
+          batchDone: true,
+          docsError: `无法读取文档状态，已停止自动重试: ${message}`,
+        })
+        return
+      }
 
-      // 用 name+size 匹配，过滤掉已在后端的文件
-      // processing/pending = 正在处理中，ready = 已完成 → 从队列移除
-      // error = 失败，保留在队列中以便重试
-      const backendFileKeys = new Set(
-        backendDocs
-          .filter((d) => d.status === 'processing' || d.status === 'ready' || d.status === 'pending')
-          .map((d) => `${d.name}::${d.size}`)
-      )
-
-      const remainingFiles = persistedFiles.filter(
-        (f) => !backendFileKeys.has(`${f.name}::${f.size}`)
-      )
-
-      const processingDocs = backendDocs.filter((d) => d.status === 'processing' || d.status === 'pending')
-      
-      // 仅统计属于此批次的已就绪文档
+      // canonical staging ID 就是 sourceSha256。文件名会在 staging 层被安全化，
+      // 因此 name+size 只能作为旧数据 fallback，不能作为主匹配键。
       const batchFileKeys = new Set(persistedFiles.map((f) => `${f.name}::${f.size}`))
-      const readyCount = backendDocs.filter(
-        (d) => d.status === 'ready' && batchFileKeys.has(`${d.name}::${d.size}`)
-      ).length
+      const readyHashes = new Set(backendDocs.filter((d) => d.status === 'ready' && d.sourceSha256).map((d) => d.sourceSha256!))
+      const activeHashes = new Set(backendDocs.filter((d) => (d.status === 'processing' || d.status === 'pending') && d.sourceSha256).map((d) => d.sourceSha256!))
+      const legacyReadyKeys = new Set(backendDocs.filter((d) => d.status === 'ready' && !d.sourceSha256).map((d) => `${d.name}::${d.size}`))
+      const legacyActiveKeys = new Set(backendDocs.filter((d) => (d.status === 'processing' || d.status === 'pending') && !d.sourceSha256).map((d) => `${d.name}::${d.size}`))
+      const isReady = (file: typeof persistedFiles[number]) => readyHashes.has(file.id) || legacyReadyKeys.has(`${file.name}::${file.size}`)
+      const isActive = (file: typeof persistedFiles[number]) => activeHashes.has(file.id) || legacyActiveKeys.has(`${file.name}::${file.size}`)
+      const completedIds = persistedFiles.filter(isReady).map((file) => file.id)
+      const remainingFiles = persistedFiles.filter((file) => !isReady(file) && !isActive(file))
+      const readyCount = persistedFiles.filter(isReady).length
+      if (completedIds.length > 0) {
+        const removed = await removeStagedFilesById(kbId, completedIds)
+        if (removed.failures.length > 0) console.warn('[RAG Batch] completed staged cache cleanup retained for retry', removed.failures)
+      }
+
+      const processingDocs = backendDocs.filter((document) => {
+        if (document.status !== 'processing' && document.status !== 'pending') return false
+        return document.sourceSha256
+          ? activeHashes.has(document.sourceSha256) && persistedFiles.some((file) => file.id === document.sourceSha256)
+          : batchFileKeys.has(`${document.name}::${document.size}`)
+      })
 
       // 恢复暂存文件，同时初始化进度（pending = 尚未开始处理）
       const restoredProgress: Record<string, StagedFileProgress> = {}

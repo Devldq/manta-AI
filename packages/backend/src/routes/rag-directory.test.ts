@@ -18,10 +18,10 @@ function fixture<T>(operation: () => T): T {
 }
 
 describe('RAG route directory updates', () => {
-  it('records the uploaded filename with refreshed counts', () => fixture(() => {
+  it('records the uploaded filename with refreshed counts', () => fixture(async () => {
     const kb = createKnowledgeBase({ name: '资料库' })
 
-    recordUploadedRagDocument(kb.id, '路线图.md', { documentCount: 1, chunkCount: 4 })
+    await recordUploadedRagDocument(kb.id, '路线图.md', { documentCount: 1, chunkCount: 4 })
 
     expect(getKnowledgeBase(kb.id)).toMatchObject({
       directory: ['路线图.md'],
@@ -32,7 +32,7 @@ describe('RAG route directory updates', () => {
 
   it('reads the document name before deletion and removes one directory entry', () => fixture(async () => {
     const kb = createKnowledgeBase({ name: '资料库' })
-    recordUploadedRagDocument(kb.id, '路线图.md', { documentCount: 1, chunkCount: 4 })
+    await recordUploadedRagDocument(kb.id, '路线图.md', { documentCount: 1, chunkCount: 4 })
     const events: string[] = []
     const provider = {
       getDocument: vi.fn(async () => {

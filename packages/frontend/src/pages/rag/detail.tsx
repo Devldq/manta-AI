@@ -47,6 +47,7 @@ import {
   type ChatMessage,
   type LLMProfileOption,
   type ChunkingConfig,
+  MAX_RAG_BATCH_CONCURRENCY,
 } from '@/stores/rag-detail-store'
 import { formatDistanceToNow } from 'date-fns'
 import {
@@ -1016,7 +1017,7 @@ function ChunkingConfigPanel({ kbId }: { kbId?: string }) {
               color: 'var(--color-text-primary)',
             }}
           >
-            {[1, 5, 10, 20, 50].map((n) => (
+            {Array.from({ length: MAX_RAG_BATCH_CONCURRENCY }, (_, index) => index + 1).map((n) => (
               <option key={n} value={n}>{n}</option>
             ))}
           </select>
@@ -1240,6 +1241,7 @@ function BatchProcessingIndicator() {
   const waitingCount = store.stagedFiles.filter(
     (f) => (store.stagedFileProgress[f.id]?.stage ?? 'pending') === 'pending'
   ).length
+  const failedCount = store.stagedFiles.filter((file) => store.stagedFileProgress[file.id]?.stage === 'error').length
 
   return (
     <div
@@ -1300,6 +1302,12 @@ function BatchProcessingIndicator() {
           <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
             等待处理: {waitingCount} 个文件
           </span>
+        </div>
+      )}
+      {failedCount > 0 && (
+        <div className="flex items-center gap-2 pt-1.5" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+          <XCircle size={11} style={{ color: 'var(--color-status-failed)' }} />
+          <span className="text-[11px]" style={{ color: 'var(--color-status-failed)' }}>处理失败: {failedCount} 个文件</span>
         </div>
       )}
     </div>
@@ -1907,7 +1915,7 @@ export default function RAGDetailPage() {
                 className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
                 style={{ background: 'var(--color-accent)', color: 'var(--color-text-inverse)' }}
               >
-                {store.embeddingChecking ? <><Loader2 size={12} className="animate-spin" />检测向量模型...</> : <><Play size={12} />处理全部 ({store.stagedFiles.length} 个文件)</>}
+                {store.embeddingChecking ? <><Loader2 size={12} className="animate-spin" />检测向量模型...</> : <><Play size={12} />{store.stagedFiles.some((file) => store.stagedFileProgress[file.id]?.stage === 'error') ? '重试未完成文件' : '处理全部'} ({store.stagedFiles.length} 个文件)</>}
               </button>
               {store.embeddingCheckResult && !store.embeddingCheckResult.available && (
                 <div className="flex items-start gap-1.5 px-2 py-1.5 rounded text-[11px]" style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: 'var(--color-text-primary)' }}>
@@ -2045,6 +2053,33 @@ export default function RAGDetailPage() {
                           onRemove={store.batchProcessing ? undefined : () => store.removeStagedFile(sf.id)}
                           onPreview={id && !store.batchProcessing ? () => store.fetchChunkPreview(id, sf.file) : undefined}
                           previewing={store.previewChunksLoading && store.previewChunksFileName === sf.name}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── 处理失败 ─── */}
+                {store.stagedFiles.filter((file) => store.stagedFileProgress[file.id]?.stage === 'error').length > 0 && (
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    <div className="flex items-center gap-1.5 mb-1 flex-shrink-0">
+                      <XCircle size={11} style={{ color: 'var(--color-status-failed)' }} />
+                      <span className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>处理失败</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium tabular-nums" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--color-status-failed)' }}>
+                        {store.stagedFiles.filter((file) => store.stagedFileProgress[file.id]?.stage === 'error').length} 个文件
+                      </span>
+                    </div>
+                    <div className="flex-1 min-h-0 rounded-lg p-2 space-y-1 overflow-y-auto" style={{ background: 'var(--color-surface)', border: '1px solid rgba(239,68,68,0.35)' }}>
+                      {store.stagedFiles.filter((file) => store.stagedFileProgress[file.id]?.stage === 'error').map((file) => (
+                        <StagedFileItem
+                          key={file.id}
+                          name={file.name}
+                          size={file.size}
+                          relativePath={file.relativePath}
+                          stage="error"
+                          progress={store.stagedFileProgress[file.id]?.progress}
+                          error={store.stagedFileProgress[file.id]?.error}
+                          onRemove={store.batchProcessing ? undefined : () => store.removeStagedFile(file.id)}
                         />
                       ))}
                     </div>
