@@ -42,7 +42,7 @@ next-env.d.ts
 /.takumi/.turbo/
 
 # Turborepo
-.turbo/
+.turbo/*
 coverage/
 
 # Electron Builder smoke/package output (the application package itself is tracked)
