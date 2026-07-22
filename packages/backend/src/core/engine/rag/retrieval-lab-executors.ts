@@ -1,13 +1,15 @@
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDocumentPipeline, type DocumentMetadata, type RetrievalResult } from '@manta/rag'
 import { createQdrantProvider } from '@manta/rag/qdrant'
 import type { JobExecutorRegistration } from '@manta/task-runtime'
-import type { JsonValue } from '@manta/contracts'
+import type { JsonValue, RetrievalEvalCase, RetrievalEvalQueryTrace } from '@manta/contracts'
 import { getKnowledgeBase } from '../../storage/knowledge-base/store.js'
 import { buildEmbeddingService } from '../../../routes/rag.js'
 import { RagSourceAssetStore } from '../../../storage/rag-source-assets.js'
-import { RetrievalLabStore, type EvaluationQueryResult } from './retrieval-lab-store.js'
+import { RetrievalLabStore } from './retrieval-lab-store.js'
+import { aggregateRetrievalMetrics, scoreRetrievalCase, type ScorableRetrievedChunk } from './retrieval-evaluation-scorer.js'
 
 export interface RetrievalLabExecutorRoots { knowledge: string }
 
@@ -85,34 +87,51 @@ export function createEvaluationExecutor(roots: RetrievalLabExecutorRoots): JobE
       if (!knowledgeBase) throw new Error(`Knowledge base ${dataset.knowledgeBaseId} was not found`)
       const provider = createQdrantProvider({ collectionPrefix: strategy.indexPrefix })
       const embeddingService = buildEmbeddingService(knowledgeBase.config)
-      const queryResults: EvaluationQueryResult[] = []
+      const queryResults: RetrievalEvalQueryTrace[] = []
       try {
         await provider.initialize()
+        const sourceManifestHash = corpusManifestHash(strategy.corpusSnapshot)
+        if (dataset.sourceManifestHash && dataset.sourceManifestHash !== sourceManifestHash) {
+          throw Object.assign(new Error('Dataset source manifest does not match the strategy corpus'), { code: 'EVALUATION_CORPUS_MISMATCH' })
+        }
+        const maxK = Math.max(strategy.retrieval.topK, ...run.kValues)
+        const sourceHashes = new Map(strategy.corpusSnapshot.map((item) => [item.documentId, item.sourceSha256]))
         for (let index = 0; index < dataset.queries.length; index++) {
           context.signal.throwIfAborted()
           const item = dataset.queries[index]
           const started = performance.now()
-          const embedding = await embeddingService.embed(item.query)
-          const retrieved = strategy.retrieval.mode === 'hybrid'
-            ? await provider.hybridSearch(dataset.knowledgeBaseId, embedding, item.query, { topK: strategy.retrieval.topK, threshold: strategy.retrieval.threshold, rrfK: strategy.retrieval.rrfK, includeMetadata: true })
-            : await provider.vectorSearch(dataset.knowledgeBaseId, embedding, { topK: strategy.retrieval.topK, threshold: strategy.retrieval.threshold, includeMetadata: true })
-          const latencyMs = performance.now() - started
-          queryResults.push(scoreQuery(item, retrieved, latencyMs))
-          context.checkpoint('query_evaluated', { queryId: item.id, index: index + 1, total: dataset.queries.length })
-          context.progress((index + 1) / dataset.queries.length, { queryId: item.id, latencyMs })
+          try {
+            const embedding = await embeddingService.embed(item.query)
+            const retrieved = strategy.retrieval.mode === 'hybrid'
+              ? await provider.hybridSearch(dataset.knowledgeBaseId, embedding, item.query, { topK: maxK, threshold: strategy.retrieval.threshold, rrfK: strategy.retrieval.rrfK, includeMetadata: true })
+              : await provider.vectorSearch(dataset.knowledgeBaseId, embedding, { topK: maxK, threshold: strategy.retrieval.threshold, includeMetadata: true })
+            const latencyMs = performance.now() - started
+            const scorable = retrieved.map((result): ScorableRetrievedChunk => ({
+              chunkId: result.chunk.id,
+              documentId: result.chunk.documentId,
+              content: result.chunk.content,
+              score: result.score,
+              sourceSha256: result.chunk.sourceSha256 ?? sourceHashes.get(result.chunk.documentId),
+              sourceVersion: result.chunk.sourceVersion,
+              startIndex: result.chunk.startIndex,
+              endIndex: result.chunk.endIndex,
+            }))
+            queryResults.push(scoreRetrievalCase({ case: item, candidateResults: scorable, finalResults: scorable, latencyMs, kValues: run.kValues }))
+            context.checkpoint('query_evaluated', { queryId: item.id, index: index + 1, total: dataset.queries.length })
+            context.progress((index + 1) / dataset.queries.length, { queryId: item.id, latencyMs })
+          } catch (error) {
+            if (context.signal.aborted) throw error
+            queryResults.push(failedQueryTrace(item, run.kValues, performance.now() - started, error))
+            context.checkpoint('query_failed', { queryId: item.id, index: index + 1, total: dataset.queries.length, error: error instanceof Error ? error.message : String(error) })
+            context.progress((index + 1) / dataset.queries.length, { queryId: item.id, failed: true })
+          }
         }
-        const latencies = queryResults.map((item) => item.latencyMs).sort((left, right) => left - right)
-        const metrics = {
-          recallAtK: average(queryResults.map((item) => item.recall)),
-          mrr: average(queryResults.map((item) => item.reciprocalRank)),
-          ndcgAtK: average(queryResults.map((item) => item.ndcg)),
-          zeroResultRate: queryResults.filter((item) => !item.retrieved.length).length / queryResults.length,
-          latencyP50Ms: percentile(latencies, 0.5),
-          latencyP95Ms: percentile(latencies, 0.95),
-        }
-        store.updateEvaluationRun(run.id, { status: 'succeeded', queries: queryResults, metrics, completedAt: new Date().toISOString(), error: undefined })
+        const metrics = aggregateRetrievalMetrics(queryResults, run.kValues, run.metricSpecVersion)
+        const slices = unique(queryResults.flatMap((item) => item.slices))
+        const sliceMetrics = Object.fromEntries(slices.map((slice) => [slice, aggregateRetrievalMetrics(queryResults.filter((item) => item.slices.includes(slice)), run.kValues, run.metricSpecVersion)]))
+        store.updateEvaluationRun(run.id, { status: 'succeeded', sourceManifestHash, queries: queryResults, metrics, sliceMetrics, completedAt: new Date().toISOString(), error: undefined })
         store.updateStrategy(strategy.id, { evaluationSummary: metrics })
-        return { evaluationRunId: run.id, strategyVersionId: strategy.id, metrics } as JsonValue
+        return { evaluationRunId: run.id, strategyVersionId: strategy.id, sourceManifestHash, metrics } as JsonValue
       } catch (error) {
         store.updateEvaluationRun(run.id, { status: 'failed', queries: queryResults, completedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) })
         throw error
@@ -137,40 +156,40 @@ export async function searchStrategy(roots: RetrievalLabExecutorRoots, strategyV
   } finally { await provider.close() }
 }
 
-function scoreQuery(item: { id: string; query: string; relevantSources: Array<{ documentId: string; quote: string }> }, results: RetrievalResult[], latencyMs: number): EvaluationQueryResult {
-  const relevantDocs = new Set(item.relevantSources.map((source) => source.documentId))
-  const retrieved = results.map((result) => {
-    const sources = item.relevantSources.filter((source) => source.documentId === result.chunk.documentId)
-    const relevant = sources.some((source) => textOverlaps(result.chunk.content, source.quote))
-    return { documentId: result.chunk.documentId, content: result.chunk.content, score: result.score, relevant }
-  })
-  const matchedDocs = new Set(retrieved.filter((result) => result.relevant).map((result) => result.documentId))
-  const firstRelevant = retrieved.findIndex((result) => result.relevant)
-  const dcg = retrieved.reduce((sum, result, index) => sum + (result.relevant ? 1 / Math.log2(index + 2) : 0), 0)
-  const idealRelevant = Math.min(relevantDocs.size, retrieved.length)
-  const idcg = Array.from({ length: idealRelevant }, (_, index) => 1 / Math.log2(index + 2)).reduce((sum, value) => sum + value, 0)
+function chunkerName(name: string): 'fixed' | 'semantic' | 'recursive' { return name === 'fixed' ? 'fixed' : name === 'paragraph-v1' || name === 'semantic' ? 'semantic' : 'recursive' }
+function stringField(value: JsonValue, field: string): string { if (!value || Array.isArray(value) || typeof value !== 'object' || typeof value[field] !== 'string') throw new Error(`${field} is required`); return value[field] }
+
+function failedQueryTrace(item: RetrievalEvalCase, kValues: number[], latencyMs: number, error: unknown): RetrievalEvalQueryTrace {
   return {
     queryId: item.id,
+    familyId: item.familyId ?? item.id,
     query: item.query,
+    expectedBehavior: item.expectedBehavior,
+    risk: item.risk,
+    split: item.split,
+    slices: item.slices,
+    forbiddenReasonsExpected: unique(item.forbiddenSources.map((source) => source.reason)),
     latencyMs,
-    retrieved,
-    recall: relevantDocs.size ? matchedDocs.size / relevantDocs.size : 0,
-    reciprocalRank: firstRelevant < 0 ? 0 : 1 / (firstRelevant + 1),
-    ndcg: idcg ? dcg / idcg : 0,
+    status: error instanceof Error && error.name === 'ZodError' ? 'invalid_gold' : 'infra_failed',
+    candidateResults: [],
+    finalResults: [],
+    candidateMetricsByK: Object.fromEntries(kValues.map((k) => [String(k), emptyMetrics()])),
+    metricsByK: Object.fromEntries(kValues.map((k) => [String(k), emptyMetrics()])),
+    error: { code: (error as { code?: string }).code ?? 'RETRIEVAL_QUERY_FAILED', message: error instanceof Error ? error.message : String(error) },
   }
 }
 
-function textOverlaps(content: string, quote: string): boolean {
-  const left = content.replace(/\s+/g, ' ').trim().toLowerCase()
-  const right = quote.replace(/\s+/g, ' ').trim().toLowerCase()
-  if (!left || !right) return false
-  if (left.includes(right) || right.includes(left)) return true
-  const window = Math.min(24, right.length)
-  for (let index = 0; index + window <= right.length; index += Math.max(1, Math.floor(window / 2))) if (left.includes(right.slice(index, index + window))) return true
-  return false
+function emptyMetrics() {
+  return {
+    docHit: null, docRecall: null, evidenceRecall: null, completeEvidenceHit: null, mrr: null, ndcg: null,
+    newEvidencePrecision: null, evidenceChunkPrecision: null, redundancyRate: null, noRelevantHit: null,
+    falseSupport: null, correctNoEvidence: null, minimalCompleteK: null,
+    forbiddenHits: { outdated: false, unauthorized: false, knownWrong: false, confuser: false },
+  }
 }
 
-function chunkerName(name: string): 'fixed' | 'semantic' | 'recursive' { return name === 'fixed' ? 'fixed' : name === 'paragraph-v1' || name === 'semantic' ? 'semantic' : 'recursive' }
-function stringField(value: JsonValue, field: string): string { if (!value || Array.isArray(value) || typeof value !== 'object' || typeof value[field] !== 'string') throw new Error(`${field} is required`); return value[field] }
-function average(values: number[]): number { return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0 }
-function percentile(values: number[], quantile: number): number { if (!values.length) return 0; return values[Math.min(values.length - 1, Math.max(0, Math.ceil(values.length * quantile) - 1))] }
+function corpusManifestHash(snapshot: Array<{ documentId: string; sourceSha256: string; size: number }>): string {
+  return createHash('sha256').update(JSON.stringify([...snapshot].sort((left, right) => left.documentId.localeCompare(right.documentId)))).digest('hex')
+}
+
+function unique<T>(values: T[]): T[] { return [...new Set(values)] }
