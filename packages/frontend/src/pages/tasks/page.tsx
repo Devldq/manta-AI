@@ -18,91 +18,13 @@ import {
   KimInputBar,
 } from './components'
 import type { WorkspaceEntry } from './components/WorkspaceSelector'
-import type { Conversation, AgentEntry, StepUsageData } from './utils'
+import type { Conversation, AgentEntry, StepUsageData, StoredMessage } from './utils'
+import { storedMessageToUIMessage } from './utils/formatters'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { createStepUsageInterceptor } from './step-usage-sse'
+import { withPendingAssistantMessage } from './pending-assistant'
 
 const DEFAULT_AGENT = 'main'
-
-// ─── Step Usage 拦截器：从 SSE 流中提取 manta:step-usage 事件 ──────────────────
-
-interface StepUsageEvent {
-  stepIndex: number
-  usage: {
-    inputTokens: number
-    outputTokens: number
-    cacheReadTokens?: number
-    cacheWriteTokens?: number
-    noCacheTokens?: number
-  }
-  toolNames?: string[]
-}
-
-/**
- * 创建一个自定义 fetch 函数，拦截 SSE 响应流中的 manta:step-usage 事件。
- * DefaultChatTransport 会忽略非 UIMessageChunk 格式的事件，
- * 所以我们需要在 raw 字节层面拦截，提取 step-usage 数据后原样传递。
- */
-function createStepUsageInterceptor(
-  onStepUsage: (data: StepUsageEvent) => void,
-): typeof globalThis.fetch {
-  return async (input, init) => {
-    const response = await globalThis.fetch(input, init)
-
-    if (!response.body) return response
-    const ct = response.headers.get('content-type') ?? ''
-    if (!ct.includes('text/event-stream')) return response
-
-    let buffer = ''
-    const decoder = new TextDecoder()
-
-    const transformedBody = response.body.pipeThrough(
-      new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, controller) {
-          // 原样传递给 DefaultChatTransport 处理
-          controller.enqueue(chunk)
-
-          // 同时解析 SSE 事件，提取 step-usage
-          buffer += decoder.decode(chunk, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() ?? ''
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
-            const dataStr = line.slice(6).trim()
-            if (!dataStr || dataStr === '[DONE]') continue
-            try {
-              const event = JSON.parse(dataStr)
-              if (event.type === 'manta:step-usage') {
-                onStepUsage(event)
-              }
-            } catch {
-              // 忽略解析错误
-            }
-          }
-        },
-        flush() {
-          // 处理 buffer 中剩余的数据
-          const remaining = buffer.trim()
-          if (!remaining.startsWith('data: ')) return
-          try {
-            const event = JSON.parse(remaining.slice(6).trim())
-            if (event.type === 'manta:step-usage') {
-              onStepUsage(event)
-            }
-          } catch {
-            // 忽略
-          }
-        },
-      }),
-    )
-
-    return new Response(transformedBody, {
-      headers: response.headers,
-      status: response.status,
-      statusText: response.statusText,
-    })
-  }
-}
 
 // ─── ChatView（有会话时） ─────────────────────────────────────────────────────
 
@@ -124,9 +46,12 @@ function ChatView({
   const prevMessageCountRef = useRef(initialMessages.length)
   const [inputText, setInputText] = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [previewPath, setPreviewPath] = useState<string | null>(null)
 
   // ─── 实时 Step Usage 状态（流式期间从 SSE 拦截，不等 loop 结束）──
   const [liveStepUsages, setLiveStepUsages] = useState<StepUsageData[]>([])
+  const [awaitingAssistant, setAwaitingAssistant] = useState(false)
+  const pendingTurnStartRef = useRef<number | null>(null)
 
   // 创建 fetch 拦截器，捕获 manta:step-usage 事件
   const interceptedFetch = useMemo(
@@ -214,6 +139,10 @@ function ChatView({
   }, [editingTitle])
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const handleOpenFile = useCallback((path: string) => {
+    setPreviewPath(path)
+    setSidebarOpen(true)
+  }, [])
   const pendingMsgKey = `manta:pending-msg:${convId}`
 
   const { messages, setMessages, sendMessage, stop, status, error } = useChat({
@@ -229,6 +158,21 @@ function ChatView({
   })
 
   const isLoading = status === 'submitted' || status === 'streaming'
+
+  // Track the new turn independently from useChat.status. During reconnect and
+  // request setup the status can briefly be ready even though the user message
+  // has already rendered and the first assistant chunk has not arrived.
+  useEffect(() => {
+    if (!awaitingAssistant) return
+    const start = pendingTurnStartRef.current
+    if (start !== null && messages.slice(start).some((message) => message.role === 'assistant')) {
+      pendingTurnStartRef.current = null
+      setAwaitingAssistant(false)
+    } else if (status === 'error') {
+      pendingTurnStartRef.current = null
+      setAwaitingAssistant(false)
+    }
+  }, [awaitingAssistant, messages, status])
 
   // ─── SSE 重连 ─────────────────────────────────────────────────────────
   const reconnect = useReconnectSSE(
@@ -269,31 +213,9 @@ function ChatView({
           const conv = data.conversation
           if (!conv) return
           setSidebarConv(conv)
-          const refreshed: UIMessage[] = conv.messages
-            .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
-            .map((m: { id: string; role: string; content: string; timestamp: string; toolCalls?: unknown[]; usage?: Record<string, unknown> | null; stepUsages?: Array<Record<string, unknown>> | null }) => {
-              const parts: UIMessage['parts'] = []
-              if (m.toolCalls && m.toolCalls.length > 0) {
-                for (const tc of m.toolCalls as { toolCallId: string; toolName: string; isError: boolean; input: unknown; output: unknown; errorText?: string }[]) {
-                  parts.push({
-                    type: 'dynamic-tool',
-                    toolCallId: tc.toolCallId,
-                    toolName: tc.toolName,
-                    state: tc.isError ? 'output-error' : 'output-available',
-                    input: tc.input,
-                    output: tc.isError ? undefined : tc.output,
-                    errorText: tc.errorText,
-                  } as unknown as NonNullable<UIMessage['parts']>[number])
-                }
-              }
-              if (m.content) parts.push({ type: 'text' as const, text: m.content })
-              return {
-                id: m.id,
-                role: m.role as 'user' | 'assistant',
-                parts,
-                metadata: { timestamp: m.timestamp, usage: m.usage ?? null, stepUsages: m.stepUsages ?? null },
-              }
-            })
+          const refreshed = (conv.messages as StoredMessage[])
+            .filter((message) => message.role === 'user' || message.role === 'assistant')
+            .map(storedMessageToUIMessage)
           setMessages(refreshed)
           setLiveStepUsages([])
           reconnect.reset()
@@ -341,6 +263,8 @@ function ChatView({
     const pendingMsg = sessionStorage.getItem(pendingMsgKey)
     if (pendingMsg) {
       sessionStorage.removeItem(pendingMsgKey)
+      pendingTurnStartRef.current = messages.length
+      setAwaitingAssistant(true)
       sendMessage({ text: pendingMsg })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -362,19 +286,23 @@ function ChatView({
     if (!msg || isLoading) return
     shouldAutoScrollRef.current = true
     setInputText('')
+    pendingTurnStartRef.current = messages.length
+    setAwaitingAssistant(true)
     sendMessage({ text: msg })
   }
 
   // ─── 自定义停止 ────────────────────────────────────────────────
   async function handleStop() {
     await fetch(buildConvUrl('/stop'), { method: 'POST' }).catch(() => {})
+    pendingTurnStartRef.current = null
+    setAwaitingAssistant(false)
     stop()
   }
 
   // ─── 合并重连流式内容到消息列表 ────────────────────────────────────────────
   const hasReconnectContent = reconnect.connected && reconnect.streamingParts.length > 0
   const replacedMsgIdxRef = useRef(-1)
-  const displayMessages: UIMessage[] = hasReconnectContent
+  const streamedMessages: UIMessage[] = hasReconnectContent
     ? (() => {
         const result = [...messages]
         let lastAssistantIdx = -1
@@ -401,6 +329,10 @@ function ChatView({
         return result
       })()
     : ((replacedMsgIdxRef.current = -1), messages)
+  // useChat does not create the assistant message until the first stream chunk.
+  // Render an empty assistant row immediately so the cursor belongs to the new
+  // turn instead of being attached to the previous completed answer.
+  const displayMessages = withPendingAssistantMessage(streamedMessages, awaitingAssistant, convId)
 
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return
@@ -485,7 +417,14 @@ function ChatView({
             </button>
 
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={() => {
+                if (sidebarOpen) {
+                  setSidebarOpen(false)
+                } else {
+                  setPreviewPath(null)
+                  setSidebarOpen(true)
+                }
+              }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-fast"
               style={{ border: '1px solid var(--color-border)', background: sidebarOpen ? 'var(--color-accent-subtle)' : 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
               onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
@@ -515,10 +454,11 @@ function ChatView({
             const lastAssistantIdx = [...displayMessages].reverse().findIndex(m => m.role === 'assistant')
             const lastAssistantRealIdx = lastAssistantIdx >= 0 ? displayMessages.length - 1 - lastAssistantIdx : -1
             const isLastAssistant = msg.role === 'assistant' && idx === lastAssistantRealIdx
-            const streaming = isReconnectMsg ? showReconnectStreaming : isLoading && isLastAssistant
+            const isLastMessage = idx === displayMessages.length - 1
+            const streaming = isReconnectMsg ? showReconnectStreaming : (isLoading || awaitingAssistant) && isLastAssistant && isLastMessage
             return (
               <div key={msg.id} style={{ width: '100%' }}>
-                <MessageRow message={msg} agentName={agentName} isStreaming={streaming} isLastAssistant={isLastAssistant} liveStepUsages={isLastAssistant && streaming ? liveStepUsages : undefined} />
+                <MessageRow message={msg} agentName={agentName} isStreaming={streaming} liveStepUsages={isLastAssistant && streaming ? liveStepUsages : undefined} onOpenFile={handleOpenFile} />
               </div>
             )
           })}
@@ -555,11 +495,14 @@ function ChatView({
         />
       </div>
 
-      {/* 会话侧边栏 - 桌面端显示，移动端隐藏 */}
-      <div className="hidden md:block">
+      {/* 会话详情与本地文件预览侧边栏 */}
+      <div className="task-context-panel">
         <SessionSidebar
           open={sidebarOpen}
           conversation={sidebarConv}
+          workspaceId={workspaceId}
+          previewPath={previewPath}
+          onClose={() => setSidebarOpen(false)}
         />
       </div>
 
@@ -847,34 +790,7 @@ function TasksPage() {
   if (conv) {
     const initialMessages: UIMessage[] = conv.messages
       .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => {
-        const parts: UIMessage['parts'] = []
-
-        if (m.toolCalls && m.toolCalls.length > 0) {
-          for (const tc of m.toolCalls) {
-            parts.push({
-              type: 'dynamic-tool',
-              toolCallId: tc.toolCallId,
-              toolName: tc.toolName,
-              state: tc.isError ? 'output-error' : 'output-available',
-              input: tc.input,
-              output: tc.isError ? undefined : tc.output,
-              errorText: tc.errorText,
-            } as unknown as NonNullable<UIMessage['parts']>[number])
-          }
-        }
-
-        if (m.content) {
-          parts.push({ type: 'text' as const, text: m.content })
-        }
-
-        return {
-          id: m.id,
-          role: m.role as 'user' | 'assistant',
-          parts,
-          metadata: { timestamp: m.timestamp, usage: m.usage ?? null },
-        }
-      })
+      .map(storedMessageToUIMessage)
 
     return (
       <ChatView

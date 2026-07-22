@@ -1,6 +1,7 @@
 import type { StorageGroupId } from '@manta/shared'
 import { STORAGE_GROUP_IDS } from '@manta/shared'
-import { EmbeddingCacheManager, configureQdrantProvider, resetQdrantProvider } from '@manta/rag'
+import { EmbeddingCacheManager } from '@manta/rag'
+import { createQdrantProvider, type QdrantProvider } from '@manta/rag/qdrant'
 import { BootstrapStore, createStorageHub, GitBindingStore, GitRunner, GitSyncService, ImportCoordinator, volumeRoot, type StorageGroupDriver } from '@manta/storage-hub'
 import { createClaudeInstallResource, createClaudeMarketplaceRuntimeOwner, type ClaudeMarketplaceRuntimeOwner, type PluginMarketplaceCache } from '../core/storage/plugin/marketplace'
 import { createGroupDriver, createKnowledgeDriver, type ManagedGroupLifecycle } from './group-drivers'
@@ -22,6 +23,7 @@ export interface BackendStorageRuntime extends StorageResolver {
   readonly diagnosticsWriter: RuntimeDiagnosticsWriter
   readonly marketplaceScheduler: ClaudeMarketplaceRuntimeOwner
   readonly processRegistry: ProcessRegistry
+  readonly ragProvider: QdrantProvider
   readonly legacyRecoveryWarnings: LegacyRecoveryWarning[]
   recoverStartup(): Promise<void>
   runInStorageContext<T>(operation: () => T): T
@@ -39,7 +41,7 @@ export interface BackendRuntimeOptions {
 export function createBackendStorageRuntime(storage: StorageResolver, options: BackendRuntimeOptions = {}): BackendStorageRuntime {
   recoverExtensionTransactions(storage.resolve('extensions'))
   const legacyRecoveryWarnings = migrateLegacyAtomicJournals(join(storage.resolve('secrets'), '.transactions'), STORAGE_GROUP_IDS.map((id) => storage.resolve(id)), storage.resolve('diagnostics', 'legacy-recovery'))
-  const provider = configureQdrantProvider()
+  const provider = createQdrantProvider()
   const cache = new EmbeddingCacheManager(storage.resolve('knowledge', 'rag', 'cache'))
   const diagnosticsWriter = new RuntimeDiagnosticsWriter(storage.resolve('diagnostics'))
   const marketplaceScheduler = createClaudeMarketplaceRuntimeOwner(
@@ -85,7 +87,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
     { isPipelineCommitted: async (record) => matchesReadyRagDocument(record, await provider.getDocument(record.documentId)) },
   )
   return {
-    resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler, processRegistry, legacyRecoveryWarnings,
+    resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler, processRegistry, ragProvider: provider, legacyRecoveryWarnings,
     recoverStartup,
     runInStorageContext: (operation) => runWithStorageResolver(storage, () => runWithDiagnosticsOwner(diagnosticsWriter, operation)),
     async quiesce() {
@@ -108,10 +110,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
         ...[...drivers.values()].map((driver) => driver.close()),
         ...[...lifecycles.values()].map((lifecycle) => lifecycle.dispose()),
       ])
-      let resetError: unknown
-      try { await resetQdrantProvider() } catch (error) { resetError = error }
       const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map((result) => result.reason)
-      if (resetError) errors.push(resetError)
       if (errors.length === 1) throw errors[0]
       if (errors.length > 1) throw new AggregateError(errors, 'Backend storage shutdown failed')
     },

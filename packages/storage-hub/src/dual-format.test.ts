@@ -1,11 +1,11 @@
-import { createRequire } from 'node:module'
+import Module from 'node:module'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createStorageHub } from './runtime/storage-hub'
 
-const require = createRequire(import.meta.url)
+const require = Module.createRequire(import.meta.url)
 
 describe('@manta/storage-hub package exports', () => {
   it('loads from CommonJS without requiring an ESM-only shared entry', () => {

@@ -41,7 +41,7 @@ export const KimInputBar = memo(function KimInputBar({
   const agentDropRef = useRef<HTMLDivElement>(null)
   const [modelOpen, setModelOpen] = useState(false)
   const modelDropRef = useRef<HTMLDivElement>(null)
-  const [profiles, setProfiles] = useState<Array<{ id: string; name: string }>>([])
+  const [profiles, setProfiles] = useState<Array<{ id: string; name: string; modelType: 'chat' | 'reasoning' }>>([])
   const [activeProfileId, setActiveProfileId] = useState<string>('')
 
   // 获取模型配置列表
@@ -50,9 +50,12 @@ export const KimInputBar = memo(function KimInputBar({
       try {
         const res = await fetch('/api/chat/config')
         const data = await res.json()
-        if (data.profiles) {
-          setProfiles(data.profiles.map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })))
-          setActiveProfileId(data.activeProfileId || data.profiles[0]?.id || '')
+        const agentProfiles = (data.profilesMasked || data.profiles || []).filter(
+          (profile: { modelType?: string }) => profile.modelType === 'chat' || profile.modelType === 'reasoning',
+        )
+        if (agentProfiles.length > 0) {
+          setProfiles(agentProfiles.map((p: { id: string; name: string; modelType: 'chat' | 'reasoning' }) => ({ id: p.id, name: p.name, modelType: p.modelType })))
+          setActiveProfileId(agentProfiles.some((profile: { id: string }) => profile.id === data.activeProfileId) ? data.activeProfileId : agentProfiles[0].id)
         }
       } catch (err) {
         console.error('Failed to fetch profiles:', err)

@@ -1,24 +1,31 @@
-import { useState, memo } from 'react'
+import { useMemo, useState, memo } from 'react'
 import type { UIMessage } from 'ai'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { markdownComponents } from '../utils/markdown'
+import { createMarkdownComponents } from '../utils/markdown'
 import { getTextContent, formatTime, fmtTokens } from '../utils/formatters'
 import { ToolCallLog } from './ToolCallLog'
 import { TokenBreakdown } from './TokenBreakdown'
+import { useSmoothStreamingText } from './useSmoothStreamingText'
 import type { StepUsageData } from '../utils/types'
 
-const MarkdownContent = memo(function MarkdownContent({ content, streaming }: { content: string; streaming?: boolean }) {
+const MarkdownContent = memo(function MarkdownContent({ content, streaming, onOpenFile }: { content: string; streaming?: boolean; onOpenFile?: (path: string) => void }) {
+  const { text, revealing } = useSmoothStreamingText(content, Boolean(streaming))
+  const components = useMemo(
+    () => createMarkdownComponents({ onOpenFile, streaming: Boolean(streaming) }),
+    [onOpenFile, streaming],
+  )
+
   return (
-    <div>
+    <div className={revealing ? 'streaming-markdown streaming-markdown--active' : 'streaming-markdown'}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={markdownComponents}
+        components={components}
       >
-        {content}
+        {text}
       </ReactMarkdown>
-      {streaming && (
-        <span style={{ display: 'inline-block', width: '2px', height: '13px', background: 'var(--color-accent)', marginLeft: '2px', verticalAlign: 'text-bottom', animation: 'blink 1s step-end infinite' }} />
+      {revealing && (
+        <span className="streaming-caret" aria-hidden="true" />
       )}
     </div>
   )
@@ -28,16 +35,14 @@ interface MessageRowProps {
   message: UIMessage
   agentName: string
   isStreaming: boolean
-  /** 是否是最后一条 assistant 消息（用于自动折叠历史消息） */
-  isLastAssistant?: boolean
   /** 流式期间实时收集的 step usage 数据（来自 SSE manta:step-usage 事件） */
   liveStepUsages?: StepUsageData[]
+  onOpenFile?: (path: string) => void
 }
 
-export const MessageRow = memo(function MessageRow({ message, agentName, isStreaming, isLastAssistant = true, liveStepUsages }: MessageRowProps) {
+export const MessageRow = memo(function MessageRow({ message, agentName, isStreaming, liveStepUsages, onOpenFile }: MessageRowProps) {
   const [hovered, setHovered] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [toolsExpanded, setToolsExpanded] = useState(isLastAssistant) // 历史消息默认折叠工具调用
   const [tokenDetailOpen, setTokenDetailOpen] = useState(false)
 
   const content = getTextContent(message)
@@ -85,15 +90,9 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
     noCacheTokens: liveStepUsages!.reduce((a, s) => a + (s.noCacheTokens ?? 0), 0) || undefined,
   } : undefined)
 
-  // Token 分析的显示条件：
-  // - 非流式：有 usage 数据就显示（和原来一样）
-  // - 流式：有 live step usages 就显示（不等 loop 结束）
-  const showTokenAnalysis = effectiveUsage && (effectiveUsage.inputTokens != null || effectiveUsage.outputTokens != null)
-  // 分步面板：非流式时 >1 步才显示，流式时 ≥1 步就显示（实时查看进度）
-  const hasStepUsages = effectiveStepUsages && (isStreaming ? effectiveStepUsages.length >= 1 : effectiveStepUsages.length > 1)
-
-  // 判断是否是已完成的历史消息（非最后一条 assistant，且非流式）
-  const isHistorical = !isLastAssistant && !isStreaming
+  // Token 是完成态元数据，不能在最终答复前抢先呈现为“结果”。
+  const showTokenAnalysis = !isStreaming && effectiveUsage && (effectiveUsage.inputTokens != null || effectiveUsage.outputTokens != null)
+  const hasStepUsages = !isStreaming && effectiveStepUsages && effectiveStepUsages.length > 1
 
   async function handleCopy() {
     try {
@@ -142,40 +141,8 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
         </div>
 
         {/* 工具调用日志（步骤视图） */}
-        {hasToolCalls && (toolsExpanded || isLastAssistant) && (
-          <ToolCallLog parts={message.parts} isStreaming={isStreaming} />
-        )}
-
-        {/* 历史消息：折叠的工具调用摘要 */}
-        {hasToolCalls && isHistorical && toolsExpanded && (
-          <button
-            onClick={() => setToolsExpanded(false)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '3px',
-              padding: '2px 6px', border: '1px solid var(--color-border)',
-              background: 'var(--color-surface)', borderRadius: '10px',
-              cursor: 'pointer', fontSize: '10px', color: 'var(--color-text-muted)',
-              marginBottom: '6px',
-            }}
-          >
-            <span>收起工具调用</span>
-          </button>
-        )}
-
-        {/* 历史消息：折叠状态时显示展开按钮 */}
-        {hasToolCalls && isHistorical && !toolsExpanded && (
-          <button
-            onClick={() => setToolsExpanded(true)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '3px',
-              padding: '2px 6px', border: '1px solid var(--color-border)',
-              background: 'var(--color-surface)', borderRadius: '10px',
-              cursor: 'pointer', fontSize: '10px', color: 'var(--color-text-muted)',
-              marginBottom: '6px',
-            }}
-          >
-            <span>🔧 查看工具调用</span>
-          </button>
+        {hasToolCalls && (
+          <ToolCallLog parts={message.parts} isStreaming={isStreaming} onOpenFile={onOpenFile} />
         )}
 
         {/* 主内容区 */}
@@ -193,18 +160,22 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
             <div
               style={{ fontSize: '13px', lineHeight: '1.55', color: 'var(--color-text-primary)', wordBreak: 'break-word' }}
             >
-              <MarkdownContent content={content} streaming={isStreaming} />
+              <MarkdownContent content={content} streaming={isStreaming} onOpenFile={onOpenFile} />
             </div>
           </div>
         ) : (
           <span style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>
             {isStreaming ? (
-              <span style={{ display: 'inline-block', width: '2px', height: '13px', background: 'var(--color-accent)', animation: 'blink 1s step-end infinite', verticalAlign: 'middle' }} />
+              <span className="agent-thinking" aria-label="正在生成回复">
+                <span className="agent-thinking-dot" />
+                <span className="agent-thinking-dot" />
+                <span className="agent-thinking-dot" />
+              </span>
             ) : hasToolCalls ? null : '（无输出）'}
           </span>
         )}
 
-        {/* 底部：token 消耗（流式期间也显示实时数据） */}
+        {/* 底部：仅在回复完成后显示 token 消耗 */}
         {showTokenAnalysis && (
           <div style={{ marginTop: '6px' }}>
             {/* 紧凑摘要行 */}
@@ -220,13 +191,6 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
               )}
               {effectiveUsage.cacheReadTokens != null && effectiveUsage.cacheReadTokens > 0 && (
                 <span style={{ fontSize: '9px', color: 'var(--color-text-success, #10b981)', fontFamily: 'var(--font-mono)' }}>cache hit {fmtTokens(effectiveUsage.cacheReadTokens)}</span>
-              )}
-              {/* 流式期间的实时指示 */}
-              {isStreaming && hasLive && (
-                <span style={{ fontSize: '9px', color: 'var(--color-accent)', fontFamily: 'var(--font-mono)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                  <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'var(--color-accent)', display: 'inline-block', animation: 'pulse-soft 1.5s ease-in-out infinite' }} />
-                  live
-                </span>
               )}
             </div>
 

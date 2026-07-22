@@ -36,7 +36,7 @@ export {
   getQdrantProvider,
   resetQdrantProvider,
 } from './qdrant-provider'
-export type { QdrantProviderOptions } from './qdrant-provider'
+export type { QdrantProviderOptions, HybridSearchOptions } from './qdrant-provider'
 
 // Legacy symbols remain exported only so historical test sources still compile.
 // Production composition and every backend route use QdrantProvider exclusively.
@@ -62,6 +62,10 @@ export {
   createDocumentPipeline,
 } from './pipeline'
 export type { PipelineOptions, PipelineResult, PipelineStage } from './pipeline'
+
+// ─── 显式依赖注入引擎 ───────────────────────────────────
+export { RagEngine, createDefaultParserRegistry, createDefaultChunkerRegistry } from './engine'
+export type { ParserRegistry, ChunkerRegistry, CatalogRepository, LexicalIndex, RagClock, RagIdFactory, RagEngineDependencies, RagPreviewOptions, RagIngestOptions } from './engine'
 
 // ─── Embedding 缓存 ─────────────────────────────────────
 export {

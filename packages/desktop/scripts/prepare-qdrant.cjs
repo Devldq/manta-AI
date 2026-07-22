@@ -48,6 +48,7 @@ async function prepareQdrant(targetName) {
   const executable = join(directory, targetName.startsWith('win-') ? 'qdrant.exe' : 'qdrant')
   try {
     await access(executable)
+    await writeExecutableManifest(directory, executable, targetName)
     return executable
   } catch { /* download the pinned official release below */ }
 
@@ -68,7 +69,18 @@ async function prepareQdrant(targetName) {
   await rm(archive, { force: true })
   if (!targetName.startsWith('win-')) await chmod(executable, 0o755)
   await access(executable)
+  await writeExecutableManifest(directory, executable, targetName)
   return executable
+}
+
+async function writeExecutableManifest(directory, executable, targetName) {
+  const executableSha256 = createHash('sha256').update(await readFile(executable)).digest('hex')
+  await writeFile(join(directory, 'qdrant-manifest.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    qdrantVersion: VERSION,
+    target: targetName,
+    executableSha256,
+  }, null, 2)}\n`)
 }
 
 async function main() {

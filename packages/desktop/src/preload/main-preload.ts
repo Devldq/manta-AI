@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { registerStorageIpc } from '../ipc/registerStorageIpc'
+import { createStorageRendererBridge } from '../ipc/storageRendererBridge'
 
-contextBridge.exposeInMainWorld('mantaDesktop', { storage: registerStorageIpc.createRendererBridge(ipcRenderer) })
+contextBridge.exposeInMainWorld('mantaDesktop', { storage: createStorageRendererBridge(ipcRenderer) })
 const subscription = (channel: string, callback: (data: any) => void) => { const listener = (_event: unknown, data: any) => callback(data); ipcRenderer.on(channel, listener); return () => ipcRenderer.removeListener(channel, listener) }
 contextBridge.exposeInMainWorld('electronAPI', {
   selectDirectory: () => ipcRenderer.invoke('dialog:openDirectory'), openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),

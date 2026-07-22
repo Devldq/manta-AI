@@ -12,8 +12,10 @@ import { CachedEmbeddingService, EmbeddingCacheManager } from './embedding-cache
 // ── 类型 ────────────────────────────────────────────────────
 
 export interface PipelineOptions {
-  embeddingService: EmbeddingService
-  ragProvider: RAGProvider
+  /** Required by process(); previewChunks() intentionally works without it. */
+  embeddingService?: EmbeddingService
+  /** Required by process(); previewChunks() intentionally works without it. */
+  ragProvider?: RAGProvider
   chunkStrategy?: 'fixed' | 'semantic' | 'recursive'
   /** 分块大小（Token 数），内部会按 ~4 字符/Token 转换为字符数 */
   chunkSize?: number
@@ -24,6 +26,8 @@ export interface PipelineOptions {
   cacheManager?: EmbeddingCacheManager
   /** 缓存使用的模型标识（可选，默认 'default'） */
   cacheModel?: string
+  /** Cancels at safe parser, embedding-batch, and index boundaries. */
+  signal?: AbortSignal
 }
 
 /** Token → 字符近似转换系数（混合中英文约 1 Token ≈ 4 字符） */
@@ -43,13 +47,13 @@ export type PipelineStage = 'parsing' | 'chunking' | 'embedding' | 'storing'
 
 export class DocumentPipeline {
   private parserFactory = createDocumentParserFactory()
-  private embeddingService: EmbeddingService
-  private ragProvider: RAGProvider
+  private embeddingService?: EmbeddingService
+  private ragProvider?: RAGProvider
   private chunkStrategy: ChunkingStrategy
   private options: PipelineOptions
   constructor(options: PipelineOptions) {
     // 如果提供了缓存管理器，使用带缓存的 EmbeddingService
-    if (options.cacheManager) {
+    if (options.cacheManager && options.embeddingService) {
       this.embeddingService = new CachedEmbeddingService(
         options.embeddingService,
         options.cacheManager,
@@ -73,14 +77,18 @@ export class DocumentPipeline {
     const emit = this.options.onProgress || (() => {})
 
     try {
+      if (!this.embeddingService || !this.ragProvider) throw new Error('process() requires embeddingService and ragProvider dependencies')
+      this.options.signal?.throwIfAborted()
       // 1. 解析
       emit('parsing', 0, `正在解析文档: ${metadata.name}`)
       const rawChunks = await this.parserFactory.parseDocument(buffer, metadata)
+      this.options.signal?.throwIfAborted()
       emit('parsing', 100, `解析完成，共 ${rawChunks.length} 个段落`)
 
       // 2. 分块
       emit('chunking', 0, '正在分块...')
       const chunks = this.rechunk(rawChunks, metadata.id, metadata.name)
+      this.options.signal?.throwIfAborted()
       emit('chunking', 100, `分块完成，共 ${chunks.length} 个块`)
 
       if (chunks.length === 0) {
@@ -94,8 +102,10 @@ export class DocumentPipeline {
 
       try {
         for (let i = 0; i < texts.length; i += batchSize) {
+          this.options.signal?.throwIfAborted()
           const batch = texts.slice(i, i + batchSize)
           const embeddings = await this.embeddingService.embedBatch(batch)
+          this.options.signal?.throwIfAborted()
 
           for (let j = 0; j < batch.length; j++) {
             chunks[i + j].embedding = embeddings[j]
@@ -115,6 +125,7 @@ export class DocumentPipeline {
 
       // 4. 写入向量库
       emit('storing', 0, '正在写入向量库...')
+      this.options.signal?.throwIfAborted()
       await this.ragProvider.addDocument(knowledgeBaseId, metadata, chunks)
       emit('storing', 100, '写入完成')
 

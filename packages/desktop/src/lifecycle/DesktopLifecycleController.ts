@@ -1,7 +1,7 @@
 import type { AshBootstrap } from '@manta/shared'
 import type { RelaunchIntent } from './StorageControlStore'
 import type { OnboardingProgressReporter, OnboardingProgressStepId } from '../onboarding/progress-contract'
-interface MantaServerHandle { readonly port: number; quiesce(): Promise<void>; close(): Promise<void>; healthCheck(): Promise<{ ok: boolean; error?: string }> }
+interface MantaServerHandle { readonly port: number; readonly rendererUrl?: string; quiesce(): Promise<void>; close(): Promise<void>; healthCheck(): Promise<{ ok: boolean; error?: string }> }
 
 export interface StartupFailure { ok: false; error: { code: string; message: string; retryable: boolean } }
 export interface DesktopLifecycleDependencies {
@@ -86,7 +86,7 @@ export class DesktopLifecycleController {
       const health = await this.server.healthCheck()
       if (!health.ok) throw Object.assign(new Error(health.error ?? 'Storage health check failed'), { code: 'STORAGE_UNHEALTHY' })
     })
-    await this.runProgressStep('open-main', onProgress, () => this.deps.openMain(`http://127.0.0.1:${this.server!.port}`))
+    await this.runProgressStep('open-main', onProgress, () => this.deps.openMain(this.server!.rendererUrl ?? `http://127.0.0.1:${this.server!.port}`))
   }
   private async runProgressStep<T>(step: OnboardingProgressStepId, report: OnboardingProgressReporter | undefined, operation: () => Promise<T>): Promise<T> {
     report?.({ step, state: 'active' })

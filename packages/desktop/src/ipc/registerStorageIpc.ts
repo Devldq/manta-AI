@@ -1,8 +1,8 @@
-import { AgentStorageProgressSchema, StorageIpcRequestSchema, StorageIpcResponseSchema, type AgentOperationSummary, type AgentPlanPreview, type AgentStorageProgress, type StorageGitImportPlan, type StorageGroupId, type StorageIpcRequest, type StorageIpcResponse, type StorageOperationProgress } from '@manta/shared'
+import { StorageIpcRequestSchema, StorageIpcResponseSchema, type AgentOperationSummary, type AgentPlanPreview, type StorageGitImportPlan, type StorageGroupId, type StorageIpcRequest, type StorageIpcResponse } from '@manta/shared'
 import { randomUUID } from 'node:crypto'
+import { createStorageRendererBridge } from './storageRendererBridge'
 
 interface IpcMainLike { handle(channel: string, listener: (event: any, request: unknown) => unknown): void; removeHandler(channel: string): void }
-interface IpcRendererLike { invoke(channel: string, request?: unknown): Promise<unknown>; on(channel: string, listener: (...args: any[]) => void): void; removeListener(channel: string, listener: (...args: any[]) => void): void }
 export interface StartedStorageOperation { operationId: string; completion?: Promise<unknown> }
 type StorageOperationStart = string | StartedStorageOperation
 type ConfiguredGitBinding = { volumeId: string; mode: 'local' | 'remote'; remoteUrl?: string; credentialRef?: string; includeSecrets?: boolean; createdAt: string; updatedAt: string }
@@ -97,12 +97,5 @@ export function registerStorageIpc(options: { ipcMain: IpcMainLike; trustedOrigi
 }
 
 export namespace registerStorageIpc {
-  export const createRendererBridge = (ipc: IpcRendererLike) => ({
-    invoke: (request: StorageIpcRequest) => ipc.invoke('storage:invoke', request) as Promise<StorageIpcResponse>,
-    subscribeProgress(callback: (progress: StorageOperationProgress) => void) {
-      const listener = (_event: unknown, progress: unknown) => callback(progress as StorageOperationProgress)
-      ipc.on('storage:progress', listener); return () => ipc.removeListener('storage:progress', listener)
-    },
-    subscribeAgentProgress(callback: (progress: AgentStorageProgress) => void) { const listener = (_event: unknown, progress: unknown) => { const parsed = AgentStorageProgressSchema.safeParse(progress); if (parsed.success) callback(parsed.data) }; ipc.on('storage:agent-progress', listener); return () => ipc.removeListener('storage:agent-progress', listener) },
-  })
+  export const createRendererBridge = createStorageRendererBridge
 }

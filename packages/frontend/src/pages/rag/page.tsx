@@ -45,7 +45,7 @@ function CreateKBModal({
   const [requiresAuthorization, setRequiresAuthorization] = useState(false)
   const [modelConfig, setModelConfig] = useState<{
     availableProviders: Array<{ id: 'openai' | 'local'; name: string; models: Array<{ id: string; name: string; dimensions?: number }> }>
-    llmProfiles: Array<{ id: string; name: string; model: string; provider?: string; isDefault?: boolean }>
+    llmProfiles: Array<{ id: string; name: string; model: string; provider?: string; modelType: 'chat' | 'reasoning' | 'embedding' | 'multimodal'; isDefault?: boolean }>
   } | null>(null)
   const [loadingModels, setLoadingModels] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -67,7 +67,8 @@ function CreateKBModal({
           setModelConfig(data)
           setEmbeddingProvider(data.globalProvider)
           setEmbeddingModel(data.globalModel)
-          const defaultProfile = data.llmProfiles?.find((profile: { isDefault?: boolean }) => profile.isDefault) || data.llmProfiles?.[0]
+          const qaProfiles = data.llmProfiles?.filter((profile: { modelType?: string }) => profile.modelType === 'chat' || profile.modelType === 'reasoning') || []
+          const defaultProfile = qaProfiles.find((profile: { isDefault?: boolean }) => profile.isDefault) || qaProfiles[0]
           setQaModelProfileId(defaultProfile?.id || '')
           setMultimodalModelProfileId('')
         })
@@ -102,6 +103,8 @@ function CreateKBModal({
   const embeddingModels = modelConfig?.availableProviders.flatMap((provider) =>
     provider.models.map((model) => ({ ...model, providerId: provider.id, providerName: provider.name })),
   ) || []
+  const qaProfiles = modelConfig?.llmProfiles.filter((profile) => profile.modelType === 'chat' || profile.modelType === 'reasoning') || []
+  const multimodalProfiles = modelConfig?.llmProfiles.filter((profile) => profile.modelType === 'multimodal') || []
 
   return (
     <div
@@ -198,7 +201,7 @@ function CreateKBModal({
               </label>
               <select id="kb-qa-model" value={qaModelProfileId} onChange={(event) => setQaModelProfileId(event.target.value)} disabled={loadingModels} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)' }}>
                 <option value="">跟随系统默认</option>
-                {modelConfig?.llmProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>)}
+                {qaProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>)}
               </select>
             </div>
 
@@ -208,7 +211,7 @@ function CreateKBModal({
               </label>
               <select id="kb-multimodal-model" value={multimodalModelProfileId} onChange={(event) => setMultimodalModelProfileId(event.target.value)} disabled={loadingModels} className="w-full px-3 py-2 rounded-lg text-sm outline-none" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)' }}>
                 <option value="">暂不启用</option>
-                {modelConfig?.llmProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>)}
+                {multimodalProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>)}
               </select>
             </div>
 

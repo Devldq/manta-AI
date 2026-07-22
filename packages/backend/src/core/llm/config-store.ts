@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import { resolveStoragePath } from '../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import type { LLMConfig, ModelProfile, LLMProfilesConfig } from './types'
-import { getDefaultLLMConfig, profileToLLMConfig } from './types'
+import { getDefaultLLMConfig, isAgentModel, profileToLLMConfig, resolveModelType } from './types'
 import { readCrossGroupBundle, transactCrossGroupBundle } from '../../storage/cross-group-bundle'
 import { durableAtomicWrite } from '../../storage/durable-atomic'
 
@@ -12,6 +12,26 @@ const profilesFile = () => resolveStoragePath('config', 'llm-profiles.json')
 const legacyFile = () => resolveStoragePath('config', 'llm-config.json')
 const profileSecretsFile = () => resolveStoragePath('secrets', 'llm-profile-api-keys.json')
 const participants = () => [{ name: 'metadata', root: resolveStoragePath('config') }, { name: 'secret', root: resolveStoragePath('secrets') }]
+
+function normalizeProfile(profile: ModelProfile): ModelProfile {
+  return { ...profile, modelType: resolveModelType(profile) }
+}
+
+function normalizeProfiles(config: LLMProfilesConfig): LLMProfilesConfig {
+  const profiles = config.profiles.map(normalizeProfile)
+  for (const profile of profiles) if (!isAgentModel(profile)) profile.isDefault = false
+  let defaultProfile = profiles.find((profile) => profile.isDefault && isAgentModel(profile))
+  if (!defaultProfile) {
+    defaultProfile = profiles.find(isAgentModel)
+    if (defaultProfile) defaultProfile.isDefault = true
+  }
+  const activeProfile = profiles.find((profile) => profile.id === config.activeProfileId && isAgentModel(profile))
+  return {
+    ...config,
+    profiles,
+    activeProfileId: activeProfile?.id ?? defaultProfile?.id,
+  }
+}
 
 /** 安全写文件（先写 tmp 再 rename） */
 function safeWrite(filePath: string, data: unknown): void {
@@ -28,7 +48,8 @@ function persistProfiles(config: LLMProfilesConfig): void {
   const existingRaw = bundle.read('secret', 'llm-profile-api-keys.json')
   const existing = existingRaw ? JSON.parse(existingRaw) as Record<string, string> : readProfileSecrets()
   const secrets: Record<string, string> = {}
-  profiles = config.profiles.map((profile) => {
+  profiles = config.profiles.map((rawProfile) => {
+    const profile = normalizeProfile(rawProfile)
     const clearApiKey = (profile as ModelProfile & { clearApiKey?: boolean }).clearApiKey === true
     const apiKey = clearApiKey ? undefined : profile.apiKey ?? existing[profile.id]
     if (apiKey) secrets[profile.id] = apiKey
@@ -42,7 +63,7 @@ function persistProfiles(config: LLMProfilesConfig): void {
 
 function hydrateProfiles(config: LLMProfilesConfig): LLMProfilesConfig {
   const secrets = readProfileSecrets()
-  return { ...config, profiles: config.profiles.map((profile) => ({ ...profile, apiKey: secrets[profile.id] })) }
+  return normalizeProfiles({ ...config, profiles: config.profiles.map((profile) => ({ ...profile, apiKey: secrets[profile.id] })) })
 }
 
 /** 从旧格式（单一 LLMConfig）迁移为新格式（LLMProfilesConfig） */
@@ -112,7 +133,7 @@ export function getLLMProfiles(): LLMProfilesConfig {
   const committed = readCrossGroupBundle(participants(), 'llm-profiles', (bundle) => ({ metadata: bundle.read('metadata', 'llm-profiles.json'), secrets: bundle.read('secret', 'llm-profile-api-keys.json') }))
   if (committed?.metadata) {
     const parsed = JSON.parse(committed.metadata) as LLMProfilesConfig; const secrets = committed.secrets ? JSON.parse(committed.secrets) as Record<string, string> : {}
-    return { ...parsed, profiles: parsed.profiles.map((profile) => ({ ...profile, apiKey: secrets[profile.id] })) }
+    return normalizeProfiles({ ...parsed, profiles: parsed.profiles.map((profile) => ({ ...profile, apiKey: secrets[profile.id] })) })
   }
   // 1. 尝试自动迁移旧格式（仅执行一次）
   if (!migrationDone) {
@@ -150,7 +171,7 @@ export function getLLMProfiles(): LLMProfilesConfig {
 
 /** 保存多模型配置列表 */
 export function saveLLMProfiles(config: LLMProfilesConfig): void {
-  persistProfiles(config)
+  persistProfiles(normalizeProfiles(config))
 }
 
 // ─── 激活配置 ───
@@ -163,15 +184,16 @@ export function getActiveProfile(): ModelProfile {
   // 优先使用 activeProfileId
   if (activeProfileId) {
     const found = profiles.find((p) => p.id === activeProfileId)
-    if (found) return found
+    if (found && isAgentModel(found)) return found
   }
 
   // 其次使用 isDefault
-  const defaultProfile = profiles.find((p) => p.isDefault)
+  const defaultProfile = profiles.find((p) => p.isDefault && isAgentModel(p))
   if (defaultProfile) return defaultProfile
 
-  // 最后使用第一个
-  return profiles[0]
+  const firstAgentProfile = profiles.find(isAgentModel)
+  if (firstAgentProfile) return firstAgentProfile
+  throw new Error('没有可用于 Agent 对话的模型配置，请添加对话模型或推理模型')
 }
 
 /** 获取当前激活配置（兼容下游 LLMConfig 接口） */
@@ -184,6 +206,7 @@ export function setActiveProfile(id: string): void {
   const profilesConfig = getLLMProfiles()
   const found = profilesConfig.profiles.find((p) => p.id === id)
   if (!found) throw new Error(`找不到配置: ${id}`)
+  if (!isAgentModel(found)) throw new Error(`模型 ${found.name || found.model} 的类型为 ${resolveModelType(found)}，不能用于 Agent 对话`)
   profilesConfig.activeProfileId = id
   saveLLMProfiles(profilesConfig)
 }
@@ -193,7 +216,7 @@ export function setActiveProfile(id: string): void {
 /** 添加新的模型配置 */
 export function addProfile(profile: Omit<ModelProfile, 'id'>): ModelProfile {
   const profilesConfig = getLLMProfiles()
-  const newProfile: ModelProfile = { ...profile, id: uuidv4() }
+  const newProfile = normalizeProfile({ ...profile, id: uuidv4() })
 
   // 如果是第一个配置，自动设为 default 和 active
   if (profilesConfig.profiles.length === 0) {
@@ -217,7 +240,11 @@ export function updateProfile(id: string, updates: Partial<Omit<ModelProfile, 'i
   const index = profilesConfig.profiles.findIndex((p) => p.id === id)
   if (index === -1) throw new Error(`找不到配置: ${id}`)
 
-  const updated = { ...profilesConfig.profiles[index], ...updates }
+  const updated = normalizeProfile({ ...profilesConfig.profiles[index], ...updates })
+
+  if (!isAgentModel(updated) && (profilesConfig.activeProfileId === id || updated.isDefault)) {
+    throw new Error('当前使用中或默认的模型必须是对话模型或推理模型，请先切换 Agent 模型')
+  }
 
   // 如果声明为 default，需要取消其他配置的 isDefault
   if (updates.isDefault) {
@@ -241,17 +268,21 @@ export function deleteProfile(id: string): void {
   if (index === -1) throw new Error(`找不到配置: ${id}`)
 
   const deleted = profilesConfig.profiles[index]
+  if (isAgentModel(deleted) && profilesConfig.profiles.filter(isAgentModel).length <= 1) {
+    throw new Error('至少保留一个对话模型或推理模型供 Agent 使用')
+  }
   profilesConfig.profiles.splice(index, 1)
 
   // 如果删除的是 active，切换到 default 或第一个
   if (profilesConfig.activeProfileId === id) {
-    const defaultProfile = profilesConfig.profiles.find((p) => p.isDefault)
-    profilesConfig.activeProfileId = defaultProfile?.id ?? profilesConfig.profiles[0]?.id
+    const defaultProfile = profilesConfig.profiles.find((p) => p.isDefault && isAgentModel(p))
+    profilesConfig.activeProfileId = defaultProfile?.id ?? profilesConfig.profiles.find(isAgentModel)?.id
   }
 
   // 如果删除的是 default，将第一个设为 default
   if (deleted.isDefault && profilesConfig.profiles.length > 0) {
-    profilesConfig.profiles[0].isDefault = true
+    const nextDefault = profilesConfig.profiles.find(isAgentModel)
+    if (nextDefault) nextDefault.isDefault = true
   }
 
   saveLLMProfiles(profilesConfig)
@@ -262,6 +293,7 @@ export function setDefaultProfile(id: string): void {
   const profilesConfig = getLLMProfiles()
   const found = profilesConfig.profiles.find((p) => p.id === id)
   if (!found) throw new Error(`找不到配置: ${id}`)
+  if (!isAgentModel(found)) throw new Error(`模型 ${found.name || found.model} 的类型为 ${resolveModelType(found)}，不能设为 Agent 默认模型`)
 
   profilesConfig.profiles.forEach((p) => { p.isDefault = false })
   found.isDefault = true
@@ -287,6 +319,7 @@ export function getLLMProfilesMasked(): LLMProfilesConfig & { profilesMasked: Ar
 
   return {
     ...config,
+    profiles: profilesMasked,
     profilesMasked,
   }
 }

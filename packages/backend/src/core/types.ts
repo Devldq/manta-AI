@@ -506,6 +506,8 @@ export interface StepUsageRecord {
   cacheWriteTokens?: number
   noCacheTokens?: number
   toolNames?: string[]
+  /** 面向用户的公开步骤摘要，不包含模型私密思维链 */
+  progressText?: string
 }
 
 /** 会话消息 */

@@ -1,0 +1,33 @@
+{
+  "name": "@manta/skill-runtime",
+  "version": "0.1.0",
+  "description": "Local-first Manta Skill loader and permissioned script runtime",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts && tsup src/node-runner.ts --format esm --no-dts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@manta/contracts": "workspace:*",
+    "esbuild": "0.27.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8.5.0",
+    "typescript": "^5"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Devldq/manta-AI.git", "directory": "packages/skill-runtime" },
+  "publishConfig": { "access": "public", "provenance": true }
+}

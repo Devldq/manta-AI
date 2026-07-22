@@ -1,0 +1,38 @@
+{
+  "name": "@manta/cli",
+  "version": "0.1.0",
+  "description": "Local command-line client for the Manta desktop knowledge service",
+  "type": "module",
+  "bin": {
+    "manta": "./dist/cli.js"
+  },
+  "main": "./dist/cli.cjs",
+  "module": "./dist/cli.js",
+  "types": "./dist/cli.d.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/cli.d.ts", "default": "./dist/cli.js" },
+      "require": { "types": "./dist/cli.d.cts", "default": "./dist/cli.cjs" }
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/cli.ts --format esm,cjs --dts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@manta/sdk": "workspace:*",
+    "@manta/service": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8.5.0",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Devldq/manta-AI.git", "directory": "packages/cli" },
+  "publishConfig": { "access": "public", "provenance": true }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@manta/a2a-server",
+  "version": "0.1.0",
+  "description": "Loopback-only A2A 1.0 adapter for the local Manta Service",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+    }
+  },
+  "bin": { "manta-a2a": "./dist/cli.js" },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts && tsup src/cli.ts --format esm --no-dts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@manta/contracts": "workspace:*",
+    "@manta/sdk": "workspace:*",
+    "fastify": "^5.3.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8.5.0",
+    "typescript": "^5"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Devldq/manta-AI.git", "directory": "packages/a2a-server" },
+  "publishConfig": { "access": "public", "provenance": true }
+}

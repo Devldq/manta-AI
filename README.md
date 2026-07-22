@@ -4,7 +4,7 @@
 
 [English](README.en.md)
 
-Manta AI 将分散在 Obsidian、Markdown、PDF、Office 文档、网页、代码仓库和其他数据源中的知识，组织成一个属于用户自己的 AI 知识库。它既可以作为桌面应用使用，也可以通过 API、SDK、CLI、MCP、Skill 和 A2A 为 Codex 及其他 AI Agent 提供知识与任务能力。
+Manta AI 将分散在 Obsidian、Markdown、PDF、Office 文档、网页、代码仓库和其他数据源中的知识，组织成一个属于用户自己的 AI 知识库。Manta 的产品形态是 Desktop 客户端；它通过仅监听本机回环地址的 API、SDK、CLI、MCP、Skill 和 A2A，为 Codex 及其他本机 AI Agent 提供知识与任务能力。
 
 Manta 不替代用户熟悉的内容工具：
 
@@ -22,6 +22,7 @@ Manta 不替代用户熟悉的内容工具：
 ### 建立个人知识库
 
 - 从本地文件夹、Obsidian Vault、文档、网页、Git 仓库和连接器采集内容。
+- 大文件通过可恢复的分块 Upload Session 上传，并在完成时校验完整 SHA-256。
 - 解析不同格式，提取正文、标题、目录、元数据和来源信息。
 - 对重复或变化的内容进行识别，保留文档版本和处理记录。
 - 按知识库、项目、标签、路径或自定义范围组织资料。
@@ -40,10 +41,9 @@ Manta 不替代用户熟悉的内容工具：
 
 Manta 不只提供一次检索结果，还提供可重复的召回效果评测。
 
-- 在知识库的测试 Tab 中快速检查某个文档或一组文档的召回结果。
 - 在独立 Retrieval Lab 中维护测试集并批量比较不同策略。
 - 分别配置解析、分块、Embedding、检索、过滤、融合和 Rerank 策略。
-- 查看 `Recall@K`、`Precision@K`、`MRR`、`nDCG@K`、零召回率和延迟。
+- 查看 `Recall@K`、`MRR`、`nDCG@K`、零召回率和延迟。
 - 检查具体命中的文档、Chunk、分数、来源和排序变化。
 - 将验证通过的策略保存为本地不可变版本，并支持发布、切换与回滚。
 
@@ -52,18 +52,18 @@ Manta 不只提供一次检索结果，还提供可重复的召回效果评测�
 - 让 Agent 使用个人知识库、文件、命令和已授权工具完成任务。
 - 为每个任务保存输入、步骤、工具调用、审批、结果和日志。
 - 长时间运行的文档处理、索引、评测和 Agent 任务在后台继续执行。
-- 页面刷新、切换页面或客户端重连不会取消后台任务。
+- 切换 Desktop 功能页、重载界面、退出客户端或稍后重连不会取消后台任务。
 - 可以从 Desktop、API、SDK 或 CLI 查询进度、取消、重试和继续任务。
 - 通过来源引用和执行记录追踪答案与操作依据。
 
 ### 面向其他 AI 的知识服务
 
-Manta 可以作为独立的本地服务运行。即使没有打开 Desktop，Codex、自动化脚本和其他 Agent 也可以在授权范围内调用它。
+Manta Desktop 配套一个独立的本地后台 Service。即使没有打开 Desktop 窗口，Codex、自动化脚本和其他本机 Agent 也可以在授权范围内调用它；Manta 不提供浏览器产品或云服务。
 
 | 入口 | 能力 |
 |---|---|
 | Desktop | 管理知识库、搜索、问答、评测、Agent 和设置 |
-| REST API | 访问知识、检索、任务、事件和管理能力 |
+| Local REST API | 通过 loopback 访问知识、检索、任务、事件和管理能力 |
 | TypeScript SDK | 以类似 OpenAI SDK 的方式调用 Manta |
 | CLI | 在终端中导入、检索、评测、运行任务和管理服务 |
 | MCP Server | 将 Manta 的知识和任务能力暴露为 MCP Tools |
@@ -74,23 +74,21 @@ Manta 可以作为独立的本地服务运行。即使没有打开 Desktop，Cod
 
 - 知识、配置、扩展、工作数据、Secret、诊断信息和缓存分组保存。
 - 用户可以选择数据目录和存储卷，并管理迁移、同步、容量与健康状态。
-- 本地模型和远程模型可以按任务配置，知识原文不必离开用户设备。
-- 远程访问默认关闭，启用后需要认证和明确的能力授权。
+- 可以按任务配置本地模型或用户自行提供的模型端点；Manta 本身不托管云端控制面。
+- API 只监听 loopback，不提供局域网或公网访问模式。
 - MCP、Skill、A2A 和外部应用只获得被授予的权限。
 
 ## 工作方式
 
 ```mermaid
 flowchart LR
-    Sources["Obsidian / Files / Web / Git / Connectors"] --> Manta["Manta Knowledge Runtime"]
-    Manta --> Search["Search / RAG / Evaluation"]
-    Manta --> Agent["Manta Agent"]
-    Manta --> Service["API / SDK / CLI"]
-
-    Search --> Desktop["Desktop"]
-    Agent --> Desktop
-    Service --> Codex["Codex / AI Agents"]
-    Service --> MCP["MCP / Skills / A2A"]
+    Sources["Obsidian / Files / Web / Git"] --> Desktop["Manta Desktop"]
+    Desktop --> Service["Local Manta Service"]
+    Service --> Search["Search / RAG / Evaluation"]
+    Service --> Agent["Durable Agent / Skills"]
+    Service --> LocalAPI["Loopback API / SDK / CLI"]
+    LocalAPI --> Codex["Codex / Local AI Agents"]
+    LocalAPI --> Protocols["MCP / A2A"]
 ```
 
 同一份知识只采集和管理一次，随后可以被桌面搜索、RAG 问答、Agent 任务、CLI 脚本和外部 AI 共同使用。不同入口共享相同的来源引用、权限规则和任务状态。
@@ -107,7 +105,7 @@ flowchart LR
 
 ## 包架构
 
-Manta 的公共能力按以下包边界组织。下表定义包的职责；`@manta/rag` 已存在于当前仓库，其余公共包是否可用以实际代码和发布版本为准。
+Manta 的公共能力按以下包边界组织：
 
 | Package | 职责 |
 |---|---|
@@ -115,15 +113,16 @@ Manta 的公共能力按以下包边界组织。下表定义包的职责；`@man
 | `@manta/task-runtime` | 持久化任务、worker、lease、事件日志、取消、恢复、重试 |
 | `@manta/rag` | 无 UI、显式依赖注入的 RAG 核心引擎 |
 | `@manta/sdk` | 类似 OpenAI SDK 的高层 TypeScript Client |
+| `@manta/service` | Desktop 配套的唯一实例本地 Service，持有数据与后台 Worker |
 | `@manta/cli` | `manta` 命令，基于 SDK |
 | `@manta/mcp-server` | `manta-mcp` 可执行程序，把 SDK 能力映射成 MCP Tools |
 | `@manta/skill-runtime` | Skill 加载、脚本执行、权限、超时、资源与 SDK 注入 |
-| `@manta/a2a-server` | 后续 A2A Agent Card 和任务适配 |
+| `@manta/a2a-server` | 本机 A2A 1.0 Agent Card、Message、Task 与 Artifact 适配 |
 
 包设计遵循四条规则：
 
 - `@manta/contracts` 是公共契约源，不依赖 Desktop 或具体存储实现。
-- `@manta/rag` 和 `@manta/task-runtime` 不依赖 UI，可以在 Desktop、服务端或脚本环境中复用。
+- `@manta/rag` 和 `@manta/task-runtime` 不依赖 UI，可以在 Desktop 本地 Service 或脚本环境中复用。
 - CLI、MCP Server 和 A2A Server 通过 `@manta/sdk` 使用 Manta，不直接访问内部数据库。
 - Skill Runtime 为脚本提供受控运行环境，并按权限注入 SDK、资源和 Secret 引用。
 
@@ -146,12 +145,6 @@ pnpm dev:desktop
 
 首次启动时选择一个新的空目录，或连接已有的完整 Manta 数据目录。
 
-完成一次 Desktop 初始化后，也可以启动浏览器开发模式：
-
-```bash
-pnpm dev
-```
-
 ### 验证
 
 ```bash
@@ -169,4 +162,4 @@ pnpm build
 
 ## 许可证
 
-本项目为私有项目，未授予再分发许可。
+公开发布的 `@manta/*` 包采用各自 `package.json` 中声明的 MIT License。Desktop 应用和仓库中未单独标注许可的其他内容保留所有权利。

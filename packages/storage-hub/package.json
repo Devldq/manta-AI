@@ -1,7 +1,7 @@
 {
   "name": "@manta/storage-hub",
   "version": "2.0.0",
-  "private": true,
+  "description": "Local storage implementation used by the Manta desktop service",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -18,6 +18,7 @@
       }
     }
   },
+  "files": ["dist"],
   "scripts": {
     "test": "pnpm build && vitest run --coverage --coverage.reporter=json --coverage.reporter=text-summary",
     "build": "tsup src/index.ts --format esm,cjs --dts",
@@ -33,5 +34,9 @@
     "tsup": "^8.5.0",
     "typescript": "^5",
     "vitest": "^2.0.0"
-  }
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Devldq/manta-AI.git", "directory": "packages/storage-hub" },
+  "publishConfig": { "access": "public", "provenance": true }
 }

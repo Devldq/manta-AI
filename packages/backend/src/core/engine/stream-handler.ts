@@ -2,6 +2,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { createHash } from 'node:crypto'
 import { getLLMConfig } from '@llm/config-store'
 import { appendMessage } from '@storage/conversation/store'
 import { appendWorkspaceMessage } from '@storage/workspace/store'
@@ -15,11 +16,15 @@ import {
 } from '@context/prompt-builder'
 import { getToolRegistry } from '@tools/mcp/setup'
 import { parseMessagesToCore, type UIMessage } from './message-parser'
-import { runAgentLoop } from './agent-loop'
+import { runAgentLoop, type AgentLoopResumeState } from './agent-loop'
 import { getActiveLoop, registerLoop, emitLoopEvent } from './loop-registry'
 import { logger, logManager } from '@observability/log'
 // 使用共享安全上下文模块（解决 tsx 模块解析问题）
-import { createDefaultSecurityContext, type SecurityContext } from '../security-context'
+import { createDefaultSecurityContext, type SecurityApprovalRequest, type SecurityContext } from '../security-context'
+import type { JobExecutorContext } from '@manta/task-runtime'
+import type { JsonValue } from '@manta/contracts'
+import { approvalManager } from '../security/ApprovalManager'
+import type { ProcessRegistry } from './runner/process-registry'
 
 /** ★ 解析工作空间 folderPath 为绝对路径，处理 showDirectoryPicker 只返回目录名的 bug */
 function resolveFolderPath(folderPath?: string): string | null {
@@ -64,22 +69,29 @@ export interface StreamChatOptions {
   agentName: string
   conversationId: string
   workspaceId?: string
+  /** Durable Job execution context. When present no LoopRegistry state is required. */
+  jobContext?: JobExecutorContext
+  messageId?: string
+  processRegistry?: ProcessRegistry
 }
 
 /** 启动结果的返回类型 */
 export interface StreamChatResult {
   /** 是否是新启动的循环（true）还是已有活跃循环（false） */
   isNew: boolean
+  completion: Promise<void>
+  assistantMessageId: string
 }
 
 /**
  * 启动流式聊天 Agent Loop（如果该会话已有活跃循环则不重复启动）
  * Loop 与 HTTP 连接完全解耦，通过 LoopRegistry 广播事件
  */
-export async function startAgentLoop({ messages, agentName, conversationId, workspaceId }: StreamChatOptions): Promise<StreamChatResult> {
+export async function startAgentLoop({ messages, agentName, conversationId, workspaceId, jobContext, messageId: durableMessageId, processRegistry }: StreamChatOptions): Promise<StreamChatResult> {
   // 如果已有活跃循环，不重复启动
-  if (getActiveLoop(conversationId)) {
-    return { isNew: false }
+  const activeLoop = getActiveLoop(conversationId)
+  if (!jobContext && activeLoop) {
+    return { isNew: false, completion: activeLoop.running, assistantMessageId: `legacy-${conversationId}` }
   }
 
   // 提取用户最新输入的 prompt（用于日志记录）
@@ -96,7 +108,8 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   const modelInfo = { model: llmConfig.model, provider: llmConfig.provider }
 
   // 提前生成 messageId（整轮 agent loop 共享，确保早期日志也能立即关联到会话）
-  const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const messageId = durableMessageId ?? `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const assistantMessageId = jobContext ? `${jobContext.job.id}:assistant` : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
   // ★ 确定工作目录：有工作空间则解析并使用工作空间路径，否则用 process.cwd()
   const workspace = workspaceId ? getWorkspace(workspaceId) : null
@@ -150,12 +163,34 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   // 解析消息格式
   const coreMessages = parseMessagesToCore(messages)
 
+  if (jobContext && userPrompt) {
+    const persisted = workspaceId
+      ? appendWorkspaceMessage(workspaceId, conversationId, 'user', userPrompt, undefined, undefined, undefined, undefined, messageId)
+      : appendMessage(conversationId, 'user', userPrompt, undefined, undefined, undefined, undefined, messageId)
+    if (!persisted) throw new Error(`Conversation ${conversationId} was not found`)
+    jobContext.checkpoint('user_message_committed', { messageId })
+  }
+
   // 创建安全上下文（用于路径校验、命令校验等安全检查）
+  const resumeState = jobContext?.readCheckpoint('agent_loop_state') as unknown as AgentLoopResumeState | undefined
+  let durableStepIndex = resumeState?.nextStepIndex ?? 0
+  let approvalInput = jobContext?.consumeInput() as { approvalId?: string; decision?: 'approve' | 'deny' } | undefined
   let securityContext: SecurityContext | undefined
-  if (resolvedFolderPath) {
-    securityContext = createDefaultSecurityContext(conversationId)
-    securityContext.allowedRoots = [resolvedFolderPath]
-    securityContext.shellAllowedRoots = [resolvedFolderPath]
+  if (resolvedFolderPath || jobContext) {
+    securityContext = createDefaultSecurityContext(jobContext?.job.id ?? conversationId)
+    securityContext.workspaceId = workspaceId
+    if (resolvedFolderPath) {
+      securityContext.allowedRoots = [resolvedFolderPath]
+      securityContext.shellAllowedRoots = [resolvedFolderPath]
+    }
+    if (jobContext) {
+      securityContext.abortSignal = jobContext.signal
+      securityContext.jobId = jobContext.job.id
+      securityContext.attempt = jobContext.attempt
+      securityContext.registerProcess = processRegistry ? (pid, label) => processRegistry.register(jobContext.job.id, pid, label, { jobId: jobContext.job.id, attempt: jobContext.attempt }) : undefined
+      securityContext.unregisterProcess = processRegistry ? (pid) => processRegistry.cleanupProcess(jobContext.job.id, pid) : undefined
+      securityContext.onApprovalRequest = async (approval) => handleDurableApproval(jobContext, approval, durableStepIndex, () => approvalInput, (value) => { approvalInput = value })
+    }
     logger.info(`[Security] 初始化安全上下文，允许路径: ${resolvedFolderPath}`, {
       conversationId,
       extra: {
@@ -165,8 +200,8 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   }
 
   // 注册新的活跃循环（占位，后续填充 running promise）
-  const loopPromise = new Promise<void>((resolve) => {
-    runAgentLoop({
+  const loopPromise = new Promise<void>((resolve, reject) => {
+    void runAgentLoop({
       messages: coreMessages,
       systemPrompt,
       buildSystemPrompt,
@@ -174,7 +209,20 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
       messageId,
       conversationId,
       securityContext,
-      onChunk: (data: string) => emitLoopEvent(conversationId, data),
+      abortSignal: jobContext?.signal,
+      resumeState,
+      onStepCommitted: jobContext ? (state) => {
+        durableStepIndex = state.nextStepIndex
+        jobContext.checkpoint('agent_loop_state', JSON.parse(JSON.stringify(state)) as JsonValue)
+      } : undefined,
+      onChunk: (data: string) => {
+        if (jobContext) {
+          const value = data.startsWith('data: ') ? data.slice(6).trim() : data
+          let chunk: unknown = value
+          try { chunk = JSON.parse(value) } catch { /* retain text */ }
+          jobContext.emit('log', { channel: 'agent.stream', chunk: chunk as any })
+        } else emitLoopEvent(conversationId, data)
+      },
       onDone: () => resolve(),
       onFinish: async (event) => {
         const { text, steps } = event
@@ -205,13 +253,14 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
             cacheWriteTokens: step.usage.cacheWriteTokens,
             noCacheTokens: step.usage.noCacheTokens,
             toolNames: stepToolNames.length > 0 ? stepToolNames : undefined,
+            progressText: stepToolNames.length > 0 ? step.progressText : undefined,
           })
         }
 
         // 持久化：最后一条 user 消息 + assistant 回复（含工具调用记录）
         const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
         const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
-        if (userText) {
+        if (userText && !jobContext) {
           if (workspaceId) {
             appendWorkspaceMessage(workspaceId, conversationId, 'user', userText)
           } else {
@@ -229,10 +278,15 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
               }
             : undefined
           if (workspaceId) {
-            appendWorkspaceMessage(workspaceId, conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined)
+            appendWorkspaceMessage(workspaceId, conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined, undefined, jobContext ? assistantMessageId : undefined)
           } else {
-            appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined)
+            appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined, undefined, jobContext ? assistantMessageId : undefined)
           }
+        }
+
+        if (jobContext) {
+          jobContext.checkpoint('assistant_message_committed', { messageId: assistantMessageId, toolCallCount: toolCalls.length })
+          jobContext.addArtifact({ kind: 'conversation.message', mediaType: 'application/json', name: 'assistant-message', uri: `manta://conversations/${conversationId}/messages/${assistantMessageId}`, metadata: { conversationId, messageId: assistantMessageId } })
         }
 
         logManager.closeConversation(conversationId)
@@ -254,18 +308,58 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
 
         const lastUserMsg = [...coreMessages].reverse().find((m) => m.role === 'user')
         const userText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
-        if (userText) {
+        if (userText && !jobContext) {
           appendMsg('user', userText)
         }
-        appendMsg('assistant', errorText)
+        if (!jobContext) appendMsg('assistant', errorText)
 
         logManager.closeConversation(conversationId)
       },
-    })
+    }).catch(reject)
   })
 
-  registerLoop(conversationId, loopPromise)
+  if (!jobContext) registerLoop(conversationId, loopPromise)
 
-  return { isNew: true }
+  return { isNew: true, completion: loopPromise, assistantMessageId }
+}
+
+type DurableApprovalInput = { approvalId?: string; decision?: 'approve' | 'deny' }
+
+async function handleDurableApproval(
+  context: JobExecutorContext,
+  approval: SecurityApprovalRequest,
+  stepIndex: number,
+  readInput: () => DurableApprovalInput | undefined,
+  writeInput: (value: DurableApprovalInput | undefined) => void,
+): Promise<boolean> {
+  const approvalId = `approval-${createHash('sha256').update(JSON.stringify({ jobId: context.job.id, stepIndex, approval })).digest('hex').slice(0, 32)}`
+  const checkpointName = `agent_approval:${approvalId}`
+  const resolved = context.readCheckpoint<{ decision: 'approve' | 'deny' }>(checkpointName)
+  if (resolved) return resolved.decision === 'approve'
+
+  const provided = readInput()
+  if (provided) {
+    writeInput(undefined)
+    if (provided.approvalId !== approvalId || !provided.decision) {
+      throw Object.assign(new Error(`Approval input does not match ${approvalId}`), { code: 'INVALID_APPROVAL_INPUT' })
+    }
+    context.checkpoint(checkpointName, { decision: provided.decision })
+    approvalManager.respondToRequest(approvalId, provided.decision)
+    return provided.decision === 'approve'
+  }
+
+  const request = {
+    id: approvalId,
+    jobId: context.job.id,
+    type: approval.type,
+    requestedBy: context.job.id,
+    stepIndex,
+    createdAt: Date.now(),
+    ...(approval.path ? { path: approval.path } : {}),
+    ...(approval.command ? { command: approval.command } : {}),
+  } as const
+  approvalManager.createRequest(approval.type, context.job.id, approval.path, approval.command, approvalId)
+  context.checkpoint('agent_pending_approval', request)
+  return context.waitForInput(request)
 }
 /* AI end: 流式聊天核心处理逻辑结束 */

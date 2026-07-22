@@ -2,6 +2,41 @@
 
 export type LLMProvider = 'openai' | 'openai-compatible' | 'anthropic' | 'ollama' | 'lm-studio'
 
+/** 模型的主要用途。调用方必须按用途筛选，不能把向量/多模态模型当作 Agent 对话模型。 */
+export type ModelType = 'chat' | 'reasoning' | 'embedding' | 'multimodal'
+
+export const MODEL_TYPES: ModelType[] = ['chat', 'reasoning', 'embedding', 'multimodal']
+
+export function isModelType(value: unknown): value is ModelType {
+  return typeof value === 'string' && MODEL_TYPES.includes(value as ModelType)
+}
+
+/** 兼容没有 modelType 的旧配置；显式配置始终优先。 */
+export function inferModelType(model: string): ModelType {
+  const normalized = model.trim().toLowerCase()
+  if (/(^|[-_.:])(embed|embedding)([-_.:]|$)/.test(normalized)) return 'embedding'
+  if (/(^|[-_.])(vl|vision)([-_.:]|$)|\d(?:\.\d+)?v(?:[-_.:]|$)/.test(normalized)) return 'multimodal'
+  if (/(^|[-_.])(reasoner|reasoning|thinking|r1)([-_.:]|$)/.test(normalized)) return 'reasoning'
+  return 'chat'
+}
+
+export function resolveModelType(profile: Pick<ModelProfile, 'model' | 'modelType'>): ModelType {
+  return isModelType(profile.modelType) ? profile.modelType : inferModelType(profile.model)
+}
+
+export function isAgentModel(profile: Pick<ModelProfile, 'model' | 'modelType'>): boolean {
+  const type = resolveModelType(profile)
+  return type === 'chat' || type === 'reasoning'
+}
+
+export function isEmbeddingModel(profile: Pick<ModelProfile, 'model' | 'modelType'>): boolean {
+  return resolveModelType(profile) === 'embedding'
+}
+
+export function isMultimodalModel(profile: Pick<ModelProfile, 'model' | 'modelType'>): boolean {
+  return resolveModelType(profile) === 'multimodal'
+}
+
 /** 单次 LLM 调用配置（下游使用方接口，保持不变） */
 export interface LLMConfig {
   provider: LLMProvider
@@ -38,6 +73,8 @@ export interface ModelProfile {
   /** 是否为默认配置（同一时刻只允许一个 default） */
   isDefault?: boolean
   provider: LLMProvider
+  /** 模型主要用途；旧配置缺失时按模型名安全推断。 */
+  modelType?: ModelType
   apiKey?: string
   baseUrl?: string
   model: string

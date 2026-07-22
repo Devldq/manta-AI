@@ -1,0 +1,39 @@
+{
+  "name": "@manta/mcp-server",
+  "version": "0.1.0",
+  "description": "stdio MCP server exposing the local Manta knowledge service",
+  "type": "module",
+  "bin": {
+    "manta-mcp": "./dist/server.js"
+  },
+  "main": "./dist/server.cjs",
+  "module": "./dist/server.js",
+  "types": "./dist/server.d.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/server.d.ts", "default": "./dist/server.js" },
+      "require": { "types": "./dist/server.d.cts", "default": "./dist/server.cjs" }
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/server.ts --format esm,cjs --dts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@manta/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8.5.0",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Devldq/manta-AI.git", "directory": "packages/mcp-server" },
+  "publishConfig": { "access": "public", "provenance": true }
+}

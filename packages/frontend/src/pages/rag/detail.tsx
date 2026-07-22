@@ -2286,7 +2286,7 @@ export default function RAGDetailPage() {
                   </SelectTrigger>
                   <SelectContent className="bg-[var(--color-surface-elevated)] border-[var(--color-border)]">
                     <SelectItem value="" className="text-[11px] text-[var(--color-text-primary)]">系统默认</SelectItem>
-                    {store.llmProfiles.map((p) => (
+                    {store.llmProfiles.filter((p) => p.modelType === 'chat' || p.modelType === 'reasoning').map((p) => (
                       <SelectItem
                         key={p.id}
                         value={p.id}

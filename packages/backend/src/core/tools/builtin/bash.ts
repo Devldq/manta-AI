@@ -8,7 +8,7 @@
 import type { ToolDefinition } from '@tools/registry'
 import * as child_process from 'child_process'
 import { checkCommand } from './utils'
-import { approvalManager } from '@security/ApprovalManager'
+import { requestToolApproval } from '@security/request-approval'
 
 // ─── 使用共享安全上下文模块（解决 tsx 模块解析问题）────────────────────
 
@@ -184,6 +184,66 @@ interface BashTask {
 const bashTaskRegistry = new Map<string, BashTask>()
 let bashTaskCounter = 0
 
+function shellInvocation(command: string): { executable: string; args: string[] } {
+  if (process.platform === 'win32') return { executable: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', command] }
+  return { executable: process.env.SHELL || '/bin/sh', args: ['-lc', command] }
+}
+
+function spawnShell(command: string, cwd: string): child_process.ChildProcess {
+  const invocation = shellInvocation(command)
+  return child_process.spawn(invocation.executable, invocation.args, {
+    cwd,
+    shell: false,
+    windowsHide: true,
+    detached: process.platform !== 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+}
+
+function terminateProcessTree(proc: child_process.ChildProcess): void {
+  if (!proc.pid) return
+  try {
+    if (process.platform !== 'win32') process.kill(-proc.pid, 'SIGTERM')
+    else proc.kill('SIGTERM')
+  } catch { /* process already exited */ }
+}
+
+async function runForegroundCommand(command: string, cwd: string, timeoutMs: number, context?: SecurityContextType): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const proc = spawnShell(command, cwd)
+  if (!proc.pid) throw new Error('Shell process did not expose a PID')
+  context?.registerProcess?.(proc.pid, 'bash')
+  let stdout = ''
+  let stderr = ''
+  proc.stdout?.on('data', (chunk) => { stdout += String(chunk) })
+  proc.stderr?.on('data', (chunk) => { stderr += String(chunk) })
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (operation: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      context?.abortSignal?.removeEventListener('abort', abort)
+      context?.unregisterProcess?.(proc.pid!)
+      operation()
+    }
+    const abort = () => {
+      terminateProcessTree(proc)
+      finish(() => reject(Object.assign(new Error('Job execution was cancelled'), { code: 'JOB_EXECUTION_ABORTED' })))
+    }
+    const timer = setTimeout(() => {
+      terminateProcessTree(proc)
+      finish(() => reject(Object.assign(new Error(`Command timed out after ${timeoutMs}ms`), { code: 'COMMAND_TIMEOUT', stderr })))
+    }, timeoutMs)
+    timer.unref()
+    context?.abortSignal?.addEventListener('abort', abort, { once: true })
+    if (context?.abortSignal?.aborted) return abort()
+    proc.once('error', (error) => finish(() => reject(error)))
+    proc.once('close', (code) => finish(() => code === 0
+      ? resolve({ stdout, stderr, exitCode: 0 })
+      : reject(Object.assign(new Error(`Command exited with code ${code ?? 1}`), { code: 'COMMAND_FAILED', stderr, stdout, exitCode: code ?? 1 }))))
+  })
+}
+
 // ─── 工具定义 ────────────────────────────────────────────────────────────────
 
 /** Bash — 在 shell 中执行命令 */
@@ -232,13 +292,7 @@ function createBashTool(): ToolDefinition {
         // 如果需要授权，创建授权请求并等待用户响应
         if (validation.needApproval) {
           const context = getSecurityContext()
-          const requestedBy = context?.taskId || 'unknown'
-          
-          // 创建授权请求
-          const requestId = approvalManager.createRequest('shell', requestedBy, undefined, command)
-          
-          // 等待用户响应（最多 60 秒）
-          const approved = await approvalManager.waitForResponse(requestId, 60000)
+          const approved = await requestToolApproval({ type: 'shell', command })
           
           if (!approved) {
             // 记录审计日志（拒绝）
@@ -300,16 +354,24 @@ function createBashTool(): ToolDefinition {
             exitCode: null,
           }
           
-          const proc = child_process.exec(command, {
-            cwd: targetCwd,
-            timeout,
-          }, (error, stdout, stderr) => {
-            task.stdout += stdout || ''
-            task.stderr += stderr || ''
-            task.exitCode = error ? (error as any).code || 1 : 0
-            task.status = error ? 'failed' : 'completed'
+          const context = getSecurityContext()
+          const proc = spawnShell(command, targetCwd)
+          if (!proc.pid) throw new Error('Shell process did not expose a PID')
+          context?.registerProcess?.(proc.pid, 'bash-background')
+          proc.stdout?.on('data', (chunk) => { task.stdout += String(chunk) })
+          proc.stderr?.on('data', (chunk) => { task.stderr += String(chunk) })
+          const timeoutHandle = setTimeout(() => terminateProcessTree(proc), timeout)
+          timeoutHandle.unref()
+          const abort = () => { terminateProcessTree(proc); task.status = 'killed' }
+          context?.abortSignal?.addEventListener('abort', abort, { once: true })
+          proc.once('error', (error) => { task.stderr += error.message; task.exitCode = 1; task.status = 'failed' })
+          proc.once('close', (code) => {
+            clearTimeout(timeoutHandle)
+            context?.abortSignal?.removeEventListener('abort', abort)
+            context?.unregisterProcess?.(proc.pid!)
+            task.exitCode = code ?? 1
+            if (task.status === 'running') task.status = code === 0 ? 'completed' : 'failed'
           })
-          
           task.proc = proc
           bashTaskRegistry.set(taskId, task)
           
@@ -319,17 +381,11 @@ function createBashTool(): ToolDefinition {
             message: '任务已在后台启动',
           }
         } else {
-          // 同步执行
-          const { execSync } = child_process
-          const output = execSync(command, {
-            cwd: targetCwd,
-            timeout,
-            encoding: 'utf-8',
-          })
-          
+          const result = await runForegroundCommand(command, targetCwd, timeout, getSecurityContext())
           return {
             command,
-            output: output || '',
+            output: result.stdout,
+            stderr: result.stderr,
             status: 'completed',
           }
         }
@@ -417,7 +473,7 @@ function createBashKillTool(): ToolDefinition {
       if (task.status !== 'running') {
         return { task_id, status: task.status, message: `任务已结束，无法终止` }
       }
-      task.proc?.kill()
+      if (task.proc) terminateProcessTree(task.proc)
       task.status = 'killed'
       task.exitCode = null
       return { task_id, status: 'killed', message: `任务已终止` }

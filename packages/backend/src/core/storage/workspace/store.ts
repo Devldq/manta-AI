@@ -216,12 +216,18 @@ export function appendWorkspaceMessage(
   usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number },
   stepUsages?: StepUsageRecord[],
   agentAppId?: string,
+  messageId?: string,
 ): { conv: Conversation; message: ConversationMessage } | null {
   const conv = getWorkspaceConversation(workspaceId, conversationId)
   if (!conv) return null
 
+  if (messageId) {
+    const existing = conv.messages.find((message) => message.id === messageId)
+    if (existing) return { conv, message: existing }
+  }
+
   const msg: ConversationMessage = {
-    id: uuidv4(),
+    id: messageId ?? uuidv4(),
     role,
     content,
     timestamp: new Date().toISOString(),

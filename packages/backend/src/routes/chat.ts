@@ -13,9 +13,32 @@ import {
 } from '../core/llm/config-store'
 import { testLLMConnection } from '../core/llm/factory'
 import type { ModelProfile, LLMProfilesConfig } from '../core/llm/types'
-import { profileToLLMConfig } from '../core/llm/types'
+import { isAgentModel, isEmbeddingModel, isModelType, profileToLLMConfig, resolveModelType } from '../core/llm/types'
 import { v4 as uuidv4 } from 'uuid'
-import { listLocalOllamaModels } from '../core/engine/rag/embedding-service.js'
+import { createEmbeddingService, getAvailableEmbeddingModels, listLocalOllamaModels } from '../core/engine/rag/embedding-service.js'
+
+async function testModelConnection(profile: ModelProfile): Promise<{ ok: boolean; error?: string }> {
+  if (!isEmbeddingModel(profile)) return testLLMConnection(profileToLLMConfig(profile))
+  try {
+    const local = profile.provider === 'ollama' || profile.provider === 'lm-studio'
+    const available = await getAvailableEmbeddingModels()
+    const selected = (local ? available.local : available.openai).find((model) => model.id === profile.model)
+    if (!selected) throw new Error(`向量模型 ${profile.model} 当前不可用或未声明 embedding 能力`)
+    const service = createEmbeddingService(local ? 'local' : 'openai', {
+      apiKey: profile.apiKey,
+      baseUrl: profile.baseUrl,
+      model: profile.model,
+      dimensions: selected.dimensions,
+    })
+    const vector = await service.embed('Manta embedding connection test')
+    if (!Array.isArray(vector) || vector.length !== selected.dimensions) {
+      throw new Error(`向量维度不匹配：期望 ${selected.dimensions}，实际 ${Array.isArray(vector) ? vector.length : 0}`)
+    }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
 
 export async function chatConfigRoutes(app: FastifyInstance) {
   // GET /api/chat/config — 读取多模型配置列表（脱敏）
@@ -35,6 +58,8 @@ export async function chatConfigRoutes(app: FastifyInstance) {
       if (!incoming.profiles || incoming.profiles.length === 0) {
         return reply.status(400).send({ error: 'profiles 列表不能为空' })
       }
+      const invalidType = incoming.profiles.find((profile) => profile.modelType !== undefined && !isModelType(profile.modelType))
+      if (invalidType) return reply.status(400).send({ error: `模型 ${invalidType.name || invalidType.model} 的 modelType 无效` })
       const existing = getLLMProfiles()
       incoming.profiles = incoming.profiles.map((p) => {
         if (!(p as ModelProfile & { clearApiKey?: boolean }).clearApiKey && !p.apiKey?.trim()) {
@@ -80,7 +105,7 @@ export async function chatConfigRoutes(app: FastifyInstance) {
           } else {
             configToTest = getActiveProfile()
           }
-          const result = await testLLMConnection(profileToLLMConfig(configToTest))
+          const result = await testModelConnection(configToTest)
           return reply.send(result)
         }
 
@@ -89,6 +114,7 @@ export async function chatConfigRoutes(app: FastifyInstance) {
           switch (body.operation) {
             case 'add': {
               if (!body.profile) return reply.status(400).send({ error: '缺少 profile 数据' })
+              if (body.profile.modelType !== undefined && !isModelType(body.profile.modelType)) return reply.status(400).send({ error: 'modelType 无效' })
               const profileData = { ...body.profile }
               if (!profileData.apiKey?.trim()) {
                 const envConfig = getLLMConfig()
@@ -101,6 +127,7 @@ export async function chatConfigRoutes(app: FastifyInstance) {
             }
             case 'update': {
               if (!body.profileId || !body.profile) return reply.status(400).send({ error: '缺少 profileId 或 profile 数据' })
+              if (body.profile.modelType !== undefined && !isModelType(body.profile.modelType)) return reply.status(400).send({ error: 'modelType 无效' })
               const updated = updateProfile(body.profileId, body.profile)
               return reply.send({ success: true, profile: updated })
             }
@@ -117,6 +144,9 @@ export async function chatConfigRoutes(app: FastifyInstance) {
         case 'active': {
           const body = request.body as { profileId: string }
           if (!body.profileId) return reply.status(400).send({ error: '缺少 profileId' })
+          const profile = getLLMProfiles().profiles.find((item) => item.id === body.profileId)
+          if (!profile) return reply.status(404).send({ error: `找不到配置: ${body.profileId}` })
+          if (!isAgentModel(profile)) return reply.status(400).send({ error: `${resolveModelType(profile)} 类型模型不能用于 Agent 对话` })
           setActiveProfile(body.profileId)
           return reply.send({ success: true })
         }
@@ -124,6 +154,9 @@ export async function chatConfigRoutes(app: FastifyInstance) {
         case 'default': {
           const body = request.body as { profileId: string }
           if (!body.profileId) return reply.status(400).send({ error: '缺少 profileId' })
+          const profile = getLLMProfiles().profiles.find((item) => item.id === body.profileId)
+          if (!profile) return reply.status(404).send({ error: `找不到配置: ${body.profileId}` })
+          if (!isAgentModel(profile)) return reply.status(400).send({ error: `${resolveModelType(profile)} 类型模型不能设为 Agent 默认模型` })
           setDefaultProfile(body.profileId)
           return reply.send({ success: true })
         }
@@ -138,6 +171,7 @@ export async function chatConfigRoutes(app: FastifyInstance) {
             if (!p.name || !p.provider || !p.model) {
               return reply.status(400).send({ error: '每个配置必须包含 name、provider 和 model 字段' })
             }
+            if (p.modelType !== undefined && !isModelType(p.modelType)) return reply.status(400).send({ error: `模型 ${p.name} 的 modelType 无效` })
           }
           const existing = getLLMProfiles()
           if (merge) {

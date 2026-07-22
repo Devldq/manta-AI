@@ -29,6 +29,7 @@ export interface StoredMessage {
     cacheWriteTokens?: number
     noCacheTokens?: number
     toolNames?: string[]
+    progressText?: string
   }>
 }
 
@@ -65,6 +66,7 @@ export interface StepUsageData {
   cacheWriteTokens?: number
   noCacheTokens?: number
   toolNames?: string[]
+  progressText?: string
 }
 
 /** 按 step 分组的工具调用 */

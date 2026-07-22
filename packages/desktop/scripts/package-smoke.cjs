@@ -18,8 +18,9 @@ const repositoryDir = resolve(projectDir, '..', '..')
 const releaseDir = join(projectDir, 'release', 'win-unpacked')
 const resources = join(releaseDir, 'resources')
 const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-const required = ['app.asar', join('frontend', 'dist'), join('backend', 'dist'), join('storage-hub', 'dist'), join('rag', 'dist'), '.manta', join('qdrant', 'qdrant.exe'), join('app.asar.unpacked', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')]
+const required = ['app.asar', join('frontend', 'dist'), join('backend', 'dist'), join('storage-hub', 'dist'), join('rag', 'dist'), '.manta', join('qdrant', 'qdrant.exe'), join('qdrant', 'qdrant-manifest.json'), join('app.asar.unpacked', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')]
 const providerPackages = ['@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core']
+const runtimeWorkspacePackages = ['@manta/backend', '@manta/service', '@manta/sdk', '@manta/contracts', '@manta/task-runtime', '@manta/skill-runtime']
 const nativePackages = ['better-sqlite3']
 const nativeBinary = join(dirname(require.resolve('better-sqlite3')), '..', 'build', 'Release', 'better_sqlite3.node')
 
@@ -62,7 +63,7 @@ async function copyProductionDependencies(appDir) {
   // pnpm's workspace graph does not always expand a workspace dependency's
   // peer/optional provider closure when queried from the desktop root. Merge
   // the production graphs of every runtime package before flattening.
-  for (const filter of ['@manta/desktop', '@manta/backend', '@manta/rag', '@manta/storage-hub']) {
+  for (const filter of ['@manta/desktop', '@manta/backend', '@manta/service', '@manta/sdk', '@manta/rag', '@manta/storage-hub', '@manta/skill-runtime']) {
     const graph = JSON.parse(await run(command, ['--filter', filter, 'list', '--prod', '--depth', 'Infinity', '--json']))[0]
     collectDependencies(graph, dependencies)
   }
@@ -166,7 +167,7 @@ async function bundleBackendForElectron(appDir) {
       '@llm': join(backendDist, 'core', 'llm'),
       '@routes': join(backendDist, 'routes'),
     },
-    external: ['better-sqlite3', '@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core', '@langchain/core/messages', '@manta/shared', '@manta/storage-hub'],
+    external: ['better-sqlite3', '@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core', '@langchain/core/messages', '@manta/shared', '@manta/storage-hub', '@manta/contracts', '@manta/task-runtime', '@manta/skill-runtime'],
     define: { 'import.meta.url': 'undefined' },
   })
   const backendManifestPath = join(backendDir, 'package.json')
@@ -177,6 +178,21 @@ async function bundleBackendForElectron(appDir) {
   await writeFile(backendManifestPath, `${JSON.stringify(backendManifest, null, 2)}\n`)
 }
 
+async function prepareAppDirectory() {
+  const appDir = join(projectDir, '.package-staging', 'app')
+  await rm(join(projectDir, '.package-staging'), { recursive: true, force: true })
+  await mkdir(appDir, { recursive: true })
+  await Promise.all([
+    cp(join(projectDir, 'dist'), join(appDir, 'dist'), { recursive: true, dereference: true }),
+    cp(join(projectDir, 'package.json'), join(appDir, 'package.json'), { dereference: true }),
+  ])
+  await copyProductionDependencies(appDir)
+  await bundleBackendForElectron(appDir)
+  await Promise.all([...providerPackages, ...runtimeWorkspacePackages].map((name) => access(join(appDir, 'node_modules', ...name.split('/'), 'package.json'))))
+  await Promise.all(runtimeWorkspacePackages.map((name) => access(join(appDir, 'node_modules', ...name.split('/'), 'dist'))))
+  return appDir
+}
+
 async function packageDirectory() {
   if (process.platform !== 'win32') throw new Error('package:dir currently creates the Windows artifact declared in electron-builder.yml')
   const backup = await snapshotNodeAbi()
@@ -184,19 +200,7 @@ async function packageDirectory() {
   try {
     await rm(join(projectDir, 'release'), { recursive: true, force: true })
     await rebuildForElectron()
-    const appDir = join(projectDir, '.package-staging', 'app')
-    await rm(join(projectDir, '.package-staging'), { recursive: true, force: true })
-    await mkdir(appDir, { recursive: true })
-    await Promise.all([
-      cp(join(projectDir, 'dist'), join(appDir, 'dist'), { recursive: true, dereference: true }),
-      cp(join(projectDir, 'package.json'), join(appDir, 'package.json'), { dereference: true }),
-    ])
-    await copyProductionDependencies(appDir)
-    await bundleBackendForElectron(appDir)
-    // Provider imports are dynamic in the backend, so an archive can look
-    // healthy even when pnpm's flattened production graph omitted them.  Check
-    // the staging tree explicitly before it is sealed into app.asar.
-    await Promise.all(providerPackages.map((name) => access(join(appDir, 'node_modules', ...name.split('/'), 'package.json'))))
+    const appDir = await prepareAppDirectory()
     await stageElectronRuntime()
     await mkdir(resources, { recursive: true })
     await Promise.all([
@@ -247,6 +251,6 @@ async function main() {
   if (primary) throw primary
 }
 
-module.exports = { packageDirectory, required, providerPackages }
+module.exports = { packageDirectory, prepareAppDirectory, required, providerPackages, runtimeWorkspacePackages }
 
 if (require.main === module) main().catch((error) => { console.error(error); process.exitCode = 1 })

@@ -4,8 +4,11 @@
 
 import { FastifyPluginAsync } from 'fastify'
 import { approvalManager } from '../core/security/ApprovalManager'
+import type { TaskRuntime } from '@manta/task-runtime'
+import { hydrateDurableApprovals } from './durable-approvals.js'
 
-export function createPendingApprovalSnapshot() {
+export function createPendingApprovalSnapshot(runtime?: TaskRuntime) {
+  hydrateDurableApprovals(runtime)
   return {
     type: 'approval-snapshot' as const,
     requests: approvalManager.getPendingRequests().map((request) => ({
@@ -46,7 +49,7 @@ const approvalSSERoutes: FastifyPluginAsync = async (fastify) => {
     reply.raw.write(`data: ${JSON.stringify(initEvent)}\n\n`)
 
     // 每次连接（含浏览器自动重连）都发送权威快照，用于清除本地已失效请求。
-    reply.raw.write(`data: ${JSON.stringify(createPendingApprovalSnapshot())}\n\n`)
+    reply.raw.write(`data: ${JSON.stringify(createPendingApprovalSnapshot(fastify.taskRuntime))}\n\n`)
 
     // 保持连接打开，直到客户端断开
     request.raw.on('close', () => {

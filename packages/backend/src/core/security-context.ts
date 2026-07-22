@@ -13,12 +13,23 @@ export interface SecurityContext {
   allowedRoots: string[]
   shellAllowedRoots: string[]
   networkAccess?: boolean
+  abortSignal?: AbortSignal
+  jobId?: string
+  attempt?: number
+  registerProcess?: (pid: number, label: string) => void
+  unregisterProcess?: (pid: number) => void
   maxFileSize?: number
   platform: string
   allowExternalRead?: boolean
   allowExternalWrite?: boolean
-  onApprovalRequest?: unknown
+  onApprovalRequest?: (request: SecurityApprovalRequest) => Promise<boolean>
   onAuditLog?: unknown
+}
+
+export interface SecurityApprovalRequest {
+  type: 'read' | 'write' | 'shell'
+  path?: string
+  command?: string
 }
 
 /** 全局唯一的安全上下文存储 */

@@ -15,6 +15,7 @@ test('copyAssets emits an executable browser onboarding bundle', async () => {
   writeFileSync(join(source, 'index.ts'), 'document.querySelector("#choose")!.addEventListener("click", () => { window.started = true }); export {}')
   writeFileSync(join(source, 'progress-contract.ts'), 'export const valid = (value: unknown) => Boolean(value)')
   writeFileSync(join(preloadSource, 'onboarding-preload.ts'), 'import { contextBridge } from "electron"; import { valid } from "../onboarding/progress-contract"; contextBridge.exposeInMainWorld("test", { valid })')
+  writeFileSync(join(preloadSource, 'main-preload.ts'), 'import { contextBridge } from "electron"; import { valid } from "../onboarding/progress-contract"; contextBridge.exposeInMainWorld("mainTest", { valid })')
 
   const { copyAssets } = require('./copy-assets.cjs')
   await copyAssets(root)
@@ -33,6 +34,10 @@ test('copyAssets emits an executable browser onboarding bundle', async () => {
   const preloadBundle = readFileSync(join(root, 'dist', 'preload', 'onboarding-preload.js'), 'utf8')
   assert.doesNotMatch(preloadBundle, /require\(["']\.\./)
   assert.match(preloadBundle, /require\(["']electron["']\)/)
+
+  const mainPreloadBundle = readFileSync(join(root, 'dist', 'preload', 'main-preload.js'), 'utf8')
+  assert.doesNotMatch(mainPreloadBundle, /require\(["']\.\./)
+  assert.match(mainPreloadBundle, /require\(["']electron["']\)/)
 })
 
 test('onboarding source contains readable Simplified Chinese controls', () => {

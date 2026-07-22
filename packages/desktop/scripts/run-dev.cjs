@@ -1,11 +1,14 @@
-const { copyFile, mkdtemp, rm } = require('node:fs/promises')
-const { dirname, join } = require('node:path')
+const { copyFile, cp, mkdtemp, open, rename, rm } = require('node:fs/promises')
+const { randomUUID } = require('node:crypto')
+const { basename, dirname, join, relative, sep } = require('node:path')
 const { tmpdir } = require('node:os')
 const { spawn } = require('node:child_process')
 
 const projectDir = join(__dirname, '..')
-const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-const nativeBinary = join(dirname(require.resolve('better-sqlite3')), '..', 'build', 'Release', 'better_sqlite3.node')
+const nativePackage = dirname(require.resolve('better-sqlite3/package.json'))
+const nativeBinary = join(nativePackage, 'build', 'Release', 'better_sqlite3.node')
+const prebuildInstall = require.resolve('prebuild-install/bin.js', { paths: [nativePackage] })
+const nodeGyp = require.resolve('node-gyp/bin/node-gyp.js')
 const forwardedSignals = ['SIGINT', 'SIGTERM']
 
 function createSignalGuard(signalSource = process) {
@@ -98,34 +101,81 @@ async function snapshotNodeAbi() {
 }
 
 async function restoreNodeAbi(snapshot) {
-  await copyFile(snapshot.backup, nativeBinary)
+  await replaceNativeBinaryAtomically(snapshot.backup)
   await rm(snapshot.directory, { recursive: true, force: true })
 }
 
-async function rebuildForNode(runtime) {
+function nativeBuildEnvironment(kind) {
   const env = { ...process.env }
   for (const name of ['npm_config_runtime', 'npm_config_target', 'npm_config_disturl']) delete env[name]
-  await run(command, ['--filter', '@manta/rag', 'rebuild', 'better-sqlite3'], { env }, runtime)
+  if (kind === 'electron') {
+    env.npm_config_runtime = 'electron'
+    env.npm_config_target = require('electron/package.json').version
+    env.npm_config_disturl = 'https://electronjs.org/headers'
+  }
+  return env
 }
 
-async function rebuildForElectron(runtime) {
-  const electronVersion = require('electron/package.json').version
-  await run(command, ['--filter', '@manta/rag', 'rebuild', 'better-sqlite3'], {
-    env: {
-      ...process.env,
-      npm_config_runtime: 'electron',
-      npm_config_target: electronVersion,
-      npm_config_disturl: 'https://electronjs.org/headers',
+async function createNativeBuildStage() {
+  const directory = await mkdtemp(join(tmpdir(), 'manta-dev-native-build-'))
+  const packageDirectory = join(directory, 'better-sqlite3')
+  await cp(nativePackage, packageDirectory, {
+    recursive: true,
+    filter(source) {
+      const path = relative(nativePackage, source)
+      return path !== 'build' && !path.startsWith(`build${sep}`) && path !== 'node_modules' && !path.startsWith(`node_modules${sep}`)
     },
-  }, runtime)
+  })
+  return { directory, packageDirectory, binary: join(packageDirectory, 'build', 'Release', 'better_sqlite3.node') }
 }
 
-async function signElectronNativeBinary(runtime = {}) {
+async function signNativeBinary(binary, runtime = {}) {
   if ((runtime.platform ?? process.platform) !== 'darwin') return
   // dyld can reject a freshly rebuilt addon with CODESIGNING/Invalid Page even
   // when codesign --verify succeeds, so replace the linker signature explicitly.
-  await run('codesign', ['--force', '--sign', '-', nativeBinary], {}, runtime)
+  await run('codesign', ['--force', '--sign', '-', binary], {}, runtime)
 }
+
+async function replaceNativeBinaryAtomically(source, target = nativeBinary) {
+  // The independent Service may still have the current addon mapped. Replacing
+  // the pathname with a new inode keeps those mapped, signed pages untouched.
+  const replacement = join(dirname(target), `.${basename(target)}.${process.pid}.${randomUUID()}.tmp`)
+  let handle
+  try {
+    await copyFile(source, replacement)
+    handle = await open(replacement, 'r')
+    await handle.sync()
+    await handle.close()
+    handle = undefined
+    await rename(replacement, target)
+  } finally {
+    await handle?.close().catch(() => undefined)
+    await rm(replacement, { force: true }).catch(() => undefined)
+  }
+}
+
+async function rebuildNativeBinary(kind, runtime = {}) {
+  const stage = await createNativeBuildStage()
+  const env = nativeBuildEnvironment(kind)
+  try {
+    try {
+      await run(process.execPath, [prebuildInstall], { cwd: stage.packageDirectory, env }, runtime)
+    } catch (prebuildError) {
+      try {
+        await run(process.execPath, [nodeGyp, 'rebuild', '--release'], { cwd: stage.packageDirectory, env }, runtime)
+      } catch (buildError) {
+        throw new AggregateError([prebuildError, buildError], `Could not build better-sqlite3 for ${kind}`)
+      }
+    }
+    await signNativeBinary(stage.binary, runtime)
+    await replaceNativeBinaryAtomically(stage.binary)
+  } finally {
+    await rm(stage.directory, { recursive: true, force: true })
+  }
+}
+
+const rebuildForNode = (runtime) => rebuildNativeBinary('node', runtime)
+const rebuildForElectron = (runtime) => rebuildNativeBinary('electron', runtime)
 
 async function launchElectron(runtime) {
   await run(require('electron'), ['dist/main.js'], {}, runtime)
@@ -137,7 +187,7 @@ function interruptedError(signal) {
   return error
 }
 
-async function runDev(deps = { rebuildForNode, snapshotNodeAbi, rebuildForElectron, signElectronNativeBinary, launchElectron, restoreNodeAbi }, runtime = {}) {
+async function runDev(deps = { rebuildForNode, snapshotNodeAbi, rebuildForElectron, launchElectron, restoreNodeAbi }, runtime = {}) {
   const signalGuard = createSignalGuard(runtime.signalSource)
   const childRuntime = { ...runtime, signalGuard }
   let snapshot
@@ -152,8 +202,6 @@ async function runDev(deps = { rebuildForNode, snapshotNodeAbi, rebuildForElectr
     hasSnapshot = true
     if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
     await deps.rebuildForElectron(childRuntime)
-    if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
-    await deps.signElectronNativeBinary?.(childRuntime)
     if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
     await deps.launchElectron(childRuntime)
     if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
@@ -177,6 +225,6 @@ async function runDev(deps = { rebuildForNode, snapshotNodeAbi, rebuildForElectr
   if (restoreError !== undefined) throw restoreError
 }
 
-module.exports = { rebuildForNode, run, runDev, signElectronNativeBinary }
+module.exports = { nativeBuildEnvironment, rebuildForNode, replaceNativeBinaryAtomically, run, runDev, signNativeBinary }
 
 if (require.main === module) runDev().catch((error) => { console.error(error); process.exitCode = 1 })

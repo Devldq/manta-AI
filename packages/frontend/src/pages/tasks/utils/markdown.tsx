@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useEffect, useId, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -11,13 +11,77 @@ function countLines(children: React.ReactNode): number {
   return text.split('\n').length
 }
 
-function CodeBlock({ isBlock, lang, children, ...props }: { isBlock: boolean; lang: string; children: React.ReactNode;[key: string]: unknown }) {
+interface MarkdownComponentOptions {
+  onOpenFile?: (path: string) => void
+  streaming?: boolean
+}
+
+function MermaidBlock({ source, streaming }: { source: string; streaming: boolean }) {
+  const reactId = useId()
+  const renderId = useMemo(() => `manta-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`, [reactId])
+  const [svg, setSvg] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    setSvg('')
+    setError('')
+    const timer = window.setTimeout(async () => {
+      try {
+        const { default: mermaid } = await import('mermaid')
+        const dark = document.documentElement.classList.contains('dark')
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: dark ? 'dark' : 'neutral',
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+        })
+        const rendered = await mermaid.render(renderId, source.trim())
+        if (!cancelled) setSvg(rendered.svg)
+      } catch (reason) {
+        if (cancelled) return
+        setSvg('')
+        setError(reason instanceof Error ? reason.message : 'Mermaid 图表语法有误')
+      }
+    }, streaming ? 260 : 40)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+      document.getElementById(`d${renderId}`)?.remove()
+    }
+  }, [renderId, source, streaming])
+
+  if (svg) {
+    return (
+      <div className="mermaid-preview" role="img" aria-label="Mermaid 图表" dangerouslySetInnerHTML={{ __html: svg }} />
+    )
+  }
+
+  if (error && !streaming) {
+    return (
+      <details className="mermaid-error">
+        <summary>图表渲染失败，查看 Mermaid 源码</summary>
+        <pre><code>{source}</code></pre>
+      </details>
+    )
+  }
+
+  return <div className="mermaid-loading">正在渲染图表…</div>
+}
+
+function CodeBlock({ isBlock, lang, children, streaming, ...props }: { isBlock: boolean; lang: string; children: React.ReactNode; streaming: boolean; [key: string]: unknown }) {
+  const [expanded, setExpanded] = useState(false)
+  const lines = useMemo(() => countLines(children), [children])
+
   if (!isBlock) {
     return <code style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', padding: '1.5px 5px', borderRadius: '4px', background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)', color: 'var(--color-emphasis)' }} {...props}>{children}</code>
   }
 
-  const [expanded, setExpanded] = useState(false)
-  const lines = useMemo(() => countLines(children), [children])
+  if (lang.toLowerCase() === 'mermaid') {
+    return <MermaidBlock source={String(children ?? '').trimEnd()} streaming={streaming} />
+  }
+
   const collapsible = lines > LINE_LIMIT
 
   return (
@@ -64,13 +128,19 @@ function CodeBlock({ isBlock, lang, children, ...props }: { isBlock: boolean; la
   )
 }
 
-// 提取为模块级常量，避免每次渲染创建新对象导致 ReactMarkdown 重建 DOM
-export const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
-  code({ className, children, ...props }) {
-    const isBlock = className?.includes('language-') ?? false
-    const lang = className?.replace('language-', '') ?? ''
-    return <CodeBlock isBlock={isBlock} lang={lang} children={children} {...props} />
-  },
+function isLocalFileLink(href: string): boolean {
+  if (!href || href.startsWith('#')) return false
+  if (/^(https?:|mailto:|tel:)/i.test(href)) return false
+  return true
+}
+
+export function createMarkdownComponents({ onOpenFile, streaming = false }: MarkdownComponentOptions = {}): React.ComponentProps<typeof ReactMarkdown>['components'] {
+  return {
+    code({ className, children, ...props }) {
+      const isBlock = className?.includes('language-') ?? false
+      const lang = className?.replace('language-', '') ?? ''
+      return <CodeBlock isBlock={isBlock} lang={lang} streaming={streaming} children={children} {...props} />
+    },
   iframe({ src, ...props }) {
     return (
       <div style={{ margin: '8px 0', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--color-border)' }}>
@@ -91,7 +161,27 @@ export const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['com
   table({ children }) { return <div style={{ overflowX: 'auto', margin: '6px 0' }}><table style={{ borderCollapse: 'collapse', fontSize: '12px', width: '100%' }}>{children}</table></div> },
   th({ children }) { return <th style={{ padding: '5px 10px', borderBottom: '2px solid var(--color-border)', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap' }}>{children}</th> },
   td({ children }) { return <td style={{ padding: '5px 10px', borderBottom: '1px solid var(--color-border-subtle)' }}>{children}</td> },
-  a({ href, children }) { return <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)', textDecoration: 'underline', textUnderlineOffset: '2px' }}>{children}</a> },
+    a({ href = '', children }) {
+      const local = Boolean(onOpenFile && isLocalFileLink(href))
+      return (
+        <a
+          href={href}
+          target={local ? undefined : '_blank'}
+          rel={local ? undefined : 'noopener noreferrer'}
+          className={local ? 'markdown-file-link' : 'markdown-external-link'}
+          onClick={local ? (event) => {
+            event.preventDefault()
+            onOpenFile?.(href)
+          } : undefined}
+        >
+          {children}
+        </a>
+      )
+    },
   strong({ children }) { return <strong style={{ fontWeight: 700 }}>{children}</strong> },
   em({ children }) { return <em style={{ fontStyle: 'italic' }}>{children}</em> },
+  }
 }
+
+// 保留无上下文版本，供通用 Markdown 视图复用。
+export const markdownComponents = createMarkdownComponents()

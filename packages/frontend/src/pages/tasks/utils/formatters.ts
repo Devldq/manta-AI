@@ -1,5 +1,5 @@
 import type { UIMessage, TextUIPart } from 'ai'
-import type { ToolCallEntry, StepGroup } from './types'
+import type { StoredMessage, StoredToolCall, ToolCallEntry, StepGroup } from './types'
 
 /** 格式化 token 数：≥10000 显示为 x.xw */
 export function fmtTokens(n: number): string {
@@ -20,15 +20,75 @@ export function formatTime(ts: string | undefined): string {
 
 /** 获取消息文本内容 */
 export function getTextContent(msg: UIMessage): string {
-  return msg.parts
+  const lastStepStart = msg.parts.reduce(
+    (index, part, current) => part.type === 'step-start' ? current : index,
+    -1,
+  )
+  const visibleParts = lastStepStart >= 0 ? msg.parts.slice(lastStepStart + 1) : msg.parts
+  return visibleParts
     .filter((p): p is TextUIPart => p.type === 'text')
     .map((p) => p.text)
     .join('')
 }
 
+function storedToolPart(toolCall: StoredToolCall): UIMessage['parts'][number] {
+  return {
+    type: 'dynamic-tool',
+    toolCallId: toolCall.toolCallId,
+    toolName: toolCall.toolName,
+    state: toolCall.isError ? 'output-error' : 'output-available',
+    input: toolCall.input,
+    output: toolCall.isError ? undefined : toolCall.output,
+    errorText: toolCall.errorText,
+  } as unknown as UIMessage['parts'][number]
+}
+
+/** 将持久化消息恢复为带步骤边界的 UIMessage，刷新后仍保留公开执行摘要。 */
+export function storedMessageToUIMessage(message: StoredMessage): UIMessage {
+  const parts: UIMessage['parts'] = []
+  const toolCalls = message.toolCalls ?? []
+  const steps = message.stepUsages ?? []
+  let toolCursor = 0
+
+  if (steps.length > 0) {
+    steps.forEach((step, index) => {
+      parts.push({ type: 'step-start' })
+      if (step.progressText) parts.push({ type: 'text', text: step.progressText })
+
+      const toolCount = step.toolNames?.length ?? 0
+      for (let offset = 0; offset < toolCount && toolCursor < toolCalls.length; offset++) {
+        parts.push(storedToolPart(toolCalls[toolCursor++]))
+      }
+
+      if (index === steps.length - 1 && message.content) {
+        parts.push({ type: 'text', text: message.content })
+      }
+    })
+  } else {
+    for (const toolCall of toolCalls) parts.push(storedToolPart(toolCall))
+    if (message.content) parts.push({ type: 'text', text: message.content })
+  }
+
+  if (toolCursor < toolCalls.length) {
+    parts.unshift({ type: 'step-start' })
+    parts.splice(1, 0, ...toolCalls.slice(toolCursor).map(storedToolPart))
+  }
+
+  return {
+    id: message.id,
+    role: message.role,
+    parts,
+    metadata: {
+      timestamp: message.timestamp,
+      usage: message.usage ?? null,
+      stepUsages: message.stepUsages ?? null,
+    },
+  }
+}
+
 /**
  * 从 message parts 中按 step 边界提取分组
- * 利用 AI SDK 的 step-start / step-end 事件将工具调用组织为步骤
+ * 利用 AI SDK 落入 message.parts 的 step-start 边界组织步骤
  */
 export function extractStepGroups(parts: UIMessage['parts']): StepGroup[] {
   if (!parts || parts.length === 0) return []
@@ -37,13 +97,13 @@ export function extractStepGroups(parts: UIMessage['parts']): StepGroup[] {
   let currentGroup: StepGroup | null = null
 
   for (const p of parts) {
-    // 使用类型断言检查自定义 part 类型（step-start/step-end 可能不在官方类型中）
+    // 使用类型断言检查 step 边界类型
     const partType = (p as Record<string, unknown>).type as string
 
-    // step-start: 新步骤开始
+    // AI SDK 将 start-step 流事件落为 step-start 消息 part
     if (partType === 'step-start') {
       if (currentGroup && currentGroup.toolCalls.length > 0) {
-        // 前一个步骤未完成（无 step-end），标记为完成
+        // 前一个步骤未完成（无 finish-step），标记为完成
         currentGroup.isComplete = true
         currentGroup.isActive = false
       }
@@ -109,14 +169,6 @@ export function extractStepGroups(parts: UIMessage['parts']): StepGroup[] {
       continue
     }
 
-    // step-end / finish: 步骤完成
-    if (partType === 'step-end' || partType === 'finish') {
-      if (currentGroup) {
-        currentGroup.isComplete = true
-        currentGroup.isActive = false
-      }
-      continue
-    }
   }
 
   // 最后一个未完成的步骤
@@ -149,7 +201,7 @@ export function extractStepGroups(parts: UIMessage['parts']): StepGroup[] {
     }
   }
 
-  return groups
+  return groups.filter((group, index) => group.toolCalls.length > 0 || index < groups.length - 1)
 }
 
 /** 提取工具调用（扁平列表，兼容旧代码） */
@@ -214,38 +266,46 @@ export function describeToolCall(entry: ToolCallEntry): string {
       const cmd = String(input?.command ?? '')
       const desc = input?.description ? `（${input.description}）` : ''
       const displayCmd = cmd.length > 60 ? cmd.slice(0, 60) + '...' : cmd
-      return `${desc ? desc + ' ' : ''}${displayCmd}`
+      return `${desc ? desc + ' ' : '已运行 '}${displayCmd}`
     }
     case 'lsDir': {
       const p = String(input?.dir_path ?? '')
-      return `查看目录 ${p}`
+      return `已查看 ${p}`
     }
     case 'readFile': {
       const p = String(input?.file_path ?? '')
-      return `读取 ${p}`
+      return `已读取 ${p}`
     }
     case 'glob': {
       const pat = String(input?.pattern ?? '')
       const root = input?.path ? ` 在 ${input.path}` : ''
-      return `搜索文件 ${pat}${root}`
+      return `已搜索文件 ${pat}${root}`
     }
     case 'grep': {
       const pat = String(input?.pattern ?? '')
       const sp = input?.search_path ? ` 在 ${input.search_path}` : ''
-      return `搜索内容 "${pat}"${sp}`
+      return `已搜索内容 “${pat}”${sp}`
     }
     case 'write': {
       const p = String(input?.file_path ?? '')
-      return `写入文件 ${p}`
+      return `已写入 ${p}`
     }
     case 'edit':
     case 'multiEdit': {
       const p = String(input?.file_path ?? '')
-      return `编辑 ${p}`
+      return `已编辑 ${p}`
     }
     default:
       return entry.toolName
   }
+}
+
+/** 返回工具操作涉及的文件路径，供侧栏预览使用。 */
+export function getToolFilePath(entry: ToolCallEntry): string | null {
+  const input = entry.input as Record<string, unknown> | null | undefined
+  const candidate = input?.file_path ?? input?.path
+  if (typeof candidate !== 'string' || !candidate.trim()) return null
+  return candidate
 }
 
 /** 根据工具调用推断步骤目的（当没有 purposeText 时使用） */

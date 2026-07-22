@@ -17,13 +17,14 @@ async function copyAssets(projectDir = resolve(__dirname, '..')) {
   })
 
   // Sandboxed Electron preloads cannot require arbitrary local modules. Bundle
-  // the onboarding bridge so its progress validator is included in one file;
-  // only Electron's supported preload module remains external.
-  const onboardingPreload = resolve(projectDir, 'src', 'preload', 'onboarding-preload.ts')
-  if (existsSync(onboardingPreload)) {
+  // every preload into a single file; only Electron's supported preload module
+  // remains external.
+  for (const name of ['main-preload', 'onboarding-preload']) {
+    const preload = resolve(projectDir, 'src', 'preload', `${name}.ts`)
+    if (!existsSync(preload)) continue
     await build({
-      entryPoints: [onboardingPreload],
-      outfile: resolve(projectDir, 'dist', 'preload', 'onboarding-preload.js'),
+      entryPoints: [preload],
+      outfile: resolve(projectDir, 'dist', 'preload', `${name}.js`),
       bundle: true,
       format: 'cjs',
       platform: 'node',

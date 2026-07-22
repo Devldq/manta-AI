@@ -1,5 +1,4 @@
 import Fastify, { type FastifyInstance } from 'fastify'
-import cors from '@fastify/cors'
 import multipart from '@fastify/multipart'
 import type { StorageHealthResult, StorageResolver } from './storage/runtime'
 import { existsSync } from 'node:fs'
@@ -12,12 +11,23 @@ import { ClientStateStore } from './storage/client-state-store'
 import { storageClientStateRoutes } from './routes/storage-client-state'
 import { RagStagingStore } from './storage/rag-staging-store'
 import { ragStagingRoutes } from './routes/rag-staging'
+import type { TaskRuntime } from '@manta/task-runtime'
+import { jobRoutes } from './routes/jobs'
+import { registerLocalAccess, type LocalAccessOptions } from './local-access'
+import { ragV1Routes } from './routes/rag-v1'
+import { retrievalLabRoutes } from './routes/retrieval-lab'
+import { agentV1Routes } from './routes/agent-v1'
+import { skillV1Routes } from './routes/skill-v1'
+import type { QdrantProvider } from '@manta/rag/qdrant'
 
-export interface BuildAppOptions { storage: StorageResolver & { diagnosticsWriter?: RuntimeDiagnosticsWriter; healthCheck?: () => Promise<StorageHealthResult> }; isDev?: boolean; registerRoutes?: boolean; storageApi?: StorageApiContext; clientState?: ClientStateStore; frontendDist?: string }
+export interface BuildAppOptions { storage: StorageResolver & { diagnosticsWriter?: RuntimeDiagnosticsWriter; healthCheck?: () => Promise<StorageHealthResult> }; ragProvider?: QdrantProvider; isDev?: boolean; logger?: boolean; registerRoutes?: boolean; storageApi?: StorageApiContext; clientState?: ClientStateStore; frontendDist?: string; taskRuntime?: TaskRuntime; apiOnly?: boolean; localAccess?: LocalAccessOptions }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const isDev = options.isDev ?? process.env.NODE_ENV !== 'production'
-  const app = Fastify({ logger: false })
+  const app = Fastify({ logger: options.logger ?? false })
+  try {
+  app.decorate('taskRuntime', options.taskRuntime)
+  app.decorate('ragProvider', options.ragProvider)
   app.addHook('onRequest', (_request, _reply, done) => runWithStorageResolver(options.storage, done))
   let acceptingWrites = true
   app.decorate('quiesceWrites', () => { acceptingWrites = false })
@@ -29,24 +39,38 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       return reply.status(503).send({ success: false, error: { code: 'STORAGE_MIGRATION_IN_PROGRESS', message: 'Storage migration is in progress' } })
     }
   })
-  await app.register(cors, {
-    origin: isDev ? ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'] : false,
-    credentials: true,
-  })
+  if (options.localAccess) await registerLocalAccess(app, options.localAccess)
   app.get('/api/health', async () => ({ success: true, data: { status: 'ok', version: '2.0.0', timestamp: new Date().toISOString(), dataDir: options.storage.resolve('config') } }))
+  app.get('/v1/health', async () => ({ data: { status: 'ok', apiVersion: 'v1', timestamp: new Date().toISOString() } }))
   app.get('/api/health/storage', async () => ({ success: true, data: options.storage.healthCheck ? await options.storage.healthCheck() : { ok: true, status: 'healthy', warnings: [] } }))
   if (options.storageApi) await app.register(storageRoutes, { ...options.storageApi, health: options.storageApi.health ?? options.storage.healthCheck })
   await app.register(storageClientStateRoutes, options.clientState ?? new ClientStateStore(() => options.storage.resolve('config')))
   await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024, files: 50 } })
-  await app.register(ragStagingRoutes, new RagStagingStore())
-  if (!isDev) {
+  const ragStaging = new RagStagingStore()
+  await app.register(ragStagingRoutes, ragStaging)
+  if (options.taskRuntime) {
+    await app.register(jobRoutes, { runtime: options.taskRuntime })
+    if (!options.ragProvider) throw new Error('RAG routes require an explicit provider')
+    await app.register(ragV1Routes, { runtime: options.taskRuntime, staging: ragStaging, knowledgeRoot: options.storage.resolve('knowledge'), uploadRoot: options.storage.resolve('cache', 'upload-sessions'), provider: options.ragProvider })
+    await app.register(retrievalLabRoutes, { runtime: options.taskRuntime, knowledgeRoot: options.storage.resolve('knowledge') })
+    await app.register(agentV1Routes, { runtime: options.taskRuntime })
+    await app.register(skillV1Routes, {
+      runtime: options.taskRuntime,
+      extensionsRoot: options.storage.resolve('extensions'),
+      grantsPath: options.storage.resolve('extensions', 'skill-grants.json'),
+    })
+  }
+  if (!isDev && !options.apiOnly) {
     const frontendDist = options.frontendDist ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../frontend/dist')
     const frontendEntry = join(frontendDist, 'index.html')
     if (!existsSync(frontendEntry)) throw Object.assign(new Error(`Frontend assets are missing: ${frontendEntry}`), { code: 'FRONTEND_ASSETS_MISSING' })
     const { default: fastifyStatic } = await import('@fastify/static')
-    await app.register(fastifyStatic, { root: frontendDist, prefix: '/', wildcard: false })
+    // The local service outlives Desktop renderer rebuilds. Resolve asset paths
+    // at request time so newly hashed Vite bundles are served without requiring
+    // a service restart; otherwise the SPA fallback returns index.html as JS.
+    await app.register(fastifyStatic, { root: frontendDist, prefix: '/', wildcard: true })
     app.setNotFoundHandler((request, reply) => {
-      if (!request.url.startsWith('/api/')) return reply.sendFile('index.html')
+      if (!request.url.startsWith('/api/') && !request.url.startsWith('/v1/')) return reply.sendFile('index.html')
       return reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } })
     })
   }
@@ -70,7 +94,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       await app.register((routeModules[index] as Record<string, any>)[names[index]])
     }
   }
-  return app
+    return app
+  } catch (error) {
+    await app.close().catch(() => undefined)
+    throw error
+  }
 }
 
-declare module 'fastify' { interface FastifyInstance { quiesceWrites(): void } }
+declare module 'fastify' { interface FastifyInstance { quiesceWrites(): void; taskRuntime?: TaskRuntime; ragProvider?: QdrantProvider } }

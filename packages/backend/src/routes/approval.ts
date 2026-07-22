@@ -4,6 +4,7 @@
 
 import type { FastifyPluginAsync } from 'fastify'
 import { approvalManager, type ApprovalRequest } from '../core/security/ApprovalManager'
+import { hydrateDurableApprovals, provideDurableApprovalInput } from './durable-approvals.js'
 
 const APPROVAL_TYPES = new Set<ApprovalRequest['type']>(['read', 'write', 'shell'])
 const APPROVAL_ACTIONS = new Set(['approve', 'deny'])
@@ -52,12 +53,14 @@ const approvalRoutes: FastifyPluginAsync = async (fastify) => {
   })
 
   fastify.get('/api/approval/pending', async () => {
+    hydrateDurableApprovals(fastify.taskRuntime)
     const requests = approvalManager.getPendingRequests().map(projectRequest)
     return { success: true, total: requests.length, requests }
   })
 
   fastify.get('/api/approval/:id', async (request, reply) => {
     const { id } = request.params as { id: string }
+    hydrateDurableApprovals(fastify.taskRuntime)
     const approvalRequest = approvalManager.getRequest(id)
 
     if (!approvalRequest) {
@@ -75,6 +78,7 @@ const approvalRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(400).send({ success: false, error: 'action 必须是 approve 或 deny' })
     }
 
+    hydrateDurableApprovals(fastify.taskRuntime)
     const approvalRequest = approvalManager.getRequest(id)
     if (!approvalRequest) {
       return reply.status(404).send({ success: false, error: '授权请求不存在' })
@@ -83,7 +87,9 @@ const approvalRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(409).send({ success: false, error: '授权请求已处理，不能重复响应' })
     }
 
-    approvalManager.respondToRequest(id, action as 'approve' | 'deny')
+    const decision = action as 'approve' | 'deny'
+    provideDurableApprovalInput(fastify.taskRuntime, approvalRequest, decision)
+    approvalManager.respondToRequest(id, decision)
     const resolvedRequest = approvalManager.getRequest(id)!
     return {
       success: true,

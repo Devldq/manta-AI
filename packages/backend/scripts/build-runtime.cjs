@@ -31,6 +31,9 @@ build({
     '@langchain/core/messages',
     '@manta/shared',
     '@manta/storage-hub',
+    '@manta/contracts',
+    '@manta/task-runtime',
+    '@manta/skill-runtime',
   ],
   define: { 'import.meta.url': '__mantaImportMetaUrl' },
   banner: {

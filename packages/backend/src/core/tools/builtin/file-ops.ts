@@ -9,7 +9,7 @@
 import type { ToolDefinition } from '@tools/registry'
 import * as fs from 'fs'
 import * as path from 'path'
-import { approvalManager } from '@security/ApprovalManager'
+import { requestToolApproval } from '@security/request-approval'
 import * as os from 'os'
 
 // ─── 使用共享安全上下文模块（解决 tsx 模块解析问题）────────────────────
@@ -127,14 +127,7 @@ function createReadTool(): ToolDefinition {
       if (!validation.allowed) {
         // 如果需要授权，创建授权请求并等待用户响应
         if (validation.needApproval) {
-          const context = getSecurityContext()
-          const requestedBy = context?.taskId || 'unknown'
-          
-          // 创建授权请求
-          const requestId = approvalManager.createRequest('read', requestedBy, resolved)
-          
-          // 等待用户响应（最多 60 秒）
-          const approved = await approvalManager.waitForResponse(requestId, 60000)
+          const approved = await requestToolApproval({ type: 'read', path: resolved })
           
           if (!approved) {
             return { error: '用户拒绝访问或超时', path: resolved }
@@ -198,14 +191,7 @@ function createWriteTool(): ToolDefinition {
       if (!validation.allowed) {
         // 如果需要授权，创建授权请求并等待用户响应
         if (validation.needApproval) {
-          const context = getSecurityContext()
-          const requestedBy = context?.taskId || 'unknown'
-          
-          // 创建授权请求
-          const requestId = approvalManager.createRequest('write', requestedBy, resolved)
-          
-          // 等待用户响应（最多 60 秒）
-          const approved = await approvalManager.waitForResponse(requestId, 60000)
+          const approved = await requestToolApproval({ type: 'write', path: resolved })
           
           if (!approved) {
             return { error: '用户拒绝访问或超时', path: resolved }
@@ -258,14 +244,7 @@ function createEditTool(): ToolDefinition {
       if (!validation.allowed) {
         // 如果需要授权，创建授权请求并等待用户响应
         if (validation.needApproval) {
-          const context = getSecurityContext()
-          const requestedBy = context?.taskId || 'unknown'
-          
-          // 创建授权请求
-          const requestId = approvalManager.createRequest('write', requestedBy, resolved)
-          
-          // 等待用户响应（最多 60 秒）
-          const approved = await approvalManager.waitForResponse(requestId, 60000)
+          const approved = await requestToolApproval({ type: 'write', path: resolved })
           
           if (!approved) {
             return { error: '用户拒绝访问或超时', path: resolved }
@@ -344,14 +323,7 @@ function createMultiEditTool(): ToolDefinition {
       if (!validation.allowed) {
         // 如果需要授权，创建授权请求并等待用户响应
         if (validation.needApproval) {
-          const context = getSecurityContext()
-          const requestedBy = context?.taskId || 'unknown'
-          
-          // 创建授权请求
-          const requestId = approvalManager.createRequest('write', requestedBy, resolved)
-          
-          // 等待用户响应（最多 60 秒）
-          const approved = await approvalManager.waitForResponse(requestId, 60000)
+          const approved = await requestToolApproval({ type: 'write', path: resolved })
           
           if (!approved) {
             return { error: '用户拒绝访问或超时', path: resolved }

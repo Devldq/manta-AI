@@ -19,6 +19,7 @@ export interface StepUsageRecord {
   noCacheTokens?: number
   /** 该步骤调用的工具名列表（便于 UI 展示） */
   toolNames?: string[]
+  progressText?: string
 }
 
 export interface Message {

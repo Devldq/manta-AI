@@ -24,6 +24,12 @@ export interface QdrantProviderOptions {
   timeoutMs?: number
 }
 
+export interface HybridSearchOptions extends SearchOptions {
+  rrfK?: number
+  denseWeight?: number
+  lexicalWeight?: number
+}
+
 function payloadOf(value: unknown): QdrantPayload {
   return value && typeof value === 'object' ? value as QdrantPayload : {}
 }
@@ -167,12 +173,9 @@ export class QdrantProvider implements RAGProvider {
       for (const payload of documents) {
         const document = documentFromPayload(payload)
         if (!document) continue
-        await this.upsertDocument(kbId, {
-          ...document,
-          status: 'error',
-          error: '处理被中断（服务器重启），请重新上传此文件',
-          processedAt: new Date().toISOString(),
-        })
+        // Processing state is owned by the durable Job runtime. Merely
+        // observing a document during service startup must never rewrite it to
+        // error; the recovered Job will either continue or request recovery.
         stale.push({ kbId, docId: document.id, docName: document.name })
       }
     }
@@ -202,6 +205,9 @@ export class QdrantProvider implements RAGProvider {
         document_name: document.name,
         content: chunk.content,
         metadata: chunk.metadata,
+        // A crashed ingest must never expose a partially written document.
+        // Legacy points do not have this flag and remain visible.
+        catalog_committed: false,
         ...(chunk.startIndex === undefined ? {} : { start_index: chunk.startIndex }),
         ...(chunk.endIndex === undefined ? {} : { end_index: chunk.endIndex }),
       },
@@ -215,6 +221,22 @@ export class QdrantProvider implements RAGProvider {
       chunkCount: chunks.length,
       processedAt: new Date().toISOString(),
       error: undefined,
+    })
+    await this.commitDocumentVisibility(knowledgeBaseId, document.id)
+  }
+
+  async commitDocumentVisibility(knowledgeBaseId: string, documentId: string): Promise<void> {
+    await this.ensureInitialized()
+    await this.requireCollection(knowledgeBaseId)
+    await this.client.setPayload(this.collectionName(knowledgeBaseId), {
+      wait: true,
+      payload: { catalog_committed: true },
+      filter: {
+        must: [
+          { key: 'record_type', match: { value: 'chunk' } },
+          { key: 'document_id', match: { value: documentId } },
+        ],
+      },
     })
   }
 
@@ -248,6 +270,7 @@ export class QdrantProvider implements RAGProvider {
           { key: 'record_type', match: { value: 'chunk' } },
           ...this.toQdrantFilter(options?.filter),
         ],
+        must_not: [{ key: 'catalog_committed', match: { value: false } }],
       },
     })
     return response.points.flatMap((result) => {
@@ -262,6 +285,46 @@ export class QdrantProvider implements RAGProvider {
           documentId: chunk.documentId,
         },
       }]
+    })
+  }
+
+  /** Dense retrieval plus local BM25 lexical ranking, fused with weighted RRF. */
+  async hybridSearch(knowledgeBaseId: string, queryEmbedding: number[], query: string, options: HybridSearchOptions = {}): Promise<RetrievalResult[]> {
+    const topK = options.topK ?? 5
+    const candidateLimit = Math.max(40, topK * 6)
+    const [dense, chunks] = await Promise.all([
+      this.vectorSearch(knowledgeBaseId, queryEmbedding, { ...options, topK: candidateLimit, threshold: 0 }),
+      this.getKnowledgeBaseChunks(knowledgeBaseId, options.filter),
+    ])
+    const lexical = bm25Rank(query, chunks).slice(0, candidateLimit)
+    const rrfK = Math.max(1, options.rrfK ?? 60)
+    const denseWeight = options.denseWeight ?? 1
+    const lexicalWeight = options.lexicalWeight ?? 1
+    const byId = new Map<string, { result: RetrievalResult; score: number }>()
+    dense.forEach((result, index) => byId.set(result.chunk.id, { result, score: denseWeight / (rrfK + index + 1) }))
+    lexical.forEach(({ result }, index) => {
+      const current = byId.get(result.chunk.id)
+      const lexicalScore = lexicalWeight / (rrfK + index + 1)
+      byId.set(result.chunk.id, current ? { result: current.result, score: current.score + lexicalScore } : { result, score: lexicalScore })
+    })
+    const ranked = [...byId.values()].sort((left, right) => right.score - left.score).slice(0, topK)
+    const maximum = ranked[0]?.score || 1
+    return ranked.map(({ result, score }) => ({ ...result, score: score / maximum }))
+  }
+
+  async getKnowledgeBaseChunks(knowledgeBaseId: string, filter?: Record<string, unknown>): Promise<RetrievalResult[]> {
+    await this.ensureInitialized()
+    await this.requireCollection(knowledgeBaseId)
+    const payloads = await this.scrollPayloads(this.collectionName(knowledgeBaseId), {
+      must: [
+        { key: 'record_type', match: { value: 'chunk' } },
+        ...this.toQdrantFilter(filter),
+      ],
+      must_not: [{ key: 'catalog_committed', match: { value: false } }],
+    })
+    return payloads.flatMap((payload) => {
+      const chunk = chunkFromPayload(payload)
+      return chunk ? [{ chunk, score: 0, metadata: { documentName: asString(payload.document_name) || '', documentId: chunk.documentId } }] : []
     })
   }
 
@@ -317,6 +380,7 @@ export class QdrantProvider implements RAGProvider {
           { key: 'record_type', match: { value: 'chunk' } },
           { key: 'document_id', match: { value: documentId } },
         ],
+        must_not: [{ key: 'catalog_committed', match: { value: false } }],
       }, limit)
       if (payloads.length) {
         return payloads.map(chunkFromPayload).filter((chunk): chunk is DocumentChunk => chunk !== null)
@@ -432,6 +496,38 @@ export class QdrantProvider implements RAGProvider {
     if (!filter) return []
     return Object.entries(filter).map(([key, value]) => ({ key, match: { value } }))
   }
+}
+
+function bm25Rank(query: string, chunks: RetrievalResult[]): Array<{ result: RetrievalResult; score: number }> {
+  const queryTerms = tokenize(query)
+  if (!queryTerms.length || !chunks.length) return []
+  const documents = chunks.map((result) => tokenize(result.chunk.content))
+  const averageLength = documents.reduce((sum, terms) => sum + terms.length, 0) / documents.length || 1
+  const documentFrequency = new Map<string, number>()
+  for (const terms of documents) for (const term of new Set(terms)) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1)
+  return chunks.map((result, index) => {
+    const terms = documents[index]
+    const frequencies = new Map<string, number>()
+    for (const term of terms) frequencies.set(term, (frequencies.get(term) ?? 0) + 1)
+    let score = 0
+    for (const term of queryTerms) {
+      const frequency = frequencies.get(term) ?? 0
+      if (!frequency) continue
+      const frequencyInDocuments = documentFrequency.get(term) ?? 0
+      const idf = Math.log(1 + (documents.length - frequencyInDocuments + 0.5) / (frequencyInDocuments + 0.5))
+      const denominator = frequency + 1.2 * (1 - 0.75 + 0.75 * terms.length / averageLength)
+      score += idf * frequency * 2.2 / denominator
+    }
+    return { result, score }
+  }).filter((item) => item.score > 0).sort((left, right) => right.score - left.score)
+}
+
+function tokenize(value: string): string[] {
+  const normalized = value.normalize('NFKC').toLowerCase()
+  const words = normalized.match(/[\p{L}\p{N}]+/gu) ?? []
+  const cjk = [...normalized].filter((character) => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(character))
+  const grams = cjk.length <= 1 ? cjk : cjk.slice(0, -1).map((character, index) => `${character}${cjk[index + 1]}`)
+  return [...words, ...cjk, ...grams]
 }
 
 let providerInstance: QdrantProvider | null = null

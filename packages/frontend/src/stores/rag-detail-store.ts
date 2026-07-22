@@ -11,14 +11,10 @@ import {
   saveBatchMeta,
   loadBatchMeta,
   clearBatchMeta,
-  claimStagedFiles,
 } from '@/stores/lib/staged-files-db'
 
 // ── 文档列表轮询定时器（有 processing 文档时自动刷新）─────────
 let docPollTimer: ReturnType<typeof setTimeout> | null = null
-
-/** Worker 活跃标记 —— 防止 processStagedFiles 重入 */
-let workersActive = false
 
 /** 当前知识库仍在写入 canonical staging 的任务。批处理必须等它完成。 */
 const stagingWrites = new Map<string, Promise<void>>()
@@ -27,6 +23,90 @@ export const MAX_RAG_BATCH_CONCURRENCY = 5
 function normalizeBatchConcurrency(value: number | undefined): number {
   const requested = Number.isFinite(value) ? Math.trunc(value!) : 1
   return Math.max(1, Math.min(requested, MAX_RAG_BATCH_CONCURRENCY))
+}
+
+interface DurableJobSnapshot {
+  id: string
+  status: 'queued' | 'running' | 'waiting_for_input' | 'retry_scheduled' | 'recovery_required' | 'cancelling' | 'cancelled' | 'succeeded' | 'failed'
+  progress?: number
+  checkpoint?: string
+  error?: { message?: string }
+  result?: { chunkCount?: number }
+}
+
+function stageFromCheckpoint(checkpoint?: string): StagedFileProgress['stage'] {
+  switch (checkpoint) {
+    case 'accepted': return 'uploading'
+    case 'parsed': return 'parsing'
+    case 'chunked': return 'chunking'
+    case 'embedded': return 'embedding'
+    case 'indexed': return 'storing'
+    case 'catalog_committed': return 'done'
+    default: return 'pending'
+  }
+}
+
+async function submitDurableRagJob(kbId: string, file: File, config: ChunkingConfig, idempotencySeed: string): Promise<DurableJobSnapshot> {
+  const sha256 = await sha256Hex(await file.arrayBuffer())
+  const uploadKey = `upload:${kbId}:${idempotencySeed}`
+  const created = await fetch(`/v1/knowledge-bases/${encodeURIComponent(kbId)}/upload-sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': uploadKey },
+    body: JSON.stringify({ name: file.name, mediaType: file.type || 'application/octet-stream', size: file.size, sha256 }),
+  })
+  const createdBody = await created.json()
+  if (!created.ok) throw new Error(createdBody.error?.message ?? `上传会话创建失败 (${created.status})`)
+  const session = createdBody.data as { id: string; status: 'uploading' | 'completed'; partSize: number; partCount: number; receivedParts: Array<{ number: number }> }
+  if (session.status !== 'completed') {
+    const received = new Set(session.receivedParts.map((part) => part.number))
+    for (let number = 0; number < session.partCount; number++) {
+      if (received.has(number)) continue
+      const part = file.slice(number * session.partSize, Math.min(file.size, (number + 1) * session.partSize))
+      const partSha256 = await sha256Hex(await part.arrayBuffer())
+      const uploaded = await fetch(`/v1/upload-sessions/${encodeURIComponent(session.id)}/parts/${number}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Part-Sha256': partSha256 },
+        body: part,
+      })
+      if (!uploaded.ok) {
+        const body = await uploaded.json().catch(() => ({}))
+        throw new Error(body.error?.message ?? `分块 ${number} 上传失败 (${uploaded.status})`)
+      }
+    }
+  }
+  const completed = await fetch(`/v1/upload-sessions/${encodeURIComponent(session.id)}/complete`, { method: 'POST' })
+  const completedBody = await completed.json()
+  if (!completed.ok) throw new Error(completedBody.error?.message ?? `上传完成失败 (${completed.status})`)
+  const submitted = await fetch(`/v1/knowledge-bases/${encodeURIComponent(kbId)}/documents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `ingest:${kbId}:${idempotencySeed}` },
+    body: JSON.stringify({
+      assetId: completedBody.data.asset.assetId,
+      chunkStrategy: config.strategy,
+      chunkSize: config.chunkSize,
+      chunkOverlap: config.overlap,
+    }),
+  })
+  const submitBody = await submitted.json()
+  if (!submitted.ok) throw new Error(submitBody.error?.message ?? `任务提交失败 (${submitted.status})`)
+  return submitBody.data as DurableJobSnapshot
+}
+
+async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+async function waitForDurableJob(jobId: string, onSnapshot: (job: DurableJobSnapshot) => void): Promise<DurableJobSnapshot> {
+  while (true) {
+    const response = await fetch(`/v1/jobs/${encodeURIComponent(jobId)}`)
+    const body = await response.json()
+    if (!response.ok) throw new Error(body.error?.message ?? `任务状态读取失败 (${response.status})`)
+    const job = body.data as DurableJobSnapshot
+    onSnapshot(job)
+    if (['succeeded', 'failed', 'cancelled', 'recovery_required'].includes(job.status)) return job
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
 }
 
 /** 知识库详情 */
@@ -198,6 +278,7 @@ export interface LLMProfileOption {
   id: string
   name: string
   model: string
+  modelType: 'chat' | 'reasoning' | 'embedding' | 'multimodal'
   isDefault?: boolean
 }
 
@@ -562,40 +643,6 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
               set((s) => ({ newDocIds: [...s.newDocIds, ...newlyArrived] }))
             }
 
-            // 如果批处理中且 workers 未活跃（刷新恢复阶段），更新进度
-            const { batchProcessing, batchActiveFiles, batchTotal, stagedFiles } = get()
-            if (batchProcessing && !workersActive) {
-              if (batchActiveFiles.length === 0) {
-                // 首次恢复：用后端 processing docs 填充 activeFiles
-                const processingDocs = docs.filter(
-                  (d: DocumentInfo) => d.status === 'processing' || d.status === 'pending'
-                )
-                if (processingDocs.length > 0) {
-                  set({
-                    batchActiveFiles: processingDocs.map((d) => ({
-                      name: d.name,
-                      progress: 0,
-                      stage: 'processing' as const,
-                    })),
-                  })
-                }
-              } else {
-                // 后续轮询：移除不再 processing 的文档（已完成或失败）
-                const processingNames = new Set(
-                  docs
-                    .filter((d: DocumentInfo) => d.status === 'processing' || d.status === 'pending')
-                    .map((d) => d.name)
-                )
-                const updatedActive = batchActiveFiles.filter((f) => processingNames.has(f.name))
-                set({ batchActiveFiles: updatedActive })
-              }
-
-              const processingCount = docs.filter(
-                (d: DocumentInfo) => d.status === 'processing' || d.status === 'pending'
-              ).length
-              const completed = batchTotal - stagedFiles.length - processingCount
-              set({ batchCompletedCount: Math.max(0, completed) })
-            }
           }
         } catch { /* ignore poll error */ }
 
@@ -612,11 +659,6 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
           invalidateCache(`rag-kb:${kbId}`)
           get().fetchKnowledgeBase(kbId)
 
-          // 如果批处理中且有暂存文件待处理（刷新恢复场景），自动继续处理
-          const { batchProcessing, stagedFiles } = get()
-          if (batchProcessing && stagedFiles.length > 0 && !workersActive) {
-            get().processStagedFiles(kbId, { alreadyCompleted: get().batchCompletedCount })
-          }
         }
       }
 
@@ -696,98 +738,24 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       uploadError: null,
     })
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      // 附加分块配置到表单字段
       const config = chunkingConfig || get().chunkingConfig
-      if (config) {
-        formData.append('chunkStrategy', config.strategy)
-        formData.append('chunkSize', String(config.chunkSize))
-        formData.append('chunkOverlap', String(config.overlap))
-      }
-
-      const res = await fetch(`/api/rag/knowledge-bases/${kbId}/documents?stream=progress`, {
-        method: 'POST',
-        body: formData,
+      const submitted = await submitDurableRagJob(kbId, file, config, `${file.name}:${file.size}:${file.lastModified}`)
+      const completed = await waitForDurableJob(submitted.id, (job) => {
+        set({
+          uploadStage: job.checkpoint ?? job.status,
+          uploadProgress: Math.round((job.progress ?? 0) * 100),
+          uploadMessage: job.checkpoint ? `后台任务：${job.checkpoint}` : `后台任务：${job.status}`,
+        })
       })
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }))
-        set({ uploadProgress: null, uploadStage: null, uploadMessage: null, uploadError: json.error?.message ?? '上传失败' })
+      if (completed.status !== 'succeeded') {
+        set({ uploadProgress: null, uploadStage: null, uploadMessage: null, uploadError: completed.error?.message ?? `任务状态：${completed.status}` })
         return false
       }
-
-      const reader = res.body?.getReader()
-      if (!reader) {
-        set({ uploadProgress: null, uploadStage: null, uploadMessage: null, uploadError: '无法读取响应流' })
-        return false
-      }
-
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let done = false
-
-      while (!done) {
-        const { done: readerDone, value } = await reader.read()
-        if (readerDone) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const event = JSON.parse(line.slice(6))
-            switch (event.type) {
-              case 'progress': {
-                const chunkMatch = event.message?.match(/(\d+)\/(\d+)/)
-                const chunkCount = chunkMatch ? parseInt(chunkMatch[1], 10) : null
-                set({
-                  uploadStage: event.stage,
-                  uploadProgress: event.progress,
-                  uploadMessage: event.message,
-                  uploadChunkCount: chunkCount,
-                })
-                break
-              }
-              case 'done': {
-                done = true
-                set({
-                  uploadProgress: 100,
-                  uploadStage: 'done',
-                  uploadMessage: `处理完成，共 ${event.chunkCount ?? 0} 个分块`,
-                  uploadChunkCount: event.chunkCount ?? null,
-                })
-                break
-              }
-              case 'error': {
-                done = true
-                set({
-                  uploadProgress: null,
-                  uploadStage: null,
-                  uploadMessage: null,
-                  uploadError: event.error ?? '处理失败',
-                })
-                break
-              }
-            }
-          } catch {
-            // 忽略无法解析的行
-          }
-        }
-      }
-
-      // 短暂展示完成后清理状态
-      if (get().uploadStage === 'done') {
-        await new Promise((resolve) => setTimeout(resolve, 600))
-      }
-
+      set({ uploadProgress: 100, uploadStage: 'done', uploadMessage: `处理完成，共 ${completed.result?.chunkCount ?? 0} 个分块`, uploadChunkCount: completed.result?.chunkCount ?? null })
+      await new Promise((resolve) => setTimeout(resolve, 600))
       set({ uploadProgress: null, uploadStage: null, uploadMessage: null, uploadChunkCount: null })
-      // 刷新列表和知识库信息
-      invalidateCache(`rag-docs:${kbId}`)
-      invalidateCache(`rag-kb:${kbId}`)
-      await get().fetchDocuments(kbId)
-      await get().fetchKnowledgeBase(kbId)
+      invalidateCache(`rag-docs:${kbId}`); invalidateCache(`rag-kb:${kbId}`)
+      await get().fetchDocuments(kbId); await get().fetchKnowledgeBase(kbId)
       return true
     } catch (err) {
       set({ uploadProgress: null, uploadStage: null, uploadMessage: null, uploadChunkCount: null, uploadError: String(err) })
@@ -1028,257 +996,52 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
   },
 
   processStagedFiles: async (kbId: string, options?: { alreadyCompleted?: number }) => {
-    // 防止重入：如果 workers 已在运行，直接返回
-    if (workersActive) return
-
-    // addStagedFiles 会异步把临时浏览器 ID 换成 content hash。处理前必须
-    // 等待这次写入，否则成功文件无法按 canonical ID 从队列中删除。
     await stagingWrites.get(kbId)?.catch(() => {})
-    let { stagedFiles, chunkingConfig } = get()
-    if (stagedFiles.some((file) => !/^[a-f0-9]{64}$/.test(file.id))) {
-      try {
-        const persisted = await saveStagedFiles(kbId, stagedFiles)
-        stagedFiles = applyCanonicalStagedFiles(stagedFiles, stagedFiles, persisted)
-        set({ stagedFiles })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '暂存文件尚未保存完成'
-        set({ batchProcessing: false, batchErrors: [message] })
-        return
-      }
-    }
-    if (stagedFiles.length === 0) return
-
-    workersActive = true
+    const files = [...get().stagedFiles]
+    if (!files.length) return
+    const config = get().chunkingConfig
     const alreadyCompleted = options?.alreadyCompleted ?? 0
-    const concurrency = Math.min(normalizeBatchConcurrency(chunkingConfig.batchConcurrency), stagedFiles.length)
-    chunkingConfig = { ...chunkingConfig, batchConcurrency: concurrency }
-
-    // 保存批处理元数据到 IndexedDB（用于刷新后恢复）
-    await saveBatchMeta({
-      kbId,
-      processingStarted: true,
-      totalFiles: stagedFiles.length + alreadyCompleted,
-      concurrency,
-      chunkingConfig: { ...chunkingConfig },
-      startedAt: new Date().toISOString(),
-    }).catch(() => {})
-    // Claim only canonical IDs. A local offline file will fail naturally when
-    // upload starts and remains in memory for a visible retry.
-    await claimStagedFiles(kbId, stagedFiles.filter((file) => /^[a-f0-9]{64}$/.test(file.id)).map((file) => file.id), `batch-${kbId}`).catch(() => {})
-
-    // 初始化每个暂存文件的进度：pending 0%
-    const initialProgress: Record<string, StagedFileProgress> = {}
-    for (const sf of stagedFiles) {
-      initialProgress[sf.id] = { stage: 'pending', progress: 0 }
-    }
-
     set({
       batchProcessing: true,
-      batchTotal: stagedFiles.length + alreadyCompleted,
+      batchTotal: files.length + alreadyCompleted,
       batchCompletedCount: alreadyCompleted,
       batchActiveFiles: [],
       batchErrors: [],
       batchDone: false,
-      stagedFileProgress: initialProgress,
+      stagedFileProgress: Object.fromEntries(files.map((file) => [file.id, { stage: 'pending', progress: 0 }])),
     })
-
-    const errors: string[] = []
-    const completedStageIds = new Set<string>()
-    let completedCount = alreadyCompleted
-    let nextIndex = 0
-
-    // 更新指定暂存文件进度
-    const setProgress = (id: string, patch: Partial<StagedFileProgress>) => {
-      set((s) => {
-        const current = s.stagedFileProgress[id]
-        if (!current) return s
-        return {
-          stagedFileProgress: {
-            ...s.stagedFileProgress,
-            [id]: { ...current, ...patch },
-          },
-        }
+    await saveBatchMeta({ kbId, processingStarted: true, totalFiles: files.length + alreadyCompleted, concurrency: 1, chunkingConfig: config, startedAt: new Date().toISOString() }).catch(() => {})
+    const submissions: Array<{ file: StagedFile; job: DurableJobSnapshot }> = []
+    const submissionErrors: string[] = []
+    for (const file of files) {
+      set((state) => ({ stagedFileProgress: { ...state.stagedFileProgress, [file.id]: { stage: 'uploading', progress: 0, startTime: Date.now() } }, batchActiveFiles: [...state.batchActiveFiles, { name: file.name, progress: 0, stage: 'uploading' }] }))
+      try {
+        const job = await submitDurableRagJob(kbId, file.file, config, file.id)
+        submissions.push({ file, job })
+        await removeStagedFileById(file.id, kbId).catch(() => undefined)
+        set((state) => ({ stagedFiles: state.stagedFiles.filter((item) => item.id !== file.id), stagedFileProgress: { ...state.stagedFileProgress, [file.id]: { stage: 'pending', progress: 0, startTime: Date.now() } } }))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        submissionErrors.push(`${file.name}: ${message}`)
+        set((state) => ({ stagedFileProgress: { ...state.stagedFileProgress, [file.id]: { stage: 'error', progress: 0, error: message, endTime: Date.now() } }, batchActiveFiles: state.batchActiveFiles.filter((item) => item.name !== file.name) }))
+      }
+    }
+    const outcomes = await Promise.all(submissions.map(async ({ file, job }) => {
+      const completed = await waitForDurableJob(job.id, (snapshot) => {
+        const progress = Math.round((snapshot.progress ?? 0) * 100)
+        set((state) => ({
+          stagedFileProgress: { ...state.stagedFileProgress, [file.id]: { stage: snapshot.status === 'succeeded' ? 'done' : snapshot.status === 'failed' || snapshot.status === 'cancelled' || snapshot.status === 'recovery_required' ? 'error' : stageFromCheckpoint(snapshot.checkpoint), progress, error: snapshot.error?.message } },
+          batchActiveFiles: state.batchActiveFiles.map((item) => item.name === file.name ? { name: file.name, progress, stage: snapshot.checkpoint ?? snapshot.status } : item),
+        }))
       })
-    }
-
-    const updateActiveFile = (name: string, progress: number, stage: string | null) => {
-      const current = get().batchActiveFiles
-      const idx = current.findIndex((f) => f.name === name)
-      if (idx >= 0) {
-        const updated = [...current]
-        updated[idx] = { name, progress, stage }
-        set({ batchActiveFiles: updated })
-      }
-    }
-
-    const removeActiveFile = (name: string) => {
-      const current = get().batchActiveFiles
-      set({ batchActiveFiles: current.filter((f) => f.name !== name) })
-    }
-
-    // 处理单个文件的 worker：完成一个立即从队列取下一个（流水线并发）
-    const processOne = async () => {
-      while (nextIndex < stagedFiles.length) {
-        const myIndex = nextIndex++
-        const sf = stagedFiles[myIndex]
-        let succeeded = false
-
-        // 标记为上传中，记录开始时间，并加入 active 列表
-        setProgress(sf.id, { stage: 'uploading', progress: 0, startTime: Date.now() })
-        set((s) => ({ batchActiveFiles: [...s.batchActiveFiles, { name: sf.name, progress: 0, stage: 'uploading' }] }))
-
-        try {
-          const formData = new FormData()
-          formData.append('file', sf.file)
-          formData.append('chunkStrategy', chunkingConfig.strategy)
-          formData.append('chunkSize', String(chunkingConfig.chunkSize))
-          formData.append('chunkOverlap', String(chunkingConfig.overlap))
-
-          const res = await fetch(`/api/rag/knowledge-bases/${kbId}/documents?stream=progress`, {
-            method: 'POST',
-            body: formData,
-          })
-
-          if (!res.ok) {
-            const json = await res.json().catch(() => ({ error: { message: `HTTP ${res.status}` } }))
-            const message = json.error?.message ?? '上传失败'
-            console.error(`[RAG Batch] 文件上传 HTTP 错误 [文件=${sf.name}]: ${message}`)
-            errors.push(`${sf.name}: ${message}`)
-            setProgress(sf.id, { stage: 'error', progress: 0, error: message, endTime: Date.now() })
-            removeActiveFile(sf.name)
-            completedCount++
-            set({ batchCompletedCount: completedCount })
-            continue
-          }
-
-          const reader = res.body?.getReader()
-          if (!reader) {
-            console.error(`[RAG Batch] 无法读取响应流 [文件=${sf.name}]`)
-            errors.push(`${sf.name}: 无法读取响应流`)
-            setProgress(sf.id, { stage: 'error', progress: 0, error: '无法读取响应流', endTime: Date.now() })
-            removeActiveFile(sf.name)
-            completedCount++
-            set({ batchCompletedCount: completedCount })
-            continue
-          }
-
-          const decoder = new TextDecoder()
-          let buffer = ''
-          let fileDone = false
-
-          while (!fileDone) {
-            const { done, value } = await reader.read()
-            if (done) break
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() || ''
-
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue
-              try {
-                const event = JSON.parse(line.slice(6))
-                switch (event.type) {
-                  case 'progress': {
-                    const stage = (event.stage as StagedFileProgress['stage']) || 'processing'
-                    setProgress(sf.id, { stage, progress: event.progress })
-                    updateActiveFile(sf.name, event.progress, event.stage)
-                    break
-                  }
-                  case 'done': {
-                    fileDone = true
-                    succeeded = true
-                    setProgress(sf.id, { stage: 'done', progress: 100, endTime: Date.now() })
-                    updateActiveFile(sf.name, 100, 'done')
-                    break
-                  }
-                  case 'error': {
-                    fileDone = true
-                    const message = event.error ?? '处理失败'
-                    console.error(`[RAG Batch] 服务端处理错误 [文件=${sf.name}]: ${message}`)
-                    errors.push(`${sf.name}: ${message}`)
-                    setProgress(sf.id, { stage: 'error', progress: 0, error: message, endTime: Date.now() })
-                    break
-                  }
-                }
-              } catch {
-                // 忽略无法解析的行
-              }
-            }
-          }
-          if (!fileDone) throw new Error('处理连接提前结束，未收到完成状态')
-        } catch (err) {
-          const message = String(err)
-          console.error(`[RAG Batch] 文件处理异常 [文件=${sf.name}]:`, err)
-          errors.push(`${sf.name}: ${message}`)
-          setProgress(sf.id, { stage: 'error', progress: 0, error: message, endTime: Date.now() })
-        }
-
-        removeActiveFile(sf.name)
-        if (succeeded && /^[a-f0-9]{64}$/.test(sf.id)) {
-          try {
-            await removeStagedFileById(sf.id, kbId)
-            completedStageIds.add(sf.id)
-            set((state) => {
-              const progress = { ...state.stagedFileProgress }
-              delete progress[sf.id]
-              return {
-                stagedFiles: state.stagedFiles.filter((file) => file.id !== sf.id),
-                stagedFileProgress: progress,
-              }
-            })
-          } catch (error) {
-            const message = error instanceof Error ? error.message : 'Unable to remove staged cache file'
-            errors.push(`${sf.name}: ${message}`)
-            setProgress(sf.id, { stage: 'error', progress: 100, error: message, endTime: Date.now() })
-            console.warn('[RAG Batch] processed document retained because cache delete failed', error)
-          }
-        }
-        completedCount++
-        set({ batchCompletedCount: completedCount })
-        // 每个文件完成后静默刷新文档列表，增量合并不闪烁
-        invalidateCache(`rag-docs:${kbId}`)
-        get().fetchDocuments(kbId, { silent: true })
-      }
-    }
-
-    // 启动 N 个 worker 并发处理
-    await Promise.all(
-      Array.from({ length: concurrency }, () => processOne())
-    )
-
-    // 刷新列表和知识库信息
-    invalidateCache(`rag-docs:${kbId}`)
-    invalidateCache(`rag-kb:${kbId}`)
-    await get().fetchDocuments(kbId, { silent: true })
-    await get().fetchKnowledgeBase(kbId)
-
-    const remainingFiles = stagedFiles.filter((file) => !completedStageIds.has(file.id))
-    const retainedProgress = Object.fromEntries(
-      remainingFiles.map((file) => [file.id, get().stagedFileProgress[file.id] ?? { stage: 'error', progress: 0, error: '处理未完成' }]),
-    )
-    set({
-      batchProcessing: false,
-      batchDone: true,
-      batchErrors: errors,
-      stagedFiles: remainingFiles,
-      batchActiveFiles: [],
-      stagedFileProgress: retainedProgress,
-    })
-
-    workersActive = false
-
-    // 批处理结果日志
-    if (errors.length > 0) {
-      console.warn(`[RAG Batch] 批量处理完成: ${stagedFiles.length + alreadyCompleted} 个文件, ${errors.length} 个失败`, errors)
-    } else {
-      console.log(`[RAG Batch] 批量处理全部成功: ${stagedFiles.length + alreadyCompleted} 个文件`)
-    }
-
-    // 清除 IndexedDB 中的批处理数据
-    if (errors.length === 0) await clearAllForKb(kbId).catch((error: unknown) => console.warn('[RAG Batch] staged cache clear retained for retry', error))
-
-    // 成功提示短暂展示；失败提示保留，直到用户明确关闭或重试。
-    if (errors.length === 0) setTimeout(() => set({ batchDone: false }), 2000)
+      return { file, completed }
+    }))
+    const executionErrors = outcomes.filter(({ completed }) => completed.status !== 'succeeded').map(({ file, completed }) => `${file.name}: ${completed.error?.message ?? completed.status}`)
+    const errors = [...submissionErrors, ...executionErrors]
+    invalidateCache(`rag-docs:${kbId}`); invalidateCache(`rag-kb:${kbId}`)
+    await get().fetchDocuments(kbId, { silent: true }); await get().fetchKnowledgeBase(kbId)
+    set({ batchProcessing: false, batchDone: true, batchCompletedCount: alreadyCompleted + outcomes.length, batchActiveFiles: [], batchErrors: errors, stagedFileProgress: Object.fromEntries(Object.entries(get().stagedFileProgress).filter(([id]) => get().stagedFiles.some((file) => file.id === id))) })
+    if (!errors.length) { await clearAllForKb(kbId).catch(() => undefined); setTimeout(() => set({ batchDone: false }), 2000) }
   },
 
   /** 刷新页面后恢复未完成的批处理会话 */
@@ -1451,7 +1214,6 @@ export const useRAGDetailStore = create<RAGDetailStore>((set, get) => ({
       clearTimeout(docPollTimer)
       docPollTimer = null
     }
-    workersActive = false
     set(initialState)
   },
 }))

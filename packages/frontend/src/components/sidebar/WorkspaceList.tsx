@@ -191,7 +191,7 @@ export function WorkspaceList() {
             return (
               <div key={ws.id} className="mb-0.5">
                 <div
-                  className="group flex items-center gap-1.5 px-0.5 py-0.5 cursor-pointer text-sidebar-text-secondary transition-colors"
+                  className="group flex items-center gap-1.5 py-0.5 pl-3 pr-0.5 cursor-pointer text-sidebar-text-secondary transition-colors"
                   onClick={() => handleToggle(ws.id)}
                 >
                   <ChevronRight
@@ -224,7 +224,7 @@ export function WorkspaceList() {
                 </div>
 
                 {isExpanded && (
-                  <div className="ml-5 mt-0.5">
+                  <div className="ml-8 mt-0.5">
                     {isLoading ? (
                       <div className="px-1.5 py-1">
                         <span className="text-[12px] text-text-muted">加载中...</span>

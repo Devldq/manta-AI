@@ -1,7 +1,10 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { EventEmitter } = require('node:events')
-const { rebuildForNode, run, runDev, signElectronNativeBinary } = require('./run-dev.cjs')
+const { mkdtemp, open, readFile, rm, stat, writeFile } = require('node:fs/promises')
+const { join } = require('node:path')
+const { tmpdir } = require('node:os')
+const { nativeBuildEnvironment, replaceNativeBinaryAtomically, run, runDev, signNativeBinary } = require('./run-dev.cjs')
 
 test('desktop development builds the frontend before Electron starts', () => {
   const { scripts } = require('../package.json')
@@ -27,40 +30,51 @@ test('restores the Node ABI after Electron exits', async () => {
     rebuildForNode: async () => { calls.push('node-rebuild') },
     snapshotNodeAbi: async () => { calls.push('snapshot'); return 'backup' },
     rebuildForElectron: async () => { calls.push('rebuild') },
-    signElectronNativeBinary: async () => { calls.push('sign') },
     launchElectron: async () => { calls.push('launch') },
     restoreNodeAbi: async (backup) => { calls.push(`restore:${backup}`) },
   })
-  assert.deepEqual(calls, ['node-rebuild', 'snapshot', 'rebuild', 'sign', 'launch', 'restore:backup'])
+  assert.deepEqual(calls, ['node-rebuild', 'snapshot', 'rebuild', 'launch', 'restore:backup'])
 })
 
 test('rebuilds the Node ABI without Electron npm configuration', async () => {
-  const signalSource = new EventEmitter()
-  let child
-  let invocation
-  const rebuilding = rebuildForNode({
-    signalSource,
-    spawn: (file, args, options) => {
-      invocation = { file, args, options }
-      child = createChild()
-      return child
-    },
-  })
-
-  child.emit('close', 0, null)
-  await rebuilding
-  assert.match(invocation.file, /pnpm(?:\.cmd)?$/)
-  assert.deepEqual(invocation.args, ['--filter', '@manta/rag', 'rebuild', 'better-sqlite3'])
-  assert.equal(invocation.options.env.npm_config_runtime, undefined)
-  assert.equal(invocation.options.env.npm_config_target, undefined)
-  assert.equal(invocation.options.env.npm_config_disturl, undefined)
+  const env = nativeBuildEnvironment('node')
+  assert.equal(env.npm_config_runtime, undefined)
+  assert.equal(env.npm_config_target, undefined)
+  assert.equal(env.npm_config_disturl, undefined)
 })
 
-test('ad-hoc signs the rebuilt native binary on macOS', async () => {
+test('configures Electron headers only for the Electron native build', () => {
+  const env = nativeBuildEnvironment('electron')
+  assert.equal(env.npm_config_runtime, 'electron')
+  assert.match(env.npm_config_target, /^41\./)
+  assert.equal(env.npm_config_disturl, 'https://electronjs.org/headers')
+})
+
+test('atomically replaces the native binary without changing an existing mapped inode', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'manta-native-replace-test-'))
+  const source = join(directory, 'source.node')
+  const target = join(directory, 'target.node')
+  await writeFile(source, 'new native binary')
+  await writeFile(target, 'mapped native binary')
+  const mapped = await open(target, 'r')
+  const previous = await stat(target)
+  try {
+    await replaceNativeBinaryAtomically(source, target)
+    const current = await stat(target)
+    assert.notEqual(current.ino, previous.ino)
+    assert.equal(await readFile(target, 'utf8'), 'new native binary')
+    assert.equal(await mapped.readFile({ encoding: 'utf8' }), 'mapped native binary')
+  } finally {
+    await mapped.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('ad-hoc signs a staged native binary on macOS', async () => {
   const signalSource = new EventEmitter()
   let child
   let invocation
-  const signing = signElectronNativeBinary({
+  const signing = signNativeBinary('/tmp/staged-better_sqlite3.node', {
     platform: 'darwin',
     signalSource,
     spawn: (file, args) => {
@@ -74,12 +88,12 @@ test('ad-hoc signs the rebuilt native binary on macOS', async () => {
   await signing
   assert.equal(invocation.file, 'codesign')
   assert.deepEqual(invocation.args.slice(0, 3), ['--force', '--sign', '-'])
-  assert.match(invocation.args[3], /better_sqlite3\.node$/)
+  assert.equal(invocation.args[3], '/tmp/staged-better_sqlite3.node')
 })
 
 test('does not codesign native binaries outside macOS', async () => {
   let spawned = false
-  await signElectronNativeBinary({
+  await signNativeBinary('/tmp/staged-better_sqlite3.node', {
     platform: 'linux',
     spawn: () => { spawned = true },
   })

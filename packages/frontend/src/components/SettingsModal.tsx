@@ -1726,12 +1726,14 @@ function getDesignDocUrl(theme: DesignTheme): string {
 function LLMTab() {
   // ─── 类型定义 ───
   type LLMProvider = 'openai' | 'openai-compatible' | 'anthropic' | 'ollama' | 'lm-studio'
+  type ModelType = 'chat' | 'reasoning' | 'embedding' | 'multimodal'
 
   interface ModelProfileLocal {
     id: string
     name: string
     isDefault?: boolean
     provider: LLMProvider
+    modelType: ModelType
     apiKey?: string
     baseUrl?: string
     model: string
@@ -1752,6 +1754,15 @@ function LLMTab() {
     { value: 'ollama', label: 'Ollama（本地）', desc: 'localhost:11434 — 本地运行的 Ollama 服务' },
     { value: 'lm-studio', label: 'LM Studio（本地）', desc: 'localhost:1234 — LM Studio 本地服务' },
   ]
+
+  const MODEL_TYPE_OPTIONS: Array<{ value: ModelType; label: string; desc: string; color: string }> = [
+    { value: 'chat', label: '对话模型', desc: '用于 Agent 日常对话和知识库问答', color: '#2563eb' },
+    { value: 'reasoning', label: '推理模型', desc: '用于 Agent 复杂推理、工具调用和知识库问答', color: '#7c3aed' },
+    { value: 'embedding', label: '向量模型', desc: '仅用于文档向量化和查询向量生成', color: '#0891b2' },
+    { value: 'multimodal', label: '多模态模型', desc: '用于图片、视频或文件理解', color: '#db2777' },
+  ]
+
+  const isAgentModelType = (modelType: ModelType) => modelType === 'chat' || modelType === 'reasoning'
 
   const MODEL_SUGGESTIONS: Record<LLMProvider, string[]> = {
     'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
@@ -1806,6 +1817,7 @@ function LLMTab() {
           name: p.name,
           isDefault: p.isDefault,
           provider: p.provider ?? 'openai',
+          modelType: p.modelType ?? 'chat',
           apiKey: '',  // apiKey 脱敏，不回显
           baseUrl: p.baseUrl ?? '',
           model: p.model ?? 'gpt-4o-mini',
@@ -1861,6 +1873,7 @@ function LLMTab() {
       id: '',  // 新建时 id 为空，后端会生成
       name: '',
       provider: 'openai',
+      modelType: 'chat',
       apiKey: '',
       baseUrl: DEFAULT_BASE_URLS['openai'] ?? '',
       model: 'gpt-4o-mini',
@@ -2260,6 +2273,7 @@ function LLMTab() {
         name: p.name,
         isDefault: p.isDefault,
         provider: p.provider ?? 'openai',
+        modelType: p.modelType ?? 'chat',
         apiKey: '',
         baseUrl: p.baseUrl ?? '',
         model: p.model ?? 'gpt-4o-mini',
@@ -2390,10 +2404,10 @@ function LLMTab() {
                 borderRadius: '8px',
                 border: `1px solid ${activeProfileId === profile.id ? 'var(--color-accent)' : 'var(--color-border)'}`,
                 background: activeProfileId === profile.id ? 'var(--color-accent)10' : 'var(--color-surface)',
-                cursor: 'pointer',
+                cursor: isAgentModelType(profile.modelType) ? 'pointer' : 'default',
                 transition: 'all 0.15s',
               }}
-              onClick={() => handleSetActive(profile.id)}
+              onClick={() => { if (isAgentModelType(profile.modelType)) handleSetActive(profile.id) }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
                 <span style={{ fontSize: '16px' }}>{PROVIDER_ICON[profile.provider]}</span>
@@ -2407,6 +2421,13 @@ function LLMTab() {
                         默认
                       </span>
                     )}
+                    <span style={{
+                      fontSize: '10px', padding: '1px 5px', borderRadius: '3px', fontWeight: 600,
+                      background: `${MODEL_TYPE_OPTIONS.find((item) => item.value === profile.modelType)?.color || '#64748b'}18`,
+                      color: MODEL_TYPE_OPTIONS.find((item) => item.value === profile.modelType)?.color || '#64748b',
+                    }}>
+                      {MODEL_TYPE_OPTIONS.find((item) => item.value === profile.modelType)?.label || profile.modelType}
+                    </span>
                     {activeProfileId === profile.id && (
                       <span style={{ fontSize: '10px', padding: '1px 4px', borderRadius: '3px', background: '#22c55e20', color: '#22c55e', fontWeight: 600 }}>
                         使用中
@@ -2425,7 +2446,7 @@ function LLMTab() {
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                {!profile.isDefault && (
+                {!profile.isDefault && isAgentModelType(profile.modelType) && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleSetDefault(profile.id) }}
                     style={{
@@ -2442,7 +2463,7 @@ function LLMTab() {
                     ★
                   </button>
                 )}
-                <button
+                {profile.modelType === 'embedding' && <button
                   onClick={(e) => { e.stopPropagation(); handleSetEmbedding(profile.id) }}
                   disabled={settingEmbedding === profile.id}
                   style={{
@@ -2458,7 +2479,7 @@ function LLMTab() {
                   title="用作 Embedding 向量化模型"
                 >
                   {settingEmbedding === profile.id ? '…' : '🧬'}
-                </button>
+                </button>}
                 <button
                   onClick={(e) => { e.stopPropagation(); startEdit(profile) }}
                   style={{
@@ -2666,6 +2687,38 @@ function LLMTab() {
                   boxSizing: 'border-box',
                 }}
               />
+            </div>
+
+            {/* 模型类型 */}
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: '8px' }}>
+                模型类型
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                {MODEL_TYPE_OPTIONS.map(({ value, label, desc, color }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setEditForm((profile) => profile ? { ...profile, modelType: value } : profile)}
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      textAlign: 'left',
+                      border: `1px solid ${editForm.modelType === value ? color : 'var(--color-border)'}`,
+                      background: editForm.modelType === value ? `${color}12` : 'var(--color-surface)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ fontSize: '13px', fontWeight: editForm.modelType === value ? 600 : 400, color: editForm.modelType === value ? color : 'var(--color-text-primary)' }}>
+                      {label}
+                    </div>
+                    <div style={{ fontSize: '11px', lineHeight: 1.4, color: 'var(--color-text-muted)', marginTop: '2px' }}>{desc}</div>
+                  </button>
+                ))}
+              </div>
+              <p style={{ margin: '6px 0 0', fontSize: '11px', color: 'var(--color-text-muted)' }}>
+                类型会限制模型出现的位置，避免 Agent、向量化和多模态流程误用不兼容模型。
+              </p>
             </div>
 
             {/* Provider 选择 */}

@@ -4,7 +4,7 @@
 
 [中文](README.md)
 
-Manta AI turns knowledge scattered across Obsidian, Markdown, PDFs, Office documents, web pages, code repositories, and other sources into a personal AI knowledge base owned by the user. It works as a desktop application and exposes the same knowledge and task capabilities to Codex and other AI agents through APIs, an SDK, a CLI, MCP, Skills, and A2A.
+Manta AI turns knowledge scattered across Obsidian, Markdown, PDFs, Office documents, web pages, code repositories, and other sources into a personal AI knowledge base owned by the user. Manta is a Desktop application. It exposes knowledge and task capabilities to Codex and other local AI agents through loopback-only APIs, an SDK, a CLI, MCP, Skills, and A2A.
 
 Manta does not replace the content tools people already use:
 
@@ -22,6 +22,7 @@ Manta does not replace the content tools people already use:
 ### Build a personal knowledge base
 
 - Ingest content from local folders, Obsidian vaults, documents, web pages, Git repositories, and connectors.
+- Upload large files through resumable multipart Upload Sessions with final full-file SHA-256 verification.
 - Parse different formats and extract text, headings, structure, metadata, and provenance.
 - Detect duplicate or changed content while retaining document versions and processing records.
 - Organize material by knowledge base, project, tag, path, or custom scope.
@@ -40,10 +41,9 @@ Manta does not replace the content tools people already use:
 
 Manta provides repeatable retrieval evaluation instead of only showing a single search result.
 
-- Use a Search Test tab inside a knowledge base to inspect recall for one document or a document set.
 - Maintain evaluation datasets and compare strategies in a standalone Retrieval Lab.
 - Configure parsing, chunking, embedding, retrieval, filtering, fusion, and reranking independently.
-- Measure `Recall@K`, `Precision@K`, `MRR`, `nDCG@K`, zero-hit rate, and latency.
+- Measure `Recall@K`, `MRR`, `nDCG@K`, zero-hit rate, and latency.
 - Inspect matched documents, chunks, scores, provenance, and ranking changes.
 - Save validated strategies as immutable local versions that can be published, switched, and rolled back.
 
@@ -52,18 +52,18 @@ Manta provides repeatable retrieval evaluation instead of only showing a single 
 - Let agents use the personal knowledge base, files, commands, and authorized tools.
 - Record task inputs, steps, tool calls, approvals, outputs, and logs.
 - Keep long-running ingestion, indexing, evaluation, and agent tasks running in the background.
-- Refreshing, navigating away, or reconnecting a client does not cancel background work.
+- Switching Desktop sections, reloading the renderer, closing the client, or reconnecting later does not cancel background work.
 - Query progress, cancel, retry, or continue work from Desktop, the API, SDK, or CLI.
 - Trace answers and actions through source citations and execution records.
 
 ### Serve knowledge to other AI systems
 
-Manta can run as an independent local service. Codex, automation scripts, and other agents can call it within their granted permissions even when Manta Desktop is not open.
+Manta Desktop includes an independent local background Service. Codex, automation scripts, and other local agents can call it within their granted permissions even when the Desktop window is closed. Manta does not provide a browser product or cloud service.
 
 | Entry point | Capability |
 |---|---|
 | Desktop | Manage knowledge bases, search, Q&A, evaluation, agents, and settings |
-| REST API | Access knowledge, retrieval, tasks, events, and administration |
+| Local REST API | Access knowledge, retrieval, tasks, events, and administration over loopback |
 | TypeScript SDK | Call Manta through an interface modeled after the OpenAI SDK |
 | CLI | Ingest, retrieve, evaluate, run tasks, and manage the service from a terminal |
 | MCP Server | Expose Manta knowledge and task capabilities as MCP tools |
@@ -74,23 +74,21 @@ Manta can run as an independent local service. Codex, automation scripts, and ot
 
 - Store knowledge, configuration, extensions, work data, secrets, diagnostics, and cache in separate groups.
 - Choose storage directories and volumes, then manage migration, synchronization, capacity, and health.
-- Select local or remote models per task without requiring source knowledge to leave the device.
-- Keep remote access disabled by default and require authentication plus explicit capability grants.
+- Select local models or user-provided model endpoints per task; Manta itself does not host a cloud control plane.
+- Bind APIs to loopback only, with no LAN or public network mode.
 - Grant MCP, Skills, A2A, and external applications only the permissions they need.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    Sources["Obsidian / Files / Web / Git / Connectors"] --> Manta["Manta Knowledge Runtime"]
-    Manta --> Search["Search / RAG / Evaluation"]
-    Manta --> Agent["Manta Agent"]
-    Manta --> Service["API / SDK / CLI"]
-
-    Search --> Desktop["Desktop"]
-    Agent --> Desktop
-    Service --> Codex["Codex / AI Agents"]
-    Service --> MCP["MCP / Skills / A2A"]
+    Sources["Obsidian / Files / Web / Git"] --> Desktop["Manta Desktop"]
+    Desktop --> Service["Local Manta Service"]
+    Service --> Search["Search / RAG / Evaluation"]
+    Service --> Agent["Durable Agent / Skills"]
+    Service --> LocalAPI["Loopback API / SDK / CLI"]
+    LocalAPI --> Codex["Codex / Local AI Agents"]
+    LocalAPI --> Protocols["MCP / A2A"]
 ```
 
 Knowledge is ingested and managed once, then shared by desktop search, RAG answers, agent tasks, CLI automation, and external AI systems. Every entry point uses the same citations, permission rules, and task state.
@@ -107,7 +105,7 @@ Knowledge is ingested and managed once, then shared by desktop search, RAG answe
 
 ## Package architecture
 
-Manta's public capabilities follow the package boundaries below. The table defines each package's responsibility. `@manta/rag` exists in the current repository; availability of the other public packages depends on the actual code and published version.
+Manta's public capabilities follow these package boundaries:
 
 | Package | Responsibility |
 |---|---|
@@ -115,15 +113,16 @@ Manta's public capabilities follow the package boundaries below. The table defin
 | `@manta/task-runtime` | Durable tasks, workers, leases, event journals, cancellation, recovery, and retries |
 | `@manta/rag` | UI-free RAG core engine with explicit dependency injection |
 | `@manta/sdk` | High-level TypeScript client modeled after the OpenAI SDK |
+| `@manta/service` | The unique local companion Service that owns data and background workers |
 | `@manta/cli` | The `manta` command, built on the SDK |
 | `@manta/mcp-server` | The `manta-mcp` executable that maps SDK capabilities to MCP tools |
 | `@manta/skill-runtime` | Skill loading, script execution, permissions, timeouts, resources, and SDK injection |
-| `@manta/a2a-server` | Future A2A Agent Card and task adaptation |
+| `@manta/a2a-server` | Local A2A 1.0 Agent Card, Message, Task, and Artifact adaptation |
 
 The package design follows four rules:
 
 - `@manta/contracts` is the source of public contracts and does not depend on Desktop or a specific storage implementation.
-- `@manta/rag` and `@manta/task-runtime` have no UI dependency and can run in Desktop, services, or scripts.
+- `@manta/rag` and `@manta/task-runtime` have no UI dependency and can run in the Desktop local Service or scripts.
 - The CLI, MCP Server, and A2A Server use Manta through `@manta/sdk` instead of accessing internal databases.
 - Skill Runtime provides a controlled script environment and injects the SDK, resources, and secret references according to permissions.
 
@@ -146,12 +145,6 @@ pnpm dev:desktop
 
 On first launch, select a new empty directory or connect an existing complete Manta data directory.
 
-After Desktop has initialized storage once, you can also start the browser development environment:
-
-```bash
-pnpm dev
-```
-
 ### Verify
 
 ```bash
@@ -169,4 +162,4 @@ pnpm build
 
 ## License
 
-Private project. No redistribution license is granted.
+Published `@manta/*` packages use the MIT License declared in their respective `package.json` files. All rights are reserved for the Desktop application and other repository content without an explicit license.

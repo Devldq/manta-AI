@@ -187,11 +187,12 @@ export function stopLoop(conversationId: string): boolean {
  * 延迟 30 秒后自动清理
  */
 export function scheduleCleanup(conversationId: string): void {
-  setTimeout(() => {
+  const timer = setTimeout(() => {
     const loop = loops.get(conversationId)
     if (loop?.finished) {
       loop.emitter.removeAllListeners()
       loops.delete(conversationId)
     }
   }, 30_000) // 30 秒保留期
+  timer.unref()
 }

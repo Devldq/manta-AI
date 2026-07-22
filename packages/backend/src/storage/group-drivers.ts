@@ -1,7 +1,9 @@
 import { inventoryTree, type StorageGroupDriver } from '@manta/storage-hub'
 import type { StorageGroupId } from '@manta/shared'
-import type { EmbeddingCacheManager, QdrantProvider } from '@manta/rag'
-import { EmbeddingCacheManager as Cache, QdrantProvider as Provider } from '@manta/rag'
+import type { EmbeddingCacheManager } from '@manta/rag'
+import type { QdrantProvider } from '@manta/rag/qdrant'
+import { EmbeddingCacheManager as Cache } from '@manta/rag'
+import { QdrantProvider as Provider } from '@manta/rag/qdrant'
 import { join } from 'node:path'
 
 async function allSettledOrThrow(label: string, operations: Array<() => void | Promise<void>>): Promise<void> {

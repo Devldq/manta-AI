@@ -7,7 +7,7 @@
  * 通过模块级共享存储 + 自定义 fetch 在 AI SDK 层面处理这个结构差异。
  */
 import { getLLMConfig, getLLMProfiles } from './config-store'
-import { profileToLLMConfig } from './types'
+import { isAgentModel, profileToLLMConfig, resolveModelType } from './types'
 import type { LLMConfig } from './types'
 
 // ─── MiMo reasoning_content 共享存储 ─────────────────────────────────────────────
@@ -202,6 +202,9 @@ export async function getAISDKModelByProfileId(profileId: string) {
   const found = profilesConfig.profiles.find((p) => p.id === profileId)
   if (!found) {
     throw new Error(`找不到配置 profile: ${profileId}`)
+  }
+  if (!isAgentModel(found)) {
+    throw new Error(`模型 ${found.name || found.model} 的类型为 ${resolveModelType(found)}，不能用于 Agent 对话`)
   }
   return createAISDKModel(profileToLLMConfig(found))
 }

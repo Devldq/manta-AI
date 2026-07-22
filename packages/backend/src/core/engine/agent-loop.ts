@@ -24,6 +24,7 @@ import { recordTurn } from '@observability/metrics'
 import type { TurnMetrics, StepMetrics } from '@observability/metrics'
 // 使用共享安全上下文模块（解决 tsx 模块解析问题）
 import { runWithSecurityContext, type SecurityContext } from '../security-context'
+import { findWaitingForInputError } from '@manta/task-runtime'
 
 /** Token 预算默认值 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 1_000_000
@@ -59,6 +60,10 @@ export interface AgentLoopOptions {
   onFinish?: (event: any) => Promise<void> | void
   /** 错误时回调，用于持久化错误信息到对话历史 */
   onError?: (errorText: string) => Promise<void> | void
+  /** Last fully committed model/tool step for durable Job recovery. */
+  resumeState?: AgentLoopResumeState
+  /** Persist only after tool results have been appended to the next prompt. */
+  onStepCommitted?: (state: AgentLoopResumeState) => Promise<void> | void
 }
 
 /** 单步 token 用量（含缓存明细） */
@@ -74,7 +79,7 @@ export interface StepUsage {
 }
 
 /** 单步收集的结果 */
-interface StepCollect {
+export interface StepCollect {
   text: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   toolCalls: any[]
@@ -85,11 +90,37 @@ interface StepCollect {
   cacheHitStats?: { cachedPromptTokens: number; hitRate: number }
 }
 
+export interface AgentLoopResumeState {
+  messages: ModelMessage[]
+  steps: StepCollect[]
+  nextStepIndex: number
+}
+
 /** 退出条件判断结果 */
 interface StopDecision {
   shouldStop: boolean
   reason: string
   warningToInject?: string
+}
+
+export type BlankFinalResponseAction = 'not-blank' | 'retry' | 'fail'
+
+/**
+ * A provider may finish a step without tool calls but only return whitespace.
+ * Such a step is not a valid assistant answer: retry synthesis once, then fail
+ * the turn instead of persisting a blank message as a successful result.
+ */
+export function decideBlankFinalResponse(
+  text: string,
+  toolCallCount: number,
+  retryCount: number,
+): BlankFinalResponseAction {
+  if (toolCallCount > 0 || text.trim().length > 0) return 'not-blank'
+  return retryCount === 0 ? 'retry' : 'fail'
+}
+
+export function needsFinalResponseSynthesis(text: string, toolCallCount: number): boolean {
+  return toolCallCount > 0 || text.trim().length === 0
 }
 
 /**
@@ -126,6 +157,7 @@ function decideStop(
   stepIndex: number,
   maxOutputTokens: number,
   maxSteps: number,
+  blankFinalResponseRetries: number,
 ): StopDecision {
   // 1. 安全兜底步数上限（0 = 不限）
   if (maxSteps > 0 && stepIndex >= maxSteps) {
@@ -169,6 +201,22 @@ function decideStop(
         warningToInject: `[执行提醒] 你刚才表示要查看/读取/搜索某些内容（如源码、文件、目录），但没有实际调用工具。请立即使用适当的工具（read_file、search_file、list_dir 等）来完成你说的操作，不要只用文字描述。`,
       }
     }
+
+    const blankFinalAction = decideBlankFinalResponse(
+      stepCollect.text,
+      stepCollect.toolCalls.length,
+      blankFinalResponseRetries,
+    )
+    if (blankFinalAction === 'retry') {
+      return {
+        shouldStop: false,
+        reason: 'blank-final-response-retry',
+        warningToInject: '[收尾要求] 工具调查已经完成。现在必须基于已有结果直接输出完整最终答复，不要再调用工具。',
+      }
+    }
+    if (blankFinalAction === 'fail') {
+      return { shouldStop: true, reason: 'blank-final-response-failed' }
+    }
     return { shouldStop: true, reason: 'no-tool-calls' }
   }
 
@@ -203,7 +251,7 @@ function appendStepToMessages(
   const newMessages: ModelMessage[] = []
 
   // 添加 assistant 的文本回复（如果有）
-  if (stepCollect.text) {
+  if (stepCollect.text.trim()) {
     newMessages.push({
       role: 'assistant',
       content: [{ type: 'text', text: stepCollect.text }],
@@ -278,7 +326,7 @@ function appendStepToMessages(
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户停止
  * - 不创建 ReadableStream 或 Response，不感知 HTTP 连接状态
  */
-export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, securityContext, onChunk, onDone, onFinish, onError }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, securityContext, onChunk, onDone, onFinish, onError, resumeState, onStepCommitted }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
 
@@ -309,11 +357,13 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
   // 后台异步执行 agent loop，边产生边通过 onChunk 输出
   const executeLoop = async () => {
     const loopDetector = new LoopDetector()
-    let totalOutputTokens = 0
-    const allStepCollects: StepCollect[] = []
-    let currentMessages: ModelMessage[] = [...messages]
-    let stepIndex = 0
+    let totalOutputTokens = (resumeState?.steps ?? []).reduce((total, step) => total + step.usage.outputTokens, 0)
+    const allStepCollects: StepCollect[] = [...(resumeState?.steps ?? [])]
+    let currentMessages: ModelMessage[] = [...(resumeState?.messages ?? messages)]
+    let stepIndex = resumeState?.nextStepIndex ?? 0
     let warningMessage: string | null = null
+    let blankFinalResponseRetries = 0
+    let forcingFinalResponse = false
 
     // ── 消息时间戳跟踪器（供 TTL 修剪使用） ──
     const timestampTracker = new MessageTimestampTracker()
@@ -323,7 +373,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
     }
 
     // ── TokenTracker：精确基准 + 粗估增量 ──
-    const tokenTracker: TokenTracker = createTokenTracker(messages)
+    const tokenTracker: TokenTracker = createTokenTracker(currentMessages)
 
     // 使用上层传入的 messageId（由 startAgentLoop 提前生成），兜底自动生成
     const messageId = incomingMessageId || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -336,6 +386,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
     let ttftMs = 0
     let ttftMeasured = false
     let loopDetectionCount = 0
+    let suspendedForInput = false
 
     // 辅助函数：发送 SSE 行到 onChunk
     function sendChunk(obj: unknown) {
@@ -373,8 +424,8 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         // 每步调一次 streamText，stopWhen=[stepCountIs(1)] 强制单步执行
         const effectiveTemperature = llmConfig.temperature ?? 0.7
 
-        // 每步重新获取工具列表（包含新发现的工具）
-        const stepTools = await getAgentTools()
+        // 收尾步骤显式禁用工具，避免模型继续调查而不回答用户。
+        const stepTools = forcingFinalResponse ? {} : await getAgentTools()
 
         const stepStartTime = performance.now()
 
@@ -481,6 +532,10 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
               )
               break
             case 'tool-error':
+              {
+                const waiting = findWaitingForInputError(chunk.error)
+                if (waiting) throw waiting
+              }
               // 工具执行抛出异常时，AI SDK 发出 tool-error chunk（而非 tool-result）
               // 必须收集此 chunk，否则下次 streamText 会因为缺少 tool-result 而报错
               logger.toolCall(
@@ -600,19 +655,55 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           stepCollect.usage,
         )
 
-        // 判断退出条件（一次调用，包含 warning 检测）
-        const decision = decideStop(stepCollect, loopDetector, totalOutputTokens, stepIndex, maxOutputTokens, maxSteps)
-        if (decision.shouldStop) {
-          break
-        }
-        if (decision.warningToInject) {
-          loopDetectionCount++
-          warningMessage = decision.warningToInject
-          logger.warn(`[LoopDetector] ${warningMessage}`, {
-            ...baseMeta,
+        if (forcingFinalResponse) {
+          const finalAction = decideBlankFinalResponse(
+            stepCollect.text,
+            stepCollect.toolCalls.length,
+            blankFinalResponseRetries,
+          )
+          if (finalAction === 'not-blank') break
+          if (finalAction === 'fail') {
+            throw new Error('模型在强制收尾后仍未生成有效文本，任务不能标记为成功')
+          }
+          blankFinalResponseRetries++
+          warningMessage = '[收尾要求] 必须立即输出完整最终答复，不要调用工具，也不要只输出空白内容。'
+        } else {
+          // 判断退出条件（一次调用，包含 warning 检测）
+          const decision = decideStop(
+            stepCollect,
+            loopDetector,
+            totalOutputTokens,
             stepIndex,
-            extra: { warning: warningMessage },
-          }, ['agent', 'loop', 'warning'])
+            maxOutputTokens,
+            maxSteps,
+            blankFinalResponseRetries,
+          )
+          if (decision.reason === 'blank-final-response-failed') {
+            throw new Error('模型在强制收尾后仍未生成有效文本，任务不能标记为成功')
+          }
+          if (decision.shouldStop) {
+            // 步数、Token 或循环熔断发生在工具步骤时，先提交工具结果，
+            // 再执行一个禁用工具的收尾步骤，而不是把半截调查当成答案。
+            if (needsFinalResponseSynthesis(stepCollect.text, stepCollect.toolCalls.length)) {
+              forcingFinalResponse = true
+              warningMessage = '[收尾要求] 已达到本轮执行边界。请基于已有工具结果直接输出完整最终答复，不要再调用工具。'
+            } else {
+              break
+            }
+          }
+          if (decision.reason === 'blank-final-response-retry') {
+            blankFinalResponseRetries++
+            forcingFinalResponse = true
+          }
+          if (decision.warningToInject) {
+            loopDetectionCount++
+            warningMessage = decision.warningToInject
+            logger.warn(`[LoopDetector] ${warningMessage}`, {
+              ...baseMeta,
+              stepIndex,
+              extra: { warning: warningMessage },
+            }, ['agent', 'loop', 'warning'])
+          }
         }
 
         // 记录追加前消息数量，用于时间戳追踪
@@ -671,7 +762,9 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           }
         }
 
-        stepIndex++
+        const nextStepIndex = stepIndex + 1
+        await onStepCommitted?.({ messages: currentMessages, steps: allStepCollects, nextStepIndex })
+        stepIndex = nextStepIndex
       }
 
       // ── Agent Loop 整体完成：计算聚合指标 ──
@@ -794,10 +887,15 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
 
       // 调用 onFinish 回调（流结束后持久化消息）
       if (onFinish) {
-        const finalText = allStepCollects.map((s) => s.text).join('')
+        // 只有最后一个无工具步骤才是面向用户的最终回答；此前文本属于执行过程。
+        const finalText = allStepCollects[allStepCollects.length - 1]?.text.trim() ?? ''
+        if (!finalText) {
+          throw new Error('Agent loop ended without a valid final response')
+        }
 
         const stepsForCallback = allStepCollects.map((s) => ({
           finishReason: s.finishReason,
+          progressText: s.toolCalls.length > 0 ? s.text.trim() : undefined,
           toolCalls: s.toolCalls,
           toolResults: s.toolResults,
           usage: s.usage,
@@ -812,6 +910,11 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         })
       }
     } catch (err) {
+      const waiting = findWaitingForInputError(err)
+      if (waiting) {
+        suspendedForInput = true
+        throw waiting
+      }
       // 区分「用户主动停止」和「真正的错误」
       const isAborted = abortSignal?.aborted ?? false
       if (isAborted) {
@@ -833,7 +936,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         await onError(friendlyMessage)
       }
     } finally {
-      onDone()
+      if (!suspendedForInput) onDone()
     }
   }
 

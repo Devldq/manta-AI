@@ -1,7 +1,7 @@
-import { createRequire } from 'node:module'
+import Module from 'node:module'
 import { describe, expect, it } from 'vitest'
 
-const require = createRequire(import.meta.url)
+const require = Module.createRequire(import.meta.url)
 
 describe('@manta/shared package exports', () => {
   it('loads the public contract from CommonJS', () => {

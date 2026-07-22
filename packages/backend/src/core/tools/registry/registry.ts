@@ -7,6 +7,7 @@ import type {
 } from './types';
 import { isToolVisible, DEFAULT_MCP_TIMEOUT } from './types';
 import { truncateResult, DEFAULT_MAX_RESULT_CHARS } from './utils';
+import { findWaitingForInputError } from '@manta/task-runtime';
 
 /**
  * 根据 MCP server 名称和工具信息生成 searchHint。
@@ -373,6 +374,9 @@ export class ToolRegistry {
             console.log(`${logPrefix} ${tool.name} 完成 (${elapsed}ms, ${text.length} 字符${text !== truncated ? ', 已截断' : ''})`);
             return truncated;
           } catch (err) {
+            const waiting = findWaitingForInputError(err);
+            if (waiting) throw waiting;
+            if (err && typeof err === 'object' && 'code' in err && err.code === 'JOB_EXECUTION_ABORTED') throw err;
             const elapsed = Date.now() - startTime;
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`${logPrefix} ${tool.name} 执行失败 (${elapsed}ms): ${msg}`);

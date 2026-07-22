@@ -46,9 +46,15 @@ class ApprovalManager {
     type: 'read' | 'write' | 'shell',
     requestedBy: string,
     path?: string,
-    command?: string
+    command?: string,
+    stableId?: string,
   ): string {
-    const id = randomUUID()
+    const id = stableId ?? randomUUID()
+    const existing = this.requests.get(id)
+    if (existing) {
+      if (existing.status === 'pending') this.broadcastRequest(existing)
+      return id
+    }
     const request: ApprovalRequest = {
       id,
       type,
@@ -135,6 +141,7 @@ class ApprovalManager {
           return
         }
       }, 100)
+      checkInterval.unref()
     })
   }
 
@@ -231,6 +238,10 @@ class ApprovalManager {
     )
   }
 
+  discardRequest(id: string): void {
+    this.requests.delete(id)
+  }
+
   /**
    * 清理过期的授权请求（超过 5 分钟）
    */
@@ -250,6 +261,7 @@ class ApprovalManager {
 export const approvalManager = new ApprovalManager()
 
 // 定期清理过期请求（每 10 分钟）
-setInterval(() => {
+const approvalCleanupTimer = setInterval(() => {
   approvalManager.cleanup()
 }, 10 * 60 * 1000)
+approvalCleanupTimer.unref()

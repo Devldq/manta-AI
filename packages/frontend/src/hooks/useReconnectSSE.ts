@@ -285,7 +285,7 @@ function sseEventToPart(event: Record<string, unknown>): UIMessage['parts'][numb
  * tool-output-* → 添加新的 tool part
  * tool-input-start → 添加新的 tool part
  */
-function mergeStreamingParts(
+export function mergeStreamingParts(
   existing: UIMessage['parts'],
   incoming: UIMessage['parts'][number],
 ): UIMessage['parts'] {
@@ -293,8 +293,8 @@ function mergeStreamingParts(
   const incomingAny = incoming as Record<string, unknown>
 
   if (incomingAny.type === 'text') {
-    // 找到最后一个 text part 并追加
-    const lastText = parts.filter(p => p.type === 'text').pop()
+    // 只追加到当前连续文本，不能跨 step 或工具把过程摘要和最终答复合并。
+    const lastText = parts[parts.length - 1]
     if (lastText && typeof lastText === 'object' && 'text' in lastText) {
       ;(lastText as Record<string, unknown>).text = String(lastText.text ?? '') + String(incomingAny.text ?? '')
     } else {
@@ -315,8 +315,14 @@ function mergeStreamingParts(
       }
       existing2.state = incomingAny.state
     } else if (idx >= 0) {
-      // 替换
-      parts[idx] = incoming
+      // 输出事件不重复携带工具名和输入，合并时保留调用阶段的数据。
+      const previous = parts[idx] as Record<string, unknown>
+      parts[idx] = {
+        ...previous,
+        ...incomingAny,
+        toolName: incomingAny.toolName || previous.toolName,
+        input: incomingAny.input ?? previous.input,
+      } as UIMessage['parts'][number]
     } else {
       parts.push(incoming)
     }

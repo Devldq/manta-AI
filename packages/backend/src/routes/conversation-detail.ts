@@ -16,6 +16,9 @@ import { apiSuccess, apiError, apiHandler, Errors } from '../core/api/error-hand
 import { addMessage } from '../core/services/conversation.service'
 import { parseAtMentions } from '../core/engine/at-mention-parser'
 import { listApps } from '../core/storage/app/store'
+import { randomUUID } from 'node:crypto'
+import type { Job, JobEvent, JobStatus } from '@manta/contracts'
+import type { TaskRuntime } from '@manta/task-runtime'
 
 export async function conversationDetailRoutes(app: FastifyInstance) {
   // GET /api/conversations/:id — 获取单个会话
@@ -152,6 +155,12 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
   app.post('/api/conversations/:id/stop', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
+      if (app.taskRuntime) {
+        const job = latestAgentJob(app.taskRuntime, id, true)
+        if (!job) return reply.status(404).send({ stopped: false })
+        app.taskRuntime.cancel(job.id)
+        return reply.send({ stopped: true, jobId: job.id })
+      }
       const { stopLoop } = await import('../core/engine/loop-registry')
       const stopped = stopLoop(id)
       return reply.status(stopped ? 200 : 404).send({ stopped })
@@ -220,23 +229,27 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
       const effectiveAgentName = body.agentName || conv.agentName
 
       try {
-        const { startAgentLoop } = await import('../core/engine/stream-handler')
-        await startAgentLoop({
-          messages: body.messages,
-          agentName: effectiveAgentName,
-          conversationId: id,
-          workspaceId,
-        })
+        if (app.taskRuntime) {
+          const messageId = randomUUID()
+          const job = app.taskRuntime.createJob({ kind: 'agent.run', payload: { conversationId: id, messageId, agentName: effectiveAgentName, ...(workspaceId ? { workspaceId } : {}), messages: body.messages as any }, metadata: { conversationId: id, messageId, ...(workspaceId ? { workspaceId } : {}) }, maxAttempts: 1 })
+          return streamAgentJob(app.taskRuntime, job, 0, request, reply)
+        } else {
+          const { startAgentLoop } = await import('../core/engine/stream-handler')
+          await startAgentLoop({ messages: body.messages, agentName: effectiveAgentName, conversationId: id, workspaceId })
+        }
       } catch (err) {
         console.error('[ai-stream] start error:', err)
         return reply.status(500).send({ error: String(err) })
       }
 
       // SSE 流式响应
+      reply.hijack()
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+        'X-Vercel-AI-UI-Message-Stream': 'v1',
       })
 
       const { subscribeToLoop, getActiveLoop } = await import('../core/engine/loop-registry')
@@ -252,18 +265,19 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
       })
 
       const loop = getActiveLoop(id)
+      const onDone = () => {
+        try { reply.raw.end() } catch { /* ignore */ }
+      }
       if (loop) {
-        const onDone = () => {
-          try { reply.raw.end() } catch { /* ignore */ }
-        }
         loop.emitter.on('done', onDone)
         if (loop.finished) {
           try { reply.raw.end() } catch { /* ignore */ }
         }
       }
 
-      request.raw.on('close', () => {
+      reply.raw.on('close', () => {
         unsubscribe()
+        loop?.emitter.off('done', onDone)
       })
     } catch (err) {
       return reply.status(500).send({ error: String(err) })
@@ -274,16 +288,25 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
   app.get('/api/conversations/:id/ai-stream', async (request, reply) => {
     try {
       const { id } = request.params as { id: string }
+      if (app.taskRuntime) {
+        const job = latestStreamingAgentJob(app.taskRuntime, id)
+        if (!job) return reply.status(404).send({ error: '暂无持久化 Agent Job' })
+        const fromSeq = parseInt((request.query as Record<string, string>).fromSeq ?? '0', 10)
+        return streamAgentJob(app.taskRuntime, job, fromSeq, request, reply)
+      }
       const { getActiveLoop, subscribeToLoop } = await import('../core/engine/loop-registry')
       const loop = getActiveLoop(id)
       if (!loop) return reply.status(404).send({ error: '暂无活跃会话' })
 
       const fromSeq = parseInt((request.query as Record<string, string>).fromSeq ?? '0', 10)
 
+      reply.hijack()
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+        'X-Vercel-AI-UI-Message-Stream': 'v1',
       })
 
       const encoder = new TextEncoder()
@@ -304,11 +327,70 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
         try { reply.raw.end() } catch { /* ignore */ }
       }
 
-      request.raw.on('close', () => {
+      reply.raw.on('close', () => {
         unsubscribe()
+        loop.emitter.off('done', onDone)
       })
     } catch (err) {
       return reply.status(500).send({ error: String(err) })
     }
   })
+}
+
+function latestAgentJob(runtime: TaskRuntime, conversationId: string, activeOnly: boolean): Job | undefined {
+  return runtime.listJobs({ kind: 'agent.run', limit: 100 }).find((job) => job.metadata.conversationId === conversationId && (!activeOnly || !['succeeded', 'failed', 'cancelled'].includes(job.status)))
+}
+
+const STREAMING_AGENT_JOB_STATUSES: JobStatus[] = [
+  'queued',
+  'running',
+  'retry_scheduled',
+  'cancelling',
+]
+
+/**
+ * Refresh reconnect is only for jobs that can still emit agent-stream chunks.
+ * Completed jobs and jobs paused for user/recovery input must render from the
+ * persisted conversation snapshot instead of replaying their event history.
+ */
+export function latestStreamingAgentJob(runtime: TaskRuntime, conversationId: string): Job | undefined {
+  return runtime
+    .listJobs({ kind: 'agent.run', status: STREAMING_AGENT_JOB_STATUSES, limit: 100 })
+    .find((job) => job.metadata.conversationId === conversationId)
+}
+
+export function streamAgentJob(runtime: TaskRuntime, job: Job, fromSeq: number, _request: any, reply: any): void {
+  reply.hijack()
+  reply.raw.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+    'X-Vercel-AI-UI-Message-Stream': 'v1',
+    'X-Manta-Job-Id': job.id,
+  })
+  let cursor = Math.max(0, fromSeq)
+  let ended = false
+  const write = (event: JobEvent) => {
+    if (ended || event.seq <= cursor) return
+    cursor = event.seq
+    if (event.type === 'log' && event.data && typeof event.data === 'object' && !Array.isArray(event.data) && event.data.channel === 'agent.stream') {
+      reply.raw.write(`id: ${event.seq}\ndata: ${JSON.stringify(event.data.chunk)}\n\n`)
+    }
+    if (['job.succeeded', 'job.failed', 'job.cancelled', 'job.recovery_required'].includes(event.type)) {
+      if (event.type === 'job.failed' || event.type === 'job.recovery_required') reply.raw.write(`id: ${event.seq}\ndata: ${JSON.stringify({ type: 'error', errorText: event.data && typeof event.data === 'object' && !Array.isArray(event.data) ? event.data.message ?? event.data.reason ?? 'Agent Job failed' : 'Agent Job failed' })}\n\n`)
+      ended = true
+      unsubscribe()
+      reply.raw.end()
+    }
+  }
+  const unsubscribe = runtime.subscribe(job.id, write)
+  for (const event of runtime.events(job.id, cursor, 5_000)) write(event)
+  const snapshot = runtime.getJob(job.id)
+  if (!ended && snapshot && ['succeeded', 'failed', 'cancelled'].includes(snapshot.status)) { ended = true; unsubscribe(); reply.raw.end() }
+  // IncomingMessage.close means that the request body has completed; for a
+  // POST SSE request that can happen while the response is still streaming.
+  // Only the ServerResponse close event represents the response/client going
+  // away and is therefore the correct point to detach the job subscription.
+  reply.raw.on('close', () => { unsubscribe() })
 }
