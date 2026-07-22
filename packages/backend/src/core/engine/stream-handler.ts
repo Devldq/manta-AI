@@ -22,9 +22,11 @@ import { logger, logManager } from '@observability/log'
 // 使用共享安全上下文模块（解决 tsx 模块解析问题）
 import { createDefaultSecurityContext, type SecurityApprovalRequest, type SecurityContext } from '../security-context'
 import type { JobExecutorContext } from '@manta/task-runtime'
-import type { JsonValue } from '@manta/contracts'
+import type { AgentRunSnapshot, AgentRunUsage, JsonValue } from '@manta/contracts'
 import { approvalManager } from '../security/ApprovalManager'
 import type { ProcessRegistry } from './runner/process-registry'
+import type { AgentRuntimeExtension } from './runtime-hooks'
+import { AgentPublicEventProjector } from './agent-public-events'
 
 /** ★ 解析工作空间 folderPath 为绝对路径，处理 showDirectoryPicker 只返回目录名的 bug */
 function resolveFolderPath(folderPath?: string): string | null {
@@ -73,6 +75,8 @@ export interface StreamChatOptions {
   jobContext?: JobExecutorContext
   messageId?: string
   processRegistry?: ProcessRegistry
+  /** Optional observers for this run (tracing, audit, replay, custom logs). */
+  runtimeExtensions?: AgentRuntimeExtension[]
 }
 
 /** 启动结果的返回类型 */
@@ -87,7 +91,7 @@ export interface StreamChatResult {
  * 启动流式聊天 Agent Loop（如果该会话已有活跃循环则不重复启动）
  * Loop 与 HTTP 连接完全解耦，通过 LoopRegistry 广播事件
  */
-export async function startAgentLoop({ messages, agentName, conversationId, workspaceId, jobContext, messageId: durableMessageId, processRegistry }: StreamChatOptions): Promise<StreamChatResult> {
+export async function startAgentLoop({ messages, agentName, conversationId, workspaceId, jobContext, messageId: durableMessageId, processRegistry, runtimeExtensions }: StreamChatOptions): Promise<StreamChatResult> {
   // 如果已有活跃循环，不重复启动
   const activeLoop = getActiveLoop(conversationId)
   if (!jobContext && activeLoop) {
@@ -199,6 +203,52 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     }, ['security', 'context'])
   }
 
+  // Durable jobs persist the same ordered runtime event stream used by custom
+  // extensions. This makes lifecycle history available for diagnostics and replay.
+  const effectiveRuntimeExtensions: AgentRuntimeExtension[] = [...(runtimeExtensions ?? [])]
+  const publicProjector = new AgentPublicEventProjector({
+    runId: jobContext?.job.id ?? messageId,
+    conversationId,
+    messageId: assistantMessageId,
+  }, event => {
+    if (jobContext) {
+      const emitted = jobContext.emit('log', {
+        channel: 'agent.public',
+        event: event as unknown as JsonValue,
+      })
+      return emitted.seq
+    }
+    emitLoopEvent(conversationId, `data: ${JSON.stringify({
+      type: 'data-agent-run',
+      id: `${event.runId}:${event.seq}`,
+      data: event,
+    })}\n\n`)
+  })
+  let terminalSnapshotPersisted = false
+  const persistTerminalSnapshot = () => {
+    if (!jobContext || terminalSnapshotPersisted) return
+    const agentRun = publicProjector.getSnapshot()
+    if (!['cancelled', 'failed'].includes(agentRun.status)) return
+    const content = agentRun.summaryMarkdown ?? ''
+    const persisted = workspaceId
+      ? appendWorkspaceMessage(workspaceId, conversationId, 'assistant', content, undefined, undefined, undefined, undefined, assistantMessageId, agentRun)
+      : appendMessage(conversationId, 'assistant', content, undefined, undefined, undefined, undefined, assistantMessageId, agentRun)
+    if (!persisted) throw new Error(`Conversation ${conversationId} was not found`)
+    terminalSnapshotPersisted = true
+  }
+  effectiveRuntimeExtensions.push(publicProjector.extension)
+  if (jobContext) {
+    effectiveRuntimeExtensions.push({
+      name: 'task-runtime-event-log',
+      onEvent: event => {
+        jobContext.emit('log', {
+          channel: 'agent.runtime',
+          event: event as unknown as JsonValue,
+        })
+      },
+    })
+  }
+
   // 注册新的活跃循环（占位，后续填充 running promise）
   const loopPromise = new Promise<void>((resolve, reject) => {
     void runAgentLoop({
@@ -209,6 +259,9 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
       messageId,
       conversationId,
       securityContext,
+      agentName,
+      runtimeExtensions: effectiveRuntimeExtensions,
+      throwOnError: Boolean(jobContext),
       abortSignal: jobContext?.signal,
       resumeState,
       onStepCommitted: jobContext ? (state) => {
@@ -223,7 +276,10 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
           jobContext.emit('log', { channel: 'agent.stream', chunk: chunk as any })
         } else emitLoopEvent(conversationId, data)
       },
-      onDone: () => resolve(),
+      onDone: () => {
+        persistTerminalSnapshot()
+        if (!jobContext) resolve()
+      },
       onFinish: async (event) => {
         const { text, steps } = event
         // 从所有步骤里提取工具调用记录（input + output 配对）+ per-step usage
@@ -277,11 +333,27 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
                 noCacheTokens: event.usage.noCacheTokens ?? undefined,
               }
             : undefined
-          if (workspaceId) {
-            appendWorkspaceMessage(workspaceId, conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined, undefined, jobContext ? assistantMessageId : undefined)
-          } else {
-            appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined, undefined, jobContext ? assistantMessageId : undefined)
+          const finalUsage: AgentRunUsage = {
+            inputTokens: event.usage?.inputTokens ?? 0,
+            outputTokens: event.usage?.outputTokens ?? 0,
+            totalTokens: (event.usage?.inputTokens ?? 0) + (event.usage?.outputTokens ?? 0),
+            ...(event.usage?.cacheReadTokens === undefined ? {} : { cacheReadTokens: event.usage.cacheReadTokens }),
+            ...(event.usage?.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: event.usage.cacheWriteTokens }),
+            ...(event.usage?.noCacheTokens === undefined ? {} : { noCacheTokens: event.usage.noCacheTokens }),
+            stepCount: event.totalSteps ?? steps.length,
+            toolCallCount: event.totalToolCalls ?? toolCalls.length,
+            toolErrorCount: event.totalToolErrors ?? toolCalls.filter(call => call.isError).length,
+            durationMs: event.durationMs ?? 0,
+            completeness: 'complete',
           }
+          const persistAssistant = (agentRun: AgentRunSnapshot) => {
+            const persisted = workspaceId
+              ? appendWorkspaceMessage(workspaceId, conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined, undefined, jobContext ? assistantMessageId : undefined, agentRun)
+              : appendMessage(conversationId, 'assistant', text, toolCalls.length > 0 ? toolCalls : undefined, usage, stepUsages.length > 0 ? stepUsages : undefined, undefined, jobContext ? assistantMessageId : undefined, agentRun)
+            if (!persisted) throw new Error(`Conversation ${conversationId} was not found`)
+            terminalSnapshotPersisted = true
+          }
+          await publicProjector.finalize(text, finalUsage, persistAssistant)
         }
 
         if (jobContext) {
@@ -315,7 +387,9 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
 
         logManager.closeConversation(conversationId)
       },
-    }).catch(reject)
+    }).then(() => {
+      if (jobContext) resolve()
+    }, reject)
   })
 
   if (!jobContext) registerLoop(conversationId, loopPromise)

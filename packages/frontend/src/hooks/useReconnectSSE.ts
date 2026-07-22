@@ -46,6 +46,9 @@ export function useReconnectSSE(
   })
 
   const abortRef = useRef<AbortController | null>(null)
+  const terminalRef = useRef(false)
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const connectRef = useRef<() => Promise<void>>(async () => undefined)
   // 跟踪从 SSE 事件中接收到的最后 seq（用于精确重连）
   const lastSeqRef = useRef(0)
   // 使用 ref 存储 onStepUsage 回调，避免 connect 函数频繁重建
@@ -58,6 +61,8 @@ export function useReconnectSSE(
   const connect = useCallback(async () => {
     if (!convId) return
 
+    terminalRef.current = false
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
     setState(s => ({ ...s, reconnecting: true, error: null }))
 
     const controller = new AbortController()
@@ -139,6 +144,14 @@ export function useReconnectSSE(
                 continue
               }
 
+              if (
+                event.type === 'data-agent-run' &&
+                event.data &&
+                ['run.completed', 'run.cancelled', 'run.failed'].includes(event.data.type)
+              ) {
+                terminalRef.current = true
+              }
+
               // 将 SSE 事件转换为 UIMessage part
               const part = sseEventToPart(event)
               if (part) {
@@ -154,9 +167,17 @@ export function useReconnectSSE(
         }
       }
 
-      // 流自然结束 — 保存最后 seq 以便未来重连
+      // 连接关闭只是传输状态；只有后端终态事件才能结束一次 Agent Run。
       sessionStorage.setItem(storedSeqKey, String(lastSeqRef.current))
-      setState(s => ({ ...s, finished: true }))
+      setState(s => ({
+        ...s,
+        connected: false,
+        finished: terminalRef.current,
+        error: terminalRef.current ? s.error : 'Agent 仍在执行，正在等待重新连接',
+      }))
+      if (!terminalRef.current && !controller.signal.aborted) {
+        retryTimerRef.current = setTimeout(() => void connectRef.current(), 750)
+      }
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
         // 组件卸载或手动断开 — 保存最后 seq 以便重连
@@ -168,6 +189,7 @@ export function useReconnectSSE(
       setState(s => ({ ...s, reconnecting: false, error: (err as Error).message }))
     }
   }, [convId, storedSeqKey, workspaceId])
+  connectRef.current = connect
 
   useEffect(() => {
     if (!enabled) return
@@ -176,6 +198,7 @@ export function useReconnectSSE(
 
     return () => {
       sessionStorage.setItem(storedSeqKey, String(lastSeqRef.current))
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
       abortRef.current?.abort()
     }
   }, [enabled, connect])
@@ -183,8 +206,10 @@ export function useReconnectSSE(
   /** 重置重连状态（loop 结束、手动刷新后） */
   const reset = useCallback(() => {
     sessionStorage.setItem(storedSeqKey, String(lastSeqRef.current))
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
     abortRef.current?.abort()
     lastSeqRef.current = 0
+    terminalRef.current = false
     setState({
       connected: false,
       reconnecting: false,
@@ -205,6 +230,13 @@ export function useReconnectSSE(
 function sseEventToPart(event: Record<string, unknown>): UIMessage['parts'][number] | null {
   const type = event.type as string
   if (!type) return null
+
+  if (type === 'data-agent-run' || type === 'data-agent-run-snapshot') {
+    return {
+      type,
+      data: event.data,
+    } as unknown as NonNullable<UIMessage['parts']>[number]
+  }
 
   switch (type) {
     case 'text-start':

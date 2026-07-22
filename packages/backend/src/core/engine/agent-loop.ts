@@ -25,6 +25,11 @@ import type { TurnMetrics, StepMetrics } from '@observability/metrics'
 // 使用共享安全上下文模块（解决 tsx 模块解析问题）
 import { runWithSecurityContext, type SecurityContext } from '../security-context'
 import { findWaitingForInputError } from '@manta/task-runtime'
+import {
+  AgentRuntimeHooks,
+  runWithAgentRuntimeHooks,
+  type AgentRuntimeExtension,
+} from './runtime-hooks'
 
 /** Token 预算默认值 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 1_000_000
@@ -64,6 +69,11 @@ export interface AgentLoopOptions {
   resumeState?: AgentLoopResumeState
   /** Persist only after tool results have been appended to the next prompt. */
   onStepCommitted?: (state: AgentLoopResumeState) => Promise<void> | void
+  /** Per-run observers; global extensions registered in runtime-hooks are included automatically. */
+  runtimeExtensions?: AgentRuntimeExtension[]
+  /** Durable executors must observe failures so TaskRuntime cannot mark a failed loop as succeeded. */
+  throwOnError?: boolean
+  agentName?: string
 }
 
 /** 单步 token 用量（含缓存明细） */
@@ -326,9 +336,25 @@ function appendStepToMessages(
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户停止
  * - 不创建 ReadableStream 或 Response，不感知 HTTP 连接状态
  */
-export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, securityContext, onChunk, onDone, onFinish, onError, resumeState, onStepCommitted }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, securityContext, onChunk, onDone, onFinish, onError, resumeState, onStepCommitted, runtimeExtensions, throwOnError = false, agentName }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   const model = await getAISDKModel()
+  const messageId = incomingMessageId || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const runtimeHooks = new AgentRuntimeHooks({
+    runId: securityContext?.jobId ?? messageId,
+    conversationId,
+    messageId,
+    taskId: securityContext?.taskId,
+    workspaceId: securityContext?.workspaceId,
+    jobId: securityContext?.jobId,
+    agentName,
+  }, runtimeExtensions, ({ extensionName, eventType, error }) => {
+    logger.warn(`[AgentRuntime] 扩展 ${extensionName} 处理 ${eventType} 失败`, {
+      conversationId,
+      messageId,
+      extra: { error: error instanceof Error ? error.message : String(error) },
+    }, ['agent', 'runtime', 'extension-error'])
+  })
 
   // 从配置读取限制，0 = 不限，未设置则用默认值
   const maxOutputTokens = llmConfig.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
@@ -375,9 +401,6 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
     // ── TokenTracker：精确基准 + 粗估增量 ──
     const tokenTracker: TokenTracker = createTokenTracker(currentMessages)
 
-    // 使用上层传入的 messageId（由 startAgentLoop 提前生成），兜底自动生成
-    const messageId = incomingMessageId || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-
     // 基础日志元数据（所有本 loop 日志共享）
     const baseMeta = { messageId, conversationId, prompt }
 
@@ -387,6 +410,13 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
     let ttftMeasured = false
     let loopDetectionCount = 0
     let suspendedForInput = false
+    let doneNotified = false
+
+    const notifyDone = () => {
+      if (doneNotified) return
+      doneNotified = true
+      onDone()
+    }
 
     // 辅助函数：发送 SSE 行到 onChunk
     function sendChunk(obj: unknown) {
@@ -394,6 +424,14 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
     }
 
     try {
+      await runtimeHooks.emit('loop.started', {
+        resumed: !!resumeState,
+        messageCount: currentMessages.length,
+        model: llmConfig.model,
+        provider: llmConfig.provider,
+        maxSteps,
+        maxOutputTokens,
+      })
       // 不再发送 start 事件 — AI SDK UIMessageChunk schema 不包含此类型
       // 循环开始时直接进入 while，由 AI SDK 自身的 text-start 事件触发消息创建
 
@@ -405,7 +443,8 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
       while (true) {
         // 检查是否被用户停止
         if (abortSignal?.aborted) {
-          onDone()
+          await runtimeHooks.emit('loop.aborted', { reason: 'abort-signal', stepIndex })
+          notifyDone()
           return
         }
 
@@ -428,6 +467,12 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         const stepTools = forcingFinalResponse ? {} : await getAgentTools()
 
         const stepStartTime = performance.now()
+        await runtimeHooks.emit('step.started', {
+          stepIndex,
+          messageCount: currentMessages.length,
+          toolCount: Object.keys(stepTools).length,
+          forcingFinalResponse,
+        })
 
         // 记录传给模型的内容（精简版：仅文本片段，避免日志膨胀）
         const msgSummary = currentMessages.map(m => {
@@ -470,6 +515,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           usage: { inputTokens: 0, outputTokens: 0 },
           finishReason: '',
         }
+        let progressEmitted = false
 
         // 遍历 fullStream：收集数据 + 逐个通过 onChunk 输出
         for await (const chunk of result.fullStream) {
@@ -492,7 +538,12 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
               if (onError) {
                 await onError(friendlyMessage)
               }
-              onDone()
+              await runtimeHooks.emit('loop.failed', {
+                error: friendlyMessage,
+                durationMs: Math.round(performance.now() - turnStartTime),
+                stepIndex,
+              })
+              notifyDone()
               return
 
             case 'text-delta':
@@ -504,6 +555,13 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
               stepCollect.text += chunk.text
               break
             case 'tool-call':
+              if (!progressEmitted && stepCollect.text.trim()) {
+                progressEmitted = true
+                await runtimeHooks.emit('step.progress', {
+                  stepIndex,
+                  text: stepCollect.text.trim(),
+                })
+              }
               stepCollect.toolCalls.push({
                 toolCallId: chunk.toolCallId,
                 toolName: chunk.toolName,
@@ -591,6 +649,15 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         }
 
         const stepDurationMs = Math.round(performance.now() - stepStartTime)
+        await runtimeHooks.emit('step.completed', {
+          stepIndex,
+          durationMs: stepDurationMs,
+          textLength: stepCollect.text.length,
+          toolNames: stepCollect.toolCalls.map(call => call.toolName),
+          toolErrorCount: stepCollect.toolResults.filter(result => result.isError).length,
+          finishReason: stepCollect.finishReason,
+          usage: stepCollect.usage,
+        })
 
         // ── 提取 Prompt Cache 命中信息 ──
         if (promptCacheEnabled) {
@@ -719,7 +786,16 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         // Microcompact: 清理旧的查询类工具结果，减少上下文 token 占用
         // 保留最近 3 个工具结果不动，只清理更早的
         if (microcompactEnabled) {
-          applyMicrocompactWithLogging(currentMessages, conversationId, messageId, stepIndex)
+          const microcompactResult = applyMicrocompactWithLogging(currentMessages, conversationId, messageId, stepIndex)
+          if (microcompactResult.clearedCount > 0) {
+            await runtimeHooks.emit('context.optimized', {
+              stepIndex,
+              strategy: 'microcompact',
+              affectedCount: microcompactResult.clearedCount,
+              messageCountBefore: currentMessages.length,
+              messageCountAfter: currentMessages.length,
+            })
+          }
         }
 
         // Layer 2 动态截断: 对剩余工具结果做双重约束截断
@@ -729,7 +805,15 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           currentMessages, conversationId, messageId, stepIndex,
         )
         if (truncateResult.truncated > 0 || truncateResult.compacted > 0) {
+          const messageCountBefore = currentMessages.length
           currentMessages = truncateResult.messages
+          await runtimeHooks.emit('context.optimized', {
+            stepIndex,
+            strategy: 'truncate',
+            affectedCount: truncateResult.truncated + truncateResult.compacted,
+            messageCountBefore,
+            messageCountAfter: currentMessages.length,
+          })
         }
 
         // Layer 3 TTL 修剪: 时间衰减，老的工具结果自动退化
@@ -744,7 +828,15 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
             stepIndex,
           )
           if (ttlResult.softPruned > 0 || ttlResult.hardPruned > 0) {
+            const messageCountBefore = currentMessages.length
             currentMessages = ttlResult.messages
+            await runtimeHooks.emit('context.optimized', {
+              stepIndex,
+              strategy: 'ttl-prune',
+              affectedCount: ttlResult.softPruned + ttlResult.hardPruned,
+              messageCountBefore,
+              messageCountAfter: currentMessages.length,
+            })
           }
         }
 
@@ -753,17 +845,30 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         if (compactionEnabled) {
           const compactionResult = await compactMessages(currentMessages)
           if (compactionResult.compressedCount > 0) {
+            const messageCountBefore = currentMessages.length
             // 通知 timestamp tracker 消息列表已被替换
             timestampTracker.onCompaction(
               currentMessages.length - compactionResult.messages.length + 1, // 被移除的消息数
               1, // 插入的摘要消息数
             )
             currentMessages = compactionResult.messages
+            await runtimeHooks.emit('context.optimized', {
+              stepIndex,
+              strategy: 'llm-compaction',
+              affectedCount: compactionResult.compressedCount,
+              messageCountBefore,
+              messageCountAfter: currentMessages.length,
+            })
           }
         }
 
         const nextStepIndex = stepIndex + 1
         await onStepCommitted?.({ messages: currentMessages, steps: allStepCollects, nextStepIndex })
+        await runtimeHooks.emit('step.committed', {
+          stepIndex,
+          nextStepIndex,
+          messageCount: currentMessages.length,
+        })
         stepIndex = nextStepIndex
       }
 
@@ -906,19 +1011,37 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           steps: stepsForCallback,
           totalUsage,
           usage: totalUsage,
+          durationMs: totalDurationMs,
+          totalSteps,
+          totalToolCalls,
+          totalToolErrors,
           finishReason: allStepCollects[allStepCollects.length - 1]?.finishReason ?? 'stop',
         })
       }
+      await runtimeHooks.emit('loop.completed', {
+        durationMs: totalDurationMs,
+        totalSteps,
+        totalToolCalls,
+        totalToolErrors,
+        totalInputTokens: totalUsage.inputTokens,
+        totalOutputTokens: totalUsage.outputTokens,
+        cacheReadTokens: totalUsage.cacheReadTokens,
+        cacheWriteTokens: totalUsage.cacheWriteTokens,
+        noCacheTokens: totalUsage.noCacheTokens,
+        stopReason: turnMetrics.stopReason,
+      })
     } catch (err) {
       const waiting = findWaitingForInputError(err)
       if (waiting) {
         suspendedForInput = true
+        await runtimeHooks.emit('loop.suspended', { reason: 'waiting-for-input', stepIndex })
         throw waiting
       }
       // 区分「用户主动停止」和「真正的错误」
       const isAborted = abortSignal?.aborted ?? false
       if (isAborted) {
-        onDone()
+        await runtimeHooks.emit('loop.aborted', { reason: 'abort-signal', stepIndex })
+        notifyDone()
         return
       }
 
@@ -935,16 +1058,23 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
       if (onError) {
         await onError(friendlyMessage)
       }
+      await runtimeHooks.emit('loop.failed', {
+        error: friendlyMessage,
+        durationMs: Math.round(performance.now() - turnStartTime),
+        stepIndex,
+      })
+      if (throwOnError) throw err
     } finally {
-      if (!suspendedForInput) onDone()
+      if (!suspendedForInput) notifyDone()
     }
   }
 
   // 在安全上下文中执行 Agent Loop（如果提供了安全上下文）
   // ★ 必须使用 await 确保 async executeLoop 完整在 ALS 作用域内执行
-  if (securityContext) {
-    await runWithSecurityContext(securityContext, () => executeLoop())
-  } else {
-    await executeLoop()
-  }
+  await runWithAgentRuntimeHooks(runtimeHooks, () => {
+    if (securityContext) {
+      return runWithSecurityContext(securityContext, () => executeLoop())
+    }
+    return executeLoop()
+  })
 }

@@ -346,6 +346,33 @@ export class TaskRuntime {
     }
   }
 
+  /** Atomically presents persisted history before live events with one exclusive cursor. */
+  subscribeFrom(jobId: string, afterSeq: number, listener: (event: JobEvent) => void): () => void {
+    let cursor = Math.max(0, afterSeq)
+    let replaying = true
+    const pending: JobEvent[] = []
+    const deliver = (event: JobEvent) => {
+      if (event.seq <= cursor) return
+      cursor = event.seq
+      listener(event)
+    }
+    const unsubscribe = this.subscribe(jobId, event => {
+      if (replaying) pending.push(event)
+      else deliver(event)
+    })
+
+    let page: JobEvent[]
+    do {
+      page = this.events(jobId, cursor, 5_000)
+      for (const event of page) deliver(event)
+    } while (page.length === 5_000)
+
+    replaying = false
+    pending.sort((a, b) => a.seq - b.seq)
+    for (const event of pending) deliver(event)
+    return unsubscribe
+  }
+
   cancel(jobId: string): Job {
     this.assertOpen()
     const cancel = this.db.transaction(() => {

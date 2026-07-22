@@ -23,7 +23,6 @@ export interface SecurityContext {
   allowExternalRead?: boolean
   allowExternalWrite?: boolean
   onApprovalRequest?: (request: SecurityApprovalRequest) => Promise<boolean>
-  onAuditLog?: unknown
 }
 
 export interface SecurityApprovalRequest {
@@ -56,7 +55,6 @@ export function createDefaultSecurityContext(taskId: string): SecurityContext {
     taskId,
     platform: detectPlatform(),
     onApprovalRequest: undefined,
-    onAuditLog: undefined,
   }
 }
 

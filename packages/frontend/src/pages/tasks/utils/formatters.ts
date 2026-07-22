@@ -46,6 +46,12 @@ function storedToolPart(toolCall: StoredToolCall): UIMessage['parts'][number] {
 /** 将持久化消息恢复为带步骤边界的 UIMessage，刷新后仍保留公开执行摘要。 */
 export function storedMessageToUIMessage(message: StoredMessage): UIMessage {
   const parts: UIMessage['parts'] = []
+  if (message.agentRun) {
+    parts.push({
+      type: 'data-agent-run-snapshot',
+      data: message.agentRun,
+    } as unknown as UIMessage['parts'][number])
+  }
   const toolCalls = message.toolCalls ?? []
   const steps = message.stepUsages ?? []
   let toolCursor = 0
@@ -82,6 +88,7 @@ export function storedMessageToUIMessage(message: StoredMessage): UIMessage {
       timestamp: message.timestamp,
       usage: message.usage ?? null,
       stepUsages: message.stepUsages ?? null,
+      agentRun: message.agentRun ?? null,
     },
   }
 }

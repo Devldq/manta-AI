@@ -17,7 +17,7 @@ import { addMessage } from '../core/services/conversation.service'
 import { parseAtMentions } from '../core/engine/at-mention-parser'
 import { listApps } from '../core/storage/app/store'
 import { randomUUID } from 'node:crypto'
-import type { Job, JobEvent, JobStatus } from '@manta/contracts'
+import type { AgentPublicEvent, AgentRunPhase, Job, JobEvent, JobStatus, JsonValue } from '@manta/contracts'
 import type { TaskRuntime } from '@manta/task-runtime'
 
 export async function conversationDetailRoutes(app: FastifyInstance) {
@@ -158,8 +158,16 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
       if (app.taskRuntime) {
         const job = latestAgentJob(app.taskRuntime, id, true)
         if (!job) return reply.status(404).send({ stopped: false })
+        const expectedRunId = (request.body as { expectedRunId?: string } | undefined)?.expectedRunId
+        if (expectedRunId && expectedRunId !== job.id) {
+          return reply.status(409).send({
+            stopped: false,
+            code: 'RUN_MISMATCH',
+            activeRunId: job.id,
+          })
+        }
         app.taskRuntime.cancel(job.id)
-        return reply.send({ stopped: true, jobId: job.id })
+        return reply.send({ stopped: true, jobId: job.id, status: 'cancelling' })
       }
       const { stopLoop } = await import('../core/engine/loop-registry')
       const stopped = stopLoop(id)
@@ -230,6 +238,15 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
 
       try {
         if (app.taskRuntime) {
+          const activeJob = latestAgentJob(app.taskRuntime, id, true)
+          if (activeJob) {
+            return reply.status(409).send({
+              error: '该会话已有正在运行的 Agent',
+              code: 'AGENT_RUN_ACTIVE',
+              runId: activeJob.id,
+              status: activeJob.status,
+            })
+          }
           const messageId = randomUUID()
           const job = app.taskRuntime.createJob({ kind: 'agent.run', payload: { conversationId: id, messageId, agentName: effectiveAgentName, ...(workspaceId ? { workspaceId } : {}), messages: body.messages as any }, metadata: { conversationId: id, messageId, ...(workspaceId ? { workspaceId } : {}) }, maxAttempts: 1 })
           return streamAgentJob(app.taskRuntime, job, 0, request, reply)
@@ -289,9 +306,14 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
     try {
       const { id } = request.params as { id: string }
       if (app.taskRuntime) {
-        const job = latestStreamingAgentJob(app.taskRuntime, id)
-        if (!job) return reply.status(404).send({ error: '暂无持久化 Agent Job' })
         const fromSeq = parseInt((request.query as Record<string, string>).fromSeq ?? '0', 10)
+        // A non-zero cursor means the client already observed this run. Allow
+        // replaying its terminal tail even if the Job completed while the
+        // transport was disconnected.
+        const job = fromSeq > 0
+          ? latestAgentJob(app.taskRuntime, id, false)
+          : latestStreamingAgentJob(app.taskRuntime, id)
+        if (!job) return reply.status(404).send({ error: '暂无持久化 Agent Job' })
         return streamAgentJob(app.taskRuntime, job, fromSeq, request, reply)
       }
       const { getActiveLoop, subscribeToLoop } = await import('../core/engine/loop-registry')
@@ -371,21 +393,65 @@ export function streamAgentJob(runtime: TaskRuntime, job: Job, fromSeq: number, 
   })
   let cursor = Math.max(0, fromSeq)
   let ended = false
+  let publicTerminalSeen = false
+  const writePublicEvent = (event: JobEvent, type: AgentPublicEvent['type'], phase: AgentRunPhase, data: JsonValue = {}) => {
+    const publicEvent: AgentPublicEvent = {
+      schemaVersion: 1,
+      runId: job.id,
+      conversationId: String(job.metadata.conversationId ?? ''),
+      messageId: `${job.id}:assistant`,
+      seq: event.seq,
+      timestamp: event.timestamp,
+      phase,
+      type,
+      data,
+    }
+    reply.raw.write(`id: ${event.seq}\ndata: ${JSON.stringify({
+      type: 'data-agent-run',
+      id: `${job.id}:${event.seq}`,
+      data: publicEvent,
+    })}\n\n`)
+  }
   const write = (event: JobEvent) => {
     if (ended || event.seq <= cursor) return
     cursor = event.seq
     if (event.type === 'log' && event.data && typeof event.data === 'object' && !Array.isArray(event.data) && event.data.channel === 'agent.stream') {
       reply.raw.write(`id: ${event.seq}\ndata: ${JSON.stringify(event.data.chunk)}\n\n`)
     }
+    if (event.type === 'log' && event.data && typeof event.data === 'object' && !Array.isArray(event.data) && event.data.channel === 'agent.public') {
+      const publicEvent: Record<string, unknown> | undefined = event.data.event && typeof event.data.event === 'object' && !Array.isArray(event.data.event)
+        ? { ...event.data.event as Record<string, unknown>, seq: event.seq }
+        : undefined
+      if (publicEvent) {
+        if (['run.completed', 'run.cancelled', 'run.failed'].includes(String(publicEvent.type))) publicTerminalSeen = true
+      }
+      reply.raw.write(`id: ${event.seq}\ndata: ${JSON.stringify({
+        type: 'data-agent-run',
+        id: `${job.id}:${event.seq}`,
+        data: publicEvent,
+      })}\n\n`)
+    }
+    if (event.type === 'job.cancellation_requested') {
+      writePublicEvent(event, 'run.cancellation_requested', 'cancelling')
+    }
     if (['job.succeeded', 'job.failed', 'job.cancelled', 'job.recovery_required'].includes(event.type)) {
+      if (!publicTerminalSeen) {
+        if (event.type === 'job.cancelled') writePublicEvent(event, 'run.cancelled', 'cancelled')
+        if (event.type === 'job.failed' || event.type === 'job.recovery_required') {
+          writePublicEvent(event, 'run.failed', 'failed', event.data)
+        }
+        if (event.type === 'job.succeeded') writePublicEvent(event, 'run.completed', 'completed')
+        publicTerminalSeen = true
+      }
       if (event.type === 'job.failed' || event.type === 'job.recovery_required') reply.raw.write(`id: ${event.seq}\ndata: ${JSON.stringify({ type: 'error', errorText: event.data && typeof event.data === 'object' && !Array.isArray(event.data) ? event.data.message ?? event.data.reason ?? 'Agent Job failed' : 'Agent Job failed' })}\n\n`)
       ended = true
       unsubscribe()
       reply.raw.end()
     }
   }
-  const unsubscribe = runtime.subscribe(job.id, write)
-  for (const event of runtime.events(job.id, cursor, 5_000)) write(event)
+  let unsubscribe = () => {}
+  unsubscribe = runtime.subscribeFrom(job.id, cursor, write)
+  if (ended) unsubscribe()
   const snapshot = runtime.getJob(job.id)
   if (!ended && snapshot && ['succeeded', 'failed', 'cancelled'].includes(snapshot.status)) { ended = true; unsubscribe(); reply.raw.end() }
   // IncomingMessage.close means that the request body has completed; for a

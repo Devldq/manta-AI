@@ -1,4 +1,5 @@
 /* 会话框架类型定义 */
+import type { AgentRunSnapshot } from '@manta/contracts'
 
 /** 持久化的工具调用记录（一次工具调用的 input/output） */
 export interface ToolCallRecord {
@@ -33,6 +34,7 @@ export interface Message {
   usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; noCacheTokens?: number }
   /** 每步 token 用量明细（assistant 消息专用，用于分步展示） */
   stepUsages?: StepUsageRecord[]
+  agentRun?: AgentRunSnapshot
 }
 
 export interface ConversationContext {

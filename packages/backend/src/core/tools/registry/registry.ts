@@ -8,6 +8,7 @@ import type {
 import { isToolVisible, DEFAULT_MCP_TIMEOUT } from './types';
 import { truncateResult, DEFAULT_MAX_RESULT_CHARS } from './utils';
 import { findWaitingForInputError } from '@manta/task-runtime';
+import { getAgentRuntimeHooks } from '../../engine/runtime-hooks';
 
 /**
  * 根据 MCP server 名称和工具信息生成 searchHint。
@@ -343,7 +344,7 @@ export class ToolRegistry {
         inputSchema: useFullSchema
           ? jsonSchema(tool.parameters as any)
           : jsonSchema(PLACEHOLDER_SCHEMA as any),
-        execute: async (input: any) => {
+        execute: async (input: any, options?: { toolCallId?: string }) => {
           // ── 自动发现：未发现的 MCP 工具首次调用时自动注册 ──
           if (!isBuiltin && !isDiscovered) {
             registry.discoveredTools.add(tool.name);
@@ -353,6 +354,15 @@ export class ToolRegistry {
           // 工具调用日志
           const logPrefix = tool.mcpServer ? `[MCP:${tool.mcpServer}]` : '[Tool]';
           console.log(`${logPrefix} 调用 ${tool.name}`, JSON.stringify(input).slice(0, 200));
+
+          const runtimeHooks = getAgentRuntimeHooks();
+          await runtimeHooks?.emit('tool.started', {
+            toolName: tool.name,
+            toolCallId: options?.toolCallId,
+            input,
+            source: tool.mcpServer ? 'mcp' : 'builtin',
+            concurrency: isSafe ? 'shared' : 'exclusive',
+          });
 
           if (isSafe) {
             await registry.acquireConcurrent();
@@ -364,14 +374,23 @@ export class ToolRegistry {
           try {
             const raw = await executeFn(input);
             const elapsed = Date.now() - startTime;
+            const normalizedRaw = raw === undefined
+              ? '工具执行返回了 undefined'
+              : raw;
             if (raw === undefined) {
               console.warn(`${logPrefix} ${tool.name} 返回了 undefined (${elapsed}ms)`);
-              return '工具执行返回了 undefined';
             }
             const text =
-              typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
+              typeof normalizedRaw === 'string' ? normalizedRaw : JSON.stringify(normalizedRaw, null, 2);
             const truncated = truncateResult(text, maxChars);
             console.log(`${logPrefix} ${tool.name} 完成 (${elapsed}ms, ${text.length} 字符${text !== truncated ? ', 已截断' : ''})`);
+            await runtimeHooks?.emit('tool.completed', {
+              toolName: tool.name,
+              toolCallId: options?.toolCallId,
+              durationMs: elapsed,
+              outputChars: text.length,
+              truncated: text !== truncated,
+            });
             return truncated;
           } catch (err) {
             const waiting = findWaitingForInputError(err);
@@ -380,6 +399,12 @@ export class ToolRegistry {
             const elapsed = Date.now() - startTime;
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`${logPrefix} ${tool.name} 执行失败 (${elapsed}ms): ${msg}`);
+            await runtimeHooks?.emit('tool.failed', {
+              toolName: tool.name,
+              toolCallId: options?.toolCallId,
+              durationMs: elapsed,
+              error: msg,
+            });
             // 返回错误信息而非抛出异常，确保 AI SDK 始终获得 tool-result，
             // 避免因缺少 tool-result 导致 "Tool result is missing" 错误
             return `工具执行出错：${msg}`;

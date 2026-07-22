@@ -5,6 +5,7 @@ import * as path from 'path'
 import { resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import { type WorkspaceConfig, type CreateWorkspaceInput, type UpdateWorkspaceInput, type Conversation, type ConversationMessage, type ToolCallRecord, type StepUsageRecord } from '@core/types'
+import type { AgentRunSnapshot } from '@manta/contracts'
 import { ensureDir, atomicWrite, shortId, removeDir, readJsonFile } from '../shared/fs-utils'
 
 function workspaceDataDir(): string {
@@ -217,6 +218,7 @@ export function appendWorkspaceMessage(
   stepUsages?: StepUsageRecord[],
   agentAppId?: string,
   messageId?: string,
+  agentRun?: AgentRunSnapshot,
 ): { conv: Conversation; message: ConversationMessage } | null {
   const conv = getWorkspaceConversation(workspaceId, conversationId)
   if (!conv) return null
@@ -234,6 +236,7 @@ export function appendWorkspaceMessage(
     ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
     ...(usage ? { usage } : {}),
     ...(stepUsages && stepUsages.length > 0 ? { stepUsages } : {}),
+    ...(agentRun ? { agentRun } : {}),
     ...(agentAppId ? { agentAppId } : {}),
   }
   conv.messages.push(msg)

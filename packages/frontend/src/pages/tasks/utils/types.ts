@@ -1,4 +1,5 @@
 import type { UIMessage } from 'ai'
+import type { AgentRunSnapshot } from '@manta/contracts'
 
 export interface StoredToolCall {
   toolCallId: string
@@ -31,6 +32,7 @@ export interface StoredMessage {
     toolNames?: string[]
     progressText?: string
   }>
+  agentRun?: AgentRunSnapshot
 }
 
 export interface Conversation {

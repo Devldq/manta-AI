@@ -1,4 +1,5 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
+import type { AgentRunSnapshot } from '@manta/contracts'
 import {
   AlertCircle,
   Check,
@@ -16,6 +17,7 @@ import {
 } from 'lucide-react'
 import type { StepGroup, ToolCallEntry } from '../utils/types'
 import { describeToolCall, formatToolInput, formatToolOutput, getToolFilePath } from '../utils/formatters'
+import { formatAgentRunDuration, isAgentRunTerminal } from '../runtime/agent-run-view'
 
 const TOOL_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
   bash: Terminal,
@@ -108,23 +110,39 @@ const ToolLine = memo(function ToolLine({ entry, onOpenFile }: { entry: ToolCall
 export const AgentStepView = memo(function AgentStepView({
   groups,
   isStreaming,
+  agentRun,
   onOpenFile,
 }: {
   groups: StepGroup[]
   isStreaming: boolean
+  agentRun?: AgentRunSnapshot
   onOpenFile?: (path: string) => void
 }) {
-  const [expanded, setExpanded] = useState(true)
-  if (groups.length === 0) return null
+  const terminal = isAgentRunTerminal(agentRun)
+  const [expanded, setExpanded] = useState(() => !terminal)
+  const manuallyToggledRef = useRef(false)
+  const previousTerminalRef = useRef(terminal)
 
-  const totalCalls = groups.reduce((sum, group) => sum + group.toolCalls.length, 0)
+  useEffect(() => {
+    if (!previousTerminalRef.current && terminal && !manuallyToggledRef.current) {
+      setExpanded(false)
+    }
+    previousTerminalRef.current = terminal
+  }, [terminal])
+
+  if (groups.length === 0 && !agentRun) return null
+
+  const projectedToolCount = agentRun?.steps.reduce((sum, step) => sum + step.tools.length, 0)
+  const totalCalls = projectedToolCount ?? groups.reduce((sum, group) => sum + group.toolCalls.length, 0)
   const errorCount = groups.reduce(
     (sum, group) => sum + group.toolCalls.filter((entry) => entry.state === 'output-error').length,
     0,
   )
-  const summary = isStreaming
-    ? `正在使用工具 · ${totalCalls} 个操作`
-    : `已使用工具 · ${totalCalls} 个操作${errorCount ? ` · ${errorCount} 个错误` : ''}`
+  const effectiveStreaming = agentRun ? !terminal : isStreaming
+  const duration = formatAgentRunDuration(agentRun?.durationMs ?? agentRun?.usage?.durationMs)
+  const summary = effectiveStreaming
+    ? `${agentRun?.phase === 'summarizing' ? '正在总结' : agentRun?.status === 'cancelling' ? '正在停止' : '正在处理'} · ${totalCalls} 个操作`
+    : `${agentRun?.status === 'cancelled' ? '已停止' : agentRun?.status === 'failed' ? '执行失败' : '已处理'}${duration ? ` ${duration}` : ''} · ${totalCalls} 个操作${errorCount ? ` · ${errorCount} 个错误` : ''}`
 
   return (
     <div className="tool-events">
@@ -132,9 +150,12 @@ export const AgentStepView = memo(function AgentStepView({
         type="button"
         className="tool-events-summary"
         aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => {
+          manuallyToggledRef.current = true
+          setExpanded((value) => !value)
+        }}
       >
-        {isStreaming ? <Loader2 size={16} className="tool-spinner" /> : <Wrench size={16} />}
+        {effectiveStreaming ? <Loader2 size={16} className="tool-spinner" /> : <Wrench size={16} />}
         <span>{summary}</span>
         {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>

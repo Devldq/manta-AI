@@ -1,4 +1,5 @@
 /*  start: Manta 核心类型定义 — 所有模块共享，单向依赖（不导入任何内部模块）*/
+import type { AgentRunSnapshot } from '@manta/contracts'
 
 // ─── 任务状态机 ───────────────────────────────────────────────
 export type TaskStatus =
@@ -525,6 +526,8 @@ export interface ConversationMessage {
     noCacheTokens?: number
   }
   stepUsages?: StepUsageRecord[]
+  /** 后端权威的 Agent 运行快照，前端仅用于只读渲染。 */
+  agentRun?: AgentRunSnapshot
   /** 关联的智能体应用 ID（@调用时使用） */
   agentAppId?: string
 }

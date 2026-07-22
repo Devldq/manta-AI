@@ -4,6 +4,7 @@ import * as path from 'path'
 import { resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
 import type { Conversation, ConversationMessage, ToolCallRecord, StepUsageRecord } from '@core/types'
+import type { AgentRunSnapshot } from '@manta/contracts'
 
 function dataDir(): string { return resolveStoragePath('work', 'conversations') }
 
@@ -156,6 +157,7 @@ export function appendMessage(
   stepUsages?: StepUsageRecord[],
   agentAppId?: string,
   messageId?: string,
+  agentRun?: AgentRunSnapshot,
 ): { conv: Conversation; message: ConversationMessage } | null {
   const conv = readConv(convId)
   if (!conv) return null
@@ -173,6 +175,7 @@ export function appendMessage(
     ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
     ...(usage ? { usage } : {}),
     ...(stepUsages && stepUsages.length > 0 ? { stepUsages } : {}),
+    ...(agentRun ? { agentRun } : {}),
     ...(agentAppId ? { agentAppId } : {}),
   }
   conv.messages.push(msg)

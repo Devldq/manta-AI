@@ -8,7 +8,7 @@ export const TokenBreakdown = memo(function TokenBreakdown({ steps, open, onTogg
 
   // 找出所有步骤中最高的总 token 数，用于归一化进度条宽度
   const maxTotal = Math.max(...steps.map((s) =>
-    s.inputTokens + s.outputTokens + (s.cacheReadTokens ?? 0)
+    s.inputTokens + s.outputTokens
   ), 1)
 
   const totalIn = steps.reduce((a, s) => a + s.inputTokens, 0)
@@ -35,7 +35,7 @@ export const TokenBreakdown = memo(function TokenBreakdown({ steps, open, onTogg
         <span style={{ display: 'inline-block', transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform var(--duration-normal) var(--ease-out-quart)', fontSize: '9px', lineHeight: 1 }}>▼</span>
         Token 分析 · {stepCount} 步
         <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
-          in {fmtTokens(totalIn + totalCache)} out {fmtTokens(totalOut)}
+          in {fmtTokens(totalIn)} out {fmtTokens(totalOut)}
         </span>
         {totalCache > 0 && (
           <span style={{ color: 'var(--color-status-done, #10b981)' }}>cache +{fmtTokens(totalCache)}</span>
@@ -47,10 +47,10 @@ export const TokenBreakdown = memo(function TokenBreakdown({ steps, open, onTogg
         <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
           {steps.map((step, i) => {
             // 该步的各类 token
-            const noCache = step.noCacheTokens ?? step.inputTokens
             const cache = step.cacheReadTokens ?? 0
+            const noCache = step.noCacheTokens ?? Math.max(0, step.inputTokens - cache)
             const out = step.outputTokens
-            const total = noCache + cache + out
+            const total = step.inputTokens + out
 
             // 该步在进度条中的占比（相对于最高步）
             const ratio = maxTotal > 0 ? total / maxTotal : 0

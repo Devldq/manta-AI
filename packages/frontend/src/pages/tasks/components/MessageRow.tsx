@@ -8,6 +8,7 @@ import { ToolCallLog } from './ToolCallLog'
 import { TokenBreakdown } from './TokenBreakdown'
 import { useSmoothStreamingText } from './useSmoothStreamingText'
 import type { StepUsageData } from '../utils/types'
+import { getAgentRunSnapshot, isAgentRunTerminal } from '../runtime/agent-run-view'
 
 const MarkdownContent = memo(function MarkdownContent({ content, streaming, onOpenFile }: { content: string; streaming?: boolean; onOpenFile?: (path: string) => void }) {
   const { text, revealing } = useSmoothStreamingText(content, Boolean(streaming))
@@ -46,8 +47,10 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
   const [tokenDetailOpen, setTokenDetailOpen] = useState(false)
 
   const content = getTextContent(message)
+  const agentRun = useMemo(() => getAgentRunSnapshot(message.parts, message.metadata), [message.parts, message.metadata])
+  const effectiveStreaming = agentRun ? !isAgentRunTerminal(agentRun) : isStreaming
   // 不再提取扁平工具调用列表，而是将 parts 传给 ToolCallLog
-  const hasToolCalls = message.parts.some(
+  const hasToolCalls = Boolean(agentRun) || message.parts.some(
     (p) =>
       p.type === 'dynamic-tool' ||
       (typeof p.type === 'string' && p.type.startsWith('tool-') && p.type !== 'tool-invocation')
@@ -82,7 +85,7 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
 
   const hasLive = liveStepUsages && liveStepUsages.length > 0
   const effectiveStepUsages = metaStepUsages ?? (hasLive ? liveStepUsages : undefined)
-  const effectiveUsage = metaUsage ?? (hasLive ? {
+  const effectiveUsage = agentRun?.usage ?? metaUsage ?? (hasLive ? {
     inputTokens: liveStepUsages!.reduce((a, s) => a + s.inputTokens, 0),
     outputTokens: liveStepUsages!.reduce((a, s) => a + s.outputTokens, 0),
     cacheReadTokens: liveStepUsages!.reduce((a, s) => a + (s.cacheReadTokens ?? 0), 0) || undefined,
@@ -91,8 +94,8 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
   } : undefined)
 
   // Token 是完成态元数据，不能在最终答复前抢先呈现为“结果”。
-  const showTokenAnalysis = !isStreaming && effectiveUsage && (effectiveUsage.inputTokens != null || effectiveUsage.outputTokens != null)
-  const hasStepUsages = !isStreaming && effectiveStepUsages && effectiveStepUsages.length > 1
+  const showTokenAnalysis = !effectiveStreaming && effectiveUsage && (effectiveUsage.inputTokens != null || effectiveUsage.outputTokens != null)
+  const hasStepUsages = !effectiveStreaming && effectiveStepUsages && effectiveStepUsages.length > 1
 
   async function handleCopy() {
     try {
@@ -142,14 +145,14 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
 
         {/* 工具调用日志（步骤视图） */}
         {hasToolCalls && (
-          <ToolCallLog parts={message.parts} isStreaming={isStreaming} onOpenFile={onOpenFile} />
+          <ToolCallLog parts={message.parts} isStreaming={effectiveStreaming} agentRun={agentRun} onOpenFile={onOpenFile} />
         )}
 
         {/* 主内容区 */}
         {content ? (
           <div style={{ position: 'relative' }}>
             {/* 复制按钮 */}
-            {!isStreaming && (
+            {!effectiveStreaming && (
               <button onClick={handleCopy} style={{ position: 'absolute', top: 0, right: 0, opacity: hovered ? 0.45 : 0, transition: 'opacity 0.15s', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', zIndex: 2 }}
                 onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
                 onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.45' }}>
@@ -160,12 +163,12 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
             <div
               style={{ fontSize: '13px', lineHeight: '1.55', color: 'var(--color-text-primary)', wordBreak: 'break-word' }}
             >
-              <MarkdownContent content={content} streaming={isStreaming} onOpenFile={onOpenFile} />
+              <MarkdownContent content={content} streaming={effectiveStreaming} onOpenFile={onOpenFile} />
             </div>
           </div>
         ) : (
           <span style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>
-            {isStreaming ? (
+            {effectiveStreaming ? (
               <span className="agent-thinking" aria-label="正在生成回复">
                 <span className="agent-thinking-dot" />
                 <span className="agent-thinking-dot" />
@@ -187,7 +190,7 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
                 <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>out {fmtTokens(effectiveUsage.outputTokens)}</span>
               )}
               {effectiveUsage.inputTokens != null && effectiveUsage.outputTokens != null && (
-                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>· {fmtTokens(effectiveUsage.inputTokens + effectiveUsage.outputTokens + (effectiveUsage.cacheReadTokens ?? 0))} total</span>
+                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>· {fmtTokens(effectiveUsage.inputTokens + effectiveUsage.outputTokens)} total</span>
               )}
               {effectiveUsage.cacheReadTokens != null && effectiveUsage.cacheReadTokens > 0 && (
                 <span style={{ fontSize: '9px', color: 'var(--color-text-success, #10b981)', fontFamily: 'var(--font-mono)' }}>cache hit {fmtTokens(effectiveUsage.cacheReadTokens)}</span>

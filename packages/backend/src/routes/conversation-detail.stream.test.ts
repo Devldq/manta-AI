@@ -18,14 +18,13 @@ function createStreamHarness() {
   response.end = vi.fn()
 
   const runtime = {
-    subscribe: vi.fn((_jobId: string, next: (event: JobEvent) => void) => {
+    subscribeFrom: vi.fn((_jobId: string, _afterSeq: number, next: (event: JobEvent) => void) => {
       listener = next
       return unsubscribe
     }),
-    events: vi.fn(() => []),
     getJob: vi.fn(() => ({ id: 'job-1', status: 'running' })),
   } as unknown as TaskRuntime
-  const job = { id: 'job-1', status: 'running' } as Job
+  const job = { id: 'job-1', status: 'running', metadata: { conversationId: 'conversation-1' } } as unknown as Job
   const request = { raw: new EventEmitter() }
   const reply = { raw: response, hijack: vi.fn() }
 
@@ -61,6 +60,23 @@ describe('streamAgentJob', () => {
     harness.response.emit('close')
 
     expect(harness.unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('projects cancellation from TaskRuntime before the job becomes terminal', () => {
+    const harness = createStreamHarness()
+    harness.listener()?.({
+      jobId: 'job-1',
+      seq: 4,
+      type: 'job.cancellation_requested',
+      timestamp: '2026-07-22T10:00:00.000Z',
+      data: {},
+    })
+
+    const payload = String(harness.response.write.mock.calls[0][0])
+    expect(payload).toContain('data-agent-run')
+    expect(payload).toContain('run.cancellation_requested')
+    expect(payload).toContain('cancelling')
+    expect(harness.response.end).not.toHaveBeenCalled()
   })
 })
 

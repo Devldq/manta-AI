@@ -23,6 +23,7 @@ import { storedMessageToUIMessage } from './utils/formatters'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { createStepUsageInterceptor } from './step-usage-sse'
 import { withPendingAssistantMessage } from './pending-assistant'
+import { getAgentRunSnapshot, isAgentRunTerminal } from './runtime/agent-run-view'
 
 const DEFAULT_AGENT = 'main'
 
@@ -145,7 +146,7 @@ function ChatView({
   }, [])
   const pendingMsgKey = `manta:pending-msg:${convId}`
 
-  const { messages, setMessages, sendMessage, stop, status, error } = useChat({
+  const { messages, setMessages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({
       api: workspaceId
         ? `/api/conversations/${convId}/ai-stream?type=workspace&workspaceId=${workspaceId}`
@@ -157,7 +158,13 @@ function ChatView({
     id: convId,
   })
 
-  const isLoading = status === 'submitted' || status === 'streaming'
+  const isTransportLoading = status === 'submitted' || status === 'streaming'
+  const hasActiveAgentRun = useMemo(() => messages.some(message => {
+    if (message.role !== 'assistant') return false
+    const snapshot = getAgentRunSnapshot(message.parts, message.metadata)
+    return Boolean(snapshot && !isAgentRunTerminal(snapshot))
+  }), [messages])
+  const isLoading = isTransportLoading || awaitingAssistant || hasActiveAgentRun
 
   // Track the new turn independently from useChat.status. During reconnect and
   // request setup the status can briefly be ready even though the user message
@@ -177,7 +184,7 @@ function ChatView({
   // ─── SSE 重连 ─────────────────────────────────────────────────────────
   const reconnect = useReconnectSSE(
     convId,
-    !isLoading && status === 'ready',
+    !isTransportLoading && status === 'ready',
     workspaceId,
     (data) => {
       setLiveStepUsages((prev) => [
@@ -246,6 +253,7 @@ function ChatView({
                     timestamp: serverMsg.timestamp,
                     usage: serverMsg.usage ?? null,
                     stepUsages: serverMsg.stepUsages ?? null,
+                    agentRun: serverMsg.agentRun ?? null,
                   },
                 }
               }
@@ -293,10 +301,16 @@ function ChatView({
 
   // ─── 自定义停止 ────────────────────────────────────────────────
   async function handleStop() {
-    await fetch(buildConvUrl('/stop'), { method: 'POST' }).catch(() => {})
-    pendingTurnStartRef.current = null
-    setAwaitingAssistant(false)
-    stop()
+    const activeRun = [...messages]
+      .reverse()
+      .filter(message => message.role === 'assistant')
+      .map(message => getAgentRunSnapshot(message.parts, message.metadata))
+      .find(snapshot => snapshot && !isAgentRunTerminal(snapshot))
+    await fetch(buildConvUrl('/stop'), {
+      method: 'POST',
+      headers: activeRun ? { 'Content-Type': 'application/json' } : undefined,
+      body: activeRun ? JSON.stringify({ expectedRunId: activeRun.runId }) : undefined,
+    }).catch(() => {})
   }
 
   // ─── 合并重连流式内容到消息列表 ────────────────────────────────────────────
