@@ -155,6 +155,7 @@ pnpm build
 
 ## 更多文档
 
+- [RAG 召回测评详细设计](docs/technical-design/11-rag-evaluation-v2.md)
 - [ASH 用户指南](docs/guides/agent-storage-hub.md)
 - [ASH 开发与打包指南](docs/development/agent-storage-hub.md)
 - [ASH 故障排查](docs/troubleshooting/agent-storage-hub.md)

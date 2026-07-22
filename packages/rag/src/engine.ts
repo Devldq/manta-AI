@@ -102,6 +102,8 @@ function rechunk(raw: DocumentChunk[], metadata: DocumentMetadata, strategy: Chu
       result.push({
         id: `${metadata.name}_${globalIndex}`,
         documentId: metadata.id,
+        sourceSha256: parent.sourceSha256 ?? metadata.sourceSha256,
+        sourceVersion: parent.sourceVersion,
         content,
         startIndex: start,
         endIndex: start + content.length,

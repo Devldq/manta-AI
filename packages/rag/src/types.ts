@@ -22,6 +22,8 @@ export interface DocumentMetadata {
 export interface DocumentChunk {
   id: string
   documentId: string
+  sourceSha256?: string
+  sourceVersion?: string
   content: string
   metadata: Record<string, unknown>
   embedding?: number[]

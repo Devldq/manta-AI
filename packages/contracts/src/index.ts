@@ -242,36 +242,215 @@ export const RetrievalStrategySchema = z.object({
 })
 export type RetrievalStrategy = z.infer<typeof RetrievalStrategySchema>
 
+export const RetrievalEvalExpectedBehaviorSchema = z.enum(['answerable', 'no_answer', 'deny'])
+export type RetrievalEvalExpectedBehavior = z.infer<typeof RetrievalEvalExpectedBehaviorSchema>
+
+export const RetrievalEvalEvidenceLocatorSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('text'), startOffset: z.number().int().nonnegative(), endOffset: z.number().int().positive() }),
+  z.object({ kind: z.literal('pdf'), page: z.number().int().positive(), startOffset: z.number().int().nonnegative().optional(), endOffset: z.number().int().positive().optional() }),
+  z.object({ kind: z.literal('table'), page: z.number().int().positive().optional(), tableId: z.string().min(1), row: z.number().int().nonnegative().optional(), column: z.number().int().nonnegative().optional() }),
+])
+export type RetrievalEvalEvidenceLocator = z.infer<typeof RetrievalEvalEvidenceLocatorSchema>
+
+export const RetrievalEvalEvidenceAnchorSchema = z.object({
+  id: z.string().min(1),
+  documentId: z.string().min(1),
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  sourceVersion: z.string().min(1).optional(),
+  locator: RetrievalEvalEvidenceLocatorSchema.optional(),
+  quote: z.string().min(1),
+  quoteHash: z.string().min(1).optional(),
+})
+export type RetrievalEvalEvidenceAnchor = z.infer<typeof RetrievalEvalEvidenceAnchorSchema>
+
+export const RetrievalEvalEvidenceGroupSchema = z.object({
+  id: z.string().min(1),
+  factIds: z.array(z.string().min(1)).default([]),
+  required: z.boolean().default(true),
+  alternatives: z.array(RetrievalEvalEvidenceAnchorSchema).min(1),
+})
+export type RetrievalEvalEvidenceGroup = z.infer<typeof RetrievalEvalEvidenceGroupSchema>
+
+export const RetrievalEvalSourceJudgmentSchema = z.object({
+  documentId: z.string().min(1),
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  grade: z.number().int().min(0).max(3),
+  reason: z.string().min(1).optional(),
+})
+export type RetrievalEvalSourceJudgment = z.infer<typeof RetrievalEvalSourceJudgmentSchema>
+
+export const RetrievalEvalForbiddenSourceSchema = z.object({
+  documentId: z.string().min(1),
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  reason: z.enum(['outdated', 'unauthorized', 'known_wrong', 'confuser']),
+})
+export type RetrievalEvalForbiddenSource = z.infer<typeof RetrievalEvalForbiddenSourceSchema>
+
+export const RetrievalEvalPrincipalSchema = z.object({
+  id: z.string().min(1),
+  roles: z.array(z.string().min(1)).default([]),
+  attributes: z.record(z.string(), JsonValueSchema).default({}),
+})
+export type RetrievalEvalPrincipal = z.infer<typeof RetrievalEvalPrincipalSchema>
+
+export const LegacyRelevantSourceSchema = z.object({
+  documentId: z.string().min(1),
+  quote: z.string().min(1),
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  startOffset: z.number().int().nonnegative().optional(),
+  endOffset: z.number().int().positive().optional(),
+})
+
+export const RetrievalEvalCaseSchema = z.object({
+  id: z.string().min(1),
+  familyId: z.string().min(1).optional(),
+  query: z.string().min(1),
+  source: z.enum(['production_log', 'incident', 'expert', 'synthetic']).default('expert'),
+  split: z.enum(['dev', 'regression', 'challenge']).default('dev'),
+  risk: z.enum(['normal', 'high', 'critical']).default('normal'),
+  expectedBehavior: RetrievalEvalExpectedBehaviorSchema.default('answerable'),
+  expectedAnswerSummary: z.string().min(1).optional(),
+  requiredFacts: z.array(z.object({ id: z.string().min(1), description: z.string().min(1) })).default([]),
+  evidenceGroups: z.array(RetrievalEvalEvidenceGroupSchema).default([]),
+  relevanceJudgments: z.array(RetrievalEvalSourceJudgmentSchema).default([]),
+  forbiddenSources: z.array(RetrievalEvalForbiddenSourceSchema).default([]),
+  slices: z.array(z.string().min(1)).default([]),
+  principal: RetrievalEvalPrincipalSchema.optional(),
+  /** Legacy V1 input. New datasets should use evidenceGroups. */
+  relevantSources: z.array(LegacyRelevantSourceSchema).default([]),
+}).superRefine((item, context) => {
+  const evidenceCount = item.evidenceGroups.reduce((sum, group) => sum + group.alternatives.length, 0) + item.relevantSources.length
+  if (item.expectedBehavior === 'answerable' && evidenceCount === 0) {
+    context.addIssue({ code: 'custom', message: 'Answerable cases require at least one evidence anchor', path: ['evidenceGroups'] })
+  }
+  if (item.expectedBehavior !== 'answerable' && item.evidenceGroups.some((group) => group.required)) {
+    context.addIssue({ code: 'custom', message: 'No-answer and deny cases cannot have required evidence groups', path: ['evidenceGroups'] })
+  }
+})
+export type RetrievalEvalCase = z.infer<typeof RetrievalEvalCaseSchema>
+
 export const EvaluationDatasetSchema = z.object({
   id: z.string().min(1),
+  datasetId: z.string().min(1).optional(),
+  version: z.number().int().positive().default(1),
+  status: z.enum(['draft', 'in_review', 'published', 'retired']).default('draft'),
   knowledgeBaseId: z.string().min(1),
   name: z.string().min(1),
-  queries: z.array(z.object({
-    id: z.string().min(1),
-    query: z.string().min(1),
-    relevantSources: z.array(z.object({
-      documentId: z.string().min(1),
-      quote: z.string().min(1),
-      startOffset: z.number().int().nonnegative().optional(),
-      endOffset: z.number().int().nonnegative().optional(),
-    })).min(1),
-  })).min(1),
+  description: z.string().optional(),
+  sourceManifestHash: z.string().min(1).optional(),
+  metricSpecVersion: z.string().min(1).default('retrieval-v2.0'),
+  queries: z.array(RetrievalEvalCaseSchema).min(1),
+  createdAt: z.string().datetime().optional(),
+  publishedAt: z.string().datetime().optional(),
 })
 export type EvaluationDataset = z.infer<typeof EvaluationDatasetSchema>
+
+export const RetrievalEvalForbiddenHitsSchema = z.object({
+  outdated: z.boolean(),
+  unauthorized: z.boolean(),
+  knownWrong: z.boolean(),
+  confuser: z.boolean(),
+})
+export type RetrievalEvalForbiddenHits = z.infer<typeof RetrievalEvalForbiddenHitsSchema>
+
+export const RetrievalEvalCaseMetricsSchema = z.object({
+  docHit: z.number().min(0).max(1).nullable(),
+  docRecall: z.number().min(0).max(1).nullable(),
+  evidenceRecall: z.number().min(0).max(1).nullable(),
+  completeEvidenceHit: z.number().min(0).max(1).nullable(),
+  mrr: z.number().min(0).max(1).nullable(),
+  ndcg: z.number().min(0).max(1).nullable(),
+  newEvidencePrecision: z.number().min(0).max(1).nullable(),
+  evidenceChunkPrecision: z.number().min(0).max(1).nullable(),
+  redundancyRate: z.number().min(0).max(1).nullable(),
+  noRelevantHit: z.number().min(0).max(1).nullable(),
+  falseSupport: z.number().min(0).max(1).nullable(),
+  correctNoEvidence: z.number().min(0).max(1).nullable(),
+  minimalCompleteK: z.number().int().positive().nullable(),
+  forbiddenHits: RetrievalEvalForbiddenHitsSchema,
+})
+export type RetrievalEvalCaseMetrics = z.infer<typeof RetrievalEvalCaseMetricsSchema>
+
+export const RetrievalEvalChunkTraceSchema = z.object({
+  rank: z.number().int().positive(),
+  chunkId: z.string().min(1),
+  documentId: z.string().min(1),
+  sourceSha256: z.string().optional(),
+  sourceVersion: z.string().optional(),
+  content: z.string(),
+  contentHash: z.string().min(1),
+  score: z.number(),
+  startIndex: z.number().int().nonnegative().optional(),
+  endIndex: z.number().int().nonnegative().optional(),
+  relevantGrade: z.number().int().min(0).max(3),
+  matchedAnchorIds: z.array(z.string()),
+  matchedGroupIds: z.array(z.string()),
+  newlyCoveredGroupIds: z.array(z.string()),
+  forbiddenReasons: z.array(z.enum(['outdated', 'unauthorized', 'known_wrong', 'confuser'])),
+})
+export type RetrievalEvalChunkTrace = z.infer<typeof RetrievalEvalChunkTraceSchema>
+
+export const RetrievalEvalQueryTraceSchema = z.object({
+  queryId: z.string().min(1),
+  familyId: z.string().min(1),
+  query: z.string().min(1),
+  expectedBehavior: RetrievalEvalExpectedBehaviorSchema,
+  risk: z.enum(['normal', 'high', 'critical']),
+  split: z.enum(['dev', 'regression', 'challenge']),
+  slices: z.array(z.string()),
+  forbiddenReasonsExpected: z.array(z.enum(['outdated', 'unauthorized', 'known_wrong', 'confuser'])),
+  latencyMs: z.number().nonnegative(),
+  status: z.enum(['scored', 'infra_failed', 'invalid_gold']),
+  candidateResults: z.array(RetrievalEvalChunkTraceSchema),
+  finalResults: z.array(RetrievalEvalChunkTraceSchema),
+  candidateMetricsByK: z.record(z.string(), RetrievalEvalCaseMetricsSchema),
+  metricsByK: z.record(z.string(), RetrievalEvalCaseMetricsSchema),
+  error: z.object({ code: z.string(), message: z.string() }).optional(),
+})
+export type RetrievalEvalQueryTrace = z.infer<typeof RetrievalEvalQueryTraceSchema>
+
+const NullableRateByKSchema = z.record(z.string(), z.number().min(0).max(1).nullable())
+
+export const RetrievalEvaluationMetricsSchema = z.object({
+  metricSpecVersion: z.string().min(1),
+  kValues: z.array(z.number().int().positive()),
+  caseCount: z.number().int().nonnegative(),
+  familyCount: z.number().int().nonnegative(),
+  answerableCaseCount: z.number().int().nonnegative(),
+  noAnswerCaseCount: z.number().int().nonnegative(),
+  infraFailureCount: z.number().int().nonnegative(),
+  docHitAtK: NullableRateByKSchema,
+  docRecallAtK: NullableRateByKSchema,
+  evidenceRecallAtK: NullableRateByKSchema,
+  completeEvidenceHitAtK: NullableRateByKSchema,
+  mrrAtK: NullableRateByKSchema,
+  ndcgByK: NullableRateByKSchema,
+  newEvidencePrecisionAtK: NullableRateByKSchema,
+  evidenceChunkPrecisionAtK: NullableRateByKSchema,
+  redundancyRateAtK: NullableRateByKSchema,
+  noRelevantHitRateAtK: NullableRateByKSchema,
+  forbiddenHitRateAtK: z.record(z.string(), z.object({
+    outdated: z.number().min(0).max(1).nullable(),
+    unauthorized: z.number().min(0).max(1).nullable(),
+    knownWrong: z.number().min(0).max(1).nullable(),
+    confuser: z.number().min(0).max(1).nullable(),
+  })),
+  latencyP50Ms: z.number().nonnegative(),
+  latencyP95Ms: z.number().nonnegative(),
+  /** Legacy aliases retained for old SDK/UI clients. */
+  recallAtK: z.number().min(0).max(1).optional(),
+  mrr: z.number().min(0).max(1).optional(),
+  ndcgAtK: z.number().min(0).max(1).optional(),
+  zeroResultRate: z.number().min(0).max(1).optional(),
+})
+export type RetrievalEvaluationMetrics = z.infer<typeof RetrievalEvaluationMetricsSchema>
 
 export const EvaluationRunSchema = z.object({
   id: z.string().min(1),
   datasetId: z.string().min(1),
   strategyVersionId: z.string().min(1),
   status: z.enum(['queued', 'running', 'succeeded', 'failed']),
-  metrics: z.object({
-    recallAtK: z.number(),
-    mrr: z.number(),
-    ndcgAtK: z.number(),
-    zeroResultRate: z.number(),
-    latencyP50Ms: z.number().nonnegative(),
-    latencyP95Ms: z.number().nonnegative(),
-  }).optional(),
+  metrics: RetrievalEvaluationMetricsSchema.optional(),
   createdAt: z.string().datetime(),
   completedAt: z.string().datetime().optional(),
 })

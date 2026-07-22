@@ -81,6 +81,8 @@ function chunkFromPayload(payload: QdrantPayload): DocumentChunk | null {
   return {
     id,
     documentId,
+    sourceSha256: asString(payload.source_sha256),
+    sourceVersion: asString(payload.source_version),
     content,
     metadata: payloadOf(payload.metadata),
     startIndex: asNumber(payload.start_index),
@@ -203,6 +205,8 @@ export class QdrantProvider implements RAGProvider {
         original_id: chunk.id,
         document_id: document.id,
         document_name: document.name,
+        ...(chunk.sourceSha256 || document.sourceSha256 ? { source_sha256: chunk.sourceSha256 ?? document.sourceSha256 } : {}),
+        ...(chunk.sourceVersion ? { source_version: chunk.sourceVersion } : {}),
         content: chunk.content,
         metadata: chunk.metadata,
         // A crashed ingest must never expose a partially written document.

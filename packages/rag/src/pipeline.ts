@@ -184,6 +184,8 @@ export class DocumentPipeline {
         result.push({
           id: `${sourceName}_${globalIndex}`,
           documentId,
+          sourceSha256: raw.sourceSha256 ?? metadata.sourceSha256,
+          sourceVersion: raw.sourceVersion,
           content: subText,
           startIndex: absStart,
           endIndex: absEnd,
