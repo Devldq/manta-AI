@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { EvaluationDatasetSchema, RetrievalStrategySchema, type EvaluationDataset, type RetrievalStrategy, type JsonValue } from '@manta/contracts'
+import {
+  EvaluationDatasetSchema,
+  RetrievalStrategySchema,
+  type EvaluationDataset,
+  type JsonValue,
+  type RetrievalEvalQueryTrace,
+  type RetrievalEvaluationMetrics,
+  type RetrievalStrategy,
+} from '@manta/contracts'
 import { durableAtomicWrite, durableMkdir } from '../../../storage/durable-atomic.js'
 
 export type StrategyBuildStatus = 'draft' | 'building' | 'ready' | 'failed'
@@ -12,20 +20,10 @@ export interface StrategyVersion extends RetrievalStrategy {
   indexPrefix: string
   indexReference?: string
   corpusSnapshot: Array<{ documentId: string; sourceSha256: string; size: number }>
-  evaluationSummary?: Record<string, number>
+  evaluationSummary?: RetrievalEvaluationMetrics
   createdAt: string
   updatedAt: string
   error?: string
-}
-
-export interface EvaluationQueryResult {
-  queryId: string
-  query: string
-  latencyMs: number
-  retrieved: Array<{ documentId: string; content: string; score: number; relevant: boolean }>
-  recall: number
-  reciprocalRank: number
-  ndcg: number
 }
 
 export interface StoredEvaluationRun {
@@ -33,8 +31,12 @@ export interface StoredEvaluationRun {
   datasetId: string
   strategyVersionId: string
   status: 'running' | 'succeeded' | 'failed'
-  metrics?: { recallAtK: number; mrr: number; ndcgAtK: number; zeroResultRate: number; latencyP50Ms: number; latencyP95Ms: number }
-  queries: EvaluationQueryResult[]
+  kValues: number[]
+  metricSpecVersion: string
+  sourceManifestHash?: string
+  metrics?: RetrievalEvaluationMetrics
+  sliceMetrics?: Record<string, RetrievalEvaluationMetrics>
+  queries: RetrievalEvalQueryTrace[]
   createdAt: string
   completedAt?: string
   error?: string
@@ -92,16 +94,63 @@ export class RetrievalLabStore {
   }
 
   createDataset(input: EvaluationDataset): EvaluationDataset {
-    const parsed = EvaluationDatasetSchema.parse({ ...input, id: input.id || randomUUID() })
+    const now = new Date().toISOString()
+    const parsed = EvaluationDatasetSchema.parse({
+      ...input,
+      id: input.id || randomUUID(),
+      datasetId: input.datasetId || input.id,
+      status: input.status ?? 'draft',
+      createdAt: input.createdAt ?? now,
+    })
     this.write('datasets', parsed.id, parsed)
     return parsed
   }
 
-  getDataset(id: string): EvaluationDataset | undefined { return this.read<EvaluationDataset>('datasets', id) }
-  listDatasets(knowledgeBaseId?: string): EvaluationDataset[] { return this.list<EvaluationDataset>('datasets').filter((item) => !knowledgeBaseId || item.knowledgeBaseId === knowledgeBaseId) }
+  getDataset(id: string): EvaluationDataset | undefined {
+    const raw = this.read<Record<string, unknown>>('datasets', id)
+    if (!raw) return undefined
+    const parsed = EvaluationDatasetSchema.parse(raw)
+    if (!('status' in raw)) return { ...parsed, datasetId: parsed.datasetId ?? parsed.id, status: 'published' }
+    return { ...parsed, datasetId: parsed.datasetId ?? parsed.id }
+  }
 
-  createEvaluationRun(datasetId: string, strategyVersionId: string): StoredEvaluationRun {
-    const run: StoredEvaluationRun = { id: randomUUID(), datasetId, strategyVersionId, status: 'running', queries: [], createdAt: new Date().toISOString() }
+  listDatasets(knowledgeBaseId?: string): EvaluationDataset[] {
+    return this.list<Record<string, unknown>>('datasets')
+      .map((item) => {
+        const parsed = EvaluationDatasetSchema.parse(item)
+        return !('status' in item) ? { ...parsed, datasetId: parsed.datasetId ?? parsed.id, status: 'published' as const } : { ...parsed, datasetId: parsed.datasetId ?? parsed.id }
+      })
+      .filter((item) => !knowledgeBaseId || item.knowledgeBaseId === knowledgeBaseId)
+      .sort((left, right) => (right.createdAt ?? '').localeCompare(left.createdAt ?? ''))
+  }
+
+  publishDataset(id: string): EvaluationDataset {
+    const current = this.getDataset(id)
+    if (!current) throw Object.assign(new Error(`Dataset ${id} was not found`), { code: 'EVALUATION_DATASET_NOT_FOUND' })
+    if (current.status === 'published') return current
+    const published = EvaluationDatasetSchema.parse({ ...current, status: 'published', publishedAt: new Date().toISOString() })
+    this.write('datasets', id, published)
+    return published
+  }
+
+  createDatasetVersion(id: string): EvaluationDataset {
+    const current = this.getDataset(id)
+    if (!current) throw Object.assign(new Error(`Dataset ${id} was not found`), { code: 'EVALUATION_DATASET_NOT_FOUND' })
+    const datasetId = current.datasetId ?? current.id
+    const nextVersion = Math.max(...this.listDatasets(current.knowledgeBaseId).filter((item) => (item.datasetId ?? item.id) === datasetId).map((item) => item.version), 0) + 1
+    return this.createDataset({
+      ...current,
+      id: randomUUID(),
+      datasetId,
+      version: nextVersion,
+      status: 'draft',
+      publishedAt: undefined,
+      createdAt: new Date().toISOString(),
+    })
+  }
+
+  createEvaluationRun(datasetId: string, strategyVersionId: string, kValues: number[], metricSpecVersion: string): StoredEvaluationRun {
+    const run: StoredEvaluationRun = { id: randomUUID(), datasetId, strategyVersionId, status: 'running', kValues, metricSpecVersion, queries: [], createdAt: new Date().toISOString() }
     this.write('runs', run.id, run)
     return run
   }

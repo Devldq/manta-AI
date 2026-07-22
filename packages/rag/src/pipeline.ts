@@ -87,7 +87,7 @@ export class DocumentPipeline {
 
       // 2. 分块
       emit('chunking', 0, '正在分块...')
-      const chunks = this.rechunk(rawChunks, metadata.id, metadata.name)
+      const chunks = this.rechunk(rawChunks, metadata.id, metadata.name, metadata.sourceSha256)
       this.options.signal?.throwIfAborted()
       emit('chunking', 100, `分块完成，共 ${chunks.length} 个块`)
 
@@ -153,10 +153,10 @@ export class DocumentPipeline {
    */
   async previewChunks(buffer: Buffer, metadata: DocumentMetadata): Promise<DocumentChunk[]> {
     const rawChunks = await this.parserFactory.parseDocument(buffer, metadata)
-    return this.rechunk(rawChunks, metadata.id, metadata.name)
+    return this.rechunk(rawChunks, metadata.id, metadata.name, metadata.sourceSha256)
   }
 
-  private rechunk(rawChunks: DocumentChunk[], documentId: string, documentName?: string): DocumentChunk[] {
+  private rechunk(rawChunks: DocumentChunk[], documentId: string, documentName?: string, sourceSha256?: string): DocumentChunk[] {
     const result: DocumentChunk[] = []
     const charSize = (this.options.chunkSize || 512) * TOKEN_TO_CHAR
     const charOverlap = (this.options.chunkOverlap || 50) * TOKEN_TO_CHAR
@@ -184,7 +184,7 @@ export class DocumentPipeline {
         result.push({
           id: `${sourceName}_${globalIndex}`,
           documentId,
-          sourceSha256: raw.sourceSha256 ?? metadata.sourceSha256,
+          sourceSha256: raw.sourceSha256 ?? sourceSha256,
           sourceVersion: raw.sourceVersion,
           content: subText,
           startIndex: absStart,
