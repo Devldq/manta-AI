@@ -43,6 +43,7 @@ describe('AgentPublicEventProjector', () => {
       toolName: 'readFile',
       toolCallId: 'call-1',
       input: { path: '/tmp/config', authorization: 'Bearer should-not-leak' },
+      publicReason: '配置入口已经定位，读取文件可以确认当前值。',
       source: 'builtin',
       concurrency: 'shared',
     })
@@ -78,6 +79,10 @@ describe('AgentPublicEventProjector', () => {
     ]))
     const toolStarted = events.find(event => event.type === 'tool.started')
     expect(toolStarted?.data).toMatchObject({ input: { authorization: '[已脱敏]' } })
+    expect(events.filter(event => event.type === 'progress.committed')).toHaveLength(2)
+    expect(projector.getSnapshot().steps[0].progressText).toBe(
+      '正在检查配置。\n配置入口已经定位，读取文件可以确认当前值。',
+    )
     expect(persist).toHaveBeenCalledOnce()
     expect(persist.mock.calls[0][0]).toMatchObject({
       status: 'completed',

@@ -170,6 +170,36 @@ describe('streaming message rendering', () => {
     expect(merged[0].purposeText).toBe('正在读取相关信息，确认当前实现。')
   })
 
+  it('prefers structured action rationales over generic provider narration', () => {
+    const groups: StepGroup[] = [{
+      stepIndex: 0,
+      purposeText: '我来读取文件。',
+      thinking: '我来读取文件。',
+      toolCalls: [],
+      isComplete: false,
+      isActive: true,
+    }]
+
+    const merged = mergeAgentRunProgress(groups, {
+      schemaVersion: 1,
+      runId: 'run-rationale',
+      conversationId: 'conversation-1',
+      messageId: 'assistant-1',
+      status: 'running',
+      phase: 'executing',
+      lastSeq: 4,
+      steps: [{
+        stepIndex: 0,
+        status: 'running',
+        startedAt: '2026-07-23T04:00:00.000Z',
+        progressText: '根目录版本是 2.0.0；继续读取 backend 清单可以核对两者是否一致。',
+        tools: [],
+      }],
+    })
+
+    expect(merged[0].thinking).toBe('根目录版本是 2.0.0；继续读取 backend 清单可以核对两者是否一致。')
+  })
+
   it('restores persisted progress and tool order after refresh', () => {
     const message = storedMessageToUIMessage({
       id: 'assistant-2',

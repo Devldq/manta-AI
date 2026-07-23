@@ -11,6 +11,12 @@ import type { AgentRuntimeEvent, AgentRuntimeExtension } from './runtime-hooks'
 const SECRET_KEY = /(authorization|cookie|password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)/i
 const MAX_PUBLIC_STRING = 2_000
 
+function appendProgressText(current: string | undefined, next: string): string {
+  const messages = current?.split('\n').map(item => item.trim()).filter(Boolean) ?? []
+  if (!messages.includes(next.trim())) messages.push(next.trim())
+  return messages.join('\n')
+}
+
 function sanitize(value: unknown, depth = 0): JsonValue {
   if (depth > 5) return '[已省略]'
   if (value === null || typeof value === 'boolean' || typeof value === 'number') return value
@@ -123,7 +129,9 @@ export class AgentPublicEventProjector {
       }
       case 'step.progress': {
         const step = this.snapshot.steps.find(item => item.stepIndex === event.data.stepIndex)
-        if (step) step.progressText = event.data.text
+        const progressText = appendProgressText(step?.progressText, event.data.text)
+        if (step?.progressText === progressText) return
+        if (step) step.progressText = progressText
         await this.emit('progress.committed', { text: event.data.text }, event.timestamp, event.data.stepIndex)
         return
       }
@@ -139,6 +147,18 @@ export class AgentPublicEventProjector {
       case 'tool.started': {
         const step = [...this.snapshot.steps].reverse().find(item => item.status === 'running')
         const toolCallId = event.data.toolCallId ?? `${event.data.toolName}:${event.sequence}`
+        if (step && event.data.publicReason) {
+          const progressText = appendProgressText(step.progressText, event.data.publicReason)
+          if (step.progressText !== progressText) {
+            step.progressText = progressText
+            await this.emit(
+              'progress.committed',
+              { text: event.data.publicReason },
+              event.timestamp,
+              step.stepIndex,
+            )
+          }
+        }
         if (step) {
           step.tools.push({
             toolCallId,

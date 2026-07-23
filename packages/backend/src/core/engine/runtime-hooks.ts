@@ -69,6 +69,7 @@ export interface AgentRuntimeEventMap {
     toolName: string
     toolCallId?: string
     input: unknown
+    publicReason?: string
     source: 'builtin' | 'mcp'
     concurrency: 'shared' | 'exclusive'
   }

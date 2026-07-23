@@ -1,5 +1,5 @@
 /* Agent 执行循环 — 手动实现 while 循环，每步调用 streamText 保持真流式 */
-import { streamText, type ModelMessage, stepCountIs } from 'ai'
+import { generateText, streamText, type ModelMessage, stepCountIs } from 'ai'
 import { transformChunk } from './stream-transformer'
 import { getAISDKModel } from '@llm/ai-sdk-provider'
 import { getLLMConfig } from '@llm/config-store'
@@ -30,6 +30,13 @@ import {
   runWithAgentRuntimeHooks,
   type AgentRuntimeExtension,
 } from './runtime-hooks'
+import {
+  getPublicToolReason,
+  matchesUserLanguage,
+  normalizePublicToolReason,
+  setPublicToolReason,
+  withoutPublicToolReason,
+} from '@tools/public-reason'
 
 /** Token 预算默认值 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 1_000_000
@@ -116,21 +123,6 @@ interface StopDecision {
 }
 
 export type BlankFinalResponseAction = 'not-blank' | 'retry' | 'fail'
-
-/**
- * Providers may call a tool without preceding text. Derive a safe public
- * progress message from the capability category instead of hidden reasoning
- * or potentially sensitive tool input.
- */
-export function buildPublicStepProgress(toolName: string): string {
-  const normalized = toolName.toLowerCase()
-  if (/(read|open|fetch|get)/.test(normalized)) return '正在读取相关信息，确认当前实现。'
-  if (/(search|grep|glob|find|list|scan)/.test(normalized)) return '正在定位相关文件和实现入口。'
-  if (/(edit|write|patch|replace|create|delete|remove)/.test(normalized)) return '正在修改相关实现，完成后会继续验证。'
-  if (/(bash|exec|terminal|shell|run|test|check|build)/.test(normalized)) return '正在执行验证命令并检查结果。'
-  if (/(browser|web|navigate|click|screenshot)/.test(normalized)) return '正在检查实际界面和交互结果。'
-  return '正在执行下一项操作并核对结果。'
-}
 
 /**
  * A provider may finish a step without tool calls but only return whitespace.
@@ -522,6 +514,48 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           abortSignal,  // 仅用户停止时触发（来自 LoopRegistry 的 AbortController）
           stopWhen: stepCountIs(1),
           providerOptions: cacheProviderOptions,
+          experimental_repairToolCall: async ({ toolCall }) => {
+            let parsedInput: unknown
+            try {
+              parsedInput = JSON.parse(toolCall.input)
+            } catch {
+              return null
+            }
+            if (getPublicToolReason(parsedInput)) return null
+
+            const cleanInput = withoutPublicToolReason(parsedInput)
+            let publicReason: string | undefined
+            for (let attempt = 0; attempt < 2 && !publicReason; attempt += 1) {
+              const rationaleResult = await generateText({
+                model,
+                system: [
+                  '你是 Agent 的公开执行说明生成器，不执行工具。',
+                  '只输出一句给用户看的自然语言说明，不得输出工具调用、XML、JSON、Markdown 或字段名。',
+                  '说明当前已知事实或不确定点、为什么下一步需要该动作、结果将验证什么。',
+                  '这不是私有思维链，不披露隐藏推理。必须与用户问题使用相同语言。',
+                ].join(''),
+                prompt: [
+                  `<用户问题>${(prompt || '用户要求继续当前任务').slice(0, 2_000)}</用户问题>`,
+                  `<下一动作>使用 ${toolCall.toolName} 获取必要证据；输入摘要为 ${JSON.stringify(cleanInput).slice(0, 1_000)}</下一动作>`,
+                  attempt === 0
+                    ? '直接写公开执行说明。'
+                    : '上一次格式不合格。只写自然语言句子，不能复述工具协议。',
+                ].join('\n'),
+                temperature: 0.2,
+                abortSignal,
+              })
+              const candidate = normalizePublicToolReason(rationaleResult.text)
+              if (candidate && matchesUserLanguage(candidate, prompt)) {
+                publicReason = candidate
+              }
+            }
+            if (!publicReason) return null
+
+            return {
+              ...toolCall,
+              input: JSON.stringify(setPublicToolReason(cleanInput, publicReason)),
+            }
+          },
         })
 
         // 收集本步结果
@@ -532,10 +566,27 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           usage: { inputTokens: 0, outputTokens: 0 },
           finishReason: '',
         }
-        let progressEmitted = false
+        const emittedToolRationales = new Set<string>()
 
         // 遍历 fullStream：收集数据 + 逐个通过 onChunk 输出
         for await (const chunk of result.fullStream) {
+          if (chunk.type === 'tool-call') {
+            const publicProgressText = getPublicToolReason(chunk.input)
+            if (!publicProgressText) {
+              throw new Error(`Tool ${chunk.toolName} did not provide a public action rationale`)
+            }
+            if (!emittedToolRationales.has(publicProgressText)) {
+              emittedToolRationales.add(publicProgressText)
+              stepCollect.publicProgressText = stepCollect.publicProgressText
+                ? `${stepCollect.publicProgressText}\n${publicProgressText}`
+                : publicProgressText
+              await runtimeHooks.emit('step.progress', {
+                stepIndex,
+                text: publicProgressText,
+              })
+            }
+          }
+
           // 将 fullStream chunk 转换为 UIMessageChunk 格式并立即输出
           const transformed = transformChunk(chunk as { type: string; [key: string]: unknown }, conversationId, messageId)
           if (transformed) {
@@ -572,19 +623,10 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
               stepCollect.text += chunk.text
               break
             case 'tool-call':
-              if (!progressEmitted) {
-                progressEmitted = true
-                const publicProgressText = stepCollect.text.trim() || buildPublicStepProgress(chunk.toolName)
-                stepCollect.publicProgressText = publicProgressText
-                await runtimeHooks.emit('step.progress', {
-                  stepIndex,
-                  text: publicProgressText,
-                })
-              }
               stepCollect.toolCalls.push({
                 toolCallId: chunk.toolCallId,
                 toolName: chunk.toolName,
-                input: chunk.input,
+                input: withoutPublicToolReason(chunk.input),
               })
               break
             case 'tool-result':

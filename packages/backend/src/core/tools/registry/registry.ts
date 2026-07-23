@@ -7,6 +7,12 @@ import type {
 } from './types';
 import { isToolVisible, DEFAULT_MCP_TIMEOUT } from './types';
 import { truncateResult, DEFAULT_MAX_RESULT_CHARS } from './utils';
+import {
+  getPublicToolReason,
+  validatePublicToolInput,
+  withPublicToolReason,
+  withoutPublicToolReason,
+} from '../public-reason';
 import { findWaitingForInputError } from '@manta/task-runtime';
 import { getAgentRuntimeHooks } from '../../engine/runtime-hooks';
 
@@ -342,9 +348,11 @@ export class ToolRegistry {
       result[tool.name] = {
         description: tool.description,
         inputSchema: useFullSchema
-          ? jsonSchema(tool.parameters as any)
-          : jsonSchema(PLACEHOLDER_SCHEMA as any),
+          ? jsonSchema(withPublicToolReason(tool.parameters) as any, { validate: validatePublicToolInput })
+          : jsonSchema(withPublicToolReason(PLACEHOLDER_SCHEMA) as any, { validate: validatePublicToolInput }),
         execute: async (input: any, options?: { toolCallId?: string }) => {
+          const publicReason = getPublicToolReason(input);
+          const toolInput = withoutPublicToolReason(input);
           // ── 自动发现：未发现的 MCP 工具首次调用时自动注册 ──
           if (!isBuiltin && !isDiscovered) {
             registry.discoveredTools.add(tool.name);
@@ -353,13 +361,14 @@ export class ToolRegistry {
 
           // 工具调用日志
           const logPrefix = tool.mcpServer ? `[MCP:${tool.mcpServer}]` : '[Tool]';
-          console.log(`${logPrefix} 调用 ${tool.name}`, JSON.stringify(input).slice(0, 200));
+          console.log(`${logPrefix} 调用 ${tool.name}`, JSON.stringify(toolInput).slice(0, 200));
 
           const runtimeHooks = getAgentRuntimeHooks();
           await runtimeHooks?.emit('tool.started', {
             toolName: tool.name,
             toolCallId: options?.toolCallId,
-            input,
+            input: toolInput,
+            publicReason,
             source: tool.mcpServer ? 'mcp' : 'builtin',
             concurrency: isSafe ? 'shared' : 'exclusive',
           });
@@ -372,7 +381,7 @@ export class ToolRegistry {
 
           const startTime = Date.now();
           try {
-            const raw = await executeFn(input);
+            const raw = await executeFn(toolInput);
             const elapsed = Date.now() - startTime;
             const normalizedRaw = raw === undefined
               ? '工具执行返回了 undefined'

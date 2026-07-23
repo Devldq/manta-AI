@@ -9,6 +9,7 @@
  */
 
 import { logger } from '@observability/log'
+import { withoutPublicToolReason } from '@tools/public-reason'
 
 /** 生成唯一 ID（使用随机后缀，避免多请求并发冲突） */
 function genId(): string {
@@ -65,20 +66,11 @@ export function transformChunk(
       return { type: 'reasoning-delta', id: (chunk.id as string) || genId(), delta: chunk.text as string }
 
     case 'tool-input-start':
-      // fullStream 用 id，UIMessageChunk 用 toolCallId
-      return {
-        type: 'tool-input-start',
-        toolCallId: (chunk.id as string) || genId(),
-        toolName: chunk.toolName as string,
-      }
+      // 工具理由位于结构化参数中；等完整 tool-call 后先发布理由，再展示工具。
+      return null
 
     case 'tool-input-delta':
-      // fullStream: { id, delta } → UIMessageChunk: { toolCallId, inputTextDelta }
-      return {
-        type: 'tool-input-delta',
-        toolCallId: (chunk.id as string) || genId(),
-        inputTextDelta: chunk.delta as string,
-      }
+      return null
 
     case 'tool-call':
       // fullStream tool-call → UIMessageChunk tool-input-available
@@ -86,7 +78,7 @@ export function transformChunk(
         type: 'tool-input-available',
         toolCallId: chunk.toolCallId as string,
         toolName: chunk.toolName as string,
-        input: chunk.args ?? chunk.input,
+        input: withoutPublicToolReason(chunk.args ?? chunk.input),
       }
 
     case 'tool-result':

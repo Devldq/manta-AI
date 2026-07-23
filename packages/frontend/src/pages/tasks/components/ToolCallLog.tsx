@@ -18,10 +18,10 @@ export function mergeAgentRunProgress(
   if (!agentRun) return groups
   return groups.map((group) => {
     const progressText = agentRun.steps.find(step => step.stepIndex === group.stepIndex)?.progressText
-    if (!progressText || group.thinking?.trim()) return group
+    if (!progressText) return group
     return {
       ...group,
-      purposeText: group.purposeText || progressText,
+      purposeText: progressText,
       thinking: progressText,
     }
   })
