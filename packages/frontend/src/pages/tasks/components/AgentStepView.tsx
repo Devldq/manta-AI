@@ -34,21 +34,11 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ size?: number; className?
 }
 
 const ThinkingBlock = memo(function ThinkingBlock({ text }: { text: string }) {
-  const [expanded, setExpanded] = useState(false)
   if (!text.trim()) return null
 
   return (
     <div className="agent-thinking-block">
-      <button
-        type="button"
-        className="agent-thinking-toggle"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
-      >
-        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <span>过程消息</span>
-      </button>
-      {expanded && <div className="agent-thinking-content">{text.trim()}</div>}
+      <div className="agent-thinking-content">{text.trim()}</div>
     </div>
   )
 })

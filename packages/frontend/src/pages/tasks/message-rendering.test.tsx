@@ -56,6 +56,28 @@ describe('streaming message rendering', () => {
     expect(html).not.toContain('source')
   })
 
+  it('shows each public execution intent directly before its tool while running', () => {
+    const groups: StepGroup[] = [{
+      stepIndex: 0,
+      purposeText: '正在定位相关文件和实现入口。',
+      thinking: '正在定位相关文件和实现入口。',
+      toolCalls: [{
+        toolCallId: 'grep-1',
+        toolName: 'grep',
+        state: 'input-available',
+        input: { pattern: 'AgentLoop' },
+        output: undefined,
+      }],
+      isComplete: false,
+      isActive: true,
+    }]
+    const html = renderToStaticMarkup(<AgentStepView groups={groups} isStreaming />)
+
+    expect(html).toContain('正在定位相关文件和实现入口。')
+    expect(html).toContain('AgentLoop')
+    expect(html).not.toContain('过程消息')
+  })
+
   it('separates a completed tool run from its task summary', () => {
     const html = renderToStaticMarkup(
       <MessageRow
