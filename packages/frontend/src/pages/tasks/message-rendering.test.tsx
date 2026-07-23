@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import { describe, expect, it } from 'vitest'
 import { AgentStepView } from './components/AgentStepView'
 import { MessageRow } from './components/MessageRow'
+import { mergeAgentRunProgress } from './components/ToolCallLog'
 import { extractStepGroups, getTextContent, storedMessageToUIMessage } from './utils/formatters'
 import { createMarkdownComponents } from './utils/markdown'
 import type { StepGroup } from './utils/types'
@@ -109,6 +110,42 @@ describe('streaming message rendering', () => {
     expect(groups[0].thinking).toBe('配置入口已定位，接下来检查保存接口。')
     expect(groups[0].toolCalls[0].toolName).toBe('readFile')
     expect(getTextContent(message)).toBe('保存链路已经修复。')
+  })
+
+  it('keeps backend progress when live tool parts do not contain provider text', () => {
+    const groups: StepGroup[] = [{
+      stepIndex: 0,
+      purposeText: '',
+      toolCalls: [{
+        toolCallId: 'read-1',
+        toolName: 'read',
+        state: 'output-available',
+        input: { file_path: 'package.json' },
+        output: 'source',
+      }],
+      isComplete: true,
+      isActive: false,
+    }]
+
+    const merged = mergeAgentRunProgress(groups, {
+      schemaVersion: 1,
+      runId: 'run-1',
+      conversationId: 'conversation-1',
+      messageId: 'assistant-1',
+      status: 'completed',
+      phase: 'completed',
+      lastSeq: 10,
+      steps: [{
+        stepIndex: 0,
+        status: 'completed',
+        startedAt: '2026-07-23T03:17:40.493Z',
+        progressText: '正在读取相关信息，确认当前实现。',
+        tools: [],
+      }],
+    })
+
+    expect(merged[0].thinking).toBe('正在读取相关信息，确认当前实现。')
+    expect(merged[0].purposeText).toBe('正在读取相关信息，确认当前实现。')
   })
 
   it('restores persisted progress and tool order after refresh', () => {

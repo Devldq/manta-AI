@@ -2,6 +2,7 @@ import { memo } from 'react'
 import type { AgentRunSnapshot } from '@manta/contracts'
 import { AgentStepView } from './AgentStepView'
 import { extractStepGroups } from '../utils/formatters'
+import type { StepGroup } from '../utils/types'
 
 interface ToolCallLogProps {
   parts: any[]
@@ -10,9 +11,25 @@ interface ToolCallLogProps {
   onOpenFile?: (path: string) => void
 }
 
+export function mergeAgentRunProgress(
+  groups: StepGroup[],
+  agentRun?: AgentRunSnapshot,
+): StepGroup[] {
+  if (!agentRun) return groups
+  return groups.map((group) => {
+    const progressText = agentRun.steps.find(step => step.stepIndex === group.stepIndex)?.progressText
+    if (!progressText || group.thinking?.trim()) return group
+    return {
+      ...group,
+      purposeText: group.purposeText || progressText,
+      thinking: progressText,
+    }
+  })
+}
+
 export const ToolCallLog = memo(function ToolCallLog({ parts, isStreaming, agentRun, onOpenFile }: ToolCallLogProps) {
   const streamedGroups = extractStepGroups(parts)
-  const groups = streamedGroups.length > 0 ? streamedGroups : (agentRun?.steps.map(step => ({
+  const groups = streamedGroups.length > 0 ? mergeAgentRunProgress(streamedGroups, agentRun) : (agentRun?.steps.map(step => ({
     stepIndex: step.stepIndex,
     purposeText: step.progressText ?? '',
     thinking: step.progressText,
