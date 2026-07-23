@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentPublicEvent, AgentRunUsage } from '@manta/contracts'
+import type { AgentPublicEvent, AgentRunSnapshot, AgentRunUsage } from '@manta/contracts'
 import { AgentPublicEventProjector } from './agent-public-events.js'
 import { AgentRuntimeHooks } from './runtime-hooks.js'
 
@@ -104,5 +104,59 @@ describe('AgentPublicEventProjector', () => {
     await projector.finalize('总结。', usage)
 
     expect(events.filter(event => event.type === 'summary.started')).toHaveLength(1)
+  })
+
+  it('continues a durable snapshot without dropping steps from a prior attempt', async () => {
+    const events: AgentPublicEvent[] = []
+    const initial: AgentRunSnapshot = {
+      schemaVersion: 1,
+      runId: 'run-resumed',
+      conversationId: 'conversation-1',
+      messageId: 'assistant-resumed',
+      status: 'running',
+      phase: 'executing',
+      lastSeq: 40,
+      startedAt: '2026-07-23T03:00:00.000Z',
+      steps: [{
+        stepIndex: 0,
+        status: 'completed',
+        startedAt: '2026-07-23T03:00:01.000Z',
+        completedAt: '2026-07-23T03:00:02.000Z',
+        progressText: '正在定位入口。',
+        tools: [{
+          toolCallId: 'call-old',
+          toolName: 'grep',
+          status: 'completed',
+        }],
+      }],
+    }
+    const projector = new AgentPublicEventProjector(
+      { runId: 'run-resumed', conversationId: 'conversation-1', messageId: 'assistant-resumed' },
+      event => { events.push(event) },
+      initial,
+    )
+    const hooks = new AgentRuntimeHooks({ runId: 'run-resumed' }, [projector.extension])
+
+    await hooks.emit('loop.started', {
+      resumed: true,
+      messageCount: 3,
+      model: 'test-model',
+      provider: 'test-provider',
+      maxSteps: 10,
+      maxOutputTokens: 1_000,
+    })
+    await hooks.emit('step.started', {
+      stepIndex: 1,
+      messageCount: 4,
+      toolCount: 1,
+      forcingFinalResponse: false,
+    })
+    await hooks.emit('step.progress', { stepIndex: 1, text: '正在读取配置。' })
+
+    const snapshot = projector.getSnapshot()
+    expect(snapshot.steps.map(step => step.stepIndex)).toEqual([0, 1])
+    expect(snapshot.steps[0].progressText).toBe('正在定位入口。')
+    expect(snapshot.steps[1].progressText).toBe('正在读取配置。')
+    expect(events[0].seq).toBeGreaterThan(40)
   })
 })

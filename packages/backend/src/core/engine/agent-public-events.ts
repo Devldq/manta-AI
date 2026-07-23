@@ -42,14 +42,25 @@ export class AgentPublicEventProjector {
   constructor(
     private readonly context: { runId: string; conversationId: string; messageId: string },
     private readonly sink: (event: AgentPublicEvent) => Promise<number | void> | number | void,
+    initialSnapshot?: AgentRunSnapshot,
   ) {
-    this.snapshot = {
-      schemaVersion: 1,
-      ...context,
-      status: 'queued',
-      phase: 'queued',
-      lastSeq: 0,
-      steps: [],
+    const canResume = initialSnapshot
+      && initialSnapshot.runId === context.runId
+      && initialSnapshot.conversationId === context.conversationId
+      && initialSnapshot.messageId === context.messageId
+    if (canResume) {
+      this.snapshot = structuredClone(initialSnapshot)
+      this.phase = initialSnapshot.phase
+      this.publicSeq = initialSnapshot.lastSeq
+    } else {
+      this.snapshot = {
+        schemaVersion: 1,
+        ...context,
+        status: 'queued',
+        phase: 'queued',
+        lastSeq: 0,
+        steps: [],
+      }
     }
   }
 

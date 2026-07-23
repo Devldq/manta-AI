@@ -206,6 +206,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   // Durable jobs persist the same ordered runtime event stream used by custom
   // extensions. This makes lifecycle history available for diagnostics and replay.
   const effectiveRuntimeExtensions: AgentRuntimeExtension[] = [...(runtimeExtensions ?? [])]
+  const resumedPublicSnapshot = jobContext?.readCheckpoint('agent_public_snapshot') as unknown as AgentRunSnapshot | undefined
   const publicProjector = new AgentPublicEventProjector({
     runId: jobContext?.job.id ?? messageId,
     conversationId,
@@ -223,7 +224,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
       id: `${event.runId}:${event.seq}`,
       data: event,
     })}\n\n`)
-  })
+  }, resumedPublicSnapshot)
   let terminalSnapshotPersisted = false
   const persistTerminalSnapshot = () => {
     if (!jobContext || terminalSnapshotPersisted) return
@@ -267,6 +268,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
       onStepCommitted: jobContext ? (state) => {
         durableStepIndex = state.nextStepIndex
         jobContext.checkpoint('agent_loop_state', JSON.parse(JSON.stringify(state)) as JsonValue)
+        jobContext.checkpoint('agent_public_snapshot', publicProjector.getSnapshot() as unknown as JsonValue)
       } : undefined,
       onChunk: (data: string) => {
         if (jobContext) {
