@@ -91,6 +91,8 @@ export interface StepUsage {
 /** 单步收集的结果 */
 export interface StepCollect {
   text: string
+  /** 面向用户的执行进度摘要；不包含模型的隐藏推理。 */
+  publicProgressText?: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   toolCalls: any[]
   toolResults: { toolCallId: string; toolName: string; output: unknown; isError?: boolean }[]
@@ -114,6 +116,21 @@ interface StopDecision {
 }
 
 export type BlankFinalResponseAction = 'not-blank' | 'retry' | 'fail'
+
+/**
+ * Providers may call a tool without preceding text. Derive a safe public
+ * progress message from the capability category instead of hidden reasoning
+ * or potentially sensitive tool input.
+ */
+export function buildPublicStepProgress(toolName: string): string {
+  const normalized = toolName.toLowerCase()
+  if (/(read|open|fetch|get)/.test(normalized)) return '正在读取相关信息，确认当前实现。'
+  if (/(search|grep|glob|find|list|scan)/.test(normalized)) return '正在定位相关文件和实现入口。'
+  if (/(edit|write|patch|replace|create|delete|remove)/.test(normalized)) return '正在修改相关实现，完成后会继续验证。'
+  if (/(bash|exec|terminal|shell|run|test|check|build)/.test(normalized)) return '正在执行验证命令并检查结果。'
+  if (/(browser|web|navigate|click|screenshot)/.test(normalized)) return '正在检查实际界面和交互结果。'
+  return '正在执行下一项操作并核对结果。'
+}
 
 /**
  * A provider may finish a step without tool calls but only return whitespace.
@@ -555,11 +572,13 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
               stepCollect.text += chunk.text
               break
             case 'tool-call':
-              if (!progressEmitted && stepCollect.text.trim()) {
+              if (!progressEmitted) {
                 progressEmitted = true
+                const publicProgressText = stepCollect.text.trim() || buildPublicStepProgress(chunk.toolName)
+                stepCollect.publicProgressText = publicProgressText
                 await runtimeHooks.emit('step.progress', {
                   stepIndex,
-                  text: stepCollect.text.trim(),
+                  text: publicProgressText,
                 })
               }
               stepCollect.toolCalls.push({
@@ -1000,7 +1019,9 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
 
         const stepsForCallback = allStepCollects.map((s) => ({
           finishReason: s.finishReason,
-          progressText: s.toolCalls.length > 0 ? s.text.trim() : undefined,
+          progressText: s.toolCalls.length > 0
+            ? (s.publicProgressText ?? (s.text.trim() || undefined))
+            : undefined,
           toolCalls: s.toolCalls,
           toolResults: s.toolResults,
           usage: s.usage,

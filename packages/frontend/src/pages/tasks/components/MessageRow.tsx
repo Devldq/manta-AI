@@ -150,7 +150,12 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
 
         {/* 主内容区 */}
         {content ? (
-          <div style={{ position: 'relative' }}>
+          <section
+            className={hasToolCalls ? 'agent-task-summary' : undefined}
+            aria-label={hasToolCalls ? '任务总结' : undefined}
+            style={{ position: 'relative' }}
+          >
+            {hasToolCalls && <div className="agent-task-summary-title">{effectiveStreaming ? '正在总结' : '任务总结'}</div>}
             {/* 复制按钮 */}
             {!effectiveStreaming && (
               <button onClick={handleCopy} style={{ position: 'absolute', top: 0, right: 0, opacity: hovered ? 0.45 : 0, transition: 'opacity 0.15s', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', zIndex: 2 }}
@@ -165,7 +170,7 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
             >
               <MarkdownContent content={content} streaming={effectiveStreaming} onOpenFile={onOpenFile} />
             </div>
-          </div>
+          </section>
         ) : (
           <span style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>
             {effectiveStreaming ? (

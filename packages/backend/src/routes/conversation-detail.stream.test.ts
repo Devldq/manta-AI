@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Job, JobEvent } from '@manta/contracts'
 import type { TaskRuntime } from '@manta/task-runtime'
 import { latestStreamingAgentJob, streamAgentJob } from './conversation-detail.js'
-import { decideBlankFinalResponse, needsFinalResponseSynthesis } from '../core/engine/agent-loop.js'
+import {
+  buildPublicStepProgress,
+  decideBlankFinalResponse,
+  needsFinalResponseSynthesis,
+} from '../core/engine/agent-loop.js'
 
 function createStreamHarness() {
   let listener: ((event: JobEvent) => void) | undefined
@@ -114,6 +118,13 @@ describe('blank final response guard', () => {
   it('accepts real text and leaves tool steps running', () => {
     expect(decideBlankFinalResponse('完整答复', 0, 0)).toBe('not-blank')
     expect(decideBlankFinalResponse('', 1, 0)).toBe('not-blank')
+  })
+
+  it('creates safe public progress when a provider calls a tool without text', () => {
+    expect(buildPublicStepProgress('readFile')).toBe('正在读取相关信息，确认当前实现。')
+    expect(buildPublicStepProgress('grep')).toBe('正在定位相关文件和实现入口。')
+    expect(buildPublicStepProgress('bash')).toBe('正在执行验证命令并检查结果。')
+    expect(buildPublicStepProgress('unknown-tool')).toBe('正在执行下一项操作并核对结果。')
   })
 
   it('forces synthesis when an execution boundary lands on a tool or blank step', () => {

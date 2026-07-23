@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import ReactMarkdown from 'react-markdown'
 import { describe, expect, it } from 'vitest'
 import { AgentStepView } from './components/AgentStepView'
+import { MessageRow } from './components/MessageRow'
 import { extractStepGroups, getTextContent, storedMessageToUIMessage } from './utils/formatters'
 import { createMarkdownComponents } from './utils/markdown'
 import type { StepGroup } from './utils/types'
@@ -32,7 +33,7 @@ describe('streaming message rendering', () => {
     expect(html).not.toContain('language-mermaid')
   })
 
-  it('shows concise tool events while keeping each input and output folded', () => {
+  it('collapses completed execution details into a concise summary', () => {
     const groups: StepGroup[] = [{
       stepIndex: 0,
       purposeText: '',
@@ -49,9 +50,38 @@ describe('streaming message rendering', () => {
     const html = renderToStaticMarkup(<AgentStepView groups={groups} isStreaming={false} />)
 
     expect(html).toContain('已处理 · 1 个操作')
-    expect(html).toContain('已读取 src/app.ts')
     expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('已读取 src/app.ts')
     expect(html).not.toContain('source')
+  })
+
+  it('separates a completed tool run from its task summary', () => {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        agentName="default"
+        isStreaming={false}
+        message={{
+          id: 'assistant-summary',
+          role: 'assistant',
+          parts: [
+            {
+              type: 'dynamic-tool',
+              toolCallId: 'read-1',
+              toolName: 'readFile',
+              state: 'output-available',
+              input: { file_path: 'src/app.ts' },
+              output: 'source',
+            } as never,
+            { type: 'text', text: '已完成检查。' },
+          ],
+        }}
+      />,
+    )
+
+    expect(html).toContain('aria-label="任务总结"')
+    expect(html).toContain('任务总结')
+    expect(html).toContain('已完成检查。')
+    expect(html).toContain('aria-expanded="false"')
   })
 
   it('keeps public progress with its tool step and leaves only the final answer in the message body', () => {

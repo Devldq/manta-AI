@@ -119,7 +119,7 @@ export const AgentStepView = memo(function AgentStepView({
   onOpenFile?: (path: string) => void
 }) {
   const terminal = isAgentRunTerminal(agentRun)
-  const [expanded, setExpanded] = useState(() => !terminal)
+  const [expanded, setExpanded] = useState(() => agentRun ? !terminal : isStreaming)
   const manuallyToggledRef = useRef(false)
   const previousTerminalRef = useRef(terminal)
 

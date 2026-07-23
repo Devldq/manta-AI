@@ -181,6 +181,15 @@ export async function openPathOrThrow(path: string): Promise<void> {
   if (error) throw new Error(error)
 }
 
+/**
+ * A development Desktop must not reuse a healthy Service process started from
+ * an older backend bundle. Packaged builds keep the durable service lifecycle.
+ */
+export async function restartDevelopmentLocalService(): Promise<boolean> {
+  if (app.isPackaged || !useLocalService) return false
+  return stopLocalService(app.getPath('userData'))
+}
+
 let activeWindow: BrowserWindow | undefined
 let onboardingWindow: BrowserWindow | undefined
 let onboardingHandoff = false
@@ -457,6 +466,7 @@ export async function runDesktop(): Promise<void> {
   if (!app.requestSingleInstanceLock()) { app.quit(); return }
   app.on('second-instance', () => { if (activeWindow?.isMinimized()) activeWindow.restore(); (activeWindow ?? onboardingWindow)?.focus() })
   await app.whenReady()
+  await restartDevelopmentLocalService()
   let stopFollowingServiceLog: StopFollowingLog | undefined
   if (!app.isPackaged && useLocalService) {
     const path = serviceLogPath(app.getPath('userData'))
