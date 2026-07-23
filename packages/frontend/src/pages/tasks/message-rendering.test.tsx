@@ -34,7 +34,7 @@ describe('streaming message rendering', () => {
     expect(html).not.toContain('language-mermaid')
   })
 
-  it('collapses completed execution details into a concise summary', () => {
+  it('collapses completed execution details under the thinking-process label', () => {
     const groups: StepGroup[] = [{
       stepIndex: 0,
       purposeText: '',
@@ -48,9 +48,26 @@ describe('streaming message rendering', () => {
       isComplete: true,
       isActive: false,
     }]
-    const html = renderToStaticMarkup(<AgentStepView groups={groups} isStreaming={false} />)
+    const html = renderToStaticMarkup(
+      <AgentStepView
+        groups={groups}
+        isStreaming={false}
+        agentRun={{
+          schemaVersion: 1,
+          runId: 'run-completed',
+          conversationId: 'conversation-1',
+          messageId: 'assistant-1',
+          status: 'completed',
+          phase: 'completed',
+          lastSeq: 8,
+          durationMs: 9_000,
+          steps: [],
+        }}
+      />,
+    )
 
-    expect(html).toContain('已处理 · 1 个操作')
+    expect(html).toContain('思考过程 9s')
+    expect(html).not.toContain('个操作')
     expect(html).toContain('aria-expanded="false"')
     expect(html).not.toContain('已读取 src/app.ts')
     expect(html).not.toContain('source')

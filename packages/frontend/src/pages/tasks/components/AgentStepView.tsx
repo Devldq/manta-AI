@@ -122,17 +122,9 @@ export const AgentStepView = memo(function AgentStepView({
 
   if (groups.length === 0 && !agentRun) return null
 
-  const projectedToolCount = agentRun?.steps.reduce((sum, step) => sum + step.tools.length, 0)
-  const totalCalls = projectedToolCount ?? groups.reduce((sum, group) => sum + group.toolCalls.length, 0)
-  const errorCount = groups.reduce(
-    (sum, group) => sum + group.toolCalls.filter((entry) => entry.state === 'output-error').length,
-    0,
-  )
   const effectiveStreaming = agentRun ? !terminal : isStreaming
   const duration = formatAgentRunDuration(agentRun?.durationMs ?? agentRun?.usage?.durationMs)
-  const summary = effectiveStreaming
-    ? `${agentRun?.phase === 'summarizing' ? '正在总结' : agentRun?.status === 'cancelling' ? '正在停止' : '正在处理'} · ${totalCalls} 个操作`
-    : `${agentRun?.status === 'cancelled' ? '已停止' : agentRun?.status === 'failed' ? '执行失败' : '已处理'}${duration ? ` ${duration}` : ''} · ${totalCalls} 个操作${errorCount ? ` · ${errorCount} 个错误` : ''}`
+  const summary = `思考过程${duration ? ` ${duration}` : ''}`
 
   return (
     <div className="tool-events">
