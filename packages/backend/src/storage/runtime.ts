@@ -106,10 +106,12 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
     async close() {
       if (closed) return
       closed = true
-      const results = await Promise.allSettled([
-        ...[...drivers.values()].map((driver) => driver.close()),
-        ...[...lifecycles.values()].map((lifecycle) => lifecycle.dispose()),
-      ])
+      // A driver's close() owns its lifecycle close hook. Disposing that same
+      // lifecycle concurrently can race on open file handles (notably the
+      // diagnostics writer) and surface as EINTR during Desktop startup.
+      const driverResults = await Promise.allSettled([...drivers.values()].map((driver) => driver.close()))
+      const lifecycleResults = await Promise.allSettled([...lifecycles.values()].map((lifecycle) => lifecycle.dispose()))
+      const results = [...driverResults, ...lifecycleResults]
       const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map((result) => result.reason)
       if (errors.length === 1) throw errors[0]
       if (errors.length > 1) throw new AggregateError(errors, 'Backend storage shutdown failed')

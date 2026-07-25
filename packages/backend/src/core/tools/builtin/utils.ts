@@ -12,6 +12,7 @@ import * as path from 'path'
 import { resolveStoragePath } from '../../../storage/path-routing'
 import { isApproved, requestAccess, listPendingRequests } from '@security/fs-access'
 import { getSecurityContext } from '../../security-context'
+import { isDangerousShellCommand } from '../../security/approval-policy.js'
 
 // ─── 参数解析 ─────────────────────────────────────────────────────────────────
 
@@ -124,33 +125,8 @@ export async function checkAccess(targetPath: string): Promise<{ resolved: strin
 
 // ─── Bash 安全检查 ───────────────────────────────────────────────────────────
 
-const DANGEROUS_PATTERNS = [
-  { pattern: /rm\s+-rf\s+[\/\*]/, message: '禁止执行 rm -rf / 或 rm -rf /*' },
-  { pattern: /:\!\s*rm\s+-rf/, message: '禁止执行 shell 历史中的 rm -rf' },
-]
-
-const DELETE_FILE_PATTERNS = [
-  { pattern: /^\s*rm\s+-/i, message: '删除文件需要审批' },
-  { pattern: /^\s*unlink\s*\(/i, message: '删除文件需要审批' },
-  { pattern: /^\s*del\s+/i, message: '删除文件需要审批' },
-]
-
-const DELETE_DIR_PATTERNS = [
-  { pattern: /^\s*rmdir\s+/i, message: '删除文件夹需要审批' },
-  { pattern: /^\s*rm\s+-r\s/i, message: '删除文件夹需要审批' },
-]
-
 export function checkCommand(command: string): string | null {
-  for (const { pattern, message } of DANGEROUS_PATTERNS) {
-    if (pattern.test(command)) return message
-  }
-  for (const { pattern, message } of DELETE_FILE_PATTERNS) {
-    if (pattern.test(command)) return message
-  }
-  for (const { pattern, message } of DELETE_DIR_PATTERNS) {
-    if (pattern.test(command)) return message
-  }
-  return null
+  return isDangerousShellCommand(command) ? '危险命令需要审批' : null
 }
 
 // ─── Todo 持久化 ─────────────────────────────────────────────────────────────

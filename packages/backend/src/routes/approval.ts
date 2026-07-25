@@ -5,6 +5,7 @@
 import type { FastifyPluginAsync } from 'fastify'
 import { approvalManager, type ApprovalRequest } from '../core/security/ApprovalManager'
 import { hydrateDurableApprovals, provideDurableApprovalInput } from './durable-approvals.js'
+import { getApprovalPolicy, isApprovalMode, saveApprovalPolicy } from '../core/security/approval-policy.js'
 
 const APPROVAL_TYPES = new Set<ApprovalRequest['type']>(['read', 'write', 'shell'])
 const APPROVAL_ACTIONS = new Set(['approve', 'deny'])
@@ -23,6 +24,32 @@ function projectRequest(request: ApprovalRequest) {
 }
 
 const approvalRoutes: FastifyPluginAsync = async (fastify) => {
+  fastify.get('/api/approval/policy', async () => ({
+    success: true,
+    policy: getApprovalPolicy(),
+  }))
+
+  fastify.put('/api/approval/policy', async (request, reply) => {
+    const body = request.body as { mode?: unknown; confirmFullAccess?: boolean }
+    if (!isApprovalMode(body.mode)) {
+      return reply.status(400).send({
+        success: false,
+        error: 'mode 必须是 request、auto 或 full',
+      })
+    }
+    if (body.mode === 'full' && getApprovalPolicy().mode !== 'full' && body.confirmFullAccess !== true) {
+      return reply.status(400).send({
+        success: false,
+        code: 'FULL_ACCESS_CONFIRMATION_REQUIRED',
+        error: '启用完全访问前必须明确确认风险',
+      })
+    }
+    return {
+      success: true,
+      policy: saveApprovalPolicy({ mode: body.mode }),
+    }
+  })
+
   fastify.post('/api/approval/request', async (request, reply) => {
     const body = request.body as {
       type?: ApprovalRequest['type']
@@ -81,14 +108,34 @@ const approvalRoutes: FastifyPluginAsync = async (fastify) => {
     hydrateDurableApprovals(fastify.taskRuntime)
     const approvalRequest = approvalManager.getRequest(id)
     if (!approvalRequest) {
-      return reply.status(404).send({ success: false, error: '授权请求不存在' })
+      // Decisions are idempotent. A delayed renderer may submit after the
+      // request was already removed during restart/cleanup.
+      return {
+        success: true,
+        stale: true,
+        message: '授权请求已失效，无需再次响应',
+      }
     }
     if (approvalRequest.status !== 'pending') {
-      return reply.status(409).send({ success: false, error: '授权请求已处理，不能重复响应' })
+      return {
+        success: true,
+        stale: true,
+        message: '授权请求已处理，无需再次响应',
+        request: projectRequest(approvalRequest),
+      }
     }
 
     const decision = action as 'approve' | 'deny'
-    provideDurableApprovalInput(fastify.taskRuntime, approvalRequest, decision)
+    if (approvalRequest.durable && !provideDurableApprovalInput(fastify.taskRuntime, approvalRequest, decision)) {
+      approvalManager.respondToRequest(id, 'deny')
+      return {
+        success: true,
+        stale: true,
+        message: '授权请求已失效，无需再次响应',
+        request: projectRequest(approvalManager.getRequest(id)!),
+      }
+    }
+    if (!approvalRequest.durable) provideDurableApprovalInput(fastify.taskRuntime, approvalRequest, decision)
     approvalManager.respondToRequest(id, decision)
     const resolvedRequest = approvalManager.getRequest(id)!
     return {

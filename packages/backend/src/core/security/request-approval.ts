@@ -1,6 +1,7 @@
 import { getSecurityContext, type SecurityApprovalRequest } from '../security-context.js'
 import { approvalManager } from './ApprovalManager.js'
 import { getAgentRuntimeHooks } from '../engine/runtime-hooks.js'
+import { shouldRequestApproval } from './approval-policy.js'
 
 /**
  * One approval boundary for every built-in tool. Durable Agent Jobs inject a
@@ -10,6 +11,10 @@ import { getAgentRuntimeHooks } from '../engine/runtime-hooks.js'
 export async function requestToolApproval(request: SecurityApprovalRequest, timeoutMs = 60_000): Promise<boolean> {
   const context = getSecurityContext()
   const runtimeHooks = getAgentRuntimeHooks()
+  const approvalMode = context?.approvalMode ?? 'request'
+
+  if (!shouldRequestApproval(approvalMode, request)) return true
+
   await runtimeHooks?.emit('approval.requested', { request })
 
   let approved: boolean

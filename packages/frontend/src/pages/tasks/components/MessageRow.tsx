@@ -55,6 +55,11 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
       p.type === 'dynamic-tool' ||
       (typeof p.type === 'string' && p.type.startsWith('tool-') && p.type !== 'tool-invocation')
   )
+  // 工具步骤中的文本属于公开执行说明。只有运行结束后，最后正文才是任务总结。
+  const visibleContent = hasToolCalls
+    ? (effectiveStreaming ? '' : (agentRun?.summaryMarkdown || content))
+    : content
+  const hasVisibleContent = visibleContent.trim().length > 0
 
   const meta = message.metadata as {
     timestamp?: string
@@ -149,13 +154,13 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
         )}
 
         {/* 主内容区 */}
-        {content ? (
+        {hasVisibleContent ? (
           <section
             className={hasToolCalls ? 'agent-task-summary' : undefined}
             aria-label={hasToolCalls ? '任务总结' : undefined}
             style={{ position: 'relative' }}
           >
-            {hasToolCalls && <div className="agent-task-summary-title">{effectiveStreaming ? '正在总结' : '任务总结'}</div>}
+            {hasToolCalls && <div className="agent-task-summary-title">任务总结</div>}
             {/* 复制按钮 */}
             {!effectiveStreaming && (
               <button onClick={handleCopy} style={{ position: 'absolute', top: 0, right: 0, opacity: hovered ? 0.45 : 0, transition: 'opacity 0.15s', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', borderRadius: '4px', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', zIndex: 2 }}
@@ -168,12 +173,12 @@ export const MessageRow = memo(function MessageRow({ message, agentName, isStrea
             <div
               style={{ fontSize: '13px', lineHeight: '1.55', color: 'var(--color-text-primary)', wordBreak: 'break-word' }}
             >
-              <MarkdownContent content={content} streaming={effectiveStreaming} onOpenFile={onOpenFile} />
+              <MarkdownContent content={visibleContent} streaming={effectiveStreaming} onOpenFile={onOpenFile} />
             </div>
           </section>
         ) : (
           <span style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>
-            {effectiveStreaming ? (
+            {effectiveStreaming && !hasToolCalls ? (
               <span className="agent-thinking" aria-label="正在生成回复">
                 <span className="agent-thinking-dot" />
                 <span className="agent-thinking-dot" />

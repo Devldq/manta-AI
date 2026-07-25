@@ -234,6 +234,26 @@ describe('backend lifecycle', () => {
     expect(readFileSync(join(diagnosticsRoot, 'system.log'), 'utf8')).toContain('startup-owned')
   })
 
+  it('finishes extension initialization before marketplace schedulers can acquire leases', async () => {
+    const { startServer } = await import('../server')
+    const events: string[] = []
+    const handle = await startServer({
+      storage: fakeStorage(mkdtempSync(join(tmpdir(), 'manta-startup-order-')), events),
+      port: 0,
+      registerRoutes: false,
+      startup: {
+        async cleanupStaleRag() { events.push('stale') },
+        async initializeSkills() { events.push('skills') },
+      },
+      schedulerAcquirers: [
+        () => { events.push('scheduler'); return () => { events.push('scheduler:close') } },
+      ],
+    })
+    handles.push(handle)
+
+    expect(events.slice(0, 3)).toEqual(['stale', 'skills', 'scheduler'])
+  })
+
   it('quiesces and reopens extension and diagnostics lifecycle owners', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-group-lifecycle-'))
     const events: string[] = []
@@ -250,6 +270,31 @@ describe('backend lifecycle', () => {
     expect(events).toContain('extensions:quiesce'); expect(events).toContain('extensions:reopen')
     expect(events).toContain('diagnostics:quiesce'); expect(events).toContain('diagnostics:reopen')
     await runtime.close()
+  })
+
+  it('disposes managed lifecycles only after their driver close hooks finish', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-lifecycle-close-order-'))
+    const events: string[] = []
+    let releaseClose!: () => void
+    const closeGate = new Promise<void>((resolve) => { releaseClose = resolve })
+    const runtime = (await import('./runtime')).createBackendStorageRuntime(fakeStorage(root), {
+      groupLifecycles: {
+        diagnostics: {
+          quiesce() {},
+          checkpoint() {},
+          async close() { events.push('close:start'); await closeGate; events.push('close:done') },
+          reopen() {},
+          dispose() { events.push('dispose') },
+        },
+      },
+    })
+
+    const closing = runtime.close()
+    await vi.waitFor(() => expect(events).toContain('close:start'))
+    expect(events).not.toContain('dispose')
+    releaseClose()
+    await closing
+    expect(events).toEqual(['close:start', 'close:done', 'dispose'])
   })
 
   it('resets RAG even if a group close fails, allowing a fresh runtime', async () => {
@@ -456,33 +501,20 @@ describe('backend lifecycle', () => {
     } finally { vi.useRealTimers() }
   })
 
-  it('waits for a gated marketplace refresh before startup failure cleanup completes', async () => {
+  it('does not start a marketplace refresh when extension startup fails', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-gated-startup-'))
-    let releaseRefresh!: () => void
-    let markStarted!: () => void
-    const started = new Promise<void>((resolve) => { markStarted = resolve })
-    const gate = new Promise<void>((resolve) => { releaseRefresh = resolve })
+    let refreshStarted = false
     const { createBackendStorageRuntime } = await import('./runtime')
     const { startServer } = await import('../server')
     const runtime = createBackendStorageRuntime(fakeStorage(root), { marketplaceRefresh: async () => {
-      markStarted(); await gate
-      logFileWriter.appendToFile({ id: 'refresh-finished', timestamp: new Date().toISOString() })
+      refreshStarted = true
       return { sourceUrl: 'test', refreshedAt: new Date().toISOString(), items: [] } as any
     } })
-    let settled = false
-    const startup = startServer({
+    await expect(startServer({
       storage: runtime, port: 0, registerRoutes: false,
       startup: { cleanupStaleRag() { throw new Error('startup rejected') }, initializeSkills() {} },
-    }).finally(() => { settled = true })
-    await started; await Promise.resolve()
-    expect(settled).toBe(false)
-    releaseRefresh()
-    await expect(startup).rejects.toThrow(/startup rejected/)
-    expect(settled).toBe(true)
-    const file = join(root, 'diagnostics', 'system.log')
-    const content = readFileSync(file, 'utf8')
-    await Promise.resolve()
-    expect(readFileSync(file, 'utf8')).toBe(content)
+    })).rejects.toThrow(/startup rejected/)
+    expect(refreshStarted).toBe(false)
     expect(() => runtime.marketplaceScheduler.acquire()).toThrow(/disposed/i)
     await expect(runtime.marketplaceScheduler.reopen(join(root, 'other'))).rejects.toThrow(/disposed/i)
     await runtime.marketplaceScheduler.dispose(); await runtime.marketplaceScheduler.dispose()

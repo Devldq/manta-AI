@@ -10,7 +10,7 @@
  */
 import type { MCPServerEntry, MCPToolVisibility } from '../registry/types';
 import { normalizeServerConfig } from '../registry/types';
-import { loadUserServers } from './config-store';
+import { loadMCPToolVisibility, loadUserServers } from './config-store';
 
 /**
  * 所有预置的 MCP Server 配置。
@@ -108,7 +108,8 @@ export function getServerByName(name: string): MCPServerEntry | undefined {
  * Configuration path: ASH config/mcp/visibility.json
  */
 export function getMCPToolVisibility(): MCPToolVisibility {
-  // TODO: 从配置文件加载用户自定义的 visibility
-  // 目前使用默认配置
-  return DEFAULT_MCP_TOOL_VISIBILITY;
+  return {
+    ...DEFAULT_MCP_TOOL_VISIBILITY,
+    ...loadMCPToolVisibility(),
+  };
 }

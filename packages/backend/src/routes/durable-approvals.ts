@@ -9,8 +9,12 @@ export function hydrateDurableApprovals(runtime: TaskRuntime | undefined): void 
   const waiting = runtime.listJobs({ kind: 'agent.run', status: 'waiting_for_input', limit: 200 })
   const waitingIds = new Set(waiting.map((job) => job.id))
   for (const request of approvalManager.getPendingRequests()) {
-    const job = runtime.getJob(request.requestedBy)
-    if (job?.kind === 'agent.run' && !waitingIds.has(job.id)) approvalManager.discardRequest(request.id)
+    // Once a durable Job leaves waiting_for_input there is no waiter that can
+    // consume a late decision. Resolve instead of deleting so SSE clients
+    // receive the terminal event.
+    if (request.durable && !waitingIds.has(request.requestedBy)) {
+      approvalManager.respondToRequest(request.id, 'deny')
+    }
   }
   for (const job of waiting) {
     const event = runtime.events(job.id, 0, 5_000).reverse().find((candidate) => candidate.type === 'job.waiting_for_input')

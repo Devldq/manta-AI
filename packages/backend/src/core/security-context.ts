@@ -6,6 +6,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks'
+import type { ApprovalMode } from './security/approval-policy.js'
 
 export interface SecurityContext {
   taskId?: string
@@ -22,6 +23,7 @@ export interface SecurityContext {
   platform: string
   allowExternalRead?: boolean
   allowExternalWrite?: boolean
+  approvalMode?: ApprovalMode
   onApprovalRequest?: (request: SecurityApprovalRequest) => Promise<boolean>
 }
 
@@ -45,13 +47,14 @@ export function runWithSecurityContext<T>(ctx: SecurityContext, fn: () => T): T 
 }
 
 /** 创建默认安全上下文 */
-export function createDefaultSecurityContext(taskId: string): SecurityContext {
+export function createDefaultSecurityContext(taskId: string, approvalMode: ApprovalMode = 'request'): SecurityContext {
   const cwd = process.cwd()
   return {
     allowedRoots: [cwd],
     allowExternalRead: true,
-    allowExternalWrite: false,
+    allowExternalWrite: true,
     shellAllowedRoots: [cwd],
+    approvalMode,
     taskId,
     platform: detectPlatform(),
     onApprovalRequest: undefined,

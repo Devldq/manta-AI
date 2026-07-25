@@ -110,16 +110,19 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
     const listeningAddress = app.server.address() as AddressInfo
     localEndpoint = `http://127.0.0.1:${listeningAddress.port}`
     taskRuntime?.start()
+    if (startup) {
+      await runInStorageContext(() => startup.cleanupStaleRag())
+      await runInStorageContext(() => startup.initializeSkills())
+    }
+    // Startup seeds and marketplace refreshes both use the extension content
+    // store. Starting schedulers first lets them race for the same lease and
+    // can make an otherwise healthy cold start fail nondeterministically.
     if (options.startSchedulers !== false) {
       const acquirers = options.schedulerAcquirers ?? [
         (log) => options.storage.marketplaceScheduler?.acquire(log) ?? acquireClaudeMarketplaceScheduler(log),
         () => acquireLogScheduler(),
       ]
       for (const acquire of acquirers) schedulerDisposers.push(acquire(app.log))
-    }
-    if (startup) {
-      await runInStorageContext(() => startup.cleanupStaleRag())
-      await runInStorageContext(() => startup.initializeSkills())
     }
   } catch (error) {
     const cleanupErrors: unknown[] = []

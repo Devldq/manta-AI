@@ -517,6 +517,97 @@ pre {
   letter-spacing: 0.02em;
 }
 
+/* ─── Agent 运行状态：固定在消息流与输入框之间 ─── */
+.agent-status-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  margin: 0 20px 8px;
+  padding: 4px 8px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  background: color-mix(in srgb, var(--color-surface) 76%, transparent);
+}
+
+.agent-status-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent);
+}
+
+.agent-status-label {
+  flex: 0 0 auto;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.agent-status-separator {
+  width: 3px;
+  height: 3px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--color-border);
+}
+
+.agent-status-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-status-activity {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agent-status-bar.is-waiting {
+  border-color: color-mix(in srgb, var(--color-status-pending) 22%, transparent);
+  background: color-mix(in srgb, var(--color-status-pending) 7%, var(--color-surface));
+}
+
+.agent-status-bar.is-waiting .agent-status-icon {
+  color: var(--color-status-pending);
+}
+
+.agent-status-bar.is-stale {
+  border-color: color-mix(in srgb, var(--color-status-pending) 28%, transparent);
+  background: color-mix(in srgb, var(--color-status-pending) 9%, var(--color-surface));
+}
+
+.agent-status-bar.is-stale .agent-status-icon,
+.agent-status-bar.is-stale .agent-status-label {
+  color: var(--color-status-pending);
+}
+
+.agent-status-bar.is-stopping .agent-status-icon,
+.agent-status-bar.is-stopping .agent-status-label {
+  color: var(--color-status-failed);
+}
+
+@media (max-width: 720px) {
+  .agent-status-bar {
+    margin-right: 16px;
+    margin-left: 16px;
+  }
+
+  .agent-status-detail {
+    display: none;
+  }
+}
+
 .tool-events-summary:focus-visible,
 .tool-event-toggle:focus-visible,
 .tool-event-preview:focus-visible,

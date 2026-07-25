@@ -28,6 +28,9 @@ describe('public tool rationale protocol', () => {
         maxLength: 240,
       },
     })
+    expect(JSON.stringify(schema.properties)).toContain('avoid repetitive report-style openings')
+    expect(JSON.stringify(schema.properties)).toContain('Do not narrate the literal tool operation')
+    expect(JSON.stringify(schema.properties)).toContain('engine.ts 把检索交给 Pipeline')
   })
 
   it('extracts the rationale and removes it from the real tool input', () => {

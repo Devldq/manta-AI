@@ -44,6 +44,40 @@ describe('ASH persistence routing', () => {
     expect(readFileSync(output, 'utf8')).toBe('user-owned')
   })
 
+  it.each([
+    ['auto', true],
+    ['full', true],
+    ['request', false],
+  ] as const)('enforces %s approval mode for writes outside the workspace', async (approvalMode, expectedSuccess) => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-ash-policy-'))
+    const workspace = mkdtempSync(join(tmpdir(), 'manta-policy-workspace-'))
+    const external = join(mkdtempSync(join(tmpdir(), 'manta-policy-external-')), 'outside.txt')
+    const { createFileOpsTools } = await import('../core/tools/builtin/file-ops')
+    const { runWithSecurityContext } = await import('../core/security-context')
+    let approvalRequests = 0
+    const result = await runWithStorageResolver({ resolve: (group, ...segments) => join(root, group, ...segments) }, () =>
+      runWithSecurityContext({
+        allowedRoots: [workspace],
+        shellAllowedRoots: [workspace],
+        platform: process.platform,
+        allowExternalRead: true,
+        allowExternalWrite: true,
+        approvalMode,
+        onApprovalRequest: async () => {
+          approvalRequests += 1
+          return false
+        },
+      }, async () => {
+        const write = createFileOpsTools().find((tool) => tool.name === 'write')!
+        return write.execute({ file_path: external, content: approvalMode })
+      }),
+    ) as Record<string, unknown>
+
+    expect('success' in result).toBe(expectedSuccess)
+    expect(existsSync(external)).toBe(expectedSuccess)
+    expect(approvalRequests).toBe(approvalMode === 'request' ? 1 : 0)
+  })
+
   it('stores API keys only in the secrets group', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-ash-secrets-'))
     const resolver = { resolve: (group: string, ...segments: string[]) => join(root, group, ...segments) }

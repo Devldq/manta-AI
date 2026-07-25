@@ -24,7 +24,11 @@ export interface BuildAppOptions { storage: StorageResolver & { diagnosticsWrite
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const isDev = options.isDev ?? process.env.NODE_ENV !== 'production'
-  const app = Fastify({ logger: options.logger ?? false })
+  // Desktop renderers keep SSE requests open for the lifetime of the window.
+  // Once shutdown reaches app.close(), all durable work has already quiesced
+  // and checkpointed, so those transport connections must not hold the
+  // Service process open indefinitely.
+  const app = Fastify({ logger: options.logger ?? false, forceCloseConnections: true })
   try {
   app.decorate('taskRuntime', options.taskRuntime)
   app.decorate('ragProvider', options.ragProvider)

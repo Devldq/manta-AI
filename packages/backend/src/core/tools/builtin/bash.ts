@@ -7,8 +7,8 @@
  */
 import type { ToolDefinition } from '@tools/registry'
 import * as child_process from 'child_process'
-import { checkCommand } from './utils'
 import { requestToolApproval } from '@security/request-approval'
+import { isDangerousShellCommand } from '../../security/approval-policy.js'
 
 // ─── 使用共享安全上下文模块（解决 tsx 模块解析问题）────────────────────
 
@@ -58,20 +58,6 @@ function isPathInAllowedRoots(targetPath: string, allowedRoots: string[]): boole
 
 // ─── 命令验证函数 ───────────────────────────────────────────────────────────────
 
-const DANGEROUS_PATTERNS = [
-  /rm\s+-rf\s+\//,           // rm -rf /
-  /mkfs\./,                  // mkfs 命令
-  /dd\s+if=/,                // dd 命令
-  />\s*\/dev\/\w+/,          // 重定向到设备
-  /chmod\s+777/,             // chmod 777
-  /curl\s+.*\|.*sh/,         // curl ... | sh
-  /wget\s+.*\|.*sh/,         // wget ... | sh
-]
-
-function isDangerousCommand(command: string): boolean {
-  return DANGEROUS_PATTERNS.some((pattern) => pattern.test(command))
-}
-
 function extractPathsFromCommand(command: string): string[] {
   const paths: string[] = []
   const absolutePathPattern = /(?:^|\s)(?:~|\/|(?:[A-Za-z]:\\))(?:[^\s<>|&;()[\]{}]+)/g
@@ -97,13 +83,21 @@ function validateCommand(command: string, cwd: string): CommandValidationResult 
       resolvedPaths: [],
     }
   }
+
+  if (context.approvalMode === 'full') {
+    return {
+      allowed: true,
+      needApproval: false,
+      resolvedPaths: extractPathsFromCommand(command),
+    }
+  }
   
   const isCwdAllowed = isPathInAllowedRoots(cwd, context.shellAllowedRoots)
   
   if (!isCwdAllowed) {
     return {
       allowed: false,
-      needApproval: false,
+      needApproval: true,
       reason: `执行路径 ${cwd} 不在允许的 Shell 执行路径内`,
       resolvedPaths: [],
     }
@@ -124,7 +118,7 @@ function validateCommand(command: string, cwd: string): CommandValidationResult 
     }
   }
   
-  if (isDangerousCommand(command)) {
+  if (isDangerousShellCommand(command)) {
     return {
       allowed: false,
       needApproval: true,
@@ -280,13 +274,7 @@ function createBashTool(): ToolDefinition {
       const { command, cwd: targetCwd = defaultCwd, timeout = 10000, run_in_background = false } = input
       const startTime = Date.now()
       
-      // 1. 检查危险命令（保留原有逻辑）
-      const unsafe = checkCommand(command)
-      if (unsafe) {
-        return { command, error: unsafe }
-      }
-      
-      // 2. 路径安全校验
+      // 1. 路径与命令风险校验
       const validation = validateCommand(command, targetCwd)
       if (!validation.allowed) {
         // 如果需要授权，创建授权请求并等待用户响应
@@ -338,7 +326,7 @@ function createBashTool(): ToolDefinition {
         }
       }
       
-      // 3. 执行命令
+      // 2. 执行命令
       try {
         if (run_in_background) {
           // 后台运行

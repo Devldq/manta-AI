@@ -13,6 +13,7 @@ import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useConversationStore } from '@/stores/conversation-store'
 import {
   MessageRow,
+  AgentStatusBar,
   FsAccessBanner,
   WelcomeScreen,
   KimInputBar,
@@ -23,7 +24,7 @@ import { storedMessageToUIMessage } from './utils/formatters'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { createStepUsageInterceptor } from './step-usage-sse'
 import { withPendingAssistantMessage } from './pending-assistant'
-import { getAgentRunSnapshot, isAgentRunTerminal } from './runtime/agent-run-view'
+import { getAgentRunLastActivityAt, getAgentRunSnapshot, isAgentRunTerminal } from './runtime/agent-run-view'
 
 const DEFAULT_AGENT = 'main'
 
@@ -159,11 +160,11 @@ function ChatView({
   })
 
   const isTransportLoading = status === 'submitted' || status === 'streaming'
-  const hasActiveAgentRun = useMemo(() => messages.some(message => {
-    if (message.role !== 'assistant') return false
-    const snapshot = getAgentRunSnapshot(message.parts, message.metadata)
-    return Boolean(snapshot && !isAgentRunTerminal(snapshot))
-  }), [messages])
+  const activeAgentRun = useMemo(() => [...messages].reverse()
+    .filter(message => message.role === 'assistant')
+    .map(message => getAgentRunSnapshot(message.parts, message.metadata))
+    .find(snapshot => snapshot && !isAgentRunTerminal(snapshot)), [messages])
+  const hasActiveAgentRun = Boolean(activeAgentRun)
   const isLoading = isTransportLoading || awaitingAssistant || hasActiveAgentRun
 
   // Track the new turn independently from useChat.status. During reconnect and
@@ -301,15 +302,10 @@ function ChatView({
 
   // ─── 自定义停止 ────────────────────────────────────────────────
   async function handleStop() {
-    const activeRun = [...messages]
-      .reverse()
-      .filter(message => message.role === 'assistant')
-      .map(message => getAgentRunSnapshot(message.parts, message.metadata))
-      .find(snapshot => snapshot && !isAgentRunTerminal(snapshot))
     await fetch(buildConvUrl('/stop'), {
       method: 'POST',
-      headers: activeRun ? { 'Content-Type': 'application/json' } : undefined,
-      body: activeRun ? JSON.stringify({ expectedRunId: activeRun.runId }) : undefined,
+      headers: activeAgentRun ? { 'Content-Type': 'application/json' } : undefined,
+      body: activeAgentRun ? JSON.stringify({ expectedRunId: activeAgentRun.runId }) : undefined,
     }).catch(() => {})
   }
 
@@ -347,6 +343,17 @@ function ChatView({
   // Render an empty assistant row immediately so the cursor belongs to the new
   // turn instead of being attached to the previous completed answer.
   const displayMessages = withPendingAssistantMessage(streamedMessages, awaitingAssistant, convId)
+  const activeStatusMessage = [...displayMessages].reverse().find((message) => {
+    if (message.role !== 'assistant') return false
+    const snapshot = getAgentRunSnapshot(message.parts, message.metadata)
+    return Boolean(snapshot && !isAgentRunTerminal(snapshot))
+  })
+  const activeStatusRun = activeStatusMessage
+    ? getAgentRunSnapshot(activeStatusMessage.parts, activeStatusMessage.metadata)
+    : activeAgentRun
+  const activeStatusActivityAt = activeStatusMessage
+    ? getAgentRunLastActivityAt(activeStatusMessage.parts, activeStatusMessage.metadata)
+    : undefined
 
   useEffect(() => {
     if (!shouldAutoScrollRef.current) return
@@ -488,6 +495,13 @@ function ChatView({
           )}
           <div ref={messagesEndRef} />
         </div>
+
+        <AgentStatusBar
+          agentRun={activeStatusRun}
+          awaitingAssistant={awaitingAssistant || isTransportLoading}
+          reconnecting={isReconnecting}
+          lastActivityAt={activeStatusActivityAt}
+        />
 
         {/* 文件访问授权 */}
         <FsAccessBanner />

@@ -29,6 +29,10 @@ interface BackendModule {
 
 const importEsm = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>
 const useLocalService = process.env.MANTA_EMBEDDED_BACKEND !== '1'
+// Cold starts may need to recover storage and hash bundled extensions before
+// the Service publishes its descriptor. Keep the shorter SDK default for CLI
+// callers, but let Desktop wait through the full recovery window.
+const DESKTOP_SERVICE_STARTUP_TIMEOUT_MS = 5 * 60_000
 
 function serviceEnvironment(): NodeJS.ProcessEnv {
   return {
@@ -43,7 +47,7 @@ function serviceEnvironment(): NodeJS.ProcessEnv {
 }
 
 async function serviceRendererHandle() {
-  const rendererUrl = await createDesktopSessionURL({ home: app.getPath('userData'), environment: serviceEnvironment() })
+  const rendererUrl = await createDesktopServiceSessionURL()
   const endpoint = new URL(rendererUrl).origin
   return {
     port: Number(new URL(endpoint).port),
@@ -57,6 +61,14 @@ async function serviceRendererHandle() {
       } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
     },
   }
+}
+
+export function createDesktopServiceSessionURL(): Promise<string> {
+  return createDesktopSessionURL({
+    home: app.getPath('userData'),
+    environment: serviceEnvironment(),
+    startupTimeoutMs: DESKTOP_SERVICE_STARTUP_TIMEOUT_MS,
+  })
 }
 
 interface ManagedQdrant {
@@ -190,6 +202,14 @@ export async function restartDevelopmentLocalService(): Promise<boolean> {
   return stopLocalService(app.getPath('userData'))
 }
 
+/**
+ * The standalone Service owns storage recovery and Agent activation. Desktop
+ * must not construct a second Backend runtime before connecting to it.
+ */
+export function shouldRecoverStorageInDesktopProcess(localService = useLocalService): boolean {
+  return !localService
+}
+
 let activeWindow: BrowserWindow | undefined
 let onboardingWindow: BrowserWindow | undefined
 let onboardingHandoff = false
@@ -260,7 +280,7 @@ async function withExclusiveStorage<T>(operation: (value: any) => Promise<T>): P
     return await operation(value)
   } finally {
     await value.runtime.close().catch(() => undefined)
-    const nextUrl = await createDesktopSessionURL({ home: app.getPath('userData'), environment: serviceEnvironment() })
+    const nextUrl = await createDesktopServiceSessionURL()
     setTimeout(() => { if (activeWindow && !activeWindow.isDestroyed()) void activeWindow.loadURL(nextUrl) }, 250)
   }
 }
@@ -289,7 +309,7 @@ async function openExclusiveStorage(): Promise<any> {
 }
 
 async function restartServiceRenderer(): Promise<void> {
-  const nextUrl = await createDesktopSessionURL({ home: app.getPath('userData'), environment: serviceEnvironment() })
+  const nextUrl = await createDesktopServiceSessionURL()
   setTimeout(() => { if (activeWindow && !activeWindow.isDestroyed()) void activeWindow.loadURL(nextUrl) }, 250)
 }
 
@@ -435,8 +455,7 @@ let disposeOnboarding: (() => void) | undefined
 const controller = new DesktopLifecycleController({
   async readBootstrap() { return new BootstrapStore(bootstrapPath()).read() },
   preflightStorage: (...bootstraps) => upgradeBootstrapVolumeDirectories(...bootstraps),
-  async recover() { const bootstrapStore=new BootstrapStore(bootstrapPath()); if (!useLocalService) qdrant ??= await startManagedQdrant(); const before=await bootstrapStore.read(); const journal=before?.pendingMigration; const trackedKind=journal&&trackedRecoveredMigrationKind(journal); const backend = await importEsm('@manta/backend'); composition = await (backend as BackendModule).createBackendStorageComposition(bootstrapStore, { deferAgentRecovery: true, onAgentProgress: (progress: unknown) => activeWindow?.webContents.send('storage:agent-progress', progress), onProgress: (raw: unknown) => { const progress=raw as StorageOperationProgress; if(shouldTrackStorageProgress(progress)){const prior=progressTails.get(progress.operationId) ?? Promise.resolve(); const next=prior.then(()=>controlStore().recordProgress(progress)); progressTails.set(progress.operationId,next.catch(()=>{})); void next.catch(()=>{})} activeWindow?.webContents.send('storage:progress',progress) } }); try { await composition.hub.migrations?.recoverPending(); await composition.activateAgents(); if (journal&&trackedKind) { await controlStore().startOperation(journal.id,trackedKind); const after=await bootstrapStore.read(); if (['planned','quiescing','copying','validating'].includes(journal.phase) || !before?.previous || !after) await controlStore().failOperation(journal.id,new Error('Migration rolled back during startup recovery')); else { const previous={schemaVersion:1 as const,...before.previous}; const value=trackedKind==='volume'?journal.sourceVolumeId:journal.groups[0]; await controlStore().completeOperation(journal.id,buildBackupRefs(journal.id,trackedKind,previous,after,value),{previous,current:after}) } }
-    if (useLocalService) { await composition.runtime.close(); composition = undefined; return }
+  async recover() { if (!shouldRecoverStorageInDesktopProcess()) return; const bootstrapStore=new BootstrapStore(bootstrapPath()); qdrant ??= await startManagedQdrant(); const before=await bootstrapStore.read(); const journal=before?.pendingMigration; const trackedKind=journal&&trackedRecoveredMigrationKind(journal); const backend = await importEsm('@manta/backend'); composition = await (backend as BackendModule).createBackendStorageComposition(bootstrapStore, { deferAgentRecovery: true, onAgentProgress: (progress: unknown) => activeWindow?.webContents.send('storage:agent-progress', progress), onProgress: (raw: unknown) => { const progress=raw as StorageOperationProgress; if(shouldTrackStorageProgress(progress)){const prior=progressTails.get(progress.operationId) ?? Promise.resolve(); const next=prior.then(()=>controlStore().recordProgress(progress)); progressTails.set(progress.operationId,next.catch(()=>{})); void next.catch(()=>{})} activeWindow?.webContents.send('storage:progress',progress) } }); try { await composition.hub.migrations?.recoverPending(); await composition.activateAgents(); if (journal&&trackedKind) { await controlStore().startOperation(journal.id,trackedKind); const after=await bootstrapStore.read(); if (['planned','quiescing','copying','validating'].includes(journal.phase) || !before?.previous || !after) await controlStore().failOperation(journal.id,new Error('Migration rolled back during startup recovery')); else { const previous={schemaVersion:1 as const,...before.previous}; const value=trackedKind==='volume'?journal.sourceVolumeId:journal.groups[0]; await controlStore().completeOperation(journal.id,buildBackupRefs(journal.id,trackedKind,previous,after,value),{previous,current:after}) } }
     cloudSync = createCloudSyncRuntime({
       volumes: async () => {
         const [bootstrap, bindings] = await Promise.all([bootstrapStore.read(), composition.git.listBindings()])

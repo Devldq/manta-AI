@@ -4,6 +4,7 @@ const electron = vi.hoisted(() => ({
   openPath: vi.fn<(path: string) => Promise<string>>(),
 }))
 const sdk = vi.hoisted(() => ({
+  createDesktopSessionURL: vi.fn<() => Promise<string>>(),
   stopLocalService: vi.fn<(home?: string) => Promise<boolean>>(),
 }))
 
@@ -28,16 +29,17 @@ vi.mock('electron', () => ({
   shell: { openPath: electron.openPath },
 }))
 vi.mock('@manta/sdk/node', () => ({
-  createDesktopSessionURL: vi.fn(),
+  createDesktopSessionURL: sdk.createDesktopSessionURL,
   createLocalManta: vi.fn(),
   stopLocalService: sdk.stopLocalService,
 }))
 
-import { openPathOrThrow, restartDevelopmentLocalService } from './desktop-runtime'
+import { createDesktopServiceSessionURL, openPathOrThrow, restartDevelopmentLocalService, shouldRecoverStorageInDesktopProcess } from './desktop-runtime'
 
 describe('desktop shell paths', () => {
   beforeEach(() => {
     electron.openPath.mockReset()
+    sdk.createDesktopSessionURL.mockReset()
     sdk.stopLocalService.mockReset()
   })
 
@@ -59,5 +61,20 @@ describe('desktop shell paths', () => {
 
     await expect(restartDevelopmentLocalService()).resolves.toBe(true)
     expect(sdk.stopLocalService).toHaveBeenCalledWith('/tmp/manta-test')
+  })
+
+  it('allows a cold local Service to finish recovery before timing out', async () => {
+    sdk.createDesktopSessionURL.mockResolvedValue('http://127.0.0.1:1234/session')
+
+    await expect(createDesktopServiceSessionURL()).resolves.toBe('http://127.0.0.1:1234/session')
+    expect(sdk.createDesktopSessionURL).toHaveBeenCalledWith(expect.objectContaining({
+      home: '/tmp/manta-test',
+      startupTimeoutMs: 5 * 60_000,
+    }))
+  })
+
+  it('leaves storage recovery and Agent activation to the standalone Service', () => {
+    expect(shouldRecoverStorageInDesktopProcess(true)).toBe(false)
+    expect(shouldRecoverStorageInDesktopProcess(false)).toBe(true)
   })
 })

@@ -66,6 +66,20 @@ describe('SettingsModal shell', () => {
     expect(source).toContain("aria-pressed={colorMode === 'dark'}")
   })
 
+  it('renders the three backend-owned agent approval scopes', () => {
+    expect(source).toContain('role="radiogroup"')
+    expect(source).toContain('aria-label="Agent 授权范围"')
+    expect(source).toContain('role="radio"')
+    expect(source).toContain('aria-checked={selected}')
+    expect(source).toContain("mode: 'request' as const")
+    expect(source).toContain("mode: 'auto' as const")
+    expect(source).toContain("mode: 'full' as const")
+    expect(source).toContain("fetch('/api/approval/policy')")
+    expect(source).toContain("method: 'PUT'")
+    expect(source).toContain('confirmFullAccess')
+    expect(source).toContain('对新任务生效')
+  })
+
   it('calculates the standard arrow, Home, and End tab destinations', () => {
     const nextTab = runtimeFunction('getNextSettingsTab')
     expect(nextTab('theme' as never, 'ArrowRight' as never)).toBe('settings')

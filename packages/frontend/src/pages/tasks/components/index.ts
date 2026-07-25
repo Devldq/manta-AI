@@ -1,4 +1,5 @@
 export { MessageRow } from './MessageRow'
+export { AgentStatusBar } from './AgentStatusBar'
 export { ToolCallLog } from './ToolCallLog'
 export { ToolCallItem } from './ToolCallItem'
 export { AgentStepView } from './AgentStepView'

@@ -16,6 +16,7 @@ import {
 import { setColorModeClass } from '@/components/ThemeInitializer'
 import { StorageSettingsPanel } from '@/features/storage/StorageSettingsPanel'
 import { clientState } from '@/lib/client-state'
+import { Check, Hand, ShieldCheck, UserRoundCheck } from 'lucide-react'
 
 /* AI start: 类型定义 */
 interface RunnerStatus {
@@ -41,6 +42,8 @@ interface PluginManifest {
   isNpm?: boolean
   disabled?: boolean
 }
+
+type ApprovalMode = 'request' | 'auto' | 'full'
 /* AI end: 类型定义 */
 
 type TabType = 'theme' | 'settings' | 'llm' | 'storage'
@@ -793,6 +796,10 @@ function SettingsTab() {
   const [installState, setInstallState] = useState<'idle' | 'installing' | 'success' | 'error'>('idle')
   const [installMsg, setInstallMsg] = useState('')
   const [isElectron, setIsElectron] = useState(false)
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>('request')
+  const [approvalLoading, setApprovalLoading] = useState(true)
+  const [approvalSaving, setApprovalSaving] = useState(false)
+  const [approvalError, setApprovalError] = useState('')
 
   const probeRunners = useCallback(async () => {
     setRunnerLoading(true)
@@ -831,7 +838,45 @@ function SettingsTab() {
       .then((d) => setReadme(d.content ?? ''))
       .catch(() => setReadme('README.md 加载失败'))
       .finally(() => setReadmeLoading(false))
+    fetch('/api/approval/policy')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('授权范围加载失败')
+        return response.json() as Promise<{ policy?: { mode?: ApprovalMode } }>
+      })
+      .then((data) => {
+        if (data.policy?.mode) setApprovalMode(data.policy.mode)
+      })
+      .catch((error) => setApprovalError(error instanceof Error ? error.message : '授权范围加载失败'))
+      .finally(() => setApprovalLoading(false))
   }, [probeRunners, loadPlugins])
+
+  async function updateApprovalMode(mode: ApprovalMode) {
+    if (mode === approvalMode || approvalSaving) return
+    const confirmFullAccess = mode === 'full'
+      ? window.confirm('完全访问会允许 Agent 以当前登录用户的系统权限访问文件并执行命令，Manta 不再弹出审批。确定继续吗？')
+      : false
+    if (mode === 'full' && !confirmFullAccess) return
+
+    const previous = approvalMode
+    setApprovalMode(mode)
+    setApprovalSaving(true)
+    setApprovalError('')
+    try {
+      const response = await fetch('/api/approval/policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, confirmFullAccess }),
+      })
+      const data = await response.json() as { policy?: { mode?: ApprovalMode }; error?: string }
+      if (!response.ok || !data.policy?.mode) throw new Error(data.error || '授权范围保存失败')
+      setApprovalMode(data.policy.mode)
+    } catch (error) {
+      setApprovalMode(previous)
+      setApprovalError(error instanceof Error ? error.message : '授权范围保存失败')
+    } finally {
+      setApprovalSaving(false)
+    }
+  }
 
   async function installPlugin() {
     const sourcePath = installPkg.trim()
@@ -900,6 +945,98 @@ function SettingsTab() {
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', padding: '16px 20px' }}>
+      <section style={{ marginBottom: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '12px', marginBottom: '10px' }}>
+          <div>
+            <h2 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)', margin: 0 }}>
+              Agent 授权范围
+            </h2>
+            <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: '3px 0 0' }}>
+              控制 Agent 访问工作空间之外的文件和执行风险命令时如何审批
+            </p>
+          </div>
+          <span style={{ color: 'var(--color-text-muted)', fontSize: '11px', whiteSpace: 'nowrap' }}>
+            对新任务生效
+          </span>
+        </div>
+        <div
+          role="radiogroup"
+          aria-label="Agent 授权范围"
+          aria-busy={approvalLoading || approvalSaving}
+          style={{
+            overflow: 'hidden',
+            border: '1px solid var(--color-border)',
+            borderRadius: '10px',
+            background: 'var(--color-surface)',
+            opacity: approvalLoading ? 0.65 : 1,
+          }}
+        >
+          {([
+            {
+              mode: 'request' as const,
+              title: '请求审批',
+              description: '访问工作空间之外的文件或执行风险命令时始终询问',
+              Icon: Hand,
+            },
+            {
+              mode: 'auto' as const,
+              title: '替我审批',
+              description: '自动允许普通访问，仅删除文件和危险 Bash 需要审批',
+              Icon: UserRoundCheck,
+            },
+            {
+              mode: 'full' as const,
+              title: '完全访问',
+              description: '不经 Manta 审批，以当前登录用户的系统权限访问文件和执行命令',
+              Icon: ShieldCheck,
+            },
+          ]).map(({ mode, title, description, Icon }, index) => {
+            const selected = approvalMode === mode
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={approvalLoading || approvalSaving}
+                onClick={() => void updateApprovalMode(mode)}
+                style={{
+                  width: '100%',
+                  display: 'grid',
+                  gridTemplateColumns: '30px minmax(0, 1fr) 20px',
+                  alignItems: 'center',
+                  gap: '10px',
+                  padding: '12px 14px',
+                  textAlign: 'left',
+                  color: selected ? 'var(--color-accent)' : 'var(--color-text-primary)',
+                  background: selected ? 'var(--color-accent-subtle)' : 'transparent',
+                  border: 'none',
+                  borderTop: index === 0 ? 'none' : '1px solid var(--color-border-subtle)',
+                  cursor: approvalLoading || approvalSaving ? 'wait' : 'pointer',
+                  transition: 'background-color var(--duration-fast), color var(--duration-fast)',
+                }}
+              >
+                <Icon size={20} strokeWidth={1.7} aria-hidden="true" />
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: '13px', fontWeight: 600, lineHeight: 1.35 }}>
+                    {title}
+                  </span>
+                  <span style={{ display: 'block', marginTop: '2px', color: selected ? 'var(--color-accent)' : 'var(--color-text-muted)', fontSize: '11px', lineHeight: 1.45 }}>
+                    {description}
+                  </span>
+                </span>
+                {selected && <Check size={17} strokeWidth={2.2} aria-label="已选择" />}
+              </button>
+            )
+          })}
+        </div>
+        {approvalError && (
+          <p role="alert" style={{ margin: '7px 2px 0', color: 'var(--color-status-failed)', fontSize: '11px' }}>
+            {approvalError}
+          </p>
+        )}
+      </section>
+
       {/* ─── 系统介绍 ─── */}
       <section style={{ marginBottom: '20px' }}>
         <h2 style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-primary)', margin: '0 0 8px' }}>

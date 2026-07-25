@@ -79,6 +79,18 @@ export async function getAgentToolsForAgent(
   return reg.toAISDKFormatForAgent(agentName, effectiveVisibility);
 }
 
+export async function getAgentPromptToolContext(agentName: string | null): Promise<{
+  toolCount: number
+  deferredToolSummary: string
+}> {
+  const reg = await getToolRegistry()
+  const tools = reg.getByAgent(agentName, getMCPToolVisibility())
+  return {
+    toolCount: tools.length,
+    deferredToolSummary: reg.getDeferredToolSummary(tools),
+  }
+}
+
 /**
  * 关闭所有 MCP 连接，清理单例状态。
  */

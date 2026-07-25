@@ -3,7 +3,7 @@ import { generateText, streamText, type ModelMessage, stepCountIs } from 'ai'
 import { transformChunk } from './stream-transformer'
 import { getAISDKModel } from '@llm/ai-sdk-provider'
 import { getLLMConfig } from '@llm/config-store'
-import { getAgentTools } from '@tools/mcp/setup'
+import { getAgentToolsForAgent } from '@tools/mcp/setup'
 import { LoopDetector } from '@context/loop-detector'
 import type { LoopDetectionResult } from '@context/loop-detector'
 import { formatAIError, formatErrorForSSE } from './error-formatter'
@@ -473,7 +473,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         const effectiveTemperature = llmConfig.temperature ?? 0.7
 
         // 收尾步骤显式禁用工具，避免模型继续调查而不回答用户。
-        const stepTools = forcingFinalResponse ? {} : await getAgentTools()
+        const stepTools = forcingFinalResponse ? {} : await getAgentToolsForAgent(agentName ?? null)
 
         const stepStartTime = performance.now()
         await runtimeHooks.emit('step.started', {
@@ -492,7 +492,6 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           ...baseMeta,
           stepIndex,
           systemLength: effectiveSystemPrompt?.length ?? 0,
-          systemContent: effectiveSystemPrompt ?? undefined,
           extra: {
             messageCount: currentMessages.length,
             messagesPreview: msgSummary,
@@ -531,7 +530,9 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
                 system: [
                   '你是 Agent 的公开执行说明生成器，不执行工具。',
                   '只输出一句给用户看的自然语言说明，不得输出工具调用、XML、JSON、Markdown 或字段名。',
-                  '说明当前已知事实或不确定点、为什么下一步需要该动作、结果将验证什么。',
+                  '像正在协作的工程师一样自然表达：用上一条结果里的新事实引出下一步，不要复述界面已经显示的工具动作、文件路径或输入。',
+                  '连续步骤要变换句式；不要反复以“需要……”“我先……”“我正在……”或“接下来……”开头，也不要套用“这将帮助我们……”等报告腔。',
+                  '示例：“目录里只有一个公开入口，我沿着它的导出关系进入核心实现。”“engine.ts 把检索交给 Pipeline；再核对 pipeline.ts 就能锁定主调用链。”',
                   '这不是私有思维链，不披露隐藏推理。必须与用户问题使用相同语言。',
                 ].join(''),
                 prompt: [

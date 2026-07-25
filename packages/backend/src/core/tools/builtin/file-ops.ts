@@ -62,6 +62,13 @@ function validatePathAccess(targetPath: string, accessType: 'read' | 'write'): P
       reason: '安全上下文未初始化',
     }
   }
+
+  if (context.approvalMode === 'full') {
+    return {
+      allowed: true,
+      needApproval: false,
+    }
+  }
   
   const isInAllowedRoots = isPathInAllowedRoots(targetPath, context.allowedRoots)
   
@@ -73,8 +80,8 @@ function validatePathAccess(targetPath: string, accessType: 'read' | 'write'): P
   }
   
   // 不在允许范围内，需要检查外部访问策略
-  const allowExternalRead = (context as any).allowExternalRead || false
-  const allowExternalWrite = (context as any).allowExternalWrite || false
+  const allowExternalRead = context.allowExternalRead || false
+  const allowExternalWrite = context.allowExternalWrite || false
   
   if (accessType === 'read' && allowExternalRead) {
     return {

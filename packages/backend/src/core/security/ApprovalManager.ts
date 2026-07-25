@@ -14,6 +14,7 @@ export interface ApprovalRequest {
   command?: string
   requestedBy: string  // taskId 或 workspaceId
   status: 'pending' | 'approved' | 'denied'
+  durable: boolean
   createdAt: number
   resolvedAt?: number
 }
@@ -62,6 +63,7 @@ class ApprovalManager {
       command,
       requestedBy,
       status: 'pending',
+      durable: stableId !== undefined,
       createdAt: Date.now(),
     }
 
@@ -137,6 +139,9 @@ class ApprovalManager {
         // 超时检查
         if (Date.now() - startTime > timeout) {
           clearInterval(checkInterval)
+          // 超时即表示这次授权已结束。必须同步更新权威状态并广播，
+          // 否则前端会继续展示一个已经没有等待者的僵尸请求。
+          this.respondToRequest(id, 'deny')
           resolve(false)
           return
         }

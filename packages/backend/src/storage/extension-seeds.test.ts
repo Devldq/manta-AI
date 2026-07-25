@@ -41,6 +41,19 @@ describe('bundled extension seeds', () => {
     const objectFiles = filesUnder(join(root, '.ash', 'objects')); expect(objectFiles).toHaveLength(1); expect(objectFiles[0].split(/[\\/]/).at(-1)).toMatch(/^[a-f0-9]{64}$/)
   })
 
+  it('does not republish an unchanged installed package on every startup', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-seed-unchanged-')); const seedRoot = join(root, 'bundle'); const extensionsRoot = join(root, 'extensions')
+    mkdirSync(join(seedRoot, 'skills', 'demo'), { recursive: true }); writeFileSync(join(seedRoot, 'skills', 'demo', 'SKILL.md'), 'unchanged')
+    const snapshot = createContentAssetService({ volumeRoot: root }).snapshotPackage
+    let snapshots = 0
+    const snapshotPackage: typeof snapshot = async (input) => { snapshots++; return snapshot(input) }
+
+    await seedBundledExtensions({ extensionsRoot, seedRoot, version: '1', snapshotPackage })
+    await seedBundledExtensions({ extensionsRoot, seedRoot, version: '1', snapshotPackage })
+
+    expect(snapshots).toBe(1)
+  })
+
   it('rolls back a package and leaves the seed manifest unchanged when snapshot publication fails', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-seed-fault-')); const seedRoot = join(root, 'bundle'); const extensionsRoot = join(root, 'extensions'); const source = join(seedRoot, 'plugins', 'demo', 'plugin.txt'); const installed = join(extensionsRoot, 'plugins', 'demo', 'plugin.txt'); mkdirSync(join(seedRoot, 'plugins', 'demo'), { recursive: true }); writeFileSync(source, 'v1')
     await seedBundledExtensions({ extensionsRoot, seedRoot, version: '1' }); writeFileSync(source, 'v2')

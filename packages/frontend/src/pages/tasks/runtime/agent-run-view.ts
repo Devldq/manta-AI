@@ -165,6 +165,35 @@ export function getAgentRunSnapshot(
   return snapshot
 }
 
+export function getAgentRunLastActivityAt(
+  parts: UIMessage['parts'],
+  metadata?: unknown,
+): string | undefined {
+  const timestamps: string[] = []
+  const metaSnapshot = metadata && typeof metadata === 'object'
+    ? (metadata as { agentRun?: AgentRunSnapshot | null }).agentRun ?? undefined
+    : undefined
+
+  if (metaSnapshot?.startedAt) timestamps.push(metaSnapshot.startedAt)
+  if (metaSnapshot?.completedAt) timestamps.push(metaSnapshot.completedAt)
+  for (const step of metaSnapshot?.steps ?? []) {
+    timestamps.push(step.startedAt)
+    if (step.completedAt) timestamps.push(step.completedAt)
+  }
+
+  for (const part of parts) {
+    const candidate = part as unknown as { type?: string; data?: unknown }
+    if (candidate.type === 'data-agent-run' && candidate.data) {
+      const timestamp = (candidate.data as AgentPublicEvent).timestamp
+      if (timestamp) timestamps.push(timestamp)
+    }
+  }
+
+  return timestamps
+    .filter(timestamp => Number.isFinite(Date.parse(timestamp)))
+    .sort((left, right) => Date.parse(right) - Date.parse(left))[0]
+}
+
 export function isAgentRunTerminal(snapshot: AgentRunSnapshot | undefined): boolean {
   return snapshot ? TERMINAL_AGENT_RUN_STATUSES.has(snapshot.status) : false
 }

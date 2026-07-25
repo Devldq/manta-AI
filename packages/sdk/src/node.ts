@@ -28,6 +28,12 @@ export interface LocalServiceStatus {
   descriptor?: ServiceDescriptor
 }
 
+export interface StopLocalServiceOptions {
+  gracefulTimeoutMs?: number
+  forceTimeoutMs?: number
+  pollIntervalMs?: number
+}
+
 export async function createDesktopSessionURL(options: LocalMantaOptions = {}): Promise<string> {
   const home = options.home ?? await discoverLocalMantaHome(options.environment)
   const descriptor = await ensureLocalService({ home, autoStart: options.autoStart, startupTimeoutMs: options.startupTimeoutMs, environment: options.environment })
@@ -104,20 +110,39 @@ export async function localServiceStatus(home?: string): Promise<LocalServiceSta
   return { running: Boolean(descriptor && await isServiceDescriptorLive(descriptor)), ...(descriptor ? { descriptor } : {}) }
 }
 
-export async function stopLocalService(home?: string): Promise<boolean> {
+export async function stopLocalService(home?: string, options: StopLocalServiceOptions = {}): Promise<boolean> {
   const resolvedHome = home ?? await discoverLocalMantaHome()
   const descriptor = await readServiceDescriptor(resolvedHome)
   if (!descriptor) return false
   const identity = await processIdentity(descriptor.pid).catch(() => undefined)
   if (identity !== descriptor.processIdentity) return false
-  process.kill(descriptor.pid, 'SIGTERM')
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    const liveIdentity = await processIdentity(descriptor.pid).catch(() => undefined)
-    if (liveIdentity !== descriptor.processIdentity) return true
-    await new Promise((resolve) => setTimeout(resolve, 100))
+
+  const waitForExit = async (timeoutMs: number): Promise<boolean> => {
+    const deadline = Date.now() + Math.max(0, timeoutMs)
+    do {
+      const liveIdentity = await processIdentity(descriptor.pid).catch(() => undefined)
+      if (liveIdentity !== descriptor.processIdentity) return true
+      if (Date.now() >= deadline) return false
+      await new Promise((resolve) => setTimeout(resolve, Math.max(10, options.pollIntervalMs ?? 100)))
+    } while (true)
   }
-  throw new Error(`Manta Service PID ${descriptor.pid} did not stop in time`)
+
+  try { process.kill(descriptor.pid, 'SIGTERM') }
+  catch (error) {
+    if (await waitForExit(0)) return true
+    throw error
+  }
+  if (await waitForExit(options.gracefulTimeoutMs ?? 10_000)) return true
+
+  // A live SSE request can keep an older Service build inside server.close().
+  // Re-check the process identity before escalating so a recycled PID can
+  // never be killed by a stale descriptor.
+  const liveIdentity = await processIdentity(descriptor.pid).catch(() => undefined)
+  if (liveIdentity !== descriptor.processIdentity) return true
+  process.kill(descriptor.pid, 'SIGKILL')
+  if (await waitForExit(options.forceTimeoutMs ?? 2_000)) return true
+
+  throw new Error(`Manta Service PID ${descriptor.pid} did not stop after SIGTERM and SIGKILL`)
 }
 
 export { Manta }

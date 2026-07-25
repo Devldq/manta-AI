@@ -5,10 +5,12 @@ export {
   buildSystemPromptWithStats,
   createMantaPromptBuilder,
   coreRules,
+  runtimeSecurityFacts,
   workingDirectory,
+  projectInstructions,
   toolGuide,
   deferredTools,
   agentSoul,
   sessionContext,
 } from './prompt-builder'
-export type { PromptContext, PipeFn, PipeStats, BuildResult } from './prompt-builder'
+export type { PromptContext, PipeFn, PipeStats, BuildResult, RuntimeSecurityFacts } from './prompt-builder'

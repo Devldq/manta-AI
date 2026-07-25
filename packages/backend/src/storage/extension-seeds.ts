@@ -42,10 +42,22 @@ export async function seedBundledExtensions(options: SeedBundledExtensionsOption
     for (const name of readdirSync(location.source).sort()) {
       const source = join(location.source, name)
       if (!lstatSync(source).isDirectory()) continue
-      const destination = join(location.target, name); const key = `${location.group}/${name}`; const sourceHash = hashTree(source); const prior = previous?.entries[key]
+      const destination = join(location.target, name); const key = `${location.group}/${name}`; const prior = previous?.entries[key]
+      // The bundle version is the immutable deployment boundary. If that
+      // exact version is already installed, do not re-read and re-snapshot
+      // every package tree on every Desktop launch.
+      if (sameVersion && prior && existsSync(destination)) {
+        entries[key] = prior
+        continue
+      }
+      const sourceHash = hashTree(source)
       if (sameVersion && prior?.sourceHash !== sourceHash) continue
       const targetHash = existsSync(destination) ? hashTree(destination) : undefined
       const logicalId = packageLogicalId(location.kind, name)
+      if (sameVersion && prior?.sourceHash === sourceHash && targetHash === sourceHash) {
+        entries[key] = { sourceHash }
+        continue
+      }
       if (!existsSync(destination) || (prior && targetHash === prior.sourceHash && targetHash !== sourceHash)) {
         await installImmutableExtensionPackage({ extensionsRoot: options.extensionsRoot, source, destination, kind: location.kind, logicalId, version: options.version, snapshotPackage: options.snapshotPackage })
       } else {

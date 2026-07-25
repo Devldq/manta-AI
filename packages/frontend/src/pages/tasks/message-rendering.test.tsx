@@ -124,6 +124,116 @@ describe('streaming message rendering', () => {
     expect(html).toContain('aria-expanded="false"')
   })
 
+  it('does not render execution text as a live task summary', () => {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        agentName="default"
+        isStreaming
+        message={{
+          id: 'assistant-running',
+          role: 'assistant',
+          parts: [
+            { type: 'step-start' },
+            { type: 'text', text: '入口在 packages/rag，接下来沿检索链路确认模块边界。' },
+            {
+              type: 'dynamic-tool',
+              toolCallId: 'read-1',
+              toolName: 'readFile',
+              state: 'input-available',
+              input: { file_path: 'packages/rag/src/index.ts' },
+            } as never,
+          ],
+          metadata: {
+            agentRun: {
+              schemaVersion: 1,
+              runId: 'run-executing',
+              conversationId: 'conversation-1',
+              messageId: 'assistant-running',
+              status: 'running',
+              phase: 'executing',
+              lastSeq: 4,
+              steps: [{
+                stepIndex: 0,
+                status: 'running',
+                startedAt: '2026-07-23T04:00:00.000Z',
+                progressText: '入口在 packages/rag，接下来沿检索链路确认模块边界。',
+                tools: [],
+              }],
+            },
+          },
+        }}
+      />,
+    )
+
+    expect(html).toContain('入口在 packages/rag，接下来沿检索链路确认模块边界。')
+    expect(html).not.toContain('任务总结')
+    expect(html).not.toContain('正在总结')
+  })
+
+  it('waits for completion before revealing the final summary text', () => {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        agentName="default"
+        isStreaming
+        message={{
+          id: 'assistant-summarizing',
+          role: 'assistant',
+          parts: [
+            { type: 'step-start' },
+            { type: 'text', text: '这是尚未完成的流式总结片段。' },
+          ],
+          metadata: {
+            agentRun: {
+              schemaVersion: 1,
+              runId: 'run-summarizing',
+              conversationId: 'conversation-1',
+              messageId: 'assistant-summarizing',
+              status: 'running',
+              phase: 'summarizing',
+              lastSeq: 8,
+              steps: [],
+            },
+          },
+        }}
+      />,
+    )
+
+    expect(html).not.toContain('这是尚未完成的流式总结片段。')
+    expect(html).not.toContain('任务总结')
+    expect(html).not.toContain('正在总结')
+  })
+
+  it('does not show an empty summary section for a cancelled run', () => {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        agentName="default"
+        isStreaming={false}
+        message={{
+          id: 'assistant-cancelled',
+          role: 'assistant',
+          parts: [
+            { type: 'step-start' },
+            { type: 'text', text: '   ' },
+          ],
+          metadata: {
+            agentRun: {
+              schemaVersion: 1,
+              runId: 'run-cancelled',
+              conversationId: 'conversation-1',
+              messageId: 'assistant-cancelled',
+              status: 'cancelled',
+              phase: 'cancelled',
+              lastSeq: 9,
+              steps: [],
+            },
+          },
+        }}
+      />,
+    )
+
+    expect(html).not.toContain('任务总结')
+  })
+
   it('keeps public progress with its tool step and leaves only the final answer in the message body', () => {
     const message = {
       id: 'assistant-1',

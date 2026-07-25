@@ -221,8 +221,8 @@ export class ToolRegistry {
    *
    * @returns 格式化的延迟工具摘要字符串
    */
-  getDeferredToolSummary(): string {
-    const deferred = this.getAll().filter((t) => t.name !== 'tool_search');
+  getDeferredToolSummary(toolList: ToolDefinition[] = this.getAll()): string {
+    const deferred = toolList.filter((t) => t.name !== 'tool_search');
 
     if (deferred.length === 0) return '';
 

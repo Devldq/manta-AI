@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildApp } from './app'
 
+const delay = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
 const storage = {
   resolve: (group: string) => `/data/${group}`,
   healthCheck: async () => ({ ok: true, status: 'healthy', warnings: [] }),
@@ -18,6 +20,33 @@ describe('server logging', () => {
       expect(logged.log.level).toBe('info')
     } finally {
       await Promise.all([quiet.close(), logged.close()])
+    }
+  })
+
+  it('does not let a long-lived event stream block shutdown', async () => {
+    const app = await buildApp({ storage, registerRoutes: false })
+    app.get('/events', (_request, reply) => {
+      reply.hijack()
+      reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      reply.raw.write('data: connected\n\n')
+    })
+    await app.listen({ host: '127.0.0.1', port: 0 })
+    const address = app.server.address()
+    if (!address || typeof address === 'string') throw new Error('Expected a TCP server address')
+    const response = await fetch(`http://127.0.0.1:${address.port}/events`)
+    const reader = response.body?.getReader()
+    await reader?.read()
+
+    const closing = app.close()
+    try {
+      await expect(Promise.race([
+        closing.then(() => 'closed'),
+        delay(250).then(() => 'timed-out'),
+      ])).resolves.toBe('closed')
+    } finally {
+      app.server.closeAllConnections()
+      await closing
+      await reader?.cancel().catch(() => undefined)
     }
   })
 })

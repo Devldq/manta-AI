@@ -13,17 +13,19 @@ import {
   buildSystemPromptWithStats,
   createMantaPromptBuilder,
   type PromptContext,
+  type RuntimeSecurityFacts,
 } from '@context/prompt-builder'
-import { getToolRegistry } from '@tools/mcp/setup'
+import { getAgentPromptToolContext } from '@tools/mcp/setup'
 import { parseMessagesToCore, type UIMessage } from './message-parser'
 import { runAgentLoop, type AgentLoopResumeState } from './agent-loop'
 import { getActiveLoop, registerLoop, emitLoopEvent } from './loop-registry'
 import { logger, logManager } from '@observability/log'
 // 使用共享安全上下文模块（解决 tsx 模块解析问题）
-import { createDefaultSecurityContext, type SecurityApprovalRequest, type SecurityContext } from '../security-context'
+import { createDefaultSecurityContext, type SecurityApprovalRequest } from '../security-context'
 import type { JobExecutorContext } from '@manta/task-runtime'
 import type { AgentRunSnapshot, AgentRunUsage, JsonValue } from '@manta/contracts'
 import { approvalManager } from '../security/ApprovalManager'
+import { getApprovalPolicy } from '../security/approval-policy.js'
 import type { ProcessRegistry } from './runner/process-registry'
 import type { AgentRuntimeExtension } from './runtime-hooks'
 import { AgentPublicEventProjector } from './agent-public-events'
@@ -119,17 +121,37 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   const workspace = workspaceId ? getWorkspace(workspaceId) : null
   const resolvedFolderPath = resolveFolderPath(workspace?.folderPath)
   const cwd = resolvedFolderPath || process.cwd()
+  const approvalMode = getApprovalPolicy().mode
+  const securityContext = resolvedFolderPath || jobContext
+    ? createDefaultSecurityContext(jobContext?.job.id ?? conversationId, approvalMode)
+    : undefined
+  if (securityContext) {
+    securityContext.workspaceId = workspaceId
+    if (resolvedFolderPath) {
+      securityContext.allowedRoots = [resolvedFolderPath]
+      securityContext.shellAllowedRoots = [resolvedFolderPath]
+    }
+  }
+  const runtimeFacts: RuntimeSecurityFacts = {
+    approvalMode,
+    securityContextAvailable: Boolean(securityContext),
+    allowedRoots: securityContext?.allowedRoots ?? [],
+    shellAllowedRoots: securityContext?.shellAllowedRoots ?? [],
+    allowExternalRead: securityContext?.allowExternalRead ?? false,
+    allowExternalWrite: securityContext?.allowExternalWrite ?? false,
+    networkAccess: securityContext?.networkAccess,
+  }
 
   // 构建 system prompt builder（每步 API 调用时重新 build，确保新存记忆立即可见）
   const soulPrompt = readAgentSoul(agentName)
-  const promptBuilder = createMantaPromptBuilder({ cwd, soulPrompt })
+  const promptBuilder = createMantaPromptBuilder({ cwd, soulPrompt, runtimeFacts })
 
   // 每步重建 system prompt 的闭包：memoryContext pipe 内部实时读 MemoryStore
   const buildSystemPrompt = async (): Promise<string> => {
-    const registry = await getToolRegistry()
+    const toolContext = await getAgentPromptToolContext(agentName)
     const ctx: PromptContext = {
-      toolCount: registry.getAll().length,
-      deferredToolSummary: registry.getDeferredToolSummary(),
+      toolCount: toolContext.toolCount,
+      deferredToolSummary: toolContext.deferredToolSummary,
       sessionMessageCount: messages.length,
       sessionId: conversationId,
     }
@@ -140,6 +162,10 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   const { prompt: systemPrompt, stats: pipeStats } = await buildSystemPromptWithStats({
     soulPrompt,
     cwd,
+    runtimeFacts,
+    agentName,
+    sessionId: conversationId,
+    sessionMessageCount: messages.length,
     conversationId,
     messageId,
   })
@@ -155,7 +181,6 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     provider: modelInfo.provider,
     messageCount: messages.length,
     systemLength: systemPrompt.length,
-    systemContent: systemPrompt,
     hasSoul: !!soulPrompt,
     soulLength: soulPrompt?.length ?? 0,
     extra: {
@@ -179,14 +204,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   const resumeState = jobContext?.readCheckpoint('agent_loop_state') as unknown as AgentLoopResumeState | undefined
   let durableStepIndex = resumeState?.nextStepIndex ?? 0
   let approvalInput = jobContext?.consumeInput() as { approvalId?: string; decision?: 'approve' | 'deny' } | undefined
-  let securityContext: SecurityContext | undefined
-  if (resolvedFolderPath || jobContext) {
-    securityContext = createDefaultSecurityContext(jobContext?.job.id ?? conversationId)
-    securityContext.workspaceId = workspaceId
-    if (resolvedFolderPath) {
-      securityContext.allowedRoots = [resolvedFolderPath]
-      securityContext.shellAllowedRoots = [resolvedFolderPath]
-    }
+  if (securityContext) {
     if (jobContext) {
       securityContext.abortSignal = jobContext.signal
       securityContext.jobId = jobContext.job.id
