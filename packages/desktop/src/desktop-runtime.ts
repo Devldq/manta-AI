@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { access, mkdir, rm } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { access, mkdir, readFile, rm } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { BootstrapStore, inspectFolderHealth, inventoryTree, volumeRoot } from '@manta/storage-hub'
@@ -19,7 +19,7 @@ import { createCloudSyncRuntime } from './lifecycle/createCloudSyncRuntime'
 import { shouldTrackStorageProgress, trackedRecoveredMigrationKind } from './lifecycle/RecoveredMigrationKind'
 import { upgradeBootstrapVolumeDirectories } from './lifecycle/LegacyVolumeUpgrade'
 import { createDesktopSessionURL, createLocalManta, stopLocalService } from '@manta/sdk/node'
-import { serviceLogPath } from '@manta/service'
+import { isServiceDescriptorLive, readServiceDescriptor, serviceLogPath } from '@manta/service'
 import { followLogFile, type StopFollowingLog } from './logging/followLogFile'
 
 interface BackendModule {
@@ -33,6 +33,25 @@ const useLocalService = process.env.MANTA_EMBEDDED_BACKEND !== '1'
 // the Service publishes its descriptor. Keep the shorter SDK default for CLI
 // callers, but let Desktop wait through the full recovery window.
 const DESKTOP_SERVICE_STARTUP_TIMEOUT_MS = 5 * 60_000
+// Development always replaces the Service so it cannot keep an older Backend
+// module graph alive. Long-lived renderer streams should close immediately,
+// but cap the graceful window so a stale build cannot add ten seconds to every
+// launch before the SDK escalates to the same-process SIGKILL fallback.
+const DEVELOPMENT_SERVICE_GRACEFUL_STOP_MS = 1_500
+const DEVELOPMENT_SERVICE_FORCE_STOP_MS = 2_000
+const DEVELOPMENT_SERVICE_BUILD_FILES = [
+  join(__dirname, '../../backend/dist/server.cjs'),
+  join(__dirname, '../../service/dist/cli.js'),
+  join(__dirname, '../../contracts/dist/index.js'),
+  join(__dirname, '../../shared/dist/index.js'),
+  join(__dirname, '../../storage-hub/dist/index.js'),
+  join(__dirname, '../../task-runtime/dist/index.js'),
+  join(__dirname, '../../skill-runtime/dist/index.js'),
+  join(__dirname, '../node_modules/better-sqlite3/package.json'),
+  join(__dirname, '../node_modules/electron/package.json'),
+  join(__dirname, '../scripts/prepare-qdrant.cjs'),
+]
+let developmentServiceBuildId: string | undefined
 
 function serviceEnvironment(): NodeJS.ProcessEnv {
   return {
@@ -42,6 +61,7 @@ function serviceEnvironment(): NodeJS.ProcessEnv {
     MANTA_FRONTEND_DIST: app.isPackaged ? join(process.resourcesPath, 'frontend', 'dist') : join(__dirname, '../../frontend/dist'),
     MANTA_QDRANT_BINARY: localQdrantBinary(),
     ...(!app.isPackaged ? { MANTA_TERMINAL_LOGS: '1' } : {}),
+    ...(developmentServiceBuildId ? { MANTA_SERVICE_BUILD_ID: developmentServiceBuildId } : {}),
     ...(process.env.QDRANT_URL ? { QDRANT_URL: process.env.QDRANT_URL } : {}),
   }
 }
@@ -197,9 +217,29 @@ export async function openPathOrThrow(path: string): Promise<void> {
  * A development Desktop must not reuse a healthy Service process started from
  * an older backend bundle. Packaged builds keep the durable service lifecycle.
  */
-export async function restartDevelopmentLocalService(): Promise<boolean> {
+async function currentDevelopmentServiceBuildId(): Promise<string> {
+  const hash = createHash('sha256')
+  for (const path of DEVELOPMENT_SERVICE_BUILD_FILES) hash.update(await readFile(path))
+  hash.update(JSON.stringify({
+    CODEX_HOME: process.env.CODEX_HOME ?? null,
+    MANTA_BUNDLED_ASSETS_VERSION: process.env.MANTA_BUNDLED_ASSETS_VERSION ?? null,
+    MANTA_SKIP_STARTUP: process.env.MANTA_SKIP_STARTUP ?? null,
+    QDRANT_URL: process.env.QDRANT_URL ?? null,
+  }))
+  return hash.digest('hex')
+}
+
+export async function restartDevelopmentLocalService(buildId?: string): Promise<boolean> {
   if (app.isPackaged || !useLocalService) return false
-  return stopLocalService(app.getPath('userData'))
+  developmentServiceBuildId = buildId ?? await currentDevelopmentServiceBuildId()
+  const home = app.getPath('userData')
+  const descriptor = await readServiceDescriptor(home)
+  if (descriptor?.buildId === developmentServiceBuildId && await isServiceDescriptorLive(descriptor)) return false
+  return stopLocalService(home, {
+    gracefulTimeoutMs: DEVELOPMENT_SERVICE_GRACEFUL_STOP_MS,
+    forceTimeoutMs: DEVELOPMENT_SERVICE_FORCE_STOP_MS,
+    pollIntervalMs: 50,
+  })
 }
 
 /**
@@ -484,8 +524,8 @@ const controller = new DesktopLifecycleController({
 export async function runDesktop(): Promise<void> {
   if (!app.requestSingleInstanceLock()) { app.quit(); return }
   app.on('second-instance', () => { if (activeWindow?.isMinimized()) activeWindow.restore(); (activeWindow ?? onboardingWindow)?.focus() })
-  await app.whenReady()
-  await restartDevelopmentLocalService()
+  const restartService = restartDevelopmentLocalService()
+  await Promise.all([app.whenReady(), restartService])
   let stopFollowingServiceLog: StopFollowingLog | undefined
   if (!app.isPackaged && useLocalService) {
     const path = serviceLogPath(app.getPath('userData'))

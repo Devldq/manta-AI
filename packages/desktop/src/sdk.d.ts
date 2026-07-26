@@ -3,5 +3,9 @@ declare module '@manta/sdk/node' {
   export function createLocalManta(options?: { home?: string; autoStart?: boolean; environment?: NodeJS.ProcessEnv }): Promise<{
     jobs: { list(options?: { limit?: number }): Promise<{ data: Array<{ id: string; status: string }> }> }
   }>
-  export function stopLocalService(home?: string): Promise<boolean>
+  export function stopLocalService(home?: string, options?: {
+    gracefulTimeoutMs?: number
+    forceTimeoutMs?: number
+    pollIntervalMs?: number
+  }): Promise<boolean>
 }

@@ -5,7 +5,11 @@ const electron = vi.hoisted(() => ({
 }))
 const sdk = vi.hoisted(() => ({
   createDesktopSessionURL: vi.fn<() => Promise<string>>(),
-  stopLocalService: vi.fn<(home?: string) => Promise<boolean>>(),
+  stopLocalService: vi.fn<(home?: string, options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number; pollIntervalMs?: number }) => Promise<boolean>>(),
+}))
+const service = vi.hoisted(() => ({
+  isServiceDescriptorLive: vi.fn<(descriptor: { buildId?: string }) => Promise<boolean>>(),
+  readServiceDescriptor: vi.fn<(home?: string) => Promise<{ buildId?: string } | undefined>>(),
 }))
 
 vi.mock('electron', () => ({
@@ -33,6 +37,11 @@ vi.mock('@manta/sdk/node', () => ({
   createLocalManta: vi.fn(),
   stopLocalService: sdk.stopLocalService,
 }))
+vi.mock('@manta/service', () => ({
+  isServiceDescriptorLive: service.isServiceDescriptorLive,
+  readServiceDescriptor: service.readServiceDescriptor,
+  serviceLogPath: vi.fn((home: string) => `${home}/logs/service.log`),
+}))
 
 import { createDesktopServiceSessionURL, openPathOrThrow, restartDevelopmentLocalService, shouldRecoverStorageInDesktopProcess } from './desktop-runtime'
 
@@ -41,6 +50,8 @@ describe('desktop shell paths', () => {
     electron.openPath.mockReset()
     sdk.createDesktopSessionURL.mockReset()
     sdk.stopLocalService.mockReset()
+    service.isServiceDescriptorLive.mockReset()
+    service.readServiceDescriptor.mockReset()
   })
 
   it('throws the error string returned by Electron shell.openPath', async () => {
@@ -58,9 +69,23 @@ describe('desktop shell paths', () => {
 
   it('stops a stale local service before a development desktop starts', async () => {
     sdk.stopLocalService.mockResolvedValue(true)
+    service.readServiceDescriptor.mockResolvedValue({ buildId: 'old-build' })
 
-    await expect(restartDevelopmentLocalService()).resolves.toBe(true)
-    expect(sdk.stopLocalService).toHaveBeenCalledWith('/tmp/manta-test')
+    await expect(restartDevelopmentLocalService('new-build')).resolves.toBe(true)
+    expect(sdk.stopLocalService).toHaveBeenCalledWith('/tmp/manta-test', {
+      gracefulTimeoutMs: 1_500,
+      forceTimeoutMs: 2_000,
+      pollIntervalMs: 50,
+    })
+  })
+
+  it('reuses a healthy development Service built from the same runtime artifacts', async () => {
+    service.readServiceDescriptor.mockResolvedValue({ buildId: 'same-build' })
+    service.isServiceDescriptorLive.mockResolvedValue(true)
+
+    await expect(restartDevelopmentLocalService('same-build')).resolves.toBe(false)
+
+    expect(sdk.stopLocalService).not.toHaveBeenCalled()
   })
 
   it('allows a cold local Service to finish recovery before timing out', async () => {

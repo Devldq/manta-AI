@@ -136,6 +136,44 @@ async function signNativeBinary(binary, runtime = {}) {
   await run('codesign', ['--force', '--sign', '-', binary], {}, runtime)
 }
 
+const nativeValidationScript = `
+const binary = process.argv[1]
+const nativeModule = { exports: {}, filename: binary }
+process.dlopen(nativeModule, binary)
+`
+
+async function validateNativeBinary(kind, binary, runtime = {}) {
+  const executable = kind === 'electron' ? require('electron') : process.execPath
+  const env = {
+    ...process.env,
+    ...(kind === 'electron' ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+  }
+  await run(executable, ['-e', nativeValidationScript, binary], { env }, runtime)
+}
+
+async function prepareValidatedNativeCandidate(kind, actions) {
+  let prebuildError
+  try {
+    await actions.prebuild()
+    await actions.sign()
+    await actions.validate()
+    return
+  } catch (error) {
+    prebuildError = error
+  }
+
+  try {
+    await actions.build()
+    await actions.sign()
+    await actions.validate()
+  } catch (buildError) {
+    throw new AggregateError(
+      [prebuildError, buildError],
+      `Could not build a loadable better-sqlite3 binary for ${kind}`,
+    )
+  }
+}
+
 async function replaceNativeBinaryAtomically(source, target = nativeBinary) {
   // The independent Service may still have the current addon mapped. Replacing
   // the pathname with a new inode keeps those mapped, signed pages untouched.
@@ -158,17 +196,17 @@ async function rebuildNativeBinary(kind, runtime = {}) {
   const stage = await createNativeBuildStage()
   const env = nativeBuildEnvironment(kind)
   try {
-    try {
-      await run(process.execPath, [prebuildInstall], { cwd: stage.packageDirectory, env }, runtime)
-    } catch (prebuildError) {
-      try {
-        await run(process.execPath, [nodeGyp, 'rebuild', '--release'], { cwd: stage.packageDirectory, env }, runtime)
-      } catch (buildError) {
-        throw new AggregateError([prebuildError, buildError], `Could not build better-sqlite3 for ${kind}`)
-      }
-    }
-    await signNativeBinary(stage.binary, runtime)
+    await prepareValidatedNativeCandidate(kind, {
+      prebuild: () => run(process.execPath, [prebuildInstall], { cwd: stage.packageDirectory, env }, runtime),
+      build: () => run(process.execPath, [nodeGyp, 'rebuild', '--release'], { cwd: stage.packageDirectory, env }, runtime),
+      sign: () => signNativeBinary(stage.binary, runtime),
+      validate: () => validateNativeBinary(kind, stage.binary, runtime),
+    })
     await replaceNativeBinaryAtomically(stage.binary)
+    // Validate the exact inode exposed through the workspace dependency path.
+    // This catches an ABI replacement race before the long-lived Electron
+    // process starts and defers loading better-sqlite3.
+    await validateNativeBinary(kind, nativeBinary, runtime)
   } finally {
     await rm(stage.directory, { recursive: true, force: true })
   }
@@ -225,6 +263,15 @@ async function runDev(deps = { rebuildForNode, snapshotNodeAbi, rebuildForElectr
   if (restoreError !== undefined) throw restoreError
 }
 
-module.exports = { nativeBuildEnvironment, rebuildForNode, replaceNativeBinaryAtomically, run, runDev, signNativeBinary }
+module.exports = {
+  nativeBuildEnvironment,
+  prepareValidatedNativeCandidate,
+  rebuildForNode,
+  replaceNativeBinaryAtomically,
+  run,
+  runDev,
+  signNativeBinary,
+  validateNativeBinary,
+}
 
 if (require.main === module) runDev().catch((error) => { console.error(error); process.exitCode = 1 })

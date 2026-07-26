@@ -4,7 +4,14 @@ const { EventEmitter } = require('node:events')
 const { mkdtemp, open, readFile, rm, stat, writeFile } = require('node:fs/promises')
 const { join } = require('node:path')
 const { tmpdir } = require('node:os')
-const { nativeBuildEnvironment, replaceNativeBinaryAtomically, run, runDev, signNativeBinary } = require('./run-dev.cjs')
+const {
+  nativeBuildEnvironment,
+  prepareValidatedNativeCandidate,
+  replaceNativeBinaryAtomically,
+  run,
+  runDev,
+  signNativeBinary,
+} = require('./run-dev.cjs')
 
 test('desktop development builds the frontend before Electron starts', () => {
   const { scripts } = require('../package.json')
@@ -48,6 +55,41 @@ test('configures Electron headers only for the Electron native build', () => {
   assert.equal(env.npm_config_runtime, 'electron')
   assert.match(env.npm_config_target, /^41\./)
   assert.equal(env.npm_config_disturl, 'https://electronjs.org/headers')
+})
+
+test('falls back to a source build when a downloaded native binary fails runtime validation', async () => {
+  const calls = []
+  let validationAttempt = 0
+
+  await prepareValidatedNativeCandidate('electron', {
+    prebuild: async () => { calls.push('prebuild') },
+    build: async () => { calls.push('build') },
+    sign: async () => { calls.push('sign') },
+    validate: async () => {
+      calls.push('validate')
+      validationAttempt += 1
+      if (validationAttempt === 1) throw new Error('NODE_MODULE_VERSION 127; expected 145')
+    },
+  })
+
+  assert.deepEqual(calls, ['prebuild', 'sign', 'validate', 'build', 'sign', 'validate'])
+})
+
+test('reports both candidate failures when no native binary loads in the target runtime', async () => {
+  const prebuildError = new Error('download failed')
+  const validationError = new Error('source build has the wrong ABI')
+
+  await assert.rejects(() => prepareValidatedNativeCandidate('electron', {
+    prebuild: async () => { throw prebuildError },
+    build: async () => {},
+    sign: async () => {},
+    validate: async () => { throw validationError },
+  }), (error) => {
+    assert.ok(error instanceof AggregateError)
+    assert.deepEqual(error.errors, [prebuildError, validationError])
+    assert.match(error.message, /loadable better-sqlite3 binary for electron/)
+    return true
+  })
 })
 
 test('atomically replaces the native binary without changing an existing mapped inode', async () => {

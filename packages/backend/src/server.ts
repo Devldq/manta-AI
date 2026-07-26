@@ -111,8 +111,18 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
     localEndpoint = `http://127.0.0.1:${listeningAddress.port}`
     taskRuntime?.start()
     if (startup) {
-      await runInStorageContext(() => startup.cleanupStaleRag())
-      await runInStorageContext(() => startup.initializeSkills())
+      // These operate on independent storage groups (knowledge/cache versus
+      // extensions). Keep both inside the routed storage context, but overlap
+      // their I/O so the HTTP listener becomes Desktop-ready sooner.
+      const startupResults = await Promise.allSettled([
+        runInStorageContext(() => startup.cleanupStaleRag()),
+        runInStorageContext(() => startup.initializeSkills()),
+      ])
+      const startupErrors = startupResults
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map((result) => result.reason)
+      if (startupErrors.length === 1) throw startupErrors[0]
+      if (startupErrors.length > 1) throw new AggregateError(startupErrors, 'Backend startup initialization failed')
     }
     // Startup seeds and marketplace refreshes both use the extension content
     // store. Starting schedulers first lets them race for the same lease and

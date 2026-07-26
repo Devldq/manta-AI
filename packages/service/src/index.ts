@@ -21,6 +21,7 @@ export interface ServiceDescriptor {
   instanceId: string
   apiVersion: typeof API_VERSION
   startedAt: string
+  buildId?: string
 }
 
 export interface ServiceCredentials {
@@ -114,21 +115,41 @@ export async function startLocalService(options: LocalServiceOptions = {}): Prom
   const instanceId = randomUUID()
   let server: MantaServerHandle | undefined
   let qdrant: Awaited<ReturnType<typeof startManagedQdrant>> | undefined
+  let composition: Awaited<ReturnType<typeof createBackendStorageComposition>> | undefined
+  let serverOwnsComposition = false
   try {
     const configuredFrontendDist = options.frontendDist ?? process.env.MANTA_FRONTEND_DIST
-    const frontendDist = configuredFrontendDist ?? await resolveLocalFrontendDist()
-    if (frontendDist) {
-      try { await access(join(frontendDist, 'index.html')) }
-      catch { throw Object.assign(new Error(`Frontend assets are missing: ${join(frontendDist, 'index.html')}`), { code: 'FRONTEND_ASSETS_MISSING' }) }
-    }
-    const credentials = await ensureServiceCredentials(home)
     const bootstrapPath = options.bootstrapPath ?? process.env.MANTA_BOOTSTRAP_PATH ?? join(home, 'ash-bootstrap.json')
-    await ensureDefaultBootstrap(bootstrapPath, home)
-    qdrant = await startManagedQdrant({ home, binary: options.qdrantBinary, url: options.qdrantUrl ?? process.env.QDRANT_URL })
+    let frontendDist: string | undefined
+    let credentials: ServiceCredentials | undefined
     const bootstrapStore = new BootstrapStore(bootstrapPath)
-    const composition = await createBackendStorageComposition(bootstrapStore)
+    const storageStartup = Promise.all([
+      resolveAndValidateFrontendDist(configuredFrontendDist),
+      ensureServiceCredentials(home),
+      ensureDefaultBootstrap(bootstrapPath, home),
+    ]).then(async ([resolvedFrontendDist, resolvedCredentials]) => {
+      frontendDist = resolvedFrontendDist
+      credentials = resolvedCredentials
+      return createBackendStorageComposition(bootstrapStore)
+    })
+    const qdrantStartup = startManagedQdrant({
+      home,
+      binary: options.qdrantBinary,
+      url: options.qdrantUrl ?? process.env.QDRANT_URL,
+    })
+    const [qdrantResult, storageResult] = await Promise.allSettled([qdrantStartup, storageStartup])
+    if (qdrantResult.status === 'fulfilled') qdrant = qdrantResult.value
+    if (storageResult.status === 'fulfilled') composition = storageResult.value
+    const startupErrors = [qdrantResult, storageResult]
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason)
+    if (startupErrors.length === 1) throw startupErrors[0]
+    if (startupErrors.length > 1) throw new AggregateError(startupErrors, 'Local Service dependencies failed to start')
+    if (!composition || !credentials) throw new Error('Local Service startup dependencies are incomplete')
+    const activeComposition = composition
+    serverOwnsComposition = true
     server = await startServer({
-      storage: composition.runtime,
+      storage: activeComposition.runtime,
       port: options.port ?? 0,
       host: '127.0.0.1',
       startSchedulers: options.startSchedulers,
@@ -136,15 +157,15 @@ export async function startLocalService(options: LocalServiceOptions = {}): Prom
       bundledSeedRoot: options.bundledSeedRoot,
       storageApi: {
         readBootstrap: () => bootstrapStore.read(),
-        inventory: composition.hub.inventory,
-        capacityMetrics: composition.hub.capacityMetrics,
+        inventory: activeComposition.hub.inventory,
+        capacityMetrics: activeComposition.hub.capacityMetrics,
         listBackups: async () => [],
-        agents: composition.agents.readModel,
+        agents: activeComposition.agents.readModel,
         git: {
-          capability: () => composition.git.capability(),
-          bindings: () => composition.git.listBindings(),
-          status: (volumeId: string) => composition.git.status(volumeId),
-          history: (volumeId: string) => composition.git.history(volumeId),
+          capability: () => activeComposition.git.capability(),
+          bindings: () => activeComposition.git.listBindings(),
+          status: (volumeId: string) => activeComposition.git.status(volumeId),
+          history: (volumeId: string) => activeComposition.git.history(volumeId),
         },
       },
       apiOnly: !frontendDist,
@@ -163,6 +184,7 @@ export async function startLocalService(options: LocalServiceOptions = {}): Prom
       instanceId,
       apiVersion: API_VERSION,
       startedAt: new Date().toISOString(),
+      ...(process.env.MANTA_SERVICE_BUILD_ID ? { buildId: process.env.MANTA_SERVICE_BUILD_ID } : {}),
     }
     await writeJsonAtomic(serviceDescriptorPath(home), descriptor, 0o600)
     let closed = false
@@ -187,9 +209,21 @@ export async function startLocalService(options: LocalServiceOptions = {}): Prom
     return { descriptor, server, close, waitUntilClosed: () => didClose }
   } catch (error) {
     if (server) await server.close().catch(() => undefined)
+    else if (composition && !serverOwnsComposition) await composition.runtime.close().catch(() => undefined)
     await qdrant?.stop().catch(() => undefined)
     await releaseLock().catch(() => undefined)
     throw error
+  }
+}
+
+async function resolveAndValidateFrontendDist(configured?: string): Promise<string | undefined> {
+  const frontendDist = configured ?? await resolveLocalFrontendDist()
+  if (!frontendDist) return undefined
+  try {
+    await access(join(frontendDist, 'index.html'))
+    return frontendDist
+  } catch {
+    throw Object.assign(new Error(`Frontend assets are missing: ${join(frontendDist, 'index.html')}`), { code: 'FRONTEND_ASSETS_MISSING' })
   }
 }
 

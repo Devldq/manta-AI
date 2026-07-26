@@ -254,6 +254,32 @@ describe('backend lifecycle', () => {
     expect(events.slice(0, 3)).toEqual(['stale', 'skills', 'scheduler'])
   })
 
+  it('runs independent RAG cleanup and extension initialization concurrently', async () => {
+    const { startServer } = await import('../server')
+    const events: string[] = []
+    let cleanupFinished = false
+    const handle = await startServer({
+      storage: fakeStorage(mkdtempSync(join(tmpdir(), 'manta-startup-parallel-')), events),
+      port: 0,
+      registerRoutes: false,
+      startSchedulers: false,
+      startup: {
+        async cleanupStaleRag() {
+          events.push('stale:start')
+          await Promise.resolve()
+          cleanupFinished = true
+          events.push('stale:done')
+        },
+        async initializeSkills() {
+          events.push(cleanupFinished ? 'skills:serial' : 'skills:parallel')
+        },
+      },
+    })
+    handles.push(handle)
+
+    expect(events.slice(0, 3)).toEqual(['stale:start', 'skills:parallel', 'stale:done'])
+  })
+
   it('quiesces and reopens extension and diagnostics lifecycle owners', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-group-lifecycle-'))
     const events: string[] = []
