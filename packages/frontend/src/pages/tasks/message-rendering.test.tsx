@@ -3,12 +3,12 @@ import ReactMarkdown from 'react-markdown'
 import { describe, expect, it } from 'vitest'
 import { AgentStepView } from './components/AgentStepView'
 import { MessageRow } from './components/MessageRow'
-import { mergeAgentRunProgress } from './components/ToolCallLog'
+import { compactReadOnlyStepGroups, mergeAgentRunProgress } from './components/ToolCallLog'
 import { extractStepGroups, getTextContent, storedMessageToUIMessage } from './utils/formatters'
 import { createMarkdownComponents } from './utils/markdown'
 import type { StepGroup } from './utils/types'
 import type { AgentPublicEvent } from '@manta/contracts'
-import { getAgentRunSnapshot, isAgentRunTerminal } from './runtime/agent-run-view'
+import { applyAgentPublicEvent, getAgentRunSnapshot, isAgentRunTerminal } from './runtime/agent-run-view'
 
 describe('streaming message rendering', () => {
   it('marks local Markdown links for the file preview interaction', () => {
@@ -325,6 +325,101 @@ describe('streaming message rendering', () => {
     })
 
     expect(merged[0].thinking).toBe('根目录版本是 2.0.0；继续读取 backend 清单可以核对两者是否一致。')
+  })
+
+  it('compacts adjacent read-only steps into one investigation batch', () => {
+    const groups = compactReadOnlyStepGroups([
+      {
+        stepIndex: 0,
+        purposeText: '先确认目录结构。',
+        thinking: '先确认目录结构。',
+        toolCalls: [{
+          toolCallId: 'list-1',
+          toolName: 'lsDir',
+          state: 'output-available',
+          input: { dir_path: '.' },
+          output: 'files',
+        }],
+        isComplete: true,
+        isActive: false,
+      },
+      {
+        stepIndex: 1,
+        purposeText: '入口已经定位，继续核对设计说明。',
+        thinking: '入口已经定位，继续核对设计说明。',
+        toolCalls: [{
+          toolCallId: 'read-1',
+          toolName: 'readFile',
+          state: 'output-available',
+          input: { file_path: 'PRODUCT.md' },
+          output: 'content',
+        }],
+        isComplete: true,
+        isActive: false,
+      },
+      {
+        stepIndex: 2,
+        purposeText: '修改已明确。',
+        thinking: '修改已明确。',
+        toolCalls: [{
+          toolCallId: 'edit-1',
+          toolName: 'edit',
+          state: 'output-available',
+          input: { file_path: 'src/app.ts' },
+          output: 'done',
+        }],
+        isComplete: true,
+        isActive: false,
+      },
+    ])
+
+    expect(groups).toHaveLength(2)
+    expect(groups[0].toolCalls.map(tool => tool.toolCallId)).toEqual(['list-1', 'read-1'])
+    expect(groups[0].thinking).toBe('先确认目录结构。\n入口已经定位，继续核对设计说明。')
+    expect(groups[1].toolCalls[0].toolCallId).toBe('edit-1')
+  })
+
+  it('accumulates distinct live rationales without repeating identical ones', () => {
+    const base = {
+      schemaVersion: 1 as const,
+      runId: 'run-progress',
+      conversationId: 'conversation-1',
+      messageId: 'assistant-1',
+      phase: 'executing' as const,
+      timestamp: '2026-07-22T10:00:00.000Z',
+    }
+    let snapshot = applyAgentPublicEvent(undefined, {
+      ...base,
+      seq: 1,
+      type: 'step.started',
+      stepIndex: 0,
+      data: {},
+    })
+    snapshot = applyAgentPublicEvent(snapshot, {
+      ...base,
+      seq: 2,
+      type: 'progress.committed',
+      stepIndex: 0,
+      data: { text: '批量读取入口文件，确认整体结构。' },
+    })
+    snapshot = applyAgentPublicEvent(snapshot, {
+      ...base,
+      seq: 3,
+      type: 'progress.committed',
+      stepIndex: 0,
+      data: { text: '批量读取入口文件，确认整体结构。' },
+    })
+    snapshot = applyAgentPublicEvent(snapshot, {
+      ...base,
+      seq: 4,
+      type: 'progress.committed',
+      stepIndex: 0,
+      data: { text: '入口指向引擎层，再核对执行边界。' },
+    })
+
+    expect(snapshot.steps[0].progressText).toBe(
+      '批量读取入口文件，确认整体结构。\n入口指向引擎层，再核对执行边界。',
+    )
   })
 
   it('restores persisted progress and tool order after refresh', () => {

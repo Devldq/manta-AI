@@ -11,6 +11,54 @@ interface ToolCallLogProps {
   onOpenFile?: (path: string) => void
 }
 
+const READ_ONLY_TOOLS = new Set([
+  'find',
+  'glob',
+  'grep',
+  'listDirectory',
+  'lsDir',
+  'read',
+  'readFile',
+  'search',
+])
+
+function mergePurposeText(...values: Array<string | undefined>): string {
+  const lines = values
+    .flatMap(value => value?.split('\n') ?? [])
+    .map(value => value.trim())
+    .filter(Boolean)
+  return [...new Set(lines)].join('\n')
+}
+
+function isReadOnlyGroup(group: StepGroup): boolean {
+  return group.toolCalls.length > 0
+    && group.toolCalls.every(tool => READ_ONLY_TOOLS.has(tool.toolName))
+}
+
+/** Collapse adjacent read-only steps into one visible investigation batch. */
+export function compactReadOnlyStepGroups(groups: StepGroup[]): StepGroup[] {
+  const compacted: StepGroup[] = []
+
+  for (const group of groups) {
+    const previous = compacted[compacted.length - 1]
+    if (previous && isReadOnlyGroup(previous) && isReadOnlyGroup(group)) {
+      const thinking = mergePurposeText(previous.thinking, group.thinking)
+      previous.purposeText = mergePurposeText(previous.purposeText, group.purposeText)
+      previous.thinking = thinking || undefined
+      previous.toolCalls = [...previous.toolCalls, ...group.toolCalls]
+      previous.isComplete = previous.isComplete && group.isComplete
+      previous.isActive = previous.isActive || group.isActive
+      continue
+    }
+    compacted.push({
+      ...group,
+      toolCalls: [...group.toolCalls],
+    })
+  }
+
+  return compacted
+}
+
 export function mergeAgentRunProgress(
   groups: StepGroup[],
   agentRun?: AgentRunSnapshot,
@@ -29,7 +77,7 @@ export function mergeAgentRunProgress(
 
 export const ToolCallLog = memo(function ToolCallLog({ parts, isStreaming, agentRun, onOpenFile }: ToolCallLogProps) {
   const streamedGroups = extractStepGroups(parts)
-  const groups = streamedGroups.length > 0 ? mergeAgentRunProgress(streamedGroups, agentRun) : (agentRun?.steps.map(step => ({
+  const hydratedGroups = streamedGroups.length > 0 ? mergeAgentRunProgress(streamedGroups, agentRun) : (agentRun?.steps.map(step => ({
     stepIndex: step.stepIndex,
     purposeText: step.progressText ?? '',
     thinking: step.progressText,
@@ -44,6 +92,7 @@ export const ToolCallLog = memo(function ToolCallLog({ parts, isStreaming, agent
     isComplete: step.status !== 'running',
     isActive: step.status === 'running',
   })) ?? [])
+  const groups = compactReadOnlyStepGroups(hydratedGroups)
   if (groups.length === 0 && !agentRun) return null
 
   return (

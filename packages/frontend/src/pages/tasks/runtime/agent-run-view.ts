@@ -37,6 +37,14 @@ function findTool(snapshot: AgentRunSnapshot, event: AgentPublicEvent): AgentRun
   return undefined
 }
 
+function appendProgressText(current: string | undefined, incoming: string): string {
+  const normalized = incoming.trim()
+  if (!normalized) return current ?? ''
+  const lines = (current ?? '').split('\n').map(line => line.trim()).filter(Boolean)
+  if (!lines.includes(normalized)) lines.push(normalized)
+  return lines.join('\n')
+}
+
 export function applyAgentPublicEvent(
   current: AgentRunSnapshot | undefined,
   event: AgentPublicEvent,
@@ -70,7 +78,9 @@ export function applyAgentPublicEvent(
       break
     case 'progress.committed': {
       const step = snapshot.steps.find(item => item.stepIndex === event.stepIndex)
-      if (step && typeof data.text === 'string') step.progressText = data.text
+      if (step && typeof data.text === 'string') {
+        step.progressText = appendProgressText(step.progressText, data.text)
+      }
       break
     }
     case 'tool.started': {

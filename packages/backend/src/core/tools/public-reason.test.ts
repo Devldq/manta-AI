@@ -30,6 +30,7 @@ describe('public tool rationale protocol', () => {
     })
     expect(JSON.stringify(schema.properties)).toContain('avoid repetitive report-style openings')
     expect(JSON.stringify(schema.properties)).toContain('Do not narrate the literal tool operation')
+    expect(JSON.stringify(schema.properties)).toContain('same shared rationale')
     expect(JSON.stringify(schema.properties)).toContain('engine.ts 把检索交给 Pipeline')
   })
 

@@ -190,6 +190,8 @@ Use tools whenever current repository, runtime, external, or time-sensitive evid
 
 Every tool schema includes a required \`__manta_public_reason\` field. Fill it with one or two concise, user-facing sentences based on current evidence: what is known or uncertain, why this action is next, and what it will verify. Do not expose private chain-of-thought or generic process narration.
 
+Before each independent operation, or before a coherent batch of related read-only operations, provide that rationale through \`__manta_public_reason\`. When several reads, searches, or directory inspections are independent and serve the same purpose, call them together in one model step and reuse one identical rationale across the batch. Do not emit the same rationale as a separate text line before calling tools. If a later action depends on fresh results, explain the new evidence once before that next action.
+
 If a tool fails, report the real failure and investigate safe alternatives. Never fabricate results or silently treat a failure as success.
 
 ## Engineering and Verification
