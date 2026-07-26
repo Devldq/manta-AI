@@ -4,9 +4,17 @@ import * as path from 'path'
 import * as os from 'os'
 import { createHash } from 'node:crypto'
 import { getLLMConfig } from '@llm/config-store'
-import { appendMessage } from '@storage/conversation/store'
-import { appendWorkspaceMessage } from '@storage/workspace/store'
-import { getWorkspace } from '@storage/workspace/store'
+import {
+  appendMessage,
+  getConversation,
+  updateConversationContext,
+} from '@storage/conversation/store'
+import {
+  appendWorkspaceMessage,
+  getWorkspace,
+  getWorkspaceConversation,
+  updateWorkspaceConversationContext,
+} from '@storage/workspace/store'
 import type { ToolCallRecord, StepUsageRecord } from '@storage/conversation/types'
 import { readAgentSoul } from '@context/agent-soul'
 import {
@@ -29,6 +37,18 @@ import { getApprovalPolicy } from '../security/approval-policy.js'
 import type { ProcessRegistry } from './runner/process-registry'
 import type { AgentRuntimeExtension } from './runtime-hooks'
 import { AgentPublicEventProjector } from './agent-public-events'
+import {
+  INTENT_GATE_CONTEXT_KEY,
+  analyzeUserIntent,
+  buildIntentExecutionPrompt,
+  createIntentAnalysisFallback,
+  nextIntentGateState,
+  readPendingIntentPlan,
+  renderIntentResponse,
+  resolveIntentExecutionPlan,
+  type IntentAnalysis,
+  type PendingIntentPlan,
+} from './intent-classifier'
 
 /** ★ 解析工作空间 folderPath 为绝对路径，处理 showDirectoryPicker 只返回目录名的 bug */
 function resolveFolderPath(folderPath?: string): string | null {
@@ -89,6 +109,12 @@ export interface StreamChatResult {
   assistantMessageId: string
 }
 
+interface IntentAnalysisCheckpoint {
+  analysis: IntentAnalysis
+  /** Retained after conversation context is cleared so a durable retry uses the exact confirmed plan. */
+  executionPlan?: PendingIntentPlan
+}
+
 /**
  * 启动流式聊天 Agent Loop（如果该会话已有活跃循环则不重复启动）
  * Loop 与 HTTP 连接完全解耦，通过 LoopRegistry 广播事件
@@ -116,6 +142,90 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   // 提前生成 messageId（整轮 agent loop 共享，确保早期日志也能立即关联到会话）
   const messageId = durableMessageId ?? `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const assistantMessageId = jobContext ? `${jobContext.job.id}:assistant` : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+  // 解析消息格式。执行前意图门禁只接收对话文本，不暴露任何工具。
+  const coreMessages = parseMessagesToCore(messages)
+
+  if (jobContext && userPrompt) {
+    const persisted = workspaceId
+      ? appendWorkspaceMessage(workspaceId, conversationId, 'user', userPrompt, undefined, undefined, undefined, undefined, messageId)
+      : appendMessage(conversationId, 'user', userPrompt, undefined, undefined, undefined, undefined, messageId)
+    if (!persisted) throw new Error(`Conversation ${conversationId} was not found`)
+    jobContext.checkpoint('user_message_committed', { messageId })
+  }
+
+  const conversation = workspaceId
+    ? getWorkspaceConversation(workspaceId, conversationId)
+    : getConversation(conversationId)
+  if (!conversation) throw new Error(`Conversation ${conversationId} was not found`)
+  const pendingIntentPlan = readPendingIntentPlan(conversation.context)
+
+  const intentCheckpoint = jobContext?.readCheckpoint('intent_analysis') as unknown as IntentAnalysisCheckpoint | undefined
+  let intentAnalysis = intentCheckpoint?.analysis
+  let confirmedIntentPlan = intentCheckpoint?.executionPlan
+  if (!intentAnalysis) {
+    try {
+      intentAnalysis = await analyzeUserIntent({
+        messages: coreMessages,
+        userPrompt,
+        pendingPlan: pendingIntentPlan,
+        agentName,
+        abortSignal: jobContext?.signal,
+      })
+    } catch (error) {
+      if (jobContext?.signal.aborted) throw error
+      intentAnalysis = createIntentAnalysisFallback(userPrompt)
+      logger.warn('[IntentGate] 意图分析失败，已切换确定性降级', {
+        conversationId,
+        messageId,
+        agentName,
+        extra: {
+          error: error instanceof Error ? error.message : String(error),
+          fallbackDecision: intentAnalysis.decision,
+          fallbackRequestType: intentAnalysis.requestType,
+        },
+      }, ['agent', 'intent', 'failure'])
+    }
+    confirmedIntentPlan = resolveIntentExecutionPlan(intentAnalysis, pendingIntentPlan, messageId)
+    jobContext?.checkpoint('intent_analysis', {
+      analysis: intentAnalysis,
+      ...(confirmedIntentPlan ? { executionPlan: confirmedIntentPlan } : {}),
+    } as unknown as JsonValue)
+  }
+
+  jobContext?.emit('log', {
+    channel: 'agent.intent',
+    analysis: intentAnalysis as unknown as JsonValue,
+  })
+
+  const nextGateState = nextIntentGateState(intentAnalysis, pendingIntentPlan, messageId)
+  const updatedConversation = workspaceId
+    ? updateWorkspaceConversationContext(workspaceId, conversationId, {
+        [INTENT_GATE_CONTEXT_KEY]: nextGateState,
+      })
+    : updateConversationContext(conversationId, {
+        [INTENT_GATE_CONTEXT_KEY]: nextGateState,
+      })
+  if (!updatedConversation) throw new Error(`Conversation ${conversationId} was not found`)
+
+  if (intentAnalysis.decision !== 'execute') {
+    const response = renderIntentResponse(intentAnalysis, userPrompt)
+    return completeIntentGateTurn({
+      conversationId,
+      workspaceId,
+      userPrompt,
+      messageId,
+      assistantMessageId,
+      response,
+      jobContext,
+    })
+  }
+  const executionPlan = confirmedIntentPlan
+    ?? resolveIntentExecutionPlan(intentAnalysis, pendingIntentPlan, messageId)
+  if (!executionPlan) {
+    throw new Error('Intent gate allowed execution without a valid execution plan')
+  }
+  const executionMode = intentAnalysis.executionMode === 'direct' ? 'direct' : 'confirmed_plan'
 
   // ★ 确定工作目录：有工作空间则解析并使用工作空间路径，否则用 process.cwd()
   const workspace = workspaceId ? getWorkspace(workspaceId) : null
@@ -155,11 +265,11 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
       sessionMessageCount: messages.length,
       sessionId: conversationId,
     }
-    return promptBuilder.build(ctx)
+    return buildIntentExecutionPrompt(promptBuilder.build(ctx), executionPlan, executionMode)
   }
 
   // 首次构建获取初始 system prompt + 统计
-  const { prompt: systemPrompt, stats: pipeStats } = await buildSystemPromptWithStats({
+  const { prompt: baseSystemPrompt, stats: pipeStats } = await buildSystemPromptWithStats({
     soulPrompt,
     cwd,
     runtimeFacts,
@@ -169,6 +279,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     conversationId,
     messageId,
   })
+  const systemPrompt = buildIntentExecutionPrompt(baseSystemPrompt, executionPlan, executionMode)
 
   // 简洁启动日志：模型 + prompt 摘要 + pipe 统计
   const promptPreview = userPrompt.length > 60 ? userPrompt.slice(0, 60) + '…' : userPrompt
@@ -188,17 +299,6 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
       pipeTokens: Math.ceil(systemPrompt.length / 2.5),
     },
   })
-
-  // 解析消息格式
-  const coreMessages = parseMessagesToCore(messages)
-
-  if (jobContext && userPrompt) {
-    const persisted = workspaceId
-      ? appendWorkspaceMessage(workspaceId, conversationId, 'user', userPrompt, undefined, undefined, undefined, undefined, messageId)
-      : appendMessage(conversationId, 'user', userPrompt, undefined, undefined, undefined, undefined, messageId)
-    if (!persisted) throw new Error(`Conversation ${conversationId} was not found`)
-    jobContext.checkpoint('user_message_committed', { messageId })
-  }
 
   // 创建安全上下文（用于路径校验、命令校验等安全检查）
   const resumeState = jobContext?.readCheckpoint('agent_loop_state') as unknown as AgentLoopResumeState | undefined
@@ -415,6 +515,94 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   if (!jobContext) registerLoop(conversationId, loopPromise)
 
   return { isNew: true, completion: loopPromise, assistantMessageId }
+}
+
+interface CompleteIntentGateTurnOptions {
+  conversationId: string
+  workspaceId?: string
+  userPrompt: string
+  messageId: string
+  assistantMessageId: string
+  response: string
+  jobContext?: JobExecutorContext
+}
+
+/**
+ * Complete a preflight-only turn without entering the Agent Loop. This is the
+ * hard boundary that guarantees clarification and plan-proposal turns cannot
+ * call tools.
+ */
+async function completeIntentGateTurn(
+  options: CompleteIntentGateTurnOptions,
+): Promise<StreamChatResult> {
+  const finish = async () => {
+    if (!options.jobContext && options.userPrompt) {
+      const user = options.workspaceId
+        ? appendWorkspaceMessage(options.workspaceId, options.conversationId, 'user', options.userPrompt, undefined, undefined, undefined, undefined, options.messageId)
+        : appendMessage(options.conversationId, 'user', options.userPrompt, undefined, undefined, undefined, undefined, options.messageId)
+      if (!user) throw new Error(`Conversation ${options.conversationId} was not found`)
+    }
+
+    const assistant = options.workspaceId
+      ? appendWorkspaceMessage(options.workspaceId, options.conversationId, 'assistant', options.response, undefined, undefined, undefined, undefined, options.assistantMessageId)
+      : appendMessage(options.conversationId, 'assistant', options.response, undefined, undefined, undefined, undefined, options.assistantMessageId)
+    if (!assistant) throw new Error(`Conversation ${options.conversationId} was not found`)
+
+    const textId = `${options.assistantMessageId}:intent`
+    const chunks: JsonValue[] = [
+      { type: 'text-start', id: textId },
+      { type: 'text-delta', id: textId, delta: options.response },
+      { type: 'text-end', id: textId },
+      { type: 'finish', finishReason: 'stop' },
+    ]
+    for (const chunk of chunks) {
+      if (options.jobContext) {
+        options.jobContext.emit('log', { channel: 'agent.stream', chunk })
+      } else {
+        emitLoopEvent(options.conversationId, `data: ${JSON.stringify(chunk)}\n\n`)
+      }
+    }
+
+    if (options.jobContext) {
+      options.jobContext.checkpoint('assistant_message_committed', {
+        messageId: options.assistantMessageId,
+        toolCallCount: 0,
+      })
+      options.jobContext.addArtifact({
+        kind: 'conversation.message',
+        mediaType: 'application/json',
+        name: 'assistant-message',
+        uri: `manta://conversations/${options.conversationId}/messages/${options.assistantMessageId}`,
+        metadata: {
+          conversationId: options.conversationId,
+          messageId: options.assistantMessageId,
+          intentGate: true,
+        },
+      })
+    }
+    logManager.closeConversation(options.conversationId)
+  }
+
+  if (options.jobContext) {
+    await finish()
+    return {
+      isNew: true,
+      completion: Promise.resolve(),
+      assistantMessageId: options.assistantMessageId,
+    }
+  }
+
+  let resolveCompletion!: () => void
+  let rejectCompletion!: (error: unknown) => void
+  const completion = new Promise<void>((resolve, reject) => {
+    resolveCompletion = resolve
+    rejectCompletion = reject
+  })
+  registerLoop(options.conversationId, completion)
+  queueMicrotask(() => {
+    void finish().then(resolveCompletion, rejectCompletion)
+  })
+  return { isNew: true, completion, assistantMessageId: options.assistantMessageId }
 }
 
 type DurableApprovalInput = { approvalId?: string; decision?: 'approve' | 'deny' }

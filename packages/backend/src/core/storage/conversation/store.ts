@@ -137,6 +137,19 @@ export function updateConversationAgent(id: string, agentName: string): Conversa
   return conv
 }
 
+/** 合并更新会话上下文，用于持久化执行前门禁等控制面状态。 */
+export function updateConversationContext(
+  id: string,
+  patch: Record<string, unknown>,
+): Conversation | null {
+  const conv = readConv(id)
+  if (!conv) return null
+  conv.context = { ...conv.context, ...patch }
+  conv.updatedAt = new Date().toISOString()
+  writeConv(conv)
+  return conv
+}
+
 /** 更新会话标题 */
 export function updateConversationTitle(id: string, title: string): Conversation | null {
   const conv = readConv(id)
