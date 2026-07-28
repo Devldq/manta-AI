@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { access, mkdir, readFile, rm } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
@@ -11,6 +11,7 @@ import { registerStorageIpc } from './ipc/registerStorageIpc'
 import { registerOnboardingIpc as registerSecureOnboardingIpc } from './ipc/registerOnboardingIpc'
 import { SelectionStore, type SelectionPurpose } from './ipc/SelectionStore'
 import { createMainWindow } from './windows/createMainWindow'
+import { createRefreshSafeMenuTemplate } from './windows/refresh-protection'
 import { createOnboardingWindow, onboardingPageUrl } from './windows/createOnboardingWindow'
 import { StorageControlStore, type RelaunchIntent } from './lifecycle/StorageControlStore'
 import type { StorageOperationProgress } from '@manta/shared'
@@ -526,6 +527,7 @@ export async function runDesktop(): Promise<void> {
   app.on('second-instance', () => { if (activeWindow?.isMinimized()) activeWindow.restore(); (activeWindow ?? onboardingWindow)?.focus() })
   const restartService = restartDevelopmentLocalService()
   await Promise.all([app.whenReady(), restartService])
+  Menu.setApplicationMenu(Menu.buildFromTemplate(createRefreshSafeMenuTemplate(process.platform, app.isPackaged)))
   let stopFollowingServiceLog: StopFollowingLog | undefined
   if (!app.isPackaged && useLocalService) {
     const path = serviceLogPath(app.getPath('userData'))

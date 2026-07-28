@@ -1,10 +1,14 @@
 import { BrowserWindow } from 'electron'
 import { join } from 'node:path'
+import { isRendererRefreshShortcut } from './refresh-protection'
 
 export interface MainWindowOptions { forwardConsole?: boolean }
 
 export function createMainWindow(url: string, options: MainWindowOptions = {}): BrowserWindow {
   const window = new BrowserWindow({ width: 1400, height: 900, show: false, webPreferences: { preload: join(__dirname, '..', 'preload', 'main-preload.js'), nodeIntegration: false, contextIsolation: true, sandbox: true } })
+  window.webContents.on('before-input-event', (event, input) => {
+    if (isRendererRefreshShortcut(input)) event.preventDefault()
+  })
   if (options.forwardConsole) {
     window.webContents.on('console-message', (details) => {
       const source = details.sourceId ? ` ${details.sourceId}:${details.lineNumber}` : ''
