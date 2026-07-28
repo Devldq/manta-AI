@@ -3,6 +3,8 @@ import type { StorageGroupId } from '@manta/shared'
 
 export interface StoragePathResolver {
   resolve(group: StorageGroupId, ...segments: string[]): string
+  /** Rebuildable machine-local data that must never be routed to a cloud volume. */
+  resolveLocalCache?(...segments: string[]): string
 }
 
 const storageContext = new AsyncLocalStorage<StoragePathResolver>()
@@ -17,6 +19,16 @@ export function resolveStoragePath(group: StorageGroupId, ...segments: string[])
   const resolver = storageContext.getStore()
   if (!resolver) throw new Error('ASH storage resolver is not available in the current operation')
   return resolver.resolve(group, ...segments)
+}
+
+/** Resolve rebuildable machine-local cache data.
+ * Tests and headless callers without an explicit local root retain the routed
+ * cache-group fallback; Desktop Service always injects a true local root.
+ */
+export function resolveLocalCachePath(...segments: string[]): string {
+  const resolver = storageContext.getStore()
+  if (!resolver) throw new Error('ASH storage resolver is not available in the current operation')
+  return resolver.resolveLocalCache?.(...segments) ?? resolver.resolve('cache', 'local', ...segments)
 }
 
 /** Validate one caller-controlled identifier before using it as a path segment. */

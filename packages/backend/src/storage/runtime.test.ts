@@ -23,6 +23,16 @@ function fakeStorage(root: string, events: string[] = []) {
 }
 
 describe('backend lifecycle', () => {
+  it('uses an explicit local task database path instead of routed work storage', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-task-path-'))
+    const storage = fakeStorage(root)
+    const localPath = join(root, 'local-runtime', 'jobs.sqlite')
+    const { resolveTaskRuntimeDatabasePath } = await import('../server')
+
+    expect(resolveTaskRuntimeDatabasePath({ storage, taskRuntimeDatabasePath: localPath })).toBe(localPath)
+    expect(resolveTaskRuntimeDatabasePath({ storage })).toBe(join(root, 'work', 'jobs', 'jobs.sqlite'))
+  })
+
   it('awaits storage recovery before building or listening on the application', async () => {
     const events: string[] = []
     const storage = Object.assign(fakeStorage(mkdtempSync(join(tmpdir(), 'manta-startup-recovery-')), events), {
@@ -214,7 +224,7 @@ describe('backend lifecycle', () => {
     expect(events).toEqual(['close'])
   })
 
-  it('runs explicit startup initialization and cleans up if it fails', async () => {
+  it('cleans up without starting best-effort maintenance when critical initialization fails', async () => {
     const { startServer } = await import('../server')
     const events: string[] = []
     const diagnosticsRoot = mkdtempSync(join(tmpdir(), 'manta-startup-diagnostics-'))
@@ -230,8 +240,8 @@ describe('backend lifecycle', () => {
         async initializeSkills() { events.push('skills'); throw new Error('skill initialization failed') },
       },
     })).rejects.toThrow(/skill initialization failed/)
-    expect(events).toEqual(['stale', 'skills', 'close'])
-    expect(readFileSync(join(diagnosticsRoot, 'system.log'), 'utf8')).toContain('startup-owned')
+    expect(events).toEqual(['skills', 'close'])
+    expect(existsSync(join(diagnosticsRoot, 'system.log'))).toBe(false)
   })
 
   it('finishes extension initialization before marketplace schedulers can acquire leases', async () => {
@@ -251,10 +261,11 @@ describe('backend lifecycle', () => {
     })
     handles.push(handle)
 
-    expect(events.slice(0, 3)).toEqual(['stale', 'skills', 'scheduler'])
+    expect(events.indexOf('skills')).toBeLessThan(events.indexOf('scheduler'))
+    await vi.waitFor(() => expect(events).toContain('stale'))
   })
 
-  it('runs independent RAG cleanup and extension initialization concurrently', async () => {
+  it('finishes critical extension initialization before best-effort RAG cleanup', async () => {
     const { startServer } = await import('../server')
     const events: string[] = []
     let cleanupFinished = false
@@ -271,13 +282,35 @@ describe('backend lifecycle', () => {
           events.push('stale:done')
         },
         async initializeSkills() {
-          events.push(cleanupFinished ? 'skills:serial' : 'skills:parallel')
+          events.push(cleanupFinished ? 'skills:late' : 'skills:first')
         },
       },
     })
     handles.push(handle)
 
-    expect(events.slice(0, 3)).toEqual(['stale:start', 'skills:parallel', 'stale:done'])
+    await vi.waitFor(() => expect(events).toContain('stale:done'))
+    expect(events).toEqual(expect.arrayContaining(['skills:first', 'stale:start', 'stale:done']))
+    expect(events.indexOf('skills:first')).toBeLessThan(events.indexOf('stale:start'))
+  })
+
+  it('keeps the listening service available when best-effort RAG cleanup fails', async () => {
+    const { startServer } = await import('../server')
+    const events: string[] = []
+    const handle = await startServer({
+      storage: fakeStorage(mkdtempSync(join(tmpdir(), 'manta-startup-rag-degraded-')), events),
+      port: 0,
+      registerRoutes: false,
+      startSchedulers: false,
+      startup: {
+        cleanupStaleRag() { events.push('stale'); throw new Error('qdrant timed out') },
+        initializeSkills() { events.push('skills') },
+      },
+    })
+    handles.push(handle)
+
+    await vi.waitFor(() => expect(events).toContain('stale'))
+    expect(handle.port).toBeGreaterThan(0)
+    expect(events).toContain('skills')
   })
 
   it('quiesces and reopens extension and diagnostics lifecycle owners', async () => {
@@ -538,7 +571,7 @@ describe('backend lifecycle', () => {
     } })
     await expect(startServer({
       storage: runtime, port: 0, registerRoutes: false,
-      startup: { cleanupStaleRag() { throw new Error('startup rejected') }, initializeSkills() {} },
+      startup: { cleanupStaleRag() {}, initializeSkills() { throw new Error('startup rejected') } },
     })).rejects.toThrow(/startup rejected/)
     expect(refreshStarted).toBe(false)
     expect(() => runtime.marketplaceScheduler.acquire()).toThrow(/disposed/i)

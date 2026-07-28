@@ -12,6 +12,7 @@ declare module '@manta/backend' {
 
   export interface BackendStorageRuntime {
     resolve(group: import('@manta/shared').StorageGroupId, ...segments: string[]): string
+    resolveLocalCache?(...segments: string[]): string
     recoverStartup(): Promise<void>
     quiesce(): Promise<void>
     checkpoint(): Promise<void>
@@ -19,11 +20,19 @@ declare module '@manta/backend' {
     healthCheck(): Promise<{ ok: boolean; status: string; warnings: unknown[]; error?: string }>
   }
 
-  export function createBackendStorageComposition(store: BootstrapStore): Promise<{
+  interface AgentReadModel {
+    agents(): Promise<any>
+    assets(adapterId: string, installationId: string): Promise<any>
+    reuse(): Promise<any>
+    operation(operationId: string): Promise<any>
+  }
+
+  export function createBackendStorageComposition(store: BootstrapStore, options?: { deferAgentRecovery?: boolean; localCacheRoot?: string }): Promise<{
     runtime: BackendStorageRuntime
     hub: { inventory(scope?: unknown): Promise<{ files: number; bytes: number; entries: unknown[] }>; capacityMetrics(): Promise<unknown> }
     git: { capability(): Promise<unknown>; listBindings(): Promise<unknown[]>; status(volumeId: string): Promise<string>; history(volumeId: string): Promise<string> }
-    agents: { readModel: unknown }
+    agents: { readModel: AgentReadModel }
+    activateAgents(): Promise<{ readModel: AgentReadModel }>
   }>
   export function startServer(options: {
     storage: BackendStorageRuntime
@@ -37,6 +46,7 @@ declare module '@manta/backend' {
     apiOnly?: boolean
     isDev?: boolean
     logger?: boolean
+    taskRuntimeDatabasePath?: string
     localAccess?: { tokens: Array<{ token: string; scopes: string[] }>; desktopNonces?: string[] }
   }): Promise<MantaServerHandle>
 }

@@ -1,26 +1,26 @@
-import type { Conversation, ConversationMessage, ConversationType, CreateConversationInput } from '@core/types'
+import type { Conversation, ConversationMessage, ConversationSummary, ConversationType, CreateConversationInput } from '@core/types'
 import {
   createConversation,
-  listConversations,
+  listConversationSummaries,
   getConversation,
   deleteConversation,
   appendMessage,
 } from '@core/storage/conversation/store'
 import {
   createWorkspaceConversation,
-  listWorkspaceConversations,
+  listWorkspaceConversationSummaries,
   deleteWorkspaceConversation,
 } from '@core/storage/workspace/store'
 import { validateWithZod } from '@core/api/error-handler'
 import { CreateConversationSchema, SendMessageSchema } from '@manta/shared'
 
-export function fetchConversations(params: { type: ConversationType; workspaceId?: string }): Conversation[] {
+export async function fetchConversations(params: { type: ConversationType; workspaceId?: string }): Promise<ConversationSummary[]> {
   if (params.type === 'workspace' && params.workspaceId) {
     // 从工作空间存储获取
-    return listWorkspaceConversations(params.workspaceId)
+    return listWorkspaceConversationSummaries(params.workspaceId)
   }
   // 从全局存储获取
-  return listConversations()
+  return listConversationSummaries()
 }
 
 export function createNewConversation(input: CreateConversationInput): Conversation {

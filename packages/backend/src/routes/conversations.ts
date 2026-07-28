@@ -12,7 +12,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         workspaceId?: string
       }
       const convType = (type as ConversationType) || 'global'
-      const conversations = fetchConversations({ type: convType, workspaceId })
+      const conversations = await fetchConversations({ type: convType, workspaceId })
       return reply.send(apiSuccess({ conversations }))
     } catch (err) {
       return apiError(reply, err)

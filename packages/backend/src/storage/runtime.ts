@@ -19,6 +19,7 @@ import { createAgentStorageComposition } from './agent-storage'
 export interface StorageResolver { resolve(group: StorageGroupId, ...segments: string[]): string }
 export interface StorageHealthResult { ok: boolean; status: 'healthy' | 'degraded' | 'unhealthy'; warnings: LegacyRecoveryWarning[]; error?: string }
 export interface BackendStorageRuntime extends StorageResolver {
+  resolveLocalCache?(...segments: string[]): string
   readonly drivers: Map<StorageGroupId, StorageGroupDriver>
   readonly diagnosticsWriter: RuntimeDiagnosticsWriter
   readonly marketplaceScheduler: ClaudeMarketplaceRuntimeOwner
@@ -36,9 +37,13 @@ export interface BackendStorageRuntime extends StorageResolver {
 export interface BackendRuntimeOptions {
   groupLifecycles?: Partial<Record<StorageGroupId, ManagedGroupLifecycle>>
   marketplaceRefresh?: (dataDir: string) => Promise<PluginMarketplaceCache>
+  localCacheRoot?: string
 }
 
 export function createBackendStorageRuntime(storage: StorageResolver, options: BackendRuntimeOptions = {}): BackendStorageRuntime {
+  const scopedStorage = options.localCacheRoot
+    ? { ...storage, resolve: storage.resolve.bind(storage), resolveLocalCache: (...segments: string[]) => join(options.localCacheRoot!, ...segments) }
+    : storage
   recoverExtensionTransactions(storage.resolve('extensions'))
   const legacyRecoveryWarnings = migrateLegacyAtomicJournals(join(storage.resolve('secrets'), '.transactions'), STORAGE_GROUP_IDS.map((id) => storage.resolve(id)), storage.resolve('diagnostics', 'legacy-recovery'))
   const provider = createQdrantProvider()
@@ -87,9 +92,11 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
     { isPipelineCommitted: async (record) => matchesReadyRagDocument(record, await provider.getDocument(record.documentId)) },
   )
   return {
-    resolve: storage.resolve.bind(storage), drivers, diagnosticsWriter, marketplaceScheduler, processRegistry, ragProvider: provider, legacyRecoveryWarnings,
+    resolve: storage.resolve.bind(storage),
+    ...(options.localCacheRoot ? { resolveLocalCache: (...segments: string[]) => join(options.localCacheRoot!, ...segments) } : {}),
+    drivers, diagnosticsWriter, marketplaceScheduler, processRegistry, ragProvider: provider, legacyRecoveryWarnings,
     recoverStartup,
-    runInStorageContext: (operation) => runWithStorageResolver(storage, () => runWithDiagnosticsOwner(diagnosticsWriter, operation)),
+    runInStorageContext: (operation) => runWithStorageResolver(scopedStorage, () => runWithDiagnosticsOwner(diagnosticsWriter, operation)),
     async quiesce() {
       quiesced = true
       const results = await Promise.allSettled([...drivers.values()].map((driver) => driver.quiesce()))
@@ -126,7 +133,7 @@ export function createBackendStorageRuntime(storage: StorageResolver, options: B
   }
 }
 
-export async function createBackendStorageComposition(bootstrap: BootstrapStore, options: { onProgress?: (progress: import('@manta/shared').StorageOperationProgress) => void; onAgentProgress?: (progress: import('./agent-storage').AgentStorageProgress) => void; deferAgentRecovery?: boolean } = {}) {
+export async function createBackendStorageComposition(bootstrap: BootstrapStore, options: { onProgress?: (progress: import('@manta/shared').StorageOperationProgress) => void; onAgentProgress?: (progress: import('./agent-storage').AgentStorageProgress) => void; deferAgentRecovery?: boolean; localCacheRoot?: string } = {}) {
   const initialBootstrap = await bootstrap.read()
   if (initialBootstrap?.pendingMigration && !options.deferAgentRecovery) throw new Error('Storage migration recovery must complete before Agent storage recovery')
   let runtime: BackendStorageRuntime | undefined
@@ -151,7 +158,7 @@ export async function createBackendStorageComposition(bootstrap: BootstrapStore,
       })()
     },
     createDrivers(storage) {
-      runtime = createBackendStorageRuntime(storage)
+      runtime = createBackendStorageRuntime(storage, { localCacheRoot: options.localCacheRoot })
       return runtime.drivers
     },
   })

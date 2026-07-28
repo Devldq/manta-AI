@@ -11,6 +11,20 @@ const prebuildInstall = require.resolve('prebuild-install/bin.js', { paths: [nat
 const nodeGyp = require.resolve('node-gyp/bin/node-gyp.js')
 const forwardedSignals = ['SIGINT', 'SIGTERM']
 
+function createDevTimer(output = process.stdout) {
+  const startedAt = process.hrtime.bigint()
+  let previousAt = startedAt
+  return (phase) => {
+    const now = process.hrtime.bigint()
+    output.write(`MANTA_DEV_TIMING ${JSON.stringify({
+      phase,
+      durationMs: Math.round(Number(now - previousAt) / 1e6),
+      totalMs: Math.round(Number(now - startedAt) / 1e6),
+    })}\n`)
+    previousAt = now
+  }
+}
+
 function createSignalGuard(signalSource = process) {
   let activeChild
   let firstSignal
@@ -228,6 +242,7 @@ function interruptedError(signal) {
 async function runDev(deps = { rebuildForNode, snapshotNodeAbi, rebuildForElectron, launchElectron, restoreNodeAbi }, runtime = {}) {
   const signalGuard = createSignalGuard(runtime.signalSource)
   const childRuntime = { ...runtime, signalGuard }
+  const recordPhase = createDevTimer(runtime.timingOutput)
   let snapshot
   let hasSnapshot = false
   let primaryError
@@ -235,13 +250,17 @@ async function runDev(deps = { rebuildForNode, snapshotNodeAbi, rebuildForElectr
 
   try {
     await deps.rebuildForNode?.(childRuntime)
+    recordPhase('prepare-node-native')
     if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
     snapshot = await deps.snapshotNodeAbi()
     hasSnapshot = true
+    recordPhase('snapshot-node-native')
     if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
     await deps.rebuildForElectron(childRuntime)
+    recordPhase('prepare-electron-native')
     if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
     await deps.launchElectron(childRuntime)
+    recordPhase('electron-session')
     if (signalGuard.signal !== undefined) throw interruptedError(signalGuard.signal)
   } catch (error) {
     primaryError = error
@@ -249,6 +268,7 @@ async function runDev(deps = { rebuildForNode, snapshotNodeAbi, rebuildForElectr
 
   try {
     if (hasSnapshot) await deps.restoreNodeAbi(snapshot)
+    if (hasSnapshot) recordPhase('restore-node-native')
   } catch (error) {
     restoreError = error
   } finally {
@@ -264,6 +284,7 @@ async function runDev(deps = { rebuildForNode, snapshotNodeAbi, rebuildForElectr
 }
 
 module.exports = {
+  createDevTimer,
   nativeBuildEnvironment,
   prepareValidatedNativeCandidate,
   rebuildForNode,

@@ -1,12 +1,18 @@
 /* 会话存储层 — 文件夹实现（每个会话一个文件夹，内含 session.json + log.ndjson 等） */
 import * as fs from 'fs'
 import * as path from 'path'
-import { resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
+import { resolveLocalCachePath, resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
-import type { Conversation, ConversationMessage, ToolCallRecord, StepUsageRecord } from '@core/types'
+import type { Conversation, ConversationMessage, ConversationSummary, ToolCallRecord, StepUsageRecord } from '@core/types'
 import type { AgentRunSnapshot } from '@manta/contracts'
 
 function dataDir(): string { return resolveStoragePath('work', 'conversations') }
+const SUMMARY_INDEX_FILE = '.conversation-index.json'
+
+interface ConversationSummaryIndex {
+  version: 1
+  conversations: ConversationSummary[]
+}
 
 function ensureDir(): void {
   const dir = dataDir()
@@ -21,6 +27,81 @@ function convDirPath(id: string): string {
 /** 会话 JSON 文件路径 */
 function convSessionFilePath(id: string): string {
   return path.join(convDirPath(id), 'session.json')
+}
+
+function summaryIndexFilePath(): string {
+  return path.join(dataDir(), SUMMARY_INDEX_FILE)
+}
+
+function localSummaryIndexFilePath(): string {
+  return resolveLocalCachePath('conversation-indexes', 'global.json')
+}
+
+function toConversationSummary(conv: Conversation): ConversationSummary {
+  return {
+    id: conv.id,
+    title: conv.title,
+    agentName: conv.agentName,
+    createdAt: conv.createdAt,
+    updatedAt: conv.updatedAt,
+    ...(conv.workspaceId ? { workspaceId: conv.workspaceId } : {}),
+    messageCount: conv.messages.length,
+  }
+}
+
+function parseSummaryIndex(raw: string): ConversationSummary[] | null {
+  try {
+    const value = JSON.parse(raw) as ConversationSummaryIndex
+    if (value.version !== 1 || !Array.isArray(value.conversations)) return null
+    if (value.conversations.some((item) => (
+      typeof item?.id !== 'string'
+      || typeof item.title !== 'string'
+      || typeof item.agentName !== 'string'
+      || typeof item.createdAt !== 'string'
+      || typeof item.updatedAt !== 'string'
+    ))) return null
+    return value.conversations
+  } catch {
+    return null
+  }
+}
+
+function readLocalSummaryIndex(): ConversationSummary[] | null {
+  try { return parseSummaryIndex(fs.readFileSync(localSummaryIndexFilePath(), 'utf-8')) } catch { return null }
+}
+
+async function readPortableSummaryIndex(): Promise<ConversationSummary[] | null> {
+  try { return parseSummaryIndex(await fs.promises.readFile(summaryIndexFilePath(), 'utf-8')) } catch { return null }
+}
+
+function writeLocalSummaryIndex(conversations: ConversationSummary[]): void {
+  const fp = localSummaryIndexFilePath()
+  fs.mkdirSync(path.dirname(fp), { recursive: true })
+  const tmp = `${fp}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify({ version: 1, conversations } satisfies ConversationSummaryIndex), 'utf-8')
+  fs.renameSync(tmp, fp)
+}
+
+function writeSummaryIndex(conversations: ConversationSummary[]): void {
+  writeLocalSummaryIndex(conversations)
+  ensureDir()
+  const fp = summaryIndexFilePath()
+  const tmp = `${fp}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify({ version: 1, conversations } satisfies ConversationSummaryIndex), 'utf-8')
+  fs.renameSync(tmp, fp)
+}
+
+function updateSummaryIndex(conv: Conversation): void {
+  const summaries = readLocalSummaryIndex() ?? []
+  const next = summaries.filter((item) => item.id !== conv.id)
+  if (!conv.workspaceId) next.push(toConversationSummary(conv))
+  writeSummaryIndex(next)
+}
+
+function removeFromSummaryIndex(id: string): void {
+  const summaries = readLocalSummaryIndex()
+  if (!summaries) return
+  writeSummaryIndex(summaries.filter((item) => item.id !== id))
 }
 
 /** 会话专属日志文件路径 */
@@ -55,6 +136,7 @@ function writeConv(conv: Conversation): void {
   const tmp = `${fp}.tmp`
   fs.writeFileSync(tmp, JSON.stringify(conv, null, 2), 'utf-8')
   fs.renameSync(tmp, fp)
+  updateSummaryIndex(conv)
 }
 
 /** 迁移旧的 .json 文件到文件夹格式 */
@@ -120,6 +202,34 @@ export function listConversations(): Conversation[] {
     const globalConvs = convs.filter(c => !c.workspaceId)
     return globalConvs.sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
   } catch { return [] }
+}
+
+async function rebuildConversationSummaries(): Promise<ConversationSummary[]> {
+  try {
+    const entries = await fs.promises.readdir(dataDir(), { withFileTypes: true })
+    const conversations = await Promise.all(entries.map(async (entry) => {
+      if (entry.isDirectory()) {
+        try { return JSON.parse(await fs.promises.readFile(convSessionFilePath(entry.name), 'utf-8')) as Conversation } catch { return null }
+      }
+      if (entry.isFile() && entry.name.endsWith('.json') && entry.name !== SUMMARY_INDEX_FILE && !entry.name.endsWith('.tmp')) {
+        try { return JSON.parse(await fs.promises.readFile(path.join(dataDir(), entry.name), 'utf-8')) as Conversation } catch { return null }
+      }
+      return null
+    }))
+    return conversations.filter((item): item is Conversation => !!item && !item.workspaceId).map(toConversationSummary)
+  } catch { return [] }
+}
+
+/** 获取会话摘要列表。本地镜像命中时完全不接触云端；首次回填使用异步 I/O。 */
+export async function listConversationSummaries(): Promise<ConversationSummary[]> {
+  const local = readLocalSummaryIndex()
+  if (local) return [...local].sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
+
+  const portable = await readPortableSummaryIndex()
+  const summaries = portable ?? await rebuildConversationSummaries()
+  writeLocalSummaryIndex(summaries)
+  if (!portable) writeSummaryIndex(summaries)
+  return [...summaries].sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
 }
 
 /** 获取单个会话 */
@@ -222,12 +332,20 @@ export function deleteConversation(id: string): boolean {
   // 新格式：删除整个文件夹
   const dir = convDirPath(id)
   if (fs.existsSync(dir)) {
-    try { removeDir(dir); return true } catch { return false }
+    try {
+      removeDir(dir)
+      removeFromSummaryIndex(id)
+      return true
+    } catch { return false }
   }
   // 旧格式兼容：删除 .json 文件
   const oldFp = path.join(dataDir(), safeStorageSegment(`${id}.json`))
   if (fs.existsSync(oldFp)) {
-    try { fs.unlinkSync(oldFp); return true } catch { return false }
+    try {
+      fs.unlinkSync(oldFp)
+      removeFromSummaryIndex(id)
+      return true
+    } catch { return false }
   }
   return false
 }

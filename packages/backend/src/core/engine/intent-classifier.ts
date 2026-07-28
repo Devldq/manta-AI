@@ -5,7 +5,6 @@ import { getAISDKModel } from '@llm/ai-sdk-provider'
 
 export const INTENT_GATE_CONTEXT_KEY = 'intentGate'
 export const INTENT_CONFIRMATION_CONFIDENCE = 0.85
-export const INTENT_DIRECT_EXECUTION_CONFIDENCE = 0.8
 
 const IntentActionSchema = z.enum([
   'conversation',
@@ -141,7 +140,7 @@ const INTENT_UNDERSTANDING_SYSTEM_PROMPT = `You are Manta's intent-understanding
 
 Analyze only what the user is trying to achieve. Do not solve the request, choose tools, name commands, inspect files, design implementation steps, or produce an execution plan.
 
-Infer obvious context when it is safe. Mark needs_clarification only when missing information could materially change the target or desired outcome. A clear small request must remain clear.
+Infer obvious context when it is safe. Mark needs_clarification only when missing information could materially change the target or desired outcome and no reasonable reversible assumption permits useful progress. A broad product goal is not ambiguous merely because the user did not provide a complete specification; the planning stage can start with discovery and an assumed MVP. A clear request must remain clear.
 
 Use the language of the latest user message. Return JSON only, with exactly:
 {"requestType":"conversation|information|task","goal":"...","desiredOutcome":"...","target":"... or empty string","ambiguity":"clear|needs_clarification","confidence":0.0,"missingInformation":[],"questions":[],"assumptions":[],"pendingPlanRelation":"none|confirm|revise|reject|discuss"}`
@@ -154,9 +153,9 @@ Never name tools, APIs, shell commands, function names, or files to inspect unle
 
 Decision rules:
 - "respond": only greetings, acknowledgements, or casual conversation where directResponse is the complete response.
-- "clarify": only when the understanding says critical information is missing. Reuse its focused questions.
-- "execute"/"direct": clear, bounded, simple work with risk no higher than local_write, including clear information questions as action "answer" and risk "none".
-- "propose": complex, broad, destructive, externally visible, or materially judgment-dependent work.
+- "clarify": only when the understanding says critical information is missing and no reasonable reversible assumption lets the Agent make useful progress. Reuse its focused questions.
+- "execute"/"direct": work the Agent can plan and begin autonomously with risk no higher than local_write. Complexity, breadth, or plan length alone are not reasons to ask for confirmation. Use explicit assumptions for choices that are safe and reversible.
+- "propose": only when the user asked for a plan without execution, or when execution needs a materially consequential choice that cannot be resolved by a safe reversible assumption.
 - "execute"/"confirmed_plan": only an unambiguous confirmation of the exact pending plan.
 
 Never directly execute external_write or destructive work. Confirmation does not broaden scope or bypass normal approval controls.
@@ -226,9 +225,9 @@ export function groundIntentPlan(
 }
 
 /**
- * Deterministic guardrails around the model classification. Direct execution
- * is limited to clear, simple, bounded, low-risk work; confirmed plans retain
- * the stricter persisted-plan handshake.
+ * Deterministic safety guardrails around the model classification. The model
+ * owns the planning decision; code only prevents unsafe direct execution and
+ * retains the stricter persisted-plan handshake.
  */
 export function enforceIntentGate(
   analysis: IntentAnalysis,
@@ -370,14 +369,11 @@ export function canExecuteDirectly(analysis: IntentAnalysis): boolean {
   return analysis.decision === 'execute'
     && analysis.executionMode === 'direct'
     && isDirectRequest
-    && analysis.complexity === 'simple'
-    && analysis.confidence >= INTENT_DIRECT_EXECUTION_CONFIDENCE
     && ['none', 'read_only', 'local_write'].includes(analysis.risk)
     && analysis.action !== 'external_action'
     && analysis.missingInformation.length === 0
     && analysis.questions.length === 0
     && analysis.plan.length > 0
-    && analysis.plan.length <= 4
 }
 
 /**
@@ -568,7 +564,7 @@ export function createIntentAnalysisFallback(userPrompt: string): IntentAnalysis
       risk: 'none',
       goal: chinese ? `回答用户的问题：${trimmedPrompt}` : `Answer the user's question: ${trimmedPrompt}`,
       summary: chinese ? '这是一个目标明确的信息问句，可以直接回答。' : 'This is a clear information request that can be answered directly.',
-      confidence: INTENT_DIRECT_EXECUTION_CONFIDENCE,
+      confidence: 0.8,
       missingInformation: [],
       questions: [],
       assumptions: [],
@@ -578,27 +574,85 @@ export function createIntentAnalysisFallback(userPrompt: string): IntentAnalysis
     }
   }
 
+  if (trimmedPrompt) {
+    return {
+      decision: 'execute',
+      executionMode: 'direct',
+      requestType: 'task',
+      complexity: 'complex',
+      action: 'execute',
+      risk: 'local_write',
+      goal: trimmedPrompt,
+      summary: chinese
+        ? '意图预分析不可用，将原始目标交给主 Agent 自主规划。'
+        : 'Intent pre-analysis is unavailable, so the original goal will be planned by the main Agent.',
+      confidence: 0.8,
+      missingInformation: [],
+      questions: [],
+      assumptions: [],
+      plan: [
+        chinese
+          ? '根据原始请求和现有上下文自主制定计划；可安全推断时直接推进，只有遇到真正阻塞结果的歧义才询问用户'
+          : 'Plan autonomously from the original request and available context; proceed with safe assumptions and ask only when ambiguity truly blocks the outcome',
+      ],
+      directResponse: '',
+      pendingPlanDisposition: 'clear',
+    }
+  }
+
   return {
-    decision: 'clarify',
+    decision: 'respond',
     executionMode: 'none',
     requestType: 'task',
-    complexity: 'complex',
+    complexity: 'simple',
     action: 'conversation',
     risk: 'none',
-    goal: chinese ? '确认当前请求中缺失的关键目标' : 'Confirm the critical goal missing from the current request',
-    summary: chinese ? '意图分析暂时无法可靠分类，且当前请求不足以安全推断具体目标。' : 'Intent analysis is temporarily unavailable and the request does not contain enough detail to infer a safe target.',
+    goal: chinese ? '等待用户输入请求' : 'Wait for a user request',
+    summary: chinese ? '请告诉我你想完成什么。' : 'Please tell me what you would like to accomplish.',
     confidence: 0,
     missingInformation: [],
-    questions: [
-      chinese
-        ? '你希望我具体处理什么对象，并达到什么结果？'
-        : 'What specifically should I work on, and what outcome do you want?',
-    ],
+    questions: [],
     assumptions: [],
     plan: [],
-    directResponse: '',
+    directResponse: chinese ? '请告诉我你想完成什么。' : 'Please tell me what you would like to accomplish.',
     pendingPlanDisposition: 'clear',
   }
+}
+
+/**
+ * Resolve the hot-path intent without another model round trip.
+ *
+ * The main Agent already owns planning, clarification, and tool selection. The
+ * preflight layer only needs to preserve an explicitly confirmed pending plan;
+ * every other non-empty request can start the streaming Agent immediately.
+ */
+export function resolveImmediateIntent(
+  userPrompt: string,
+  pendingPlan?: PendingIntentPlan,
+): IntentAnalysis {
+  if (pendingPlan && hasExplicitPlanConfirmation(userPrompt)) {
+    return {
+      decision: 'execute',
+      executionMode: 'confirmed_plan',
+      requestType: 'task',
+      complexity: pendingPlan.steps.length > 1 ? 'complex' : 'simple',
+      action: pendingPlan.action,
+      risk: pendingPlan.risk,
+      goal: pendingPlan.goal,
+      summary: /[\u3400-\u9fff]/.test(userPrompt)
+        ? '用户已明确确认上一版方案。'
+        : 'The user explicitly confirmed the previous plan.',
+      confidence: 1,
+      missingInformation: [],
+      questions: [],
+      assumptions: pendingPlan.assumptions,
+      plan: pendingPlan.steps,
+      directResponse: '',
+      pendingPlanDisposition: 'clear',
+    }
+  }
+
+  return createIntentAnalysisFallback(userPrompt)
 }
 
 /**

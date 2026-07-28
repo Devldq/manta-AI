@@ -4,6 +4,7 @@ import { createReadStream } from 'node:fs'
 import { access, mkdir, readFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
+import { connect as connectTcp } from 'node:net'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,6 +21,16 @@ export interface ManagedQdrantOptions {
   url?: string
 }
 
+export type ExistingQdrantState = 'ready' | 'occupied' | 'absent'
+
+export interface ExistingQdrantProbeOptions {
+  initialRequestTimeoutMs?: number
+  retryRequestTimeoutMs?: number
+  retryIntervalMs?: number
+  graceMs?: number
+  portTimeoutMs?: number
+}
+
 export async function startManagedQdrant(options: ManagedQdrantOptions): Promise<ManagedQdrant> {
   const configuredUrl = options.url?.replace(/\/$/, '')
   if (configuredUrl) {
@@ -28,9 +39,16 @@ export async function startManagedQdrant(options: ManagedQdrantOptions): Promise
     return { url: configuredUrl, owned: false, async stop() {} }
   }
   const url = 'http://127.0.0.1:6333'
-  if (await qdrantReady(url)) {
+  const existing = await probeExistingQdrant(url)
+  if (existing === 'ready') {
     exposeQdrantUrl(url)
     return { url, owned: false, async stop() {} }
+  }
+  if (existing === 'occupied') {
+    throw Object.assign(
+      new Error(`Qdrant endpoint is already listening but did not become healthy: ${url}`),
+      { code: 'QDRANT_EXISTING_UNHEALTHY' },
+    )
   }
   const configuredBinary = options.binary ?? process.env.MANTA_QDRANT_BINARY
   const binary = configuredBinary ?? await resolveLocalQdrantBinary()
@@ -70,6 +88,22 @@ export async function startManagedQdrant(options: ManagedQdrantOptions): Promise
     if (spawnError || didExit) break
     await delay(100)
   }
+
+  // Another startup branch may temporarily block the Node event loop on cloud
+  // storage. Always perform one deadline-independent probe before terminating
+  // a child that may already be healthy.
+  const finalState = await probeExistingQdrant(url, {
+    initialRequestTimeoutMs: 2_000,
+    retryRequestTimeoutMs: 2_000,
+    graceMs: 5_000,
+  })
+  if (finalState === 'ready') {
+    exposeQdrantUrl(url)
+    return didExit
+      ? { url, owned: false, async stop() {} }
+      : { url, owned: true, stop: () => stopChild(child, () => didExit, exitPromise) }
+  }
+
   await stopChild(child, () => didExit, exitPromise)
   throw Object.assign(new Error(`Local Qdrant failed to start: ${spawnError?.message || output.trim() || 'startup timeout'}`), { code: 'QDRANT_START_FAILED' })
 }
@@ -125,7 +159,28 @@ async function verifyBundledQdrant(binary: string): Promise<void> {
   if (actual !== manifest.executableSha256) throw new Error(`Qdrant executable hash mismatch: expected ${manifest.executableSha256}, received ${actual}`)
 }
 
-async function qdrantReady(url: string): Promise<boolean> {
+export async function probeExistingQdrant(
+  url: string,
+  options: ExistingQdrantProbeOptions = {},
+): Promise<ExistingQdrantState> {
+  const initialRequestTimeoutMs = options.initialRequestTimeoutMs ?? 750
+  if (await qdrantReady(url, initialRequestTimeoutMs)) return 'ready'
+
+  const portTimeoutMs = options.portTimeoutMs ?? 300
+  if (!await endpointAcceptsTcp(url, portTimeoutMs)) return 'absent'
+
+  const retryRequestTimeoutMs = options.retryRequestTimeoutMs ?? 1_500
+  const retryIntervalMs = options.retryIntervalMs ?? 150
+  const deadline = Date.now() + (options.graceMs ?? 5_000)
+  while (Date.now() < deadline) {
+    if (await qdrantReady(url, retryRequestTimeoutMs)) return 'ready'
+    if (!await endpointAcceptsTcp(url, portTimeoutMs)) return 'absent'
+    await delay(retryIntervalMs)
+  }
+  return 'occupied'
+}
+
+async function qdrantReady(url: string, timeoutMs = 750): Promise<boolean> {
   return new Promise((resolveReady) => {
     const target = new URL(`${url}/collections`)
     const request = (target.protocol === 'https:' ? httpsRequest : httpRequest)(target, {
@@ -139,7 +194,7 @@ async function qdrantReady(url: string): Promise<boolean> {
       settled = true
       resolveReady(ready)
     }
-    request.setTimeout(750, () => request.destroy(new Error('Qdrant readiness timeout')))
+    request.setTimeout(timeoutMs, () => request.destroy(new Error('Qdrant readiness timeout')))
     request.once('error', () => settle(false))
     request.once('response', (response) => {
       const chunks: Buffer[] = []
@@ -159,6 +214,24 @@ async function qdrantReady(url: string): Promise<boolean> {
       })
     })
     request.end()
+  })
+}
+
+async function endpointAcceptsTcp(url: string, timeoutMs: number): Promise<boolean> {
+  const target = new URL(url)
+  const port = Number.parseInt(target.port || (target.protocol === 'https:' ? '443' : '80'), 10)
+  return new Promise((resolveOpen) => {
+    const socket = connectTcp({ host: target.hostname, port })
+    let settled = false
+    const settle = (open: boolean) => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolveOpen(open)
+    }
+    socket.setTimeout(timeoutMs, () => settle(false))
+    socket.once('connect', () => settle(true))
+    socket.once('error', () => settle(false))
   })
 }
 

@@ -84,7 +84,7 @@ export class LogManager {
 
   /** 将日志追加写入文件（仅服务端生效）— 双写：全局 system.log + 会话专属 log.ndjson */
   private appendToFile(entry: LogEntry): void {
-    logFileWriter.appendToFile(entry as unknown as { id: string; timestamp: string; [key: string]: unknown })
+    logFileWriter.appendToFileDeferred(entry as unknown as { id: string; timestamp: string; [key: string]: unknown })
   }
 
   /** 添加日志 */

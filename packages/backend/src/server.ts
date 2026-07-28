@@ -38,6 +38,7 @@ export interface StartServerOptions {
   isDev?: boolean
   logger?: boolean
   taskRuntime?: TaskRuntime
+  taskRuntimeDatabasePath?: string
   configureTaskRuntime?: (runtime: TaskRuntime) => void | Promise<void>
   apiOnly?: boolean
   localAccess?: LocalAccessOptions
@@ -49,6 +50,10 @@ export interface MantaServerHandle {
   quiesce(): Promise<void>
   close(): Promise<void>
   healthCheck(): Promise<StorageHealthResult>
+}
+
+export function resolveTaskRuntimeDatabasePath(options: Pick<StartServerOptions, 'storage' | 'taskRuntimeDatabasePath'>): string {
+  return options.taskRuntimeDatabasePath ?? options.storage.resolve('work', 'jobs', 'jobs.sqlite')
 }
 
 export async function initializeBundledExtensionsForStartup<T>(options: {
@@ -65,6 +70,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
   let app: FastifyInstance | undefined
   let taskRuntime: TaskRuntime | undefined
   let ownedRagProvider: QdrantProvider | undefined
+  let startupMaintenance: Promise<void> | undefined
   const ragProvider = () => options.storage.ragProvider ?? (ownedRagProvider ??= createQdrantProvider())
   const schedulerDisposers: Array<() => void | Promise<void>> = []
   const startup = options.startup === false ? undefined : options.startup ?? defaultStartupHooks(options.bundledSeedRoot, () => options.storage.ragProvider ?? ownedRagProvider)
@@ -74,7 +80,9 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
   let localEndpoint: string | undefined
   try {
     await runInStorageContext(() => options.storage.recoverStartup?.())
-    taskRuntime = options.taskRuntime ?? (options.registerRoutes === false ? undefined : new TaskRuntime({ databasePath: options.storage.resolve('work', 'jobs', 'jobs.sqlite') }))
+    taskRuntime = options.taskRuntime ?? (options.registerRoutes === false ? undefined : new TaskRuntime({
+      databasePath: resolveTaskRuntimeDatabasePath(options),
+    }))
     if (taskRuntime) {
       await options.configureTaskRuntime?.(taskRuntime)
       if (!taskRuntime.hasExecutor('rag.document.ingest')) {
@@ -111,18 +119,17 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
     localEndpoint = `http://127.0.0.1:${listeningAddress.port}`
     taskRuntime?.start()
     if (startup) {
-      // These operate on independent storage groups (knowledge/cache versus
-      // extensions). Keep both inside the routed storage context, but overlap
-      // their I/O so the HTTP listener becomes Desktop-ready sooner.
-      const startupResults = await Promise.allSettled([
-        runInStorageContext(() => startup.cleanupStaleRag()),
-        runInStorageContext(() => startup.initializeSkills()),
-      ])
-      const startupErrors = startupResults
-        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-        .map((result) => result.reason)
-      if (startupErrors.length === 1) throw startupErrors[0]
-      if (startupErrors.length > 1) throw new AggregateError(startupErrors, 'Backend startup initialization failed')
+      // Extension initialization is readiness-critical and may perform cold
+      // routed-storage reads. Finish it without a competing Qdrant scan.
+      await runInStorageContext(() => startup.initializeSkills())
+      // RAG cleanup is best-effort maintenance, not a readiness dependency.
+      // Start it only after critical initialization so a timeout cannot starve
+      // routed storage or delay an already-listening Service.
+      startupMaintenance = Promise.resolve()
+        .then(() => runInStorageContext(() => startup.cleanupStaleRag()))
+        .catch((error) => {
+          app?.log.warn({ err: error }, 'RAG startup cleanup failed; continuing with Service ready')
+        })
     }
     // Startup seeds and marketplace refreshes both use the extension content
     // store. Starting schedulers first lets them race for the same lease and
@@ -136,6 +143,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
     }
   } catch (error) {
     const cleanupErrors: unknown[] = []
+    if (startupMaintenance) await startupMaintenance
     for (const dispose of schedulerDisposers.splice(0)) { try { await dispose() } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
     if (app) { try { await runInStorageContext(() => app!.close()) } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
     if (taskRuntime) { try { await taskRuntime.close() } catch (cleanupError) { cleanupErrors.push(cleanupError) } }
@@ -167,6 +175,7 @@ export async function startServer(options: StartServerOptions): Promise<MantaSer
           try { await operation() } catch (error) { errors.push(error) }
         }
         await attempt(quiesce)
+        if (startupMaintenance) await attempt(() => startupMaintenance!)
         await attempt(() => taskRuntime?.checkpoint())
         await attempt(() => runInStorageContext(() => options.storage.checkpoint()))
         for (const dispose of schedulerDisposers.splice(0)) await attempt(dispose)

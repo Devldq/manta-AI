@@ -6,7 +6,7 @@
   "main": "dist/main.js",
   "scripts": {
     "prepare-qdrant": "node scripts/prepare-qdrant.cjs",
-    "dev": "pnpm prepare-qdrant && pnpm --filter @manta/frontend build && pnpm build && node scripts/run-dev.cjs",
+    "dev": "pnpm prepare-qdrant && pnpm build && node scripts/run-dev.cjs",
     "build": "node scripts/clean.cjs && tsc && node scripts/copy-assets.cjs",
     "prepare-packaged-runtime": "node scripts/prepare-packaged-runtime.cjs",
     "package:dir": "pnpm prepare-qdrant && pnpm build && pnpm prepare-packaged-runtime && node scripts/package-smoke.cjs --prepared",

@@ -5,12 +5,17 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
+    "@manta/frontend#build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "!.turbo/**"],
+      "outputs": ["dist/**"]
+    },
     "dev": {
       "cache": false,
       "persistent": true
     },
     "@manta/desktop#dev": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "@manta/frontend#build"],
       "cache": false,
       "persistent": true
     },

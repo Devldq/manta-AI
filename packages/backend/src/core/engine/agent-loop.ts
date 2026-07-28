@@ -78,6 +78,8 @@ export interface AgentLoopOptions {
   onStepCommitted?: (state: AgentLoopResumeState) => Promise<void> | void
   /** Per-run observers; global extensions registered in runtime-hooks are included automatically. */
   runtimeExtensions?: AgentRuntimeExtension[]
+  /** Startup timing observer used before the normal runtime event stream begins. */
+  onStartupPhase?: (phase: string) => Promise<void> | void
   /** Durable executors must observe failures so TaskRuntime cannot mark a failed loop as succeeded. */
   throwOnError?: boolean
   agentName?: string
@@ -345,9 +347,11 @@ function appendStepToMessages(
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户停止
  * - 不创建 ReadableStream 或 Response，不感知 HTTP 连接状态
  */
-export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, securityContext, onChunk, onDone, onFinish, onError, resumeState, onStepCommitted, runtimeExtensions, throwOnError = false, agentName }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, securityContext, onChunk, onDone, onFinish, onError, resumeState, onStepCommitted, runtimeExtensions, onStartupPhase, throwOnError = false, agentName }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
+  await onStartupPhase?.('model.create.started')
   const model = await getAISDKModel()
+  await onStartupPhase?.('model.create.completed')
   const messageId = incomingMessageId || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const runtimeHooks = new AgentRuntimeHooks({
     runId: securityContext?.jobId ?? messageId,

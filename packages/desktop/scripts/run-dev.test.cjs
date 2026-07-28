@@ -13,10 +13,11 @@ const {
   signNativeBinary,
 } = require('./run-dev.cjs')
 
-test('desktop development builds the frontend before Electron starts', () => {
+test('desktop development delegates the frontend build to the cached Turbo dependency', () => {
   const { scripts } = require('../package.json')
-  assert.match(scripts.dev, /--filter @manta\/frontend build/)
-  assert.ok(scripts.dev.indexOf('--filter @manta/frontend build') < scripts.dev.indexOf('node scripts/run-dev.cjs'))
+  const { tasks } = require('../../../turbo.json')
+  assert.doesNotMatch(scripts.dev, /--filter @manta\/frontend build/)
+  assert.ok(tasks['@manta/desktop#dev'].dependsOn.includes('@manta/frontend#build'))
 })
 
 function deferred() {

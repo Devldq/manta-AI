@@ -33,7 +33,8 @@ let lastErrorMap = new Map<string, string>();
 
 /**
  * 获取预先配置好的 ToolRegistry（含内置工具 + MCP 工具）。
- * 首次调用时会自动初始化 MCP 连接（异步），后续调用立即返回。
+ * 首次调用时在后台初始化 MCP 连接，但不会阻塞内置工具或 Agent 首字。
+ * MCP 工具完成发现后会原子地加入同一个 Registry，后续 Agent 步骤可见。
  */
 export async function getToolRegistry(): Promise<ToolRegistry> {
   if (!registry) {
@@ -46,12 +47,26 @@ export async function getToolRegistry(): Promise<ToolRegistry> {
 
   if (!mcpConnected) {
     if (!mcpInitPromise) {
-      mcpInitPromise = connectAllMCPServers(registry);
+      mcpInitPromise = connectAllMCPServers(registry).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        lastErrorMap.set('__initialization__', message);
+        mcpConnected = true;
+        console.error(`[ToolRegistry] MCP 后台初始化失败: ${message}`);
+      });
     }
-    await mcpInitPromise;
   }
 
   return registry;
+}
+
+/**
+ * Explicit MCP management actions need a stable view of the initial
+ * connections. Agent prompt/tool reads deliberately do not call this helper.
+ */
+async function waitForMCPInitialization(): Promise<ToolRegistry> {
+  const reg = await getToolRegistry();
+  if (mcpInitPromise) await mcpInitPromise;
+  return reg;
 }
 
 /**
@@ -95,6 +110,7 @@ export async function getAgentPromptToolContext(agentName: string | null): Promi
  * 关闭所有 MCP 连接，清理单例状态。
  */
 export async function shutdownMCP(): Promise<void> {
+  if (mcpInitPromise) await mcpInitPromise;
   if (registry) {
     await registry.closeAllMCP();
   }
@@ -304,7 +320,7 @@ export async function connectServerByName(
   }
 
   const entry = normalizeServerConfig(rawEntry); // 兼容旧 stdio 格式
-  const reg = await getToolRegistry();
+  const reg = await waitForMCPInitialization();
 
   // 如果已连接，先断开
   if (reg.isMCPServerConnected(serverName)) {
@@ -327,7 +343,7 @@ export async function connectServerByName(
 export async function disconnectServerByName(
   serverName: string,
 ): Promise<number> {
-  const reg = await getToolRegistry();
+  const reg = await waitForMCPInitialization();
   return reg.unregisterMCPServer(serverName);
 }
 

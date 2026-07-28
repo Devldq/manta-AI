@@ -113,18 +113,23 @@ export { recoverRagAssetTransactions } from './rag-asset-transactions'
 
 export function createRagUploadResources(initialCacheRoot: string, initialKnowledgeRoot: string, isReferenced: (hash: string) => Promise<boolean>) {
   let cacheRoot = initialCacheRoot; let knowledgeRoot = initialKnowledgeRoot
-  const idle = () => {
+  const uploadsIdle = () => {
     if (activeUploads.get(cacheRoot)) return { ok: false, error: 'RAG uploads are still active' }
+    return { ok: true }
+  }
+  const integrity = () => {
+    const uploadStatus = uploadsIdle()
+    if (!uploadStatus.ok) return uploadStatus
     try { inspectRagOrphans(knowledgeRoot); inspectRagAssetTransactions({ volumeRoot: dirname(knowledgeRoot), knowledgeRoot }); return { ok: true } } catch (error) { return { ok: false, error: String(error) } }
   }
   const common = {
-    async checkpoint() { const status = idle(); if (!status.ok) throw new Error(status.error); await cleanupRagOrphans(knowledgeRoot, { olderThan: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), isReferenced }) },
-    close() { const status = idle(); if (!status.ok) throw new Error(status.error) },
-    integrityCheck: idle,
+    async checkpoint() { const status = integrity(); if (!status.ok) throw new Error(status.error); await cleanupRagOrphans(knowledgeRoot, { olderThan: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), isReferenced }) },
+    close() { const status = uploadsIdle(); if (!status.ok) throw new Error(status.error) },
+    integrityCheck: integrity,
   }
   return {
-    cache: { ...common, reopen(nextRoot: string) { const status = idle(); if (!status.ok) throw new Error(status.error); cacheRoot = join(nextRoot, 'uploads') } },
-    knowledge: { ...common, reopen(nextRoot: string) { const status = idle(); if (!status.ok) throw new Error(status.error); knowledgeRoot = nextRoot } },
+    cache: { ...common, reopen(nextRoot: string) { const status = integrity(); if (!status.ok) throw new Error(status.error); cacheRoot = join(nextRoot, 'uploads') } },
+    knowledge: { ...common, reopen(nextRoot: string) { const status = integrity(); if (!status.ok) throw new Error(status.error); knowledgeRoot = nextRoot } },
   }
 }
 

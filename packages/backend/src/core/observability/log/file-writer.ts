@@ -39,6 +39,12 @@ export class LogFileWriter {
     if (owner) { owner.append(entry as DiagnosticEntry); return }
   }
 
+  /** Queue normal diagnostic logs so slow storage cannot block Agent TTFT. */
+  appendToFileDeferred(entry: { id: string; timestamp: string; [key: string]: unknown }): void {
+    const owner = currentDiagnosticsOwner()
+    if (owner) { owner.appendDeferred(entry as DiagnosticEntry); return }
+  }
+
 }
 
 /** 全局日志文件写入器实例 */

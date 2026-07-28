@@ -460,6 +460,9 @@ importers:
       typescript:
         specifier: ^5
         version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.15)(less@4.6.6)(lightningcss@1.32.0)(sass-embedded@1.100.0)(sass@1.100.0)(stylus@0.64.0)(sugarss@5.0.1(postcss@8.5.8))(terser@5.48.0)
 
   packages/shared:
     dependencies:

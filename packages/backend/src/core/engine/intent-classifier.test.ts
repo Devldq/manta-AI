@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   INTENT_CONFIRMATION_CONFIDENCE,
-  INTENT_DIRECT_EXECUTION_CONFIDENCE,
   buildIntentExecutionPrompt,
   buildIntentPlanningPrompt,
   buildIntentUnderstandingPrompt,
@@ -12,6 +11,7 @@ import {
   hasExplicitPlanConfirmation,
   nextIntentGateState,
   renderIntentResponse,
+  resolveImmediateIntent,
   resolveIntentExecutionPlan,
   recoverIntentAnalysisFromError,
   type IntentAnalysis,
@@ -76,7 +76,7 @@ describe('intent execution gate', () => {
       decision: 'execute',
       executionMode: 'direct',
       complexity: 'simple',
-      confidence: INTENT_DIRECT_EXECUTION_CONFIDENCE,
+      confidence: 0.8,
       goal: '修正一个明确的拼写错误',
       plan: ['修正指定文本并检查结果'],
     }), undefined, '把标题里的 Mantaa 改成 Manta')
@@ -142,12 +142,45 @@ describe('intent execution gate', () => {
     expect(result.questions).toEqual(['你指的是桌面端还是网页端登录？'])
   })
 
-  it('asks a focused question when both classification and deterministic inference fail', () => {
-    const result = createIntentAnalysisFallback('帮我弄一下')
+  it('hands a non-empty request to the main Agent when pre-analysis fails', () => {
+    const result = createIntentAnalysisFallback('我想做一个类似 Obsidian 的应用')
 
-    expect(result.decision).toBe('clarify')
-    expect(result.questions).toEqual(['你希望我具体处理什么对象，并达到什么结果？'])
-    expect(result.questions[0]).not.toContain('执行范围')
+    expect(result.decision).toBe('execute')
+    expect(result.executionMode).toBe('direct')
+    expect(result.goal).toBe('我想做一个类似 Obsidian 的应用')
+    expect(result.questions).toEqual([])
+    expect(canExecuteDirectly(result)).toBe(true)
+  })
+
+  it('starts a broad Chinese request immediately instead of asking model-authored English questions', () => {
+    const result = resolveImmediateIntent('我想做一个类似 Obsidian 的应用')
+
+    expect(result.decision).toBe('execute')
+    expect(result.executionMode).toBe('direct')
+    expect(result.goal).toBe('我想做一个类似 Obsidian 的应用')
+    expect(result.questions).toEqual([])
+    expect(renderIntentResponse(result, '我想做一个类似 Obsidian 的应用')).toBe('')
+  })
+
+  it('preserves an explicitly confirmed pending plan without model pre-analysis', () => {
+    const pending = pendingPlan()
+    const result = resolveImmediateIntent('确认执行', pending)
+
+    expect(result.decision).toBe('execute')
+    expect(result.executionMode).toBe('confirmed_plan')
+    expect(result.confidence).toBe(1)
+    expect(result.goal).toBe(pending.goal)
+    expect(result.plan).toEqual(pending.steps)
+    expect(resolveIntentExecutionPlan(result, pending, 'message-confirm')).toBe(pending)
+  })
+
+  it('routes a pending-plan revision to the main Agent instead of treating it as confirmation', () => {
+    const result = resolveImmediateIntent('确认执行，但是先不要跑测试', pendingPlan())
+
+    expect(result.decision).toBe('execute')
+    expect(result.executionMode).toBe('direct')
+    expect(result.goal).toBe('确认执行，但是先不要跑测试')
+    expect(result.pendingPlanDisposition).toBe('clear')
   })
 
   it('recovers valid JSON returned as fenced text by compatible providers', () => {
@@ -168,7 +201,40 @@ describe('intent execution gate', () => {
     expect(recovered).toEqual(expected)
   })
 
-  it('turns unsafe or complex direct execution into a proposal', () => {
+  it('lets the model directly execute complex local work', () => {
+    const result = enforceIntentGate(analysis({
+      decision: 'execute',
+      executionMode: 'direct',
+      complexity: 'complex',
+      risk: 'local_write',
+      plan: [
+        '理解现有产品结构',
+        '确定最小可用范围',
+        '实现核心编辑体验',
+        '实现本地数据持久化',
+        '验证关键使用流程',
+      ],
+    }), undefined, '我想做一个类似 Obsidian 的应用')
+
+    expect(result.decision).toBe('execute')
+    expect(result.executionMode).toBe('direct')
+    expect(canExecuteDirectly(result)).toBe(true)
+  })
+
+  it('does not replace the model decision with a numeric confidence threshold', () => {
+    const result = enforceIntentGate(analysis({
+      decision: 'execute',
+      executionMode: 'direct',
+      complexity: 'complex',
+      confidence: 0.45,
+      risk: 'local_write',
+    }), undefined, '先探索现有项目，再实现一个可用的 Obsidian 类 MVP')
+
+    expect(result.decision).toBe('execute')
+    expect(result.executionMode).toBe('direct')
+  })
+
+  it('turns unsafe direct execution into a proposal', () => {
     const result = enforceIntentGate(analysis({
       decision: 'execute',
       executionMode: 'direct',
@@ -179,6 +245,15 @@ describe('intent execution gate', () => {
     expect(result.decision).toBe('propose')
     expect(result.executionMode).toBe('none')
     expect(result.pendingPlanDisposition).toBe('replace')
+  })
+
+  it('does not encode complexity or plan length as code confirmation requirements', () => {
+    expect(canExecuteDirectly(analysis({
+      decision: 'execute',
+      executionMode: 'direct',
+      complexity: 'complex',
+      plan: Array.from({ length: 10 }, (_, index) => `步骤 ${index + 1}`),
+    }))).toBe(true)
   })
 
   it('fails closed when confirmation confidence is below the threshold', () => {

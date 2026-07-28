@@ -86,7 +86,7 @@ export async function workspaceDetailRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string }
       const workspace = getWorkspace(id)
       if (!workspace) return reply.status(404).send({ error: '工作空间不存在' })
-      const conversations = fetchConversations({ type: 'workspace', workspaceId: id })
+      const conversations = await fetchConversations({ type: 'workspace', workspaceId: id })
       return reply.send({ success: true, data: { conversations } })
     } catch (err) {
       return reply.status(500).send({ error: String(err) })

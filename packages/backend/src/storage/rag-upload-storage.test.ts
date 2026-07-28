@@ -5,10 +5,22 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
 import { AssetManifestStore } from '@manta/storage-hub'
-import { cleanupRagOrphans, createRagUploadStorage, recoverRagAssetTransactions } from './rag-upload-storage'
+import { cleanupRagOrphans, createRagUploadResources, createRagUploadStorage, recoverRagAssetTransactions } from './rag-upload-storage'
 import { matchesReadyRagDocument } from './rag-asset-transactions'
 
 describe('RAG original document storage', () => {
+  it('does not read cloud orphan metadata while closing an idle runtime', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-rag-close-'))
+    const knowledge = join(root, 'knowledge')
+    const orphan = join(knowledge, '.orphans', 'a'.repeat(64))
+    mkdirSync(orphan, { recursive: true })
+    writeFileSync(join(orphan, 'invalid.json'), 'not json')
+    const resources = createRagUploadResources(join(root, 'cache', 'uploads'), knowledge, async () => false)
+
+    expect(resources.knowledge.integrityCheck().ok).toBe(false)
+    expect(() => resources.knowledge.close()).not.toThrow()
+  })
+
   it('reuses a completed equal-content document before invoking the pipeline or publishing another manifest', async () => {
     const root = mkdtempSync(join(tmpdir(), 'manta-rag-reuse-ready-')); const volumeRoot = join(root, 'manta-ai-data'); const knowledge = join(volumeRoot, 'knowledge')
     mkdirSync(knowledge, { recursive: true })

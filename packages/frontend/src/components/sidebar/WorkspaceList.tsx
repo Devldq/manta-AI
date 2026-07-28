@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { ChevronRight, Plus, FolderOpen, Trash2 } from 'lucide-react'
+import { ChevronRight, Plus, Folder, FolderOpen, Trash2 } from 'lucide-react'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useConversationStore } from '@/stores/conversation-store'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -35,6 +35,15 @@ export function WorkspaceList() {
   useEffect(() => {
     fetchList()
   }, [fetchList])
+
+  // 默认展开的项目需要立即加载任务；store 会阻止缓存命中后的重复请求。
+  useEffect(() => {
+    for (const ws of items) {
+      if (expandedIds.has(ws.id)) {
+        void fetchConversations(ws.id)
+      }
+    }
+  }, [expandedIds, fetchConversations, items])
 
   // URL 中有工作空间时，自动展开并加载该工作空间的对话
   useEffect(() => {
@@ -190,18 +199,27 @@ export function WorkspaceList() {
 
             return (
               <div key={ws.id} className="mb-0.5">
-                <div
-                  className="group flex items-center gap-1.5 py-0.5 pl-3 pr-0.5 cursor-pointer text-sidebar-text-secondary transition-colors"
-                  onClick={() => handleToggle(ws.id)}
-                >
-                  <ChevronRight
-                    size={11}
-                    className={`text-text-muted flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-                  />
-                  <FolderOpen size={16} className="text-sidebar-text-secondary flex-shrink-0" strokeWidth={1.8} />
-                  <div className="min-w-0 flex-1">
-                    <span className="block truncate text-[12px] font-medium leading-tight text-sidebar-text">{ws.name}</span>
-                  </div>
+                <div className="group flex items-center gap-1.5 py-0.5 pl-3 pr-0.5 text-sidebar-text-secondary">
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    onClick={() => void handleToggle(ws.id)}
+                    aria-expanded={isExpanded}
+                    aria-controls={`workspace-tasks-${ws.id}`}
+                  >
+                    <ChevronRight
+                      size={11}
+                      className={`text-text-muted flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                    />
+                    {isExpanded ? (
+                      <FolderOpen size={16} className="text-sidebar-text-secondary flex-shrink-0" strokeWidth={1.8} />
+                    ) : (
+                      <Folder size={16} className="text-sidebar-text-secondary flex-shrink-0" strokeWidth={1.8} />
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-medium leading-tight text-sidebar-text">
+                      {ws.name}
+                    </span>
+                  </button>
                   <div className="flex w-[54px] flex-shrink-0 items-center justify-end gap-1">
                     <span className="text-[10px] text-text-muted transition-opacity group-hover:opacity-0">
                       {conversations ? `${conversations.length}` : ws.conversationCount > 0 ? `${ws.conversationCount}` : ''}
@@ -224,7 +242,7 @@ export function WorkspaceList() {
                 </div>
 
                 {isExpanded && (
-                  <div className="ml-8 mt-0.5">
+                  <div id={`workspace-tasks-${ws.id}`} className="ml-8 mt-0.5">
                     {isLoading ? (
                       <div className="px-1.5 py-1">
                         <span className="text-[12px] text-text-muted">加载中...</span>

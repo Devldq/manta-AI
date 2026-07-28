@@ -39,12 +39,11 @@ import type { AgentRuntimeExtension } from './runtime-hooks'
 import { AgentPublicEventProjector } from './agent-public-events'
 import {
   INTENT_GATE_CONTEXT_KEY,
-  analyzeUserIntent,
   buildIntentExecutionPrompt,
-  createIntentAnalysisFallback,
   nextIntentGateState,
   readPendingIntentPlan,
   renderIntentResponse,
+  resolveImmediateIntent,
   resolveIntentExecutionPlan,
   type IntentAnalysis,
   type PendingIntentPlan,
@@ -120,6 +119,17 @@ interface IntentAnalysisCheckpoint {
  * Loop 与 HTTP 连接完全解耦，通过 LoopRegistry 广播事件
  */
 export async function startAgentLoop({ messages, agentName, conversationId, workspaceId, jobContext, messageId: durableMessageId, processRegistry, runtimeExtensions }: StreamChatOptions): Promise<StreamChatResult> {
+  const startupStartedAt = performance.now()
+  const reportStartupPhase = (phase: string) => {
+    const elapsedMs = Math.round(performance.now() - startupStartedAt)
+    jobContext?.emit('log', {
+      channel: 'agent.startup',
+      phase,
+      elapsedMs,
+    })
+  }
+  reportStartupPhase('request.accepted')
+
   // 如果已有活跃循环，不重复启动
   const activeLoop = getActiveLoop(conversationId)
   if (!jobContext && activeLoop) {
@@ -145,6 +155,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
 
   // 解析消息格式。执行前意图门禁只接收对话文本，不暴露任何工具。
   const coreMessages = parseMessagesToCore(messages)
+  reportStartupPhase('messages.parsed')
 
   if (jobContext && userPrompt) {
     const persisted = workspaceId
@@ -153,39 +164,25 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     if (!persisted) throw new Error(`Conversation ${conversationId} was not found`)
     jobContext.checkpoint('user_message_committed', { messageId })
   }
+  reportStartupPhase('user.persisted')
 
   const conversation = workspaceId
     ? getWorkspaceConversation(workspaceId, conversationId)
     : getConversation(conversationId)
   if (!conversation) throw new Error(`Conversation ${conversationId} was not found`)
+  reportStartupPhase('conversation.loaded')
   const pendingIntentPlan = readPendingIntentPlan(conversation.context)
 
   const intentCheckpoint = jobContext?.readCheckpoint('intent_analysis') as unknown as IntentAnalysisCheckpoint | undefined
   let intentAnalysis = intentCheckpoint?.analysis
   let confirmedIntentPlan = intentCheckpoint?.executionPlan
   if (!intentAnalysis) {
-    try {
-      intentAnalysis = await analyzeUserIntent({
-        messages: coreMessages,
-        userPrompt,
-        pendingPlan: pendingIntentPlan,
-        agentName,
-        abortSignal: jobContext?.signal,
-      })
-    } catch (error) {
-      if (jobContext?.signal.aborted) throw error
-      intentAnalysis = createIntentAnalysisFallback(userPrompt)
-      logger.warn('[IntentGate] 意图分析失败，已切换确定性降级', {
-        conversationId,
-        messageId,
-        agentName,
-        extra: {
-          error: error instanceof Error ? error.message : String(error),
-          fallbackDecision: intentAnalysis.decision,
-          fallbackRequestType: intentAnalysis.requestType,
-        },
-      }, ['agent', 'intent', 'failure'])
-    }
+    // Do not put model-authored classification in front of the streaming
+    // Agent. Two serial preflight completions made the UI wait for minutes
+    // before the first visible Agent content and could drift from the user's
+    // language. The main Agent owns planning and clarification; this fast path
+    // only preserves an explicit confirmation of a persisted plan.
+    intentAnalysis = resolveImmediateIntent(userPrompt, pendingIntentPlan)
     confirmedIntentPlan = resolveIntentExecutionPlan(intentAnalysis, pendingIntentPlan, messageId)
     jobContext?.checkpoint('intent_analysis', {
       analysis: intentAnalysis,
@@ -197,6 +194,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     channel: 'agent.intent',
     analysis: intentAnalysis as unknown as JsonValue,
   })
+  reportStartupPhase('intent.resolved')
 
   const nextGateState = nextIntentGateState(intentAnalysis, pendingIntentPlan, messageId)
   const updatedConversation = workspaceId
@@ -207,6 +205,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
         [INTENT_GATE_CONTEXT_KEY]: nextGateState,
       })
   if (!updatedConversation) throw new Error(`Conversation ${conversationId} was not found`)
+  reportStartupPhase('conversation.updated')
 
   if (intentAnalysis.decision !== 'execute') {
     const response = renderIntentResponse(intentAnalysis, userPrompt)
@@ -255,6 +254,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   // 构建 system prompt builder（每步 API 调用时重新 build，确保新存记忆立即可见）
   const soulPrompt = readAgentSoul(agentName)
   const promptBuilder = createMantaPromptBuilder({ cwd, soulPrompt, runtimeFacts })
+  reportStartupPhase('prompt.builder.created')
 
   // 每步重建 system prompt 的闭包：memoryContext pipe 内部实时读 MemoryStore
   const buildSystemPrompt = async (): Promise<string> => {
@@ -279,6 +279,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     conversationId,
     messageId,
   })
+  reportStartupPhase('prompt.initial.completed')
   const systemPrompt = buildIntentExecutionPrompt(baseSystemPrompt, executionPlan, executionMode)
 
   // 简洁启动日志：模型 + prompt 摘要 + pipe 统计
@@ -370,6 +371,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
 
   // 注册新的活跃循环（占位，后续填充 running promise）
   const loopPromise = new Promise<void>((resolve, reject) => {
+    reportStartupPhase('loop.invoked')
     void runAgentLoop({
       messages: coreMessages,
       systemPrompt,
@@ -380,6 +382,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
       securityContext,
       agentName,
       runtimeExtensions: effectiveRuntimeExtensions,
+      onStartupPhase: reportStartupPhase,
       throwOnError: Boolean(jobContext),
       abortSignal: jobContext?.signal,
       resumeState,

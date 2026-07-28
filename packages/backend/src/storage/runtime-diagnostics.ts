@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
+import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { AsyncLocalStorage } from 'node:async_hooks'
 
@@ -25,12 +26,27 @@ export class RuntimeDiagnosticsWriter {
   private accepting = true
   private disposed = false
   private buffered: DiagnosticEntry[] = []
+  private deferredWrites: Promise<void> = Promise.resolve()
   constructor(private root: string) {}
 
   append(entry: DiagnosticEntry): boolean {
     if (this.disposed || !this.accepting) return false
     if (this.paused) { this.buffered.push(entry); return true }
     return this.appendNow(entry)
+  }
+
+  /**
+   * Queue best-effort diagnostics I/O outside the request/Agent event loop.
+   * Slow or remote diagnostics volumes must never delay model streaming.
+   */
+  appendDeferred(entry: DiagnosticEntry): boolean {
+    if (this.disposed || !this.accepting) return false
+    if (this.paused) {
+      this.buffered.push({ ...entry, __deferred: true })
+      return true
+    }
+    this.queueDeferredWrite(entry)
+    return true
   }
 
   appendAudit(entry: Record<string, unknown>): boolean {
@@ -68,7 +84,7 @@ export class RuntimeDiagnosticsWriter {
   }
 
   quiesce(): void { if (!this.disposed) this.paused = true }
-  checkpoint(): void { /* synchronous writes have no in-flight queue */ }
+  checkpoint(): Promise<void> { return this.deferredWrites }
   close(): void { if (!this.disposed) this.accepting = false }
   reopen(root: string): void {
     if (this.disposed) throw new Error('Diagnostics writer is disposed')
@@ -84,8 +100,33 @@ export class RuntimeDiagnosticsWriter {
   private flush(): void {
     for (const entry of this.buffered.splice(0)) {
       if (entry.__audit === true) this.appendAuditNow(entry)
+      else if (entry.__deferred === true) {
+        const { __deferred: _, ...persisted } = entry
+        this.queueDeferredWrite(persisted)
+      }
       else this.appendNow(entry)
     }
+  }
+
+  private queueDeferredWrite(entry: DiagnosticEntry): void {
+    const root = this.root
+    this.deferredWrites = this.deferredWrites
+      .then(async () => {
+        const line = `${JSON.stringify(entry)}\n`
+        const targets = [join(root, 'system.log')]
+        const conversationId = conversationIdOf(entry)
+        if (conversationId) targets.push(join(root, 'conversations', conversationId, 'log.ndjson'))
+        for (const target of targets) {
+          try {
+            await mkdir(dirname(target), { recursive: true })
+            await appendFile(target, line, 'utf8')
+          } catch {
+            // Diagnostics persistence is best effort and must not reject the
+            // serialized queue or interfere with business requests.
+          }
+        }
+      })
+      .catch(() => {})
   }
 
   private appendAuditNow(entry: DiagnosticEntry): boolean {

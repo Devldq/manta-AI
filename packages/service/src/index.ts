@@ -4,12 +4,14 @@ import { constants } from 'node:fs'
 import { access, chmod, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir, platform } from 'node:os'
 import { dirname, join } from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { createBackendStorageComposition, startServer, type MantaServerHandle } from '@manta/backend'
 import { BootstrapStore, STORAGE_GROUP_IDS, volumeRoot } from '@manta/storage-hub'
 import type { AshBootstrap, StorageVolumeRecord } from '@manta/shared'
 import { startManagedQdrant } from './qdrant.js'
+import { prepareTaskRuntimeDatabase } from './runtime-state.js'
 
 const execFileAsync = promisify(execFile)
 const API_VERSION = 'v1'
@@ -107,11 +109,23 @@ export async function isServiceDescriptorLive(descriptor: ServiceDescriptor): Pr
 }
 
 export async function startLocalService(options: LocalServiceOptions = {}): Promise<LocalServiceHandle> {
+  const startupStartedAt = performance.now()
+  let previousPhaseAt = startupStartedAt
+  const recordStartupPhase = (phase: string) => {
+    const now = performance.now()
+    process.stdout.write(`MANTA_STARTUP_TIMING ${JSON.stringify({
+      phase,
+      durationMs: Math.round(now - previousPhaseAt),
+      totalMs: Math.round(now - startupStartedAt),
+    })}\n`)
+    previousPhaseAt = now
+  }
   const home = options.home ?? resolveMantaHome()
   await mkdir(home, { recursive: true, mode: 0o700 })
   await chmod(home, 0o700).catch(() => undefined)
   const processIdentityValue = await processIdentity(process.pid)
   const releaseLock = await acquireServiceLock(home, processIdentityValue)
+  recordStartupPhase('prepare-home-and-lock')
   const instanceId = randomUUID()
   let server: MantaServerHandle | undefined
   let qdrant: Awaited<ReturnType<typeof startManagedQdrant>> | undefined
@@ -120,33 +134,52 @@ export async function startLocalService(options: LocalServiceOptions = {}): Prom
   try {
     const configuredFrontendDist = options.frontendDist ?? process.env.MANTA_FRONTEND_DIST
     const bootstrapPath = options.bootstrapPath ?? process.env.MANTA_BOOTSTRAP_PATH ?? join(home, 'ash-bootstrap.json')
-    let frontendDist: string | undefined
-    let credentials: ServiceCredentials | undefined
     const bootstrapStore = new BootstrapStore(bootstrapPath)
-    const storageStartup = Promise.all([
+    const [frontendDist, credentials] = await Promise.all([
       resolveAndValidateFrontendDist(configuredFrontendDist),
       ensureServiceCredentials(home),
       ensureDefaultBootstrap(bootstrapPath, home),
-    ]).then(async ([resolvedFrontendDist, resolvedCredentials]) => {
-      frontendDist = resolvedFrontendDist
-      credentials = resolvedCredentials
-      return createBackendStorageComposition(bootstrapStore)
-    })
-    const qdrantStartup = startManagedQdrant({
+    ])
+    recordStartupPhase('prepare-frontend-credentials-bootstrap')
+
+    // Qdrant readiness polling must finish before storage composition begins.
+    // Routed cloud storage still contains synchronous recovery checks; running
+    // both in parallel can starve the JS poll until its deadline and make a
+    // healthy Qdrant child look like a startup failure.
+    qdrant = await startManagedQdrant({
       home,
       binary: options.qdrantBinary,
       url: options.qdrantUrl ?? process.env.QDRANT_URL,
     })
-    const [qdrantResult, storageResult] = await Promise.allSettled([qdrantStartup, storageStartup])
-    if (qdrantResult.status === 'fulfilled') qdrant = qdrantResult.value
-    if (storageResult.status === 'fulfilled') composition = storageResult.value
-    const startupErrors = [qdrantResult, storageResult]
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason)
-    if (startupErrors.length === 1) throw startupErrors[0]
-    if (startupErrors.length > 1) throw new AggregateError(startupErrors, 'Local Service dependencies failed to start')
-    if (!composition || !credentials) throw new Error('Local Service startup dependencies are incomplete')
+    recordStartupPhase('start-qdrant')
+    composition = await createBackendStorageComposition(bootstrapStore, {
+      deferAgentRecovery: true,
+      localCacheRoot: join(home, 'cache'),
+    })
+    recordStartupPhase('compose-storage')
     const activeComposition = composition
+    const agentStorageStartedAt = performance.now()
+    const agentStorage = activeComposition.activateAgents().then((value) => {
+      process.stdout.write(`MANTA_STARTUP_BACKGROUND_TIMING ${JSON.stringify({
+        phase: 'activate-agent-storage',
+        durationMs: Math.round(performance.now() - agentStorageStartedAt),
+      })}\n`)
+      return value
+    })
+    // Agent storage is isolated from the task/project path. Its routes await
+    // this promise on demand while the core Service can become ready.
+    void agentStorage.catch(() => undefined)
+    const agentReadModel = {
+      agents: async () => (await agentStorage).readModel.agents(),
+      assets: async (adapterId: string, installationId: string) => (await agentStorage).readModel.assets(adapterId, installationId),
+      reuse: async () => (await agentStorage).readModel.reuse(),
+      operation: async (operationId: string) => (await agentStorage).readModel.operation(operationId),
+    }
+    const taskRuntimeDatabase = await prepareTaskRuntimeDatabase({
+      home,
+      legacyDatabasePath: activeComposition.runtime.resolve('work', 'jobs', 'jobs.sqlite'),
+    })
+    recordStartupPhase('prepare-task-runtime')
     serverOwnsComposition = true
     server = await startServer({
       storage: activeComposition.runtime,
@@ -160,7 +193,7 @@ export async function startLocalService(options: LocalServiceOptions = {}): Prom
         inventory: activeComposition.hub.inventory,
         capacityMetrics: activeComposition.hub.capacityMetrics,
         listBackups: async () => [],
-        agents: activeComposition.agents.readModel,
+        agents: agentReadModel,
         git: {
           capability: () => activeComposition.git.capability(),
           bindings: () => activeComposition.git.listBindings(),
@@ -172,11 +205,13 @@ export async function startLocalService(options: LocalServiceOptions = {}): Prom
       frontendDist,
       isDev: false,
       logger: process.env.MANTA_TERMINAL_LOGS === '1',
+      taskRuntimeDatabasePath: taskRuntimeDatabase.databasePath,
       localAccess: {
         tokens: [credentials.tokens.cli, credentials.tokens.mcp],
         desktopNonces: options.desktopNonces,
       },
     })
+    recordStartupPhase('start-backend')
     const descriptor: ServiceDescriptor = {
       endpoint: `http://127.0.0.1:${server.port}`,
       pid: process.pid,
@@ -187,6 +222,7 @@ export async function startLocalService(options: LocalServiceOptions = {}): Prom
       ...(process.env.MANTA_SERVICE_BUILD_ID ? { buildId: process.env.MANTA_SERVICE_BUILD_ID } : {}),
     }
     await writeJsonAtomic(serviceDescriptorPath(home), descriptor, 0o600)
+    recordStartupPhase('publish-service-descriptor')
     let closed = false
     let closePromise: Promise<void> | undefined
     let resolveClosed!: () => void

@@ -33,6 +33,20 @@ interface WorkspaceStore {
   fetchConversations: (wsId: string, force?: boolean) => Promise<void>
 }
 
+export function reconcileExpandedWorkspaceIds(
+  previousItems: WorkspaceSummary[],
+  expandedIds: Set<string>,
+  nextItems: WorkspaceSummary[],
+): Set<string> {
+  const previousIds = new Set(previousItems.map((item) => item.id))
+
+  return new Set(
+    nextItems
+      .map((item) => item.id)
+      .filter((id) => expandedIds.has(id) || !previousIds.has(id)),
+  )
+}
+
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   items: [],
   expandedIds: new Set(),
@@ -53,8 +67,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         })
       )
       if (json.success && json.data?.workspaces) {
-        // 默认折叠所有工作空间（用户点击展开时按需加载）
-        set({ items: json.data.workspaces, loading: false })
+        set((state) => ({
+          items: json.data.workspaces,
+          // 首次出现的项目默认展开；已经存在的项目保留用户当前的折叠选择。
+          expandedIds: reconcileExpandedWorkspaceIds(
+            state.items,
+            state.expandedIds,
+            json.data.workspaces,
+          ),
+          loading: false,
+        }))
       } else {
         set({ items: [], loading: false })
       }

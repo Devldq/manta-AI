@@ -2,11 +2,11 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
+import { resolveLocalCachePath, resolveStoragePath, safeStorageSegment } from '../../../storage/path-routing'
 import { v4 as uuidv4 } from 'uuid'
-import { type WorkspaceConfig, type CreateWorkspaceInput, type UpdateWorkspaceInput, type Conversation, type ConversationMessage, type ToolCallRecord, type StepUsageRecord } from '@core/types'
+import { type WorkspaceConfig, type CreateWorkspaceInput, type UpdateWorkspaceInput, type Conversation, type ConversationMessage, type ConversationSummary, type ToolCallRecord, type StepUsageRecord } from '@core/types'
 import type { AgentRunSnapshot } from '@manta/contracts'
-import { ensureDir, atomicWrite, shortId, removeDir, readJsonFile } from '../shared/fs-utils'
+import { ensureDir, atomicWrite, shortId, removeDir } from '../shared/fs-utils'
 
 function workspaceDataDir(): string {
   return resolveStoragePath('work', 'workspaces')
@@ -23,6 +23,88 @@ function workspaceFilePath(id: string): string {
 /** 工作空间会话目录 */
 function workspaceConversationsDir(workspaceId: string): string {
   return path.join(workspaceDir(workspaceId), 'conversations')
+}
+
+function workspaceConversationIndexPath(workspaceId: string): string {
+  return path.join(workspaceConversationsDir(workspaceId), '.conversation-index.json')
+}
+
+function localWorkspaceConversationIndexPath(workspaceId: string): string {
+  return resolveLocalCachePath('conversation-indexes', 'workspaces', safeStorageSegment(`${workspaceId}.json`))
+}
+
+interface WorkspaceConversationSummaryIndex {
+  version: 1
+  conversations: ConversationSummary[]
+}
+
+function toConversationSummary(conv: Conversation): ConversationSummary {
+  return {
+    id: conv.id,
+    title: conv.title,
+    agentName: conv.agentName,
+    createdAt: conv.createdAt,
+    updatedAt: conv.updatedAt,
+    ...(conv.workspaceId ? { workspaceId: conv.workspaceId } : {}),
+    messageCount: conv.messages.length,
+  }
+}
+
+function parseWorkspaceConversationIndex(raw: string): ConversationSummary[] | null {
+  try {
+    const value = JSON.parse(raw) as WorkspaceConversationSummaryIndex
+    if (!value || value.version !== 1 || !Array.isArray(value.conversations)) return null
+    if (value.conversations.some((item) => (
+      typeof item?.id !== 'string'
+      || typeof item.title !== 'string'
+      || typeof item.agentName !== 'string'
+      || typeof item.createdAt !== 'string'
+      || typeof item.updatedAt !== 'string'
+    ))) return null
+    return value.conversations
+  } catch {
+    return null
+  }
+}
+
+function readLocalWorkspaceConversationIndex(workspaceId: string): ConversationSummary[] | null {
+  try { return parseWorkspaceConversationIndex(fs.readFileSync(localWorkspaceConversationIndexPath(workspaceId), 'utf-8')) } catch { return null }
+}
+
+async function readPortableWorkspaceConversationIndex(workspaceId: string): Promise<ConversationSummary[] | null> {
+  try { return parseWorkspaceConversationIndex(await fs.promises.readFile(workspaceConversationIndexPath(workspaceId), 'utf-8')) } catch { return null }
+}
+
+function writeLocalWorkspaceConversationIndex(workspaceId: string, conversations: ConversationSummary[]): void {
+  const fp = localWorkspaceConversationIndexPath(workspaceId)
+  ensureDir(path.dirname(fp))
+  atomicWrite(fp, JSON.stringify({ version: 1, conversations } satisfies WorkspaceConversationSummaryIndex))
+}
+
+function writeWorkspaceConversationIndex(workspaceId: string, conversations: ConversationSummary[]): void {
+  writeLocalWorkspaceConversationIndex(workspaceId, conversations)
+  ensureDir(workspaceConversationsDir(workspaceId))
+  atomicWrite(
+    workspaceConversationIndexPath(workspaceId),
+    JSON.stringify({ version: 1, conversations } satisfies WorkspaceConversationSummaryIndex),
+  )
+}
+
+function updateWorkspaceConversationIndex(workspaceId: string, conv: Conversation): void {
+  const summaries = readLocalWorkspaceConversationIndex(workspaceId) ?? []
+  writeWorkspaceConversationIndex(workspaceId, [
+    ...summaries.filter((item) => item.id !== conv.id),
+    toConversationSummary(conv),
+  ])
+}
+
+function removeFromWorkspaceConversationIndex(workspaceId: string, conversationId: string): void {
+  const summaries = readLocalWorkspaceConversationIndex(workspaceId)
+  if (!summaries) return
+  writeWorkspaceConversationIndex(
+    workspaceId,
+    summaries.filter((item) => item.id !== conversationId),
+  )
 }
 
 /** 工作空间会话文件夹路径 */
@@ -124,6 +206,7 @@ export function deleteWorkspace(id: string): boolean {
   try {
     if (fs.existsSync(dir)) {
       fs.rmSync(dir, { recursive: true, force: true })
+      fs.rmSync(localWorkspaceConversationIndexPath(id), { force: true })
       return true
     }
     return false
@@ -154,6 +237,7 @@ export function createWorkspaceConversation(workspaceId: string, agentName: stri
   const convDir = workspaceConvDir(workspaceId, conv.id)
   ensureDir(convDir)
   atomicWrite(workspaceConvSessionFilePath(workspaceId, conv.id), JSON.stringify(conv, null, 2))
+  updateWorkspaceConversationIndex(workspaceId, conv)
   return conv
 }
 
@@ -180,6 +264,28 @@ export function listWorkspaceConversations(workspaceId: string): Conversation[] 
   return conversations.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
 
+async function rebuildWorkspaceConversationSummaries(workspaceId: string): Promise<ConversationSummary[]> {
+  try {
+    const entries = await fs.promises.readdir(workspaceConversationsDir(workspaceId), { withFileTypes: true })
+    const conversations = await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+      try { return JSON.parse(await fs.promises.readFile(workspaceConvSessionFilePath(workspaceId, entry.name), 'utf-8')) as Conversation } catch { return null }
+    }))
+    return conversations.filter((item): item is Conversation => !!item).map(toConversationSummary)
+  } catch { return [] }
+}
+
+/** 获取工作空间会话摘要。本地镜像命中时完全不接触云端；首次回填使用异步 I/O。 */
+export async function listWorkspaceConversationSummaries(workspaceId: string): Promise<ConversationSummary[]> {
+  const local = readLocalWorkspaceConversationIndex(workspaceId)
+  if (local) return [...local].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+
+  const portable = await readPortableWorkspaceConversationIndex(workspaceId)
+  const summaries = portable ?? await rebuildWorkspaceConversationSummaries(workspaceId)
+  writeLocalWorkspaceConversationIndex(workspaceId, summaries)
+  if (!portable) writeWorkspaceConversationIndex(workspaceId, summaries)
+  return [...summaries].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+}
+
 /** 获取单个工作空间会话 */
 export function getWorkspaceConversation(workspaceId: string, conversationId: string): Conversation | null {
   const sessionPath = workspaceConvSessionFilePath(workspaceId, conversationId)
@@ -195,6 +301,7 @@ export function getWorkspaceConversation(workspaceId: string, conversationId: st
 export function updateWorkspaceConversation(workspaceId: string, conversationId: string, conv: Conversation): void {
   const sessionPath = workspaceConvSessionFilePath(workspaceId, conversationId)
   atomicWrite(sessionPath, JSON.stringify(conv, null, 2))
+  updateWorkspaceConversationIndex(workspaceId, conv)
 }
 
 /** 合并更新工作空间会话上下文。 */
@@ -270,6 +377,7 @@ export function deleteWorkspaceConversation(workspaceId: string, conversationId:
   try {
     if (fs.existsSync(convDir)) {
       fs.rmSync(convDir, { recursive: true, force: true })
+      removeFromWorkspaceConversationIndex(workspaceId, conversationId)
       return true
     }
     return false

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { resolveStoragePath, runWithStorageResolver, safeStorageSegment } from './path-routing'
+import { resolveLocalCachePath, resolveStoragePath, runWithStorageResolver, safeStorageSegment } from './path-routing'
 
 describe('ASH persistence routing', () => {
   it.each(['CON.txt', 'COM1', 'NUL', 'name.', 'name ', 'name:', '.', '..', 'a/b', 'a\\b', 'bad\u0001'])('rejects non-portable storage segment %j', (value) => {
@@ -23,6 +23,18 @@ describe('ASH persistence routing', () => {
       expect(resolveStoragePath('secrets', 'mcp-oauth')).toBe(join(root, 'secrets', 'mcp-oauth'))
       expect(resolveStoragePath('diagnostics', 'audit.log')).toBe(join(root, 'diagnostics', 'audit.log'))
       expect(resolveStoragePath('cache', 'uploads')).toBe(join(root, 'cache', 'uploads'))
+    })
+  })
+
+  it('keeps machine-local cache outside routed storage when explicitly configured', () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-ash-routing-'))
+    const local = mkdtempSync(join(tmpdir(), 'manta-local-cache-'))
+    runWithStorageResolver({
+      resolve: (group, ...segments) => join(root, group, ...segments),
+      resolveLocalCache: (...segments) => join(local, ...segments),
+    }, () => {
+      expect(resolveLocalCachePath('conversation-indexes', 'global.json'))
+        .toBe(join(local, 'conversation-indexes', 'global.json'))
     })
   })
 
