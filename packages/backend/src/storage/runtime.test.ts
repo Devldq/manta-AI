@@ -464,7 +464,7 @@ describe('backend lifecycle', () => {
     handles.push(app)
     const entry = {
       level: 'info', type: 'system', source: 'server', message: 'conversation-owned',
-      metadata: { conversationId: 'conversation-42' },
+      metadata: { conversationId: 'conversation-42', prompt: 'do-not-persist-this-prompt' },
     }
     expect((await app.inject({ method: 'POST', url: '/api/logs', payload: { logs: [entry] } })).statusCode).toBe(200)
     const response = await app.inject({ method: 'GET', url: '/api/logs/file?conversationId=conversation-42' })
@@ -472,6 +472,64 @@ describe('backend lifecycle', () => {
     expect(response.json().entries).toEqual([expect.objectContaining({ message: 'conversation-owned' })])
     expect(readFileSync(join(root, 'system.log'), 'utf8')).toContain('conversation-owned')
     expect(readFileSync(join(root, 'conversations', 'conversation-42', 'log.ndjson'), 'utf8')).toContain('conversation-owned')
+    expect(readFileSync(join(root, 'system.log'), 'utf8')).not.toContain('do-not-persist-this-prompt')
+    expect(response.json().entries[0].metadata.prompt).toBe('[REDACTED]')
+  })
+
+  it('loads a bounded durable tail and resumes from its returned offset', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'manta-conversation-log-tail-'))
+    const writer = new RuntimeDiagnosticsWriter(root)
+    const { buildApp } = await import('../app')
+    const { logRoutes } = await import('../routes/logs')
+    const app = await buildApp({ storage: { ...fakeStorage(root), diagnosticsWriter: writer }, registerRoutes: false })
+    await app.register(logRoutes)
+    handles.push(app)
+    const workspaceConversationDir = join(root, 'work', 'workspaces', 'workspace-1', 'conversations', 'conversation-tail')
+    mkdirSync(workspaceConversationDir, { recursive: true })
+    writeFileSync(join(workspaceConversationDir, 'session.json'), JSON.stringify({
+      id: 'conversation-tail',
+      workspaceId: 'workspace-1',
+      title: 'Log tail',
+      agentName: 'main',
+      messages: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }))
+
+    const post = (message: string) => app.inject({
+      method: 'POST',
+      url: '/api/logs',
+      payload: {
+        logs: [{
+          level: 'info',
+          type: 'system',
+          source: 'server',
+          message,
+          metadata: { conversationId: 'conversation-tail' },
+        }],
+      },
+    })
+
+    await post('tail-one')
+    await post('tail-two')
+    await post('tail-three')
+    const initial = await app.inject({ method: 'GET', url: '/api/logs/file?conversationId=conversation-tail&workspaceId=workspace-1&tail=2' })
+    expect(initial.statusCode).toBe(200)
+    expect(initial.json().entries.map((entry: { message: string }) => entry.message)).toEqual(['tail-two', 'tail-three'])
+    expect(initial.json().offset).toBeGreaterThan(0)
+    expect((await app.inject({
+      method: 'GET',
+      url: '/api/logs/file?conversationId=conversation-tail&workspaceId=workspace-other&tail=2',
+    })).statusCode).toBe(404)
+
+    await post('tail-four')
+    const incremental = await app.inject({
+      method: 'GET',
+      url: `/api/logs/file?conversationId=conversation-tail&workspaceId=workspace-1&offset=${initial.json().offset}`,
+    })
+    expect(incremental.statusCode).toBe(200)
+    expect(incremental.json().entries.map((entry: { message: string }) => entry.message)).toEqual(['tail-four'])
+    expect(incremental.json().offset).toBeGreaterThan(initial.json().offset)
   })
 
   it('rejects unsafe conversation ids without escaping the diagnostics root', () => {

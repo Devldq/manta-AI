@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, FileText, Loader2, X } from 'lucide-react'
+import { AlertCircle, FileText, Info, Loader2, ScrollText, X } from 'lucide-react'
+import { WorkspaceLogsPanel } from '@/features/logs/WorkspaceLogsPanel'
 
 interface Conversation {
   id: string
@@ -41,6 +42,7 @@ export function SessionSidebar({ open, conversation, workspaceId, previewPath, o
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [activeTab, setActiveTab] = useState<'details' | 'logs'>('details')
 
   useEffect(() => {
     if (!open || !previewPath) {
@@ -79,7 +81,7 @@ export function SessionSidebar({ open, conversation, workspaceId, previewPath, o
 
   if (!open) return null
 
-  const title = previewPath ? '文件预览' : '会话详情'
+  const title = previewPath ? '文件预览' : '工作区'
 
   return (
     <aside className="session-sidebar" aria-label={title}>
@@ -115,17 +117,31 @@ export function SessionSidebar({ open, conversation, workspaceId, previewPath, o
           {preview?.kind === 'text' && <pre className="file-preview-code"><code>{preview.content}</code></pre>}
         </div>
       ) : (
-        <div className="session-sidebar-details">
-          {conversation ? (
-            <dl>
-              <div><dt>标题</dt><dd>{conversation.title}</dd></div>
-              <div><dt>Agent</dt><dd>{conversation.agentName}</dd></div>
-              <div><dt>消息数</dt><dd>{conversation.messages?.length ?? 0}</dd></div>
-            </dl>
+        <>
+          <nav className="session-sidebar-tabs" aria-label="工作区面板" role="tablist">
+            <button type="button" className={activeTab === 'details' ? 'is-active' : ''} onClick={() => setActiveTab('details')} aria-selected={activeTab === 'details'} role="tab">
+              <Info size={13} />详情
+            </button>
+            <button type="button" className={activeTab === 'logs' ? 'is-active' : ''} onClick={() => setActiveTab('logs')} aria-selected={activeTab === 'logs'} role="tab">
+              <ScrollText size={13} />Logs
+            </button>
+          </nav>
+          {activeTab === 'details' ? (
+            <div className="session-sidebar-details">
+              {conversation ? (
+                <dl>
+                  <div><dt>标题</dt><dd>{conversation.title}</dd></div>
+                  <div><dt>Agent</dt><dd>{conversation.agentName}</dd></div>
+                  <div><dt>消息数</dt><dd>{conversation.messages?.length ?? 0}</dd></div>
+                </dl>
+              ) : (
+                <p>暂无会话信息</p>
+              )}
+            </div>
           ) : (
-            <p>暂无会话信息</p>
+            <WorkspaceLogsPanel conversationId={conversation?.id} workspaceId={workspaceId} />
           )}
-        </div>
+        </>
       )}
     </aside>
   )

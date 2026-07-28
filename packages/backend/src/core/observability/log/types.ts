@@ -49,6 +49,8 @@ export interface LogEntry {
 export interface LogMetadata {
   /** 会话ID */
   conversationId?: string
+  /** 工作空间ID */
+  workspaceId?: string
   /** 消息ID */
   messageId?: string
   /** 步骤索引 */

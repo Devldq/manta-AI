@@ -17,7 +17,7 @@ import {
   SystemLog,
   PerformanceLog
 } from './types'
-import { runWithoutDiagnosticsOwner } from '../../../storage/runtime-diagnostics'
+import { runWithoutDiagnosticsOwner, sanitizeDiagnosticEntry, type DiagnosticEntry } from '../../../storage/runtime-diagnostics'
 
 /** 默认日志配置 */
 const DEFAULT_CONFIG: LogReportConfig = {
@@ -45,11 +45,11 @@ export class DefaultLogCollector implements LogCollector {
     if (!this.config.enabled) return null as unknown as LogEntry
     if (!this.shouldLog(entry.level)) return null as unknown as LogEntry
 
-    const logEntry: LogEntry = {
+    const logEntry = sanitizeDiagnosticEntry({
       ...entry,
       id: uuidv4(),
       timestamp: new Date().toISOString(),
-    }
+    } as DiagnosticEntry) as unknown as LogEntry
 
     this.logs.push(logEntry)
 

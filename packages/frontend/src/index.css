@@ -729,6 +729,37 @@ pre {
   color: var(--color-text-primary);
 }
 
+.session-sidebar-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 7px 10px 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.session-sidebar-tabs button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.session-sidebar-tabs button:hover {
+  color: var(--color-text-primary);
+}
+
+.session-sidebar-tabs button.is-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
 .session-sidebar-details,
 .file-preview {
   min-height: 0;
@@ -834,6 +865,288 @@ pre {
 .file-preview-image-wrap img {
   max-width: 100%;
   height: auto;
+}
+
+.workspace-logs-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-logs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px 6px;
+}
+
+.workspace-logs-search {
+  min-width: 0;
+  flex: 1;
+  height: 30px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 7px;
+}
+
+.workspace-logs-search:focus-within {
+  border-color: var(--color-accent);
+}
+
+.workspace-logs-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 11px;
+}
+
+.workspace-logs-refresh {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.workspace-logs-refresh:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.workspace-logs-filters {
+  padding: 0 10px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.workspace-logs-filters select {
+  min-width: 0;
+  height: 26px;
+  max-width: 95px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--color-surface-elevated);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+}
+
+.workspace-logs-connection {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.workspace-logs-connection.is-live {
+  color: var(--color-status-done);
+}
+
+.workspace-logs-count {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-logs-error,
+.workspace-logs-empty {
+  margin: 10px;
+  padding: 14px 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.workspace-logs-error {
+  color: var(--color-status-failed);
+  background: color-mix(in srgb, var(--color-status-failed) 7%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+}
+
+.workspace-logs-error span {
+  flex: 1;
+}
+
+.workspace-logs-error button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.workspace-log-groups {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.workspace-log-group {
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.workspace-log-group-header {
+  width: 100%;
+  min-height: 31px;
+  padding: 0 9px;
+  border: 0;
+  background: var(--color-surface-elevated);
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.workspace-log-group-header:hover {
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-surface-elevated));
+}
+
+.workspace-log-group-header strong {
+  color: var(--color-text-primary);
+  font-size: 11px;
+}
+
+.workspace-log-group-header time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-log-group-header .is-error {
+  color: var(--color-status-failed);
+}
+
+.workspace-log-entry {
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 65%, transparent);
+}
+
+.workspace-log-entry.is-error,
+.workspace-log-entry.is-fatal {
+  background: color-mix(in srgb, var(--color-status-failed) 5%, transparent);
+}
+
+.workspace-log-entry-line {
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.workspace-log-entry-line:disabled {
+  cursor: default;
+}
+
+.workspace-log-entry-line:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+}
+
+.workspace-log-entry-chevron {
+  width: 11px;
+  color: var(--color-text-muted);
+  display: inline-flex;
+}
+
+.workspace-log-entry-line time {
+  width: 54px;
+  flex: 0 0 54px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-log-level {
+  width: 29px;
+  flex: 0 0 29px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.workspace-log-level.is-error,
+.workspace-log-level.is-fatal {
+  color: var(--color-status-failed);
+}
+
+.workspace-log-level.is-warn {
+  color: var(--color-warning, #f59e0b);
+}
+
+.workspace-log-level.is-info {
+  color: var(--color-accent);
+}
+
+.workspace-log-message {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-log-entry-details {
+  margin: 0 8px 7px 28px;
+  padding: 7px;
+  border-left: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.workspace-log-entry-meta {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 5px;
+  font-size: 9px;
+}
+
+.workspace-log-entry-details pre {
+  max-height: 150px;
+  margin: 4px 0 0;
+  padding: 6px;
+  overflow: auto;
+  border-radius: 5px;
+  background: var(--color-surface-elevated);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 @media (max-width: 767px) {

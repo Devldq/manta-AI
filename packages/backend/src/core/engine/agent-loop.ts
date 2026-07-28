@@ -415,7 +415,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
     const tokenTracker: TokenTracker = createTokenTracker(currentMessages)
 
     // 基础日志元数据（所有本 loop 日志共享）
-    const baseMeta = { messageId, conversationId, prompt }
+    const baseMeta = { messageId, conversationId, workspaceId: securityContext?.workspaceId }
 
     // ── 性能计时 ──
     const turnStartTime = performance.now()

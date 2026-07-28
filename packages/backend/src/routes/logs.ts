@@ -2,6 +2,104 @@ import type { FastifyInstance } from 'fastify'
 import { logManager, LogManager } from '../core/observability/log'
 import type { LogFilter, LogExportOptions, LogExportFormat, LogEntry } from '../core/observability/log/types'
 import * as fs from 'fs'
+import { currentDiagnosticsOwner, sanitizeDiagnosticEntry } from '../storage/runtime-diagnostics'
+import { getWorkspaceConversation } from '../core/storage/workspace/store'
+
+const MAX_INCREMENTAL_READ = 128 * 1024
+const MAX_TAIL_READ = 512 * 1024
+const DEFAULT_TAIL_ENTRIES = 200
+const MAX_TAIL_ENTRIES = 500
+
+function nonNegativeInteger(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+function readFileRange(file: string, offset: number, length: number): Buffer {
+  const buffer = Buffer.alloc(length)
+  const fd = fs.openSync(file, 'r')
+  try {
+    const bytesRead = fs.readSync(fd, buffer, 0, length, offset)
+    return buffer.subarray(0, bytesRead)
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+function parseLogLines(buffer: Buffer): { entries: LogEntry[]; invalidLines: number } {
+  const entries: LogEntry[] = []
+  let invalidLines = 0
+  for (const line of buffer.toString('utf8').split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const parsed = JSON.parse(line) as LogEntry
+      entries.push(sanitizeDiagnosticEntry(parsed))
+    } catch {
+      invalidLines++
+    }
+  }
+  return { entries, invalidLines }
+}
+
+function readTail(logFile: string, fileSize: number, requestedLimit: number) {
+  const limit = Math.min(Math.max(1, requestedLimit), MAX_TAIL_ENTRIES)
+  const start = Math.max(0, fileSize - MAX_TAIL_READ)
+  let buffer = readFileRange(logFile, start, fileSize - start)
+  let skippedPartial = false
+
+  if (start > 0) {
+    const firstNewline = buffer.indexOf(0x0a)
+    skippedPartial = true
+    buffer = firstNewline >= 0 ? buffer.subarray(firstNewline + 1) : Buffer.alloc(0)
+  }
+
+  const lastNewline = buffer.lastIndexOf(0x0a)
+  if (lastNewline >= 0) buffer = buffer.subarray(0, lastNewline + 1)
+  else if (buffer.length > 0) buffer = Buffer.alloc(0)
+
+  const parsed = parseLogLines(buffer)
+  const entries = parsed.entries.slice(-limit)
+  return {
+    entries,
+    offset: fileSize,
+    fileSize,
+    truncated: skippedPartial || parsed.entries.length > entries.length,
+    invalidLines: parsed.invalidLines,
+  }
+}
+
+function readIncrement(logFile: string, fileSize: number, requestedOffset: number) {
+  const reset = requestedOffset > fileSize
+  const readOffset = reset ? 0 : requestedOffset
+  if (readOffset >= fileSize) return { entries: [], offset: readOffset, fileSize, reset, invalidLines: 0 }
+
+  const readLength = Math.min(fileSize - readOffset, MAX_INCREMENTAL_READ)
+  let buffer = readFileRange(logFile, readOffset, readLength)
+  const lastNewline = buffer.lastIndexOf(0x0a)
+  let consumed = 0
+  let skippedPartial = false
+  if (lastNewline >= 0) {
+    consumed = lastNewline + 1
+    buffer = buffer.subarray(0, consumed)
+  } else {
+    // Advance through a legacy oversized/malformed line instead of making every
+    // refresh reread the same bytes forever. The next chunk will resynchronize
+    // at its first newline.
+    consumed = buffer.length
+    skippedPartial = buffer.length > 0
+    buffer = Buffer.alloc(0)
+  }
+
+  const parsed = parseLogLines(buffer)
+  return {
+    entries: parsed.entries,
+    offset: readOffset + consumed,
+    fileSize,
+    reset,
+    invalidLines: parsed.invalidLines + (skippedPartial ? 1 : 0),
+  }
+}
 
 export async function logRoutes(app: FastifyInstance) {
   // ─── Logs CRUD ───────────────────────────────────────────────
@@ -182,37 +280,30 @@ export async function logRoutes(app: FastifyInstance) {
     try {
       const q = request.query as Record<string, string>
       const offsetParam = q.offset
-      const offset = offsetParam ? Math.max(0, parseInt(offsetParam, 10)) : 0
+      const offset = nonNegativeInteger(offsetParam, 0)
       const conversationId = q.conversationId
+      const workspaceId = q.workspaceId
+
+      if (workspaceId && (!conversationId || !getWorkspaceConversation(workspaceId, conversationId))) {
+        return reply.status(404).send({ error: 'Conversation does not belong to this workspace' })
+      }
+
+      // Deferred diagnostics keep Agent streaming off slow storage. Reads are
+      // the durability boundary: wait for writes already accepted by this
+      // runtime so POST -> GET and refresh-after-turn cannot observe a stale file.
+      await currentDiagnosticsOwner()?.checkpoint()
 
       const logFile = conversationId ? LogManager.getSessionLogFilePath(conversationId) : LogManager.getLogFilePath()
       if (!logFile) return reply.send({ entries: [], offset: 0 })
 
-      if (!fs.existsSync(logFile)) return reply.send({ entries: [], offset: 0 })
+      if (!fs.existsSync(logFile)) return reply.send({ entries: [], offset: 0, fileSize: 0, reset: offset > 0 })
 
       const stat = fs.statSync(logFile)
       const fileSize = stat.size
-      const readOffset = offset > fileSize ? 0 : offset
-      if (readOffset >= fileSize) return reply.send({ entries: [], offset: readOffset })
-
-      const MAX_READ = 128 * 1024
-      const readLen = Math.min(fileSize - readOffset, MAX_READ)
-      const buf = Buffer.alloc(readLen)
-      const fd = fs.openSync(logFile, 'r')
-      fs.readSync(fd, buf, 0, readLen, readOffset)
-      fs.closeSync(fd)
-
-      const content = buf.toString('utf-8')
-      const lines = content.split('\n').filter(line => line.trim())
-      const entries: LogEntry[] = []
-      let bytesConsumed = 0
-
-      for (const line of lines) {
-        bytesConsumed += Buffer.byteLength(line, 'utf-8') + 1
-        try { entries.push(JSON.parse(line) as LogEntry) } catch { /* skip */ }
+      if (q.tail !== undefined) {
+        return reply.send(readTail(logFile, fileSize, nonNegativeInteger(q.tail, DEFAULT_TAIL_ENTRIES)))
       }
-
-      return reply.send({ entries, offset: readOffset + bytesConsumed })
+      return reply.send(readIncrement(logFile, fileSize, offset))
     } catch (err) {
       return reply.status(500).send({ error: String(err) })
     }
@@ -247,7 +338,7 @@ export async function logRoutes(app: FastifyInstance) {
 
     for (const log of initialLogs) {
       sentIds.add(log.id)
-      send({ type: 'log', data: log })
+      send({ type: 'log', data: sanitizeDiagnosticEntry(log) })
     }
 
     const interval = setInterval(() => {
@@ -256,7 +347,7 @@ export async function logRoutes(app: FastifyInstance) {
         const newLogs = currentLogs.filter((log: LogEntry) => !sentIds.has(log.id))
         for (const log of newLogs) {
           sentIds.add(log.id)
-          send({ type: 'log', data: log })
+          send({ type: 'log', data: sanitizeDiagnosticEntry(log) })
         }
         send({ type: 'heartbeat', timestamp: new Date().toISOString(), logCount: currentLogs.length })
       } catch (error) {
