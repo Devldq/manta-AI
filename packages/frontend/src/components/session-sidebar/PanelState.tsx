@@ -27,14 +27,16 @@ export function PanelEmpty({
   title,
   description,
   action,
+  icon,
 }: {
   title: string
   description: string
   action?: ReactNode
+  icon?: ReactNode
 }) {
   return (
     <div className="workspace-panel-state">
-      <FolderOpen size={18} aria-hidden="true" />
+      {icon ?? <FolderOpen size={18} aria-hidden="true" />}
       <strong>{title}</strong>
       <span>{description}</span>
       {action}

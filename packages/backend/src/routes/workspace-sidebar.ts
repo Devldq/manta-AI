@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import { WorkspaceTerminalService, type WorkspaceTerminalEvent } from '../core/services/workspace-terminal.service'
+import { WorkspaceTerminalService } from '../core/services/workspace-terminal.service'
 import { resolveWorkspaceRoot } from './fs'
 
 const execFileAsync = promisify(execFile)
@@ -16,7 +16,6 @@ interface ReviewFile {
 
 export async function workspaceSidebarRoutes(app: FastifyInstance) {
   const terminals = new WorkspaceTerminalService()
-  app.addHook('onClose', async () => terminals.closeAll())
 
   app.get('/api/workspace-sidebar/review', async (request, reply) => {
     const query = request.query as { workspaceId?: string }
@@ -52,14 +51,26 @@ export async function workspaceSidebarRoutes(app: FastifyInstance) {
     }
   })
 
-  app.get('/api/workspace-sidebar/terminal/current', async (request, reply) => {
+  app.get('/api/workspace-sidebar/terminal/capabilities', async (_request, reply) => {
+    return reply.send(await terminals.availability())
+  })
+
+  app.get('/api/workspace-sidebar/terminal/sessions', async (request, reply) => {
     const query = request.query as { workspaceId?: string; conversationId?: string }
     if (!query.workspaceId || !query.conversationId) {
       return reply.status(400).send({ error: '缺少 workspaceId 或 conversationId 参数' })
     }
-    const session = terminals.current(query.workspaceId, query.conversationId)
-    if (!session) return reply.status(404).send({ error: '当前对话还没有终端会话' })
-    return reply.send({ session })
+    try {
+      const cwd = await resolveWorkspaceRoot(query.workspaceId)
+      const sessions = await terminals.list({
+        workspaceId: query.workspaceId,
+        conversationId: query.conversationId,
+        cwd,
+      })
+      return reply.send({ sessions, provider: 'iterm2' })
+    } catch (error) {
+      return sendWorkspaceError(reply, error, '无法读取 iTerm2 终端会话')
+    }
   })
 
   app.post('/api/workspace-sidebar/terminal/sessions', async (request, reply) => {
@@ -69,7 +80,7 @@ export async function workspaceSidebarRoutes(app: FastifyInstance) {
     }
     try {
       const cwd = await resolveWorkspaceRoot(body.workspaceId)
-      const session = terminals.createOrGet({
+      const session = await terminals.create({
         workspaceId: body.workspaceId,
         conversationId: body.conversationId,
         cwd,
@@ -80,17 +91,6 @@ export async function workspaceSidebarRoutes(app: FastifyInstance) {
     }
   })
 
-  app.get('/api/workspace-sidebar/terminal/sessions/:id/events', async (request, reply) => {
-    const { id } = request.params as { id: string }
-    const query = request.query as { afterSeq?: string }
-    const afterSeq = Number.parseInt(query.afterSeq || '0', 10)
-    try {
-      return streamTerminalEvents(app, terminals, id, Number.isFinite(afterSeq) ? afterSeq : 0, reply)
-    } catch (error) {
-      return sendWorkspaceError(reply, error, '无法订阅终端会话')
-    }
-  })
-
   app.post('/api/workspace-sidebar/terminal/sessions/:id/input', async (request, reply) => {
     const { id } = request.params as { id: string }
     const body = request.body as { command?: string }
@@ -98,61 +98,31 @@ export async function workspaceSidebarRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: '命令不能为空' })
     }
     try {
-      return reply.send({ session: terminals.write(id, body.command) })
+      await terminals.write(id, body.command)
+      return reply.status(204).send()
     } catch (error) {
       return sendWorkspaceError(reply, error, '无法写入终端会话')
+    }
+  })
+
+  app.post('/api/workspace-sidebar/terminal/sessions/:id/focus', async (request, reply) => {
+    const { id } = request.params as { id: string }
+    try {
+      await terminals.focus(id)
+      return reply.status(204).send()
+    } catch (error) {
+      return sendWorkspaceError(reply, error, '无法打开 iTerm2 终端会话')
     }
   })
 
   app.delete('/api/workspace-sidebar/terminal/sessions/:id', async (request, reply) => {
     const { id } = request.params as { id: string }
     try {
-      return reply.send({ session: terminals.close(id) })
+      await terminals.close(id)
+      return reply.status(204).send()
     } catch (error) {
       return sendWorkspaceError(reply, error, '无法关闭终端会话')
     }
-  })
-}
-
-function streamTerminalEvents(
-  app: FastifyInstance,
-  terminals: WorkspaceTerminalService,
-  sessionId: string,
-  afterSeq: number,
-  reply: FastifyReply,
-): void {
-  if (!terminals.get(sessionId)) throw Object.assign(new Error('终端会话不存在'), { statusCode: 404 })
-  reply.hijack()
-  const response = reply.raw
-  response.statusCode = 200
-  response.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-  response.setHeader('Cache-Control', 'no-cache, no-transform')
-  response.setHeader('Connection', 'keep-alive')
-  response.setHeader('X-Accel-Buffering', 'no')
-  response.flushHeaders()
-  let lastSeq = afterSeq
-  let closed = false
-  const write = (event: WorkspaceTerminalEvent) => {
-    if (closed || event.seq <= lastSeq) return
-    lastSeq = event.seq
-    response.write(`id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-  }
-  const unsubscribe = terminals.subscribe(sessionId, write)
-  for (const event of terminals.events(sessionId, afterSeq)) write(event)
-  const heartbeat = setInterval(() => {
-    if (!closed) response.write(`: heartbeat ${new Date().toISOString()}\n\n`)
-  }, 15_000)
-  heartbeat.unref()
-  const cleanup = () => {
-    if (closed) return
-    closed = true
-    clearInterval(heartbeat)
-    unsubscribe()
-  }
-  response.once('close', cleanup)
-  response.once('error', (error: Error) => {
-    app.log.debug({ error, sessionId }, 'Terminal SSE connection closed')
-    cleanup()
   })
 }
 

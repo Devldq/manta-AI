@@ -25,6 +25,7 @@ import type { TurnMetrics, StepMetrics } from '@observability/metrics'
 // 使用共享安全上下文模块（解决 tsx 模块解析问题）
 import { runWithSecurityContext, type SecurityContext } from '../security-context'
 import { findWaitingForInputError } from '@manta/task-runtime'
+import { guardStreamResultPromises } from './stream-result-guards.js'
 import {
   AgentRuntimeHooks,
   runWithAgentRuntimeHooks,
@@ -563,6 +564,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
             }
           },
         })
+        guardStreamResultPromises(result)
 
         // 收集本步结果
         const stepCollect: StepCollect = {
@@ -730,7 +732,7 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
         if (promptCacheEnabled) {
           try {
             // result.providerMetadata 在 fullStream 消费完成后可用
-            const cacheHit = extractCacheHit(result.providerMetadata)
+            const cacheHit = extractCacheHit(await result.providerMetadata)
             if (cacheHit) {
               stepCollect.cacheHitStats = {
                 cachedPromptTokens: cacheHit.cachedPromptTokens,

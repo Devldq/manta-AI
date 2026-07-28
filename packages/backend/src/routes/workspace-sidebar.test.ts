@@ -65,4 +65,18 @@ describe('workspace sidebar routes', () => {
       await app.close()
     }
   })
+
+  it('reports the iTerm2 provider capability without starting a fallback shell', async () => {
+    const { app } = await createFixture()
+    try {
+      const response = await app.inject('/api/workspace-sidebar/terminal/capabilities')
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({
+        provider: 'iterm2',
+        available: expect.any(Boolean),
+      })
+    } finally {
+      await app.close()
+    }
+  })
 })

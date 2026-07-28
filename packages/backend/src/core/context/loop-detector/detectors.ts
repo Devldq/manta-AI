@@ -91,6 +91,65 @@ export function detectGeneralRepeat(
 }
 
 /**
+ * 检测长度大于 2 的周期循环。
+ *
+ * general-repeat 只能识别 A-A-A，ping-pong 只能识别 A-B-A-B。
+ * Agent 常见的失败模式是重复整套调查路径，例如
+ * read(main) → read(commands) → read(package) → read(cargo)，这类 A-B-C-D
+ * 循环此前不会命中任何熔断规则。
+ */
+export function detectCyclicRepeat(
+  history: ToolCallFingerprint[]
+): LoopDetectionResult | null {
+  const MIN_PERIOD = 3
+  const MAX_PERIOD = 8
+  const WARNING_CYCLES = 2
+  const CRITICAL_CYCLES = 3
+  const BREAKER_CYCLES = 4
+
+  if (history.length < MIN_PERIOD * WARNING_CYCLES) return null
+
+  const maxPeriod = Math.min(MAX_PERIOD, Math.floor(history.length / WARNING_CYCLES))
+  for (let period = MIN_PERIOD; period <= maxPeriod; period++) {
+    const suffixStart = history.length - period
+    const suffix = history.slice(suffixStart)
+
+    // 同一个调用的连续重复由 general-repeat 处理，避免把它误报成周期。
+    if (suffix.every(item => item.callHash === suffix[0]?.callHash)) continue
+
+    let cycleCount = 1
+    for (let end = suffixStart; end >= period; end -= period) {
+      const candidate = history.slice(end - period, end)
+      const matches = candidate.every(
+        (item, index) => item.callHash === suffix[index]?.callHash,
+      )
+      if (!matches) break
+      cycleCount++
+    }
+
+    if (cycleCount < WARNING_CYCLES) continue
+
+    const severity = cycleCount >= BREAKER_CYCLES
+      ? 'circuit-breaker'
+      : cycleCount >= CRITICAL_CYCLES
+        ? 'critical'
+        : 'warning'
+    const last = history[history.length - 1]
+    if (!last) return null
+
+    return {
+      type: 'cyclic-repeat',
+      severity,
+      repeatCount: cycleCount * period,
+      lastFingerprint: last,
+      message: `检测到周期循环：同一组 ${period} 个工具调用已重复 ${cycleCount} 轮，请停止重复读取并基于已有结果继续。`,
+    }
+  }
+
+  return null
+}
+
+/**
  * 检测乒乓循环：两个操作来回交替
  * 例如：read_file → write_file → read_file → write_file
  *
@@ -263,11 +322,15 @@ export function detectLoop(
   const generalResult = detectGeneralRepeat(recentHistory)
   if (generalResult) return generalResult
 
-  // 2. 检测乒乓循环
+  // 2. 检测长度大于 2 的周期循环
+  const cyclicResult = detectCyclicRepeat(recentHistory)
+  if (cyclicResult) return cyclicResult
+
+  // 3. 检测乒乓循环
   const pingPongResult = detectPingPong(recentHistory)
   if (pingPongResult) return pingPongResult
 
-  // 3. 检测轮询无进展
+  // 4. 检测轮询无进展
   const pollingResult = detectPollingNoProgress(recentHistory)
   if (pollingResult) return pollingResult
 

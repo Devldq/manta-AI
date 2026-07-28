@@ -324,6 +324,102 @@ export function inferStepPurpose(toolCalls: ToolCallEntry[]): string {
   return `${desc} 等 ${toolCalls.length} 个操作`
 }
 
+type ToolActionKind = 'read' | 'search' | 'directory' | 'command' | 'edit' | 'image' | 'web' | 'other'
+
+const TOOL_ACTION_ORDER: ToolActionKind[] = [
+  'read',
+  'search',
+  'directory',
+  'command',
+  'edit',
+  'image',
+  'web',
+  'other',
+]
+
+function getToolActionKind(toolName: string): ToolActionKind {
+  switch (toolName) {
+    case 'read':
+    case 'readFile':
+      return 'read'
+    case 'find':
+    case 'glob':
+    case 'grep':
+    case 'search':
+      return 'search'
+    case 'listDirectory':
+    case 'lsDir':
+      return 'directory'
+    case 'bash':
+      return 'command'
+    case 'batch-edit':
+    case 'edit':
+    case 'editFile':
+    case 'multiEdit':
+    case 'write':
+    case 'writeFile':
+      return 'edit'
+    case 'image':
+    case 'viewImage':
+    case 'view_image':
+      return 'image'
+    case 'browse':
+    case 'web':
+    case 'webSearch':
+      return 'web'
+    default:
+      return 'other'
+  }
+}
+
+function describeToolAction(kind: ToolActionKind, count: number): string {
+  switch (kind) {
+    case 'read':
+      return `读取 ${count} 个文件`
+    case 'search':
+      return `查询 ${count} 项内容`
+    case 'directory':
+      return `查看 ${count} 个目录`
+    case 'command':
+      return `运行 ${count} 个命令`
+    case 'edit':
+      return `编辑 ${count} 个文件`
+    case 'image':
+      return `查看 ${count} 张图像`
+    case 'web':
+      return `查询 ${count} 次网页`
+    default:
+      return `调用 ${count} 个工具`
+  }
+}
+
+/** 将一批工具调用概括为稳定、可扫描的一句话。 */
+export function describeToolBatch(toolCalls: ToolCallEntry[]): string {
+  if (toolCalls.length === 0) return '执行操作'
+  if (toolCalls.length === 1) return describeToolCall(toolCalls[0])
+
+  const counts = new Map<ToolActionKind, number>()
+  for (const tool of toolCalls) {
+    const kind = getToolActionKind(tool.toolName)
+    counts.set(kind, (counts.get(kind) ?? 0) + 1)
+  }
+
+  const actions = TOOL_ACTION_ORDER
+    .filter(kind => counts.has(kind))
+    .map(kind => describeToolAction(kind, counts.get(kind)!))
+
+  const hasRunning = toolCalls.some(tool =>
+    tool.state === 'input-streaming' || tool.state === 'input-available'
+  )
+  const hasError = toolCalls.some(tool => tool.state === 'output-error')
+  const prefix = hasRunning ? '正在' : '已'
+  const summary = actions.length === 1
+    ? actions[0]
+    : `${actions.slice(0, -1).join('、')}并${actions.at(-1)}`
+
+  return `${prefix}${summary}${hasError ? '，部分失败' : ''}`
+}
+
 /** 计算步骤组的摘要文本 */
 export function getStepSummary(group: StepGroup): string {
   const doneCount = group.toolCalls.filter(

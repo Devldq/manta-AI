@@ -16,7 +16,13 @@ import {
   Wrench,
 } from 'lucide-react'
 import type { StepGroup, ToolCallEntry } from '../utils/types'
-import { describeToolCall, formatToolInput, formatToolOutput, getToolFilePath } from '../utils/formatters'
+import {
+  describeToolBatch,
+  describeToolCall,
+  formatToolInput,
+  formatToolOutput,
+  getToolFilePath,
+} from '../utils/formatters'
 import { formatAgentRunDuration, isAgentRunTerminal } from '../runtime/agent-run-view'
 
 const TOOL_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -97,6 +103,59 @@ const ToolLine = memo(function ToolLine({ entry, onOpenFile }: { entry: ToolCall
   )
 })
 
+const ToolBatch = memo(function ToolBatch({
+  entries,
+  onOpenFile,
+}: {
+  entries: ToolCallEntry[]
+  onOpenFile?: (path: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const isRunning = entries.some(entry =>
+    entry.state === 'input-streaming' || entry.state === 'input-available'
+  )
+  const errorCount = entries.filter(entry => entry.state === 'output-error').length
+
+  return (
+    <div className={`tool-batch${isRunning ? ' is-running' : ''}${errorCount > 0 ? ' is-error' : ''}`}>
+      <button
+        type="button"
+        className="tool-batch-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(value => !value)}
+      >
+        <span className="tool-batch-icon" aria-hidden="true">
+          {isRunning
+            ? <Loader2 size={15} className="tool-spinner" />
+            : errorCount > 0
+              ? <AlertCircle size={15} />
+              : <Wrench size={15} />}
+        </span>
+        <span className="tool-batch-label">{describeToolBatch(entries)}</span>
+        {!isRunning && errorCount === 0 && <Check size={12} className="tool-event-check" aria-label="已完成" />}
+        <span className="tool-batch-count" aria-label={`${entries.length} 个工具调用`}>
+          {entries.length}
+        </span>
+        {expanded
+          ? <ChevronDown size={14} className="tool-event-chevron" />
+          : <ChevronRight size={14} className="tool-event-chevron" />}
+      </button>
+
+      {expanded && (
+        <div className="tool-batch-list">
+          {entries.map((entry, index) => (
+            <ToolLine
+              key={entry.toolCallId || `${entry.toolName}-${index}`}
+              entry={entry}
+              onOpenFile={onOpenFile}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+})
+
 export const AgentStepView = memo(function AgentStepView({
   groups,
   isStreaming,
@@ -124,7 +183,10 @@ export const AgentStepView = memo(function AgentStepView({
 
   const effectiveStreaming = agentRun ? !terminal : isStreaming
   const duration = formatAgentRunDuration(agentRun?.durationMs ?? agentRun?.usage?.durationMs)
-  const summary = `思考过程${duration ? ` ${duration}` : ''}`
+  const totalTools = groups.reduce((count, group) => count + group.toolCalls.length, 0)
+  const summary = effectiveStreaming
+    ? `处理中${totalTools > 0 ? ` · ${totalTools} 个工具调用` : ''}`
+    : `已处理${duration ? ` ${duration}` : ''}`
 
   return (
     <div className="tool-events">
@@ -147,13 +209,15 @@ export const AgentStepView = memo(function AgentStepView({
           {groups.map((group) => (
             <div key={group.stepIndex} className="tool-event-group">
               {group.thinking?.trim() && <ThinkingBlock text={group.thinking} />}
-              {group.toolCalls.map((entry, index) => (
-                <ToolLine
-                  key={entry.toolCallId || `${group.stepIndex}-${index}`}
-                  entry={entry}
-                  onOpenFile={onOpenFile}
-                />
-              ))}
+              {group.toolCalls.length > 1
+                ? <ToolBatch entries={group.toolCalls} onOpenFile={onOpenFile} />
+                : group.toolCalls.map((entry, index) => (
+                    <ToolLine
+                      key={entry.toolCallId || `${group.stepIndex}-${index}`}
+                      entry={entry}
+                      onOpenFile={onOpenFile}
+                    />
+                  ))}
             </div>
           ))}
         </div>

@@ -12,7 +12,7 @@ export interface ToolCallFingerprint {
 
 /** 循环检测结果 */
 export interface LoopDetectionResult {
-  type: 'none' | 'general-repeat' | 'ping-pong' | 'polling'
+  type: 'none' | 'general-repeat' | 'cyclic-repeat' | 'ping-pong' | 'polling'
   severity: 'warning' | 'critical' | 'circuit-breaker' | 'none'
   repeatCount: number
   lastFingerprint: ToolCallFingerprint

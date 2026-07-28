@@ -4,7 +4,12 @@ import { describe, expect, it } from 'vitest'
 import { AgentStepView } from './components/AgentStepView'
 import { MessageRow } from './components/MessageRow'
 import { compactReadOnlyStepGroups, mergeAgentRunProgress } from './components/ToolCallLog'
-import { extractStepGroups, getTextContent, storedMessageToUIMessage } from './utils/formatters'
+import {
+  describeToolBatch,
+  extractStepGroups,
+  getTextContent,
+  storedMessageToUIMessage,
+} from './utils/formatters'
 import { createMarkdownComponents } from './utils/markdown'
 import type { StepGroup } from './utils/types'
 import type { AgentPublicEvent } from '@manta/contracts'
@@ -34,7 +39,7 @@ describe('streaming message rendering', () => {
     expect(html).not.toContain('language-mermaid')
   })
 
-  it('collapses completed execution details under the thinking-process label', () => {
+  it('collapses completed execution details under the processed summary', () => {
     const groups: StepGroup[] = [{
       stepIndex: 0,
       purposeText: '',
@@ -66,7 +71,7 @@ describe('streaming message rendering', () => {
       />,
     )
 
-    expect(html).toContain('思考过程 9s')
+    expect(html).toContain('已处理 9s')
     expect(html).not.toContain('个操作')
     expect(html).toContain('aria-expanded="false"')
     expect(html).not.toContain('已读取 src/app.ts')
@@ -93,6 +98,39 @@ describe('streaming message rendering', () => {
     expect(html).toContain('正在定位相关文件和实现入口。')
     expect(html).toContain('AgentLoop')
     expect(html).not.toContain('过程消息')
+  })
+
+  it('keeps a multi-tool batch collapsed between the process summary and tool details', () => {
+    const groups: StepGroup[] = [{
+      stepIndex: 0,
+      purposeText: '批量核对实现并运行测试。',
+      thinking: '批量核对实现并运行测试。',
+      toolCalls: [
+        {
+          toolCallId: 'read-1',
+          toolName: 'readFile',
+          state: 'output-available',
+          input: { file_path: 'src/app.ts' },
+          output: 'source',
+        },
+        {
+          toolCallId: 'bash-1',
+          toolName: 'bash',
+          state: 'output-available',
+          input: { command: 'pnpm test' },
+          output: 'passed',
+        },
+      ],
+      isComplete: true,
+      isActive: false,
+    }]
+
+    const html = renderToStaticMarkup(<AgentStepView groups={groups} isStreaming />)
+
+    expect(html).toContain('已读取 1 个文件并运行 1 个命令')
+    expect(html).toContain('2 个工具调用')
+    expect(html).not.toContain('src/app.ts')
+    expect(html).not.toContain('pnpm test')
   })
 
   it('separates a completed tool run from its task summary', () => {
@@ -377,6 +415,52 @@ describe('streaming message rendering', () => {
     expect(groups[0].toolCalls.map(tool => tool.toolCallId)).toEqual(['list-1', 'read-1'])
     expect(groups[0].thinking).toBe('先确认目录结构。\n入口已经定位，继续核对设计说明。')
     expect(groups[1].toolCalls[0].toolCallId).toBe('edit-1')
+  })
+
+  it('summarizes a mixed tool batch in one readable sentence', () => {
+    expect(describeToolBatch([
+      {
+        toolCallId: 'read-1',
+        toolName: 'readFile',
+        state: 'output-available',
+        input: { file_path: 'package.json' },
+        output: 'content',
+      },
+      {
+        toolCallId: 'read-2',
+        toolName: 'readFile',
+        state: 'output-available',
+        input: { file_path: 'tsconfig.json' },
+        output: 'content',
+      },
+      {
+        toolCallId: 'bash-1',
+        toolName: 'bash',
+        state: 'output-available',
+        input: { command: 'pnpm test' },
+        output: 'passed',
+      },
+    ])).toBe('已读取 2 个文件并运行 1 个命令')
+  })
+
+  it('keeps running and partial failure states in the batch summary', () => {
+    expect(describeToolBatch([
+      {
+        toolCallId: 'grep-1',
+        toolName: 'grep',
+        state: 'input-available',
+        input: { pattern: 'ToolCall' },
+        output: undefined,
+      },
+      {
+        toolCallId: 'grep-2',
+        toolName: 'grep',
+        state: 'output-error',
+        input: { pattern: 'ToolResult' },
+        output: undefined,
+        errorText: 'failed',
+      },
+    ])).toBe('正在查询 2 项内容，部分失败')
   })
 
   it('accumulates distinct live rationales without repeating identical ones', () => {

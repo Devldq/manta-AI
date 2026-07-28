@@ -1,7 +1,7 @@
 /* 会话聊天页面 — 性能优化版 */
 
-import { useState, useEffect, useRef, Suspense, useCallback, useMemo } from 'react'
-import { AlertCircle, Loader2, PanelRight, ArrowLeft, Trash2 } from 'lucide-react'
+import { Fragment, useState, useEffect, useRef, Suspense, useCallback, useMemo, type ReactNode } from 'react'
+import { AlertCircle, Loader2, PanelRight, ArrowLeft } from 'lucide-react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
@@ -20,12 +20,26 @@ import {
 import type { WorkspaceEntry } from './components/WorkspaceSelector'
 import type { Conversation, AgentEntry, StepUsageData, StoredMessage } from './utils'
 import { storedMessageToUIMessage } from './utils/formatters'
-import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { createStepUsageInterceptor } from './step-usage-sse'
 import { withPendingAssistantMessage } from './pending-assistant'
 import { getAgentRunLastActivityAt, getAgentRunSnapshot, isAgentRunTerminal } from './runtime/agent-run-view'
 
 const DEFAULT_AGENT = 'main'
+
+/**
+ * Conversation-scoped hooks (useChat, reconnect streams, pending turns and
+ * scroll refs) must never survive a task switch. Changing the keyed fragment
+ * gives React an explicit identity boundary without remounting the whole page.
+ */
+export function ConversationViewBoundary({
+  conversationId,
+  children,
+}: {
+  conversationId: string
+  children: ReactNode
+}) {
+  return <Fragment key={conversationId}>{children}</Fragment>
+}
 
 // ─── ChatView（有会话时） ─────────────────────────────────────────────────────
 
@@ -46,7 +60,6 @@ function ChatView({
   const shouldAutoScrollRef = useRef(true)
   const prevMessageCountRef = useRef(initialMessages.length)
   const [inputText, setInputText] = useState('')
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
 
   // ─── 实时 Step Usage 状态（流式期间从 SSE 拦截，不等 loop 结束）──
@@ -72,23 +85,6 @@ function ChatView({
       }),
     [],
   )
-
-  // 删除当前任务
-  async function handleDeleteTask() {
-    setShowDeleteConfirm(false)
-    // 先跳转离开，避免页面闪烁
-    const wsParam2 = workspaceId ? `workspaceId=${workspaceId}` : ''
-    navigate(`/tasks${wsParam2 ? `?${wsParam2}` : ''}`, { replace: true })
-    // 后台异步删除（乐观：store 中已移除）
-    const typeParam = workspaceId ? 'type=workspace' : ''
-    const wsParam = workspaceId ? `workspaceId=${workspaceId}` : ''
-    const params = [typeParam, wsParam].filter(Boolean).join('&')
-    try {
-      await fetch(`/api/conversations/${convId}${params ? `?${params}` : ''}`, { method: 'DELETE' })
-    } catch {
-      // 忽略错误
-    }
-  }
 
   // 构建 API URL 的辅助函数，自动添加 workspace 参数
   const buildConvUrl = useCallback((path: string = '') => {
@@ -424,18 +420,6 @@ function ChatView({
               </span>
             )}
 
-            {/* 删除任务按钮 */}
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-fast"
-              style={{ border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-status-failed)'; e.currentTarget.style.borderColor = 'var(--color-status-failed)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.borderColor = 'var(--color-border)' }}
-              title="删除任务"
-            >
-              <Trash2 size={14} />
-            </button>
-
             <button
               onClick={() => {
                 if (sidebarOpen) {
@@ -445,13 +429,13 @@ function ChatView({
                   setSidebarOpen(true)
                 }
               }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all duration-fast"
+              className="flex items-center justify-center p-1.5 rounded-lg text-xs transition-all duration-fast"
               style={{ border: '1px solid var(--color-border)', background: sidebarOpen ? 'var(--color-accent-subtle)' : 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
               onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-accent-subtle)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)' }}
               onMouseLeave={(e) => { if (!sidebarOpen) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)' } }}
+              aria-label={sidebarOpen ? '关闭工作区' : '打开工作区'}
               title={sidebarOpen ? '关闭工作区' : '打开工作区'}>
               <PanelRight size={14} />
-              <span>{sidebarOpen ? '隐藏' : '工作区'}</span>
             </button>
           </div>
         </div>
@@ -530,16 +514,6 @@ function ChatView({
         />
       </div>
 
-      {/* 删除任务确认弹窗 */}
-      <ConfirmDialog
-        open={showDeleteConfirm}
-        title="删除任务"
-        message="确定要删除该任务吗？任务中的所有消息将被永久删除，此操作不可撤销。"
-        confirmLabel="删除"
-        variant="danger"
-        onConfirm={handleDeleteTask}
-        onCancel={() => setShowDeleteConfirm(false)}
-      />
     </div>
   )
 }
@@ -814,23 +788,25 @@ function TasksPage() {
       .map(storedMessageToUIMessage)
 
     return (
-      <ChatView
-        convId={conv.id}
-        agentName={conv.agentName}
-        initialMessages={initialMessages}
-        title={conv.title}
-        onAgentChange={handleAgentChange}
-        onNewChat={() => {
-          setConv(null)
-          const wsParam = workspaceIdParam ? `?workspaceId=${workspaceIdParam}` : ''
-          navigate(`/tasks${wsParam}`, { replace: true })
-        }}
-        agents={agents}
-        conversation={conv}
-        workspaceId={workspaceIdParam}
-        workspaces={workspaces}
-        onSwitchWorkspace={handleSwitchWorkspace}
-      />
+      <ConversationViewBoundary conversationId={conv.id}>
+        <ChatView
+          convId={conv.id}
+          agentName={conv.agentName}
+          initialMessages={initialMessages}
+          title={conv.title}
+          onAgentChange={handleAgentChange}
+          onNewChat={() => {
+            setConv(null)
+            const wsParam = workspaceIdParam ? `?workspaceId=${workspaceIdParam}` : ''
+            navigate(`/tasks${wsParam}`, { replace: true })
+          }}
+          agents={agents}
+          conversation={conv}
+          workspaceId={workspaceIdParam}
+          workspaces={workspaces}
+          onSwitchWorkspace={handleSwitchWorkspace}
+        />
+      </ConversationViewBoundary>
     )
   }
 
