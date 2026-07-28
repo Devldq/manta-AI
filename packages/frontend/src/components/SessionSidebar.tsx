@@ -1,5 +1,10 @@
-import { useEffect, useState } from 'react'
-import { AlertCircle, FileText, Loader2, X } from 'lucide-react'
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { X } from 'lucide-react'
+import {
+  composeSessionSidebarTabs,
+  type SessionSidebarContext,
+  type SessionSidebarTabDefinition,
+} from './session-sidebar/tabs'
 
 interface Conversation {
   id: string
@@ -7,20 +12,7 @@ interface Conversation {
   agentName: string
   createdAt: string
   updatedAt: string
-  messages: Array<{
-    id: string
-    role: string
-    content: string
-    timestamp: string
-  }>
-}
-
-interface FilePreview {
-  kind: 'text' | 'image'
-  path: string
-  size: number
-  content: string
-  mimeType?: string
+  messages: Array<{ id: string; role: string; content: string; timestamp: string }>
 }
 
 interface SessionSidebarProps {
@@ -29,104 +21,101 @@ interface SessionSidebarProps {
   workspaceId?: string | null
   previewPath?: string | null
   onClose?: () => void
+  tabs?: readonly SessionSidebarTabDefinition[]
 }
 
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-export function SessionSidebar({ open, conversation, workspaceId, previewPath, onClose }: SessionSidebarProps) {
-  const [preview, setPreview] = useState<FilePreview | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+export function SessionSidebar({
+  open,
+  conversation,
+  workspaceId,
+  previewPath,
+  onClose,
+  tabs: extensionTabs = [],
+}: SessionSidebarProps) {
+  const tabs = useMemo(() => composeSessionSidebarTabs(extensionTabs), [extensionTabs])
+  const [activeTabId, setActiveTabId] = useState(tabs[0]?.id ?? '')
 
   useEffect(() => {
-    if (!open || !previewPath) {
-      setPreview(null)
-      setError('')
-      return
-    }
-    if (!workspaceId) {
-      setPreview(null)
-      setError('请先选择工作区，才能预览本地文件。')
-      return
-    }
+    if (previewPath && tabs.some((tab) => tab.id === 'files')) setActiveTabId('files')
+  }, [previewPath, tabs])
 
-    const controller = new AbortController()
-    setLoading(true)
-    setPreview(null)
-    setError('')
-    const query = new URLSearchParams({ workspaceId, path: previewPath })
-    fetch(`/api/fs/preview?${query}`, { signal: controller.signal })
-      .then(async (response) => {
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.error || '无法读取文件')
-        return data as FilePreview
-      })
-      .then(setPreview)
-      .catch((reason) => {
-        if (reason instanceof DOMException && reason.name === 'AbortError') return
-        setError(reason instanceof Error ? reason.message : '无法读取文件')
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-
-    return () => controller.abort()
-  }, [open, previewPath, workspaceId])
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.id === activeTabId)) setActiveTabId(tabs[0]?.id ?? '')
+  }, [activeTabId, tabs])
 
   if (!open) return null
 
-  const title = previewPath ? '文件预览' : '会话详情'
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]
+  const ActiveComponent = activeTab?.component
+  const context: SessionSidebarContext = {
+    workspaceId: workspaceId ?? null,
+    conversationId: conversation?.id ?? null,
+    previewPath: previewPath ?? null,
+  }
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, tabIndex: number) {
+    let nextIndex: number | undefined
+    if (event.key === 'ArrowRight') nextIndex = (tabIndex + 1) % tabs.length
+    if (event.key === 'ArrowLeft') nextIndex = (tabIndex - 1 + tabs.length) % tabs.length
+    if (event.key === 'Home') nextIndex = 0
+    if (event.key === 'End') nextIndex = tabs.length - 1
+    if (nextIndex === undefined) return
+    event.preventDefault()
+    setActiveTabId(tabs[nextIndex].id)
+    document.getElementById(`workspace-tab-${tabs[nextIndex].id}`)?.focus()
+  }
 
   return (
-    <aside className="session-sidebar" aria-label={title}>
+    <aside className="session-sidebar" aria-label="工作区侧边栏">
       <header className="session-sidebar-header">
-        <div className="session-sidebar-title">
-          {previewPath && <FileText size={15} />}
-          <span>{title}</span>
+        <div className="session-sidebar-heading">
+          <span className="session-sidebar-title">工作区</span>
+          {workspaceId ? <span className="session-sidebar-connection">已绑定</span> : null}
         </div>
-        {onClose && (
-          <button type="button" className="session-sidebar-close" onClick={onClose} aria-label="关闭侧边栏">
+        {onClose ? (
+          <button type="button" className="session-sidebar-close" onClick={onClose} aria-label="关闭工作区侧边栏">
             <X size={15} />
           </button>
-        )}
+        ) : null}
       </header>
 
-      {previewPath ? (
-        <div className="file-preview">
-          <div className="file-preview-meta">
-            <span title={preview?.path || previewPath}>{preview?.path || previewPath}</span>
-            {preview && <small>{formatBytes(preview.size)}</small>}
-          </div>
-          {loading && (
-            <div className="file-preview-status"><Loader2 size={15} className="tool-spinner" />正在读取文件…</div>
-          )}
-          {error && (
-            <div className="file-preview-status is-error"><AlertCircle size={15} />{error}</div>
-          )}
-          {preview?.kind === 'image' && (
-            <div className="file-preview-image-wrap">
-              <img src={`data:${preview.mimeType};base64,${preview.content}`} alt={preview.path} />
-            </div>
-          )}
-          {preview?.kind === 'text' && <pre className="file-preview-code"><code>{preview.content}</code></pre>}
-        </div>
-      ) : (
-        <div className="session-sidebar-details">
-          {conversation ? (
-            <dl>
-              <div><dt>标题</dt><dd>{conversation.title}</dd></div>
-              <div><dt>Agent</dt><dd>{conversation.agentName}</dd></div>
-              <div><dt>消息数</dt><dd>{conversation.messages?.length ?? 0}</dd></div>
-            </dl>
-          ) : (
-            <p>暂无会话信息</p>
-          )}
-        </div>
-      )}
+      <div className="session-sidebar-tabs" role="tablist" aria-label="工作区工具">
+        {tabs.map((tab, index) => {
+          const selected = tab.id === activeTab?.id
+          const Icon = tab.icon
+          return (
+            <button
+              key={tab.id}
+              id={`workspace-tab-${tab.id}`}
+              type="button"
+              role="tab"
+              className="session-sidebar-tab"
+              aria-selected={selected}
+              aria-controls={`workspace-panel-${tab.id}`}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setActiveTabId(tab.id)}
+              onKeyDown={(event) => handleTabKeyDown(event, index)}
+            >
+              <Icon size={14} aria-hidden="true" />
+              <span>{tab.label}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {activeTab && ActiveComponent ? (
+        <section
+          id={`workspace-panel-${activeTab.id}`}
+          className="session-sidebar-panel"
+          role="tabpanel"
+          aria-labelledby={`workspace-tab-${activeTab.id}`}
+          tabIndex={0}
+        >
+          <ActiveComponent {...context} />
+        </section>
+      ) : null}
     </aside>
   )
 }
+
+export type { SessionSidebarTabDefinition } from './session-sidebar/tabs'

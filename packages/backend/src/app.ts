@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runWithDiagnosticsOwner, type RuntimeDiagnosticsWriter } from './storage/runtime-diagnostics'
-import { runWithStorageResolver } from './storage/path-routing'
+import { enterStorageResolver } from './storage/path-routing'
 import { storageRoutes, type StorageApiContext } from './routes/storage'
 import { ClientStateStore } from './storage/client-state-store'
 import { storageClientStateRoutes } from './routes/storage-client-state'
@@ -32,7 +32,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   try {
   app.decorate('taskRuntime', options.taskRuntime)
   app.decorate('ragProvider', options.ragProvider)
-  app.addHook('onRequest', (_request, _reply, done) => runWithStorageResolver(options.storage, done))
+  app.addHook('onRequest', (_request, _reply, done) => {
+    enterStorageResolver(options.storage)
+    done()
+  })
   let acceptingWrites = true
   app.decorate('quiesceWrites', () => { acceptingWrites = false })
   if (options.storage.diagnosticsWriter) {
@@ -86,13 +89,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       import('./routes/chat.js'), import('./routes/mcp.js'), import('./routes/logs.js'), import('./routes/fs.js'), import('./routes/metrics.js'),
       import('./routes/plugins.js'), import('./routes/rag.js'), import('./routes/readme.js'), import('./routes/runners.js'),
       import('./routes/workflow.js'), import('./routes/skills.js'), import('./routes/audit.js'), import('./routes/approval.js'),
-      import('./routes/approval-sse.js'),
+      import('./routes/approval-sse.js'), import('./routes/workspace-sidebar.js'),
     ])
     const names = [
       'agentRoutes', 'conversationRoutes', 'conversationDetailRoutes', 'taskRoutes', 'appRoutes', 'workspaceRoutes',
       'workspaceDetailRoutes', 'configRoutes', 'configWorkspaceRoutes', 'toolRoutes', 'toolsTestRoutes', 'chatConfigRoutes',
       'mcpRoutes', 'logRoutes', 'fsRoutes', 'metricsRoutes', 'pluginRoutes', 'ragRoutes', 'readmeRoutes', 'runnerRoutes',
-      'workflowRoutes', 'skillRoutes', 'default', 'default', 'default',
+      'workflowRoutes', 'skillRoutes', 'default', 'default', 'default', 'workspaceSidebarRoutes',
     ]
     for (let index = 0; index < routeModules.length; index++) {
       await app.register((routeModules[index] as Record<string, any>)[names[index]])

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { extname, isAbsolute, relative, resolve } from 'node:path'
 import { grantAccess, denyAccess, listPendingRequests, requestAccess } from '../core/security/fs-access'
 import { getWorkspace } from '../core/storage/workspace/store'
@@ -26,11 +26,14 @@ function decodePreviewPath(value: string): string {
   }
 }
 
-async function resolveWorkspacePreviewPath(workspaceId: string, requestedPath: string) {
+export async function resolveWorkspaceRoot(workspaceId: string): Promise<string> {
   const workspace = getWorkspace(workspaceId)
   if (!workspace?.folderPath) throw Object.assign(new Error('当前工作区未绑定本地文件夹'), { statusCode: 400 })
+  return realpath(workspace.folderPath)
+}
 
-  const root = await realpath(workspace.folderPath)
+export async function resolveWorkspacePreviewPath(workspaceId: string, requestedPath: string) {
+  const root = await resolveWorkspaceRoot(workspaceId)
   const decodedPath = decodePreviewPath(requestedPath)
   const candidate = await realpath(isAbsolute(decodedPath) ? decodedPath : resolve(root, decodedPath))
   const relativePath = relative(root, candidate)
@@ -42,6 +45,40 @@ async function resolveWorkspacePreviewPath(workspaceId: string, requestedPath: s
 }
 
 export async function fsRoutes(app: FastifyInstance) {
+  // GET /api/fs/tree — 按需列出当前工作区目录，避免一次扫描整个仓库
+  app.get('/api/fs/tree', async (request, reply) => {
+    const query = request.query as { workspaceId?: string; path?: string }
+    if (!query.workspaceId) return reply.status(400).send({ error: '缺少 workspaceId 参数' })
+    try {
+      const { candidate, relativePath } = await resolveWorkspacePreviewPath(query.workspaceId, query.path || '.')
+      const directoryStat = await stat(candidate)
+      if (!directoryStat.isDirectory()) return reply.status(400).send({ error: '目标不是目录' })
+      const entries = await readdir(candidate, { withFileTypes: true })
+      const visibleEntries = entries
+        .filter((entry) => !entry.isSymbolicLink())
+        .sort((left, right) => {
+          if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1
+          return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' })
+        })
+      const limitedEntries = visibleEntries.slice(0, 500)
+      const basePath = relativePath === '.' ? '' : relativePath
+      return reply.send({
+        path: basePath,
+        entries: limitedEntries.map((entry) => ({
+          name: entry.name,
+          path: basePath ? `${basePath}/${entry.name}` : entry.name,
+          kind: entry.isDirectory() ? 'directory' : 'file',
+        })),
+        truncated: visibleEntries.length > limitedEntries.length,
+      })
+    } catch (error) {
+      const statusCode = typeof error === 'object' && error && 'statusCode' in error
+        ? Number((error as { statusCode: number }).statusCode)
+        : 404
+      return reply.status(statusCode).send({ error: error instanceof Error ? error.message : '无法读取目录' })
+    }
+  })
+
   // GET /api/fs/preview — 安全读取当前工作区内的文本或图片文件
   app.get('/api/fs/preview', async (request, reply) => {
     const query = request.query as { workspaceId?: string; path?: string }

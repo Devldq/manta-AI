@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildApp } from './app'
+import { resolveStoragePath } from './storage/path-routing'
 
 const delay = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
@@ -12,6 +13,21 @@ const storage = {
 } as any
 
 describe('server logging', () => {
+  it('keeps the storage resolver available for real HTTP request handlers', async () => {
+    const app = await buildApp({ storage, registerRoutes: false })
+    app.get('/storage-context', async () => ({ path: resolveStoragePath('work') }))
+    await app.listen({ host: '127.0.0.1', port: 0 })
+    const address = app.server.address()
+    if (!address || typeof address === 'string') throw new Error('Expected a TCP server address')
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/storage-context`)
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toEqual({ path: '/data/work' })
+    } finally {
+      await app.close()
+    }
+  })
+
   it('keeps logging opt-in and enables Fastify logs when requested', async () => {
     const quiet = await buildApp({ storage, registerRoutes: false })
     const logged = await buildApp({ storage, registerRoutes: false, logger: true })

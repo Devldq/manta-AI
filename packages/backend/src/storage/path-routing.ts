@@ -14,6 +14,15 @@ export function runWithStorageResolver<T>(resolver: StoragePathResolver, operati
   return storageContext.run(resolver, operation)
 }
 
+/**
+ * Bind the resolver to the current request async resource.
+ * Fastify continues request handling after onRequest returns, so wrapping only
+ * the `done` callback in `AsyncLocalStorage.run` does not cover real sockets.
+ */
+export function enterStorageResolver(resolver: StoragePathResolver): void {
+  storageContext.enterWith(resolver)
+}
+
 /** Resolve an application-owned path. There is deliberately no home/cwd fallback. */
 export function resolveStoragePath(group: StorageGroupId, ...segments: string[]): string {
   const resolver = storageContext.getStore()
