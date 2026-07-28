@@ -10,9 +10,9 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { resolveStoragePath } from '../../../storage/path-routing'
-import { isApproved, requestAccess, listPendingRequests } from '@security/fs-access'
 import { getSecurityContext } from '../../security-context'
 import { isDangerousShellCommand } from '../../security/approval-policy.js'
+import { requestToolApproval } from '../../security/request-approval.js'
 
 // ─── 参数解析 ─────────────────────────────────────────────────────────────────
 
@@ -92,35 +92,37 @@ export function walkFiles(dir: string, result: string[] = []): string[] {
 
 /**
  * 解析路径并检查授权：
- * - 已授权 → 返回 resolved 路径
- * - 未授权 → 发起授权请求，轮询等待（最多 120s），授权后继续；超时或拒绝返回 error
+ * - 工作空间真实路径内 → 直接返回
+ * - 工作空间外（含 symlink 逃逸）→ 进入统一工具审批链
  */
 export async function checkAccess(targetPath: string): Promise<{ resolved: string } | { error: string }> {
-  // ★ 相对路径相对于安全上下文的工作空间（而非 process.cwd()）
   const context = getSecurityContext()
   const baseCwd = context?.allowedRoots?.[0] || process.cwd()
-  const resolved = path.resolve(baseCwd, targetPath)
-  if (isApproved(resolved)) {
-    return { resolved }
+  const lexicalTarget = path.resolve(baseCwd, targetPath)
+  const resolved = realPathOrResolved(lexicalTarget)
+  const allowedRoots = context?.allowedRoots?.length ? context.allowedRoots : [baseCwd]
+  const insideAllowedRoot = allowedRoots.some((root) => isPathInside(realPathOrResolved(root), resolved))
+  if (insideAllowedRoot) return { resolved }
+
+  const approved = await requestToolApproval({ type: 'read', path: resolved })
+  if (!approved) {
+    return { error: `用户拒绝了对 "${resolved}" 的读取请求` }
   }
+  return { resolved }
+}
 
-  const req = requestAccess(resolved)
-  const timeout = 120_000
-  const interval = 500
-  const start = Date.now()
-
-  while (Date.now() - start < timeout) {
-    await new Promise((r) => setTimeout(r, interval))
-    if (isApproved(resolved)) {
-      return { resolved }
-    }
-    const stillPending = listPendingRequests().some((r) => r.id === req.id)
-    if (!stillPending && !isApproved(resolved)) {
-      return { error: `用户拒绝了对 "${resolved}" 的访问请求` }
-    }
+function realPathOrResolved(targetPath: string): string {
+  try {
+    return fs.realpathSync(targetPath)
+  } catch {
+    return path.resolve(targetPath)
   }
+}
 
-  return { error: `等待授权超时（120s），无法访问 "${resolved}"` }
+function isPathInside(root: string, target: string): boolean {
+  const relativePath = path.relative(root, target)
+  return relativePath === ''
+    || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
 }
 
 // ─── Bash 安全检查 ───────────────────────────────────────────────────────────

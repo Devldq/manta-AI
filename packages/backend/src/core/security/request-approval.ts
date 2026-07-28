@@ -1,17 +1,20 @@
 import { getSecurityContext, type SecurityApprovalRequest } from '../security-context.js'
 import { approvalManager } from './ApprovalManager.js'
 import { getAgentRuntimeHooks } from '../engine/runtime-hooks.js'
-import { shouldRequestApproval } from './approval-policy.js'
+import { getApprovalPolicy, shouldRequestApproval } from './approval-policy.js'
 
 /**
  * One approval boundary for every built-in tool. Durable Agent Jobs inject a
  * Job-backed implementation through SecurityContext; legacy callers retain
  * the existing in-process ApprovalManager behaviour.
  */
-export async function requestToolApproval(request: SecurityApprovalRequest, timeoutMs = 60_000): Promise<boolean> {
+export async function requestToolApproval(request: SecurityApprovalRequest, timeoutMs?: number): Promise<boolean> {
   const context = getSecurityContext()
   const runtimeHooks = getAgentRuntimeHooks()
   const approvalMode = context?.approvalMode ?? 'request'
+  const effectiveTimeoutMs = timeoutMs
+    ?? context?.approvalTimeoutMs
+    ?? getApprovalPolicy().timeoutMs
 
   if (!shouldRequestApproval(approvalMode, request)) return true
 
@@ -22,8 +25,15 @@ export async function requestToolApproval(request: SecurityApprovalRequest, time
     approved = context?.onApprovalRequest
       ? await context.onApprovalRequest(request)
       : await approvalManager.waitForResponse(
-          approvalManager.createRequest(request.type, context?.taskId ?? 'unknown', request.path, request.command),
-          timeoutMs,
+          approvalManager.createRequest(
+            request.type,
+            context?.taskId ?? 'unknown',
+            request.path,
+            request.command,
+            undefined,
+            effectiveTimeoutMs,
+          ),
+          effectiveTimeoutMs,
         )
   } catch (error) {
     await runtimeHooks?.emit('approval.failed', {

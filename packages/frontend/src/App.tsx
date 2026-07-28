@@ -2,7 +2,7 @@ import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { ThemeInitializer } from './components/ThemeInitializer'
 import { SidebarNav } from './components/sidebar/SidebarNav'
 import { MobileSidebarToggle } from './components/MobileSidebarToggle'
-import { ApprovalDialog } from './components/ApprovalDialog'
+import { ApprovalProvider } from './components/ApprovalProvider'
 
 // 页面组件（懒加载可后续优化）
 import TasksPage from './pages/tasks/page'
@@ -37,9 +37,8 @@ function AppLayout() {
 
 export default function App() {
   return (
-    <>
+    <ApprovalProvider>
       <ThemeInitializer />
-      <ApprovalDialog />
       <Routes>
         <Route element={<AppLayout />}>
           <Route index element={<Navigate to="/tasks" replace />} />
@@ -60,6 +59,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/tasks" replace />} />
         </Route>
       </Routes>
-    </>
+    </ApprovalProvider>
   )
 }

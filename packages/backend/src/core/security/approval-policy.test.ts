@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_APPROVAL_TIMEOUT_MS,
+  getApprovalTimeoutAction,
   isApprovalMode,
+  isApprovalTimeoutMs,
   isDangerousShellCommand,
   shouldRequestApproval,
 } from './approval-policy'
@@ -11,6 +14,21 @@ describe('agent approval policy', () => {
     expect(isApprovalMode('auto')).toBe(true)
     expect(isApprovalMode('full')).toBe(true)
     expect(isApprovalMode('always')).toBe(false)
+  })
+
+  it('accepts only bounded integer approval timeouts', () => {
+    expect(isApprovalTimeoutMs(DEFAULT_APPROVAL_TIMEOUT_MS)).toBe(true)
+    expect(isApprovalTimeoutMs(5_000)).toBe(true)
+    expect(isApprovalTimeoutMs(600_000)).toBe(true)
+    expect(isApprovalTimeoutMs(4_999)).toBe(false)
+    expect(isApprovalTimeoutMs(600_001)).toBe(false)
+    expect(isApprovalTimeoutMs(30_000.5)).toBe(false)
+  })
+
+  it('derives timeout behavior from the authorization mode', () => {
+    expect(getApprovalTimeoutAction('request')).toBe('deny')
+    expect(getApprovalTimeoutAction('auto')).toBe('deny')
+    expect(getApprovalTimeoutAction('full')).toBe('approve')
   })
 
   it('requests every boundary decision in request mode', () => {

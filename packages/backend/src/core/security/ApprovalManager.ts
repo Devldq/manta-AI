@@ -16,6 +16,8 @@ export interface ApprovalRequest {
   status: 'pending' | 'approved' | 'denied'
   durable: boolean
   createdAt: number
+  expiresAt: number
+  timeoutAction: 'deny'
   resolvedAt?: number
 }
 
@@ -49,6 +51,8 @@ class ApprovalManager {
     path?: string,
     command?: string,
     stableId?: string,
+    timeoutMs: number = 60_000,
+    createdAt: number = Date.now(),
   ): string {
     const id = stableId ?? randomUUID()
     const existing = this.requests.get(id)
@@ -64,7 +68,9 @@ class ApprovalManager {
       requestedBy,
       status: 'pending',
       durable: stableId !== undefined,
-      createdAt: Date.now(),
+      createdAt,
+      expiresAt: createdAt + timeoutMs,
+      timeoutAction: 'deny',
     }
 
     this.requests.set(id, request)
@@ -118,7 +124,7 @@ class ApprovalManager {
    * @returns 是否批准
    */
   async waitForResponse(id: string, timeout: number = 60000): Promise<boolean> {
-    const startTime = Date.now()
+    const waiterDeadline = Date.now() + timeout
 
     return new Promise((resolve) => {
       const checkInterval = setInterval(() => {
@@ -137,7 +143,7 @@ class ApprovalManager {
         }
 
         // 超时检查
-        if (Date.now() - startTime > timeout) {
+        if (Date.now() >= Math.min(request.expiresAt, waiterDeadline)) {
           clearInterval(checkInterval)
           // 超时即表示这次授权已结束。必须同步更新权威状态并广播，
           // 否则前端会继续展示一个已经没有等待者的僵尸请求。

@@ -5,10 +5,11 @@
 import { FastifyPluginAsync } from 'fastify'
 import { approvalManager } from '../core/security/ApprovalManager'
 import type { TaskRuntime } from '@manta/task-runtime'
-import { hydrateDurableApprovals } from './durable-approvals.js'
+import { expirePendingApprovals, hydrateDurableApprovals } from './durable-approvals.js'
 
 export function createPendingApprovalSnapshot(runtime?: TaskRuntime) {
   hydrateDurableApprovals(runtime)
+  expirePendingApprovals(runtime)
   return {
     type: 'approval-snapshot' as const,
     requests: approvalManager.getPendingRequests().map((request) => ({
@@ -18,6 +19,8 @@ export function createPendingApprovalSnapshot(runtime?: TaskRuntime) {
       command: request.command,
       requestedBy: request.requestedBy,
       createdAt: request.createdAt,
+      expiresAt: request.expiresAt,
+      timeoutAction: request.timeoutAction,
     })),
   }
 }

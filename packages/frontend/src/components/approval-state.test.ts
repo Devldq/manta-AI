@@ -12,6 +12,8 @@ const first: PendingApproval = {
   path: '/outside/a.txt',
   requestedBy: 'conversation-a',
   createdAt: 1,
+  expiresAt: 60_001,
+  timeoutAction: 'deny',
 }
 
 describe('approval queue state', () => {

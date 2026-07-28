@@ -7,19 +7,44 @@ export type ApprovalMode = typeof APPROVAL_MODES[number]
 
 export interface ApprovalPolicy {
   mode: ApprovalMode
+  timeoutMs: number
 }
 
-const DEFAULT_POLICY: ApprovalPolicy = { mode: 'request' }
+export const DEFAULT_APPROVAL_TIMEOUT_MS = 60_000
+export const MIN_APPROVAL_TIMEOUT_MS = 5_000
+export const MAX_APPROVAL_TIMEOUT_MS = 10 * 60_000
+
+const DEFAULT_POLICY: ApprovalPolicy = {
+  mode: 'request',
+  timeoutMs: DEFAULT_APPROVAL_TIMEOUT_MS,
+}
 const policyFile = () => resolveStoragePath('config', 'agent-approval-policy.json')
 
 export function isApprovalMode(value: unknown): value is ApprovalMode {
   return typeof value === 'string' && APPROVAL_MODES.includes(value as ApprovalMode)
 }
 
+export function isApprovalTimeoutMs(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isInteger(value)
+    && value >= MIN_APPROVAL_TIMEOUT_MS
+    && value <= MAX_APPROVAL_TIMEOUT_MS
+}
+
+export function getApprovalTimeoutAction(mode: ApprovalMode): 'approve' | 'deny' {
+  return mode === 'full' ? 'approve' : 'deny'
+}
+
 export function getApprovalPolicy(): ApprovalPolicy {
   try {
     const parsed = JSON.parse(fs.readFileSync(policyFile(), 'utf8')) as Partial<ApprovalPolicy>
-    return isApprovalMode(parsed.mode) ? { mode: parsed.mode } : DEFAULT_POLICY
+    if (!isApprovalMode(parsed.mode)) return DEFAULT_POLICY
+    return {
+      mode: parsed.mode,
+      timeoutMs: isApprovalTimeoutMs(parsed.timeoutMs)
+        ? parsed.timeoutMs
+        : DEFAULT_APPROVAL_TIMEOUT_MS,
+    }
   } catch {
     return DEFAULT_POLICY
   }
@@ -27,6 +52,9 @@ export function getApprovalPolicy(): ApprovalPolicy {
 
 export function saveApprovalPolicy(policy: ApprovalPolicy): ApprovalPolicy {
   if (!isApprovalMode(policy.mode)) throw new Error(`Unsupported approval mode: ${String(policy.mode)}`)
+  if (!isApprovalTimeoutMs(policy.timeoutMs)) {
+    throw new Error(`Unsupported approval timeout: ${String(policy.timeoutMs)}`)
+  }
   durableAtomicWrite(policyFile(), JSON.stringify(policy, null, 2))
   return policy
 }

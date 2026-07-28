@@ -5,6 +5,8 @@ export interface PendingApproval {
   command?: string
   requestedBy: string
   createdAt: number
+  expiresAt?: number
+  timeoutAction?: 'deny'
 }
 
 export function mergePendingApproval(

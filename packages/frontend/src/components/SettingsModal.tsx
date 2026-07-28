@@ -44,6 +44,11 @@ interface PluginManifest {
 }
 
 type ApprovalMode = 'request' | 'auto' | 'full'
+interface ApprovalPolicy {
+  mode: ApprovalMode
+  timeoutMs: number
+  timeoutAction: 'approve' | 'deny'
+}
 /* AI end: 类型定义 */
 
 type TabType = 'theme' | 'settings' | 'llm' | 'storage'
@@ -797,6 +802,7 @@ function SettingsTab() {
   const [installMsg, setInstallMsg] = useState('')
   const [isElectron, setIsElectron] = useState(false)
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>('request')
+  const [approvalTimeoutMs, setApprovalTimeoutMs] = useState(60_000)
   const [approvalLoading, setApprovalLoading] = useState(true)
   const [approvalSaving, setApprovalSaving] = useState(false)
   const [approvalError, setApprovalError] = useState('')
@@ -841,37 +847,41 @@ function SettingsTab() {
     fetch('/api/approval/policy')
       .then(async (response) => {
         if (!response.ok) throw new Error('授权范围加载失败')
-        return response.json() as Promise<{ policy?: { mode?: ApprovalMode } }>
+        return response.json() as Promise<{ policy?: ApprovalPolicy }>
       })
       .then((data) => {
         if (data.policy?.mode) setApprovalMode(data.policy.mode)
+        if (data.policy?.timeoutMs) setApprovalTimeoutMs(data.policy.timeoutMs)
       })
       .catch((error) => setApprovalError(error instanceof Error ? error.message : '授权范围加载失败'))
       .finally(() => setApprovalLoading(false))
   }, [probeRunners, loadPlugins])
 
-  async function updateApprovalMode(mode: ApprovalMode) {
-    if (mode === approvalMode || approvalSaving) return
-    const confirmFullAccess = mode === 'full'
+  async function updateApprovalPolicy(mode: ApprovalMode, timeoutMs: number) {
+    if ((mode === approvalMode && timeoutMs === approvalTimeoutMs) || approvalSaving) return
+    const confirmFullAccess = mode === 'full' && approvalMode !== 'full'
       ? window.confirm('完全访问会允许 Agent 以当前登录用户的系统权限访问文件并执行命令，Manta 不再弹出审批。确定继续吗？')
       : false
-    if (mode === 'full' && !confirmFullAccess) return
+    if (mode === 'full' && approvalMode !== 'full' && !confirmFullAccess) return
 
-    const previous = approvalMode
+    const previous = { mode: approvalMode, timeoutMs: approvalTimeoutMs }
     setApprovalMode(mode)
+    setApprovalTimeoutMs(timeoutMs)
     setApprovalSaving(true)
     setApprovalError('')
     try {
       const response = await fetch('/api/approval/policy', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode, confirmFullAccess }),
+        body: JSON.stringify({ mode, timeoutMs, confirmFullAccess }),
       })
-      const data = await response.json() as { policy?: { mode?: ApprovalMode }; error?: string }
-      if (!response.ok || !data.policy?.mode) throw new Error(data.error || '授权范围保存失败')
+      const data = await response.json() as { policy?: ApprovalPolicy; error?: string }
+      if (!response.ok || !data.policy) throw new Error(data.error || '授权范围保存失败')
       setApprovalMode(data.policy.mode)
+      setApprovalTimeoutMs(data.policy.timeoutMs)
     } catch (error) {
-      setApprovalMode(previous)
+      setApprovalMode(previous.mode)
+      setApprovalTimeoutMs(previous.timeoutMs)
       setApprovalError(error instanceof Error ? error.message : '授权范围保存失败')
     } finally {
       setApprovalSaving(false)
@@ -999,7 +1009,7 @@ function SettingsTab() {
                 role="radio"
                 aria-checked={selected}
                 disabled={approvalLoading || approvalSaving}
-                onClick={() => void updateApprovalMode(mode)}
+                onClick={() => void updateApprovalPolicy(mode, approvalTimeoutMs)}
                 style={{
                   width: '100%',
                   display: 'grid',
@@ -1029,6 +1039,75 @@ function SettingsTab() {
               </button>
             )
           })}
+        </div>
+        <div
+          className="approval-policy-controls"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+            gap: '8px',
+            marginTop: '8px',
+          }}
+        >
+          <label
+            style={{
+              display: 'grid',
+              gap: '5px',
+              padding: '10px 12px',
+              border: '1px solid var(--color-border)',
+              borderRadius: '8px',
+              background: 'var(--color-surface)',
+              color: 'var(--color-text-secondary)',
+              fontSize: '11px',
+            }}
+          >
+            <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>审批等待时间</span>
+            <select
+              aria-label="审批等待时间"
+              value={approvalTimeoutMs}
+              disabled={approvalLoading || approvalSaving || approvalMode === 'full'}
+              onChange={(event) => void updateApprovalPolicy(approvalMode, Number(event.target.value))}
+              style={{
+                width: '100%',
+                minHeight: '32px',
+                padding: '5px 8px',
+                border: '1px solid var(--color-border)',
+                borderRadius: '6px',
+                background: 'var(--color-background)',
+                color: 'var(--color-text-primary)',
+                font: 'inherit',
+              }}
+            >
+              <option value={15_000}>15 秒</option>
+              <option value={30_000}>30 秒</option>
+              <option value={60_000}>1 分钟</option>
+              <option value={120_000}>2 分钟</option>
+              <option value={300_000}>5 分钟</option>
+            </select>
+          </label>
+          <div
+            style={{
+              display: 'grid',
+              alignContent: 'center',
+              gap: '5px',
+              padding: '10px 12px',
+              border: '1px solid var(--color-border)',
+              borderRadius: '8px',
+              background: 'var(--color-surface)',
+              color: 'var(--color-text-secondary)',
+              fontSize: '11px',
+              lineHeight: 1.45,
+            }}
+          >
+            <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              {approvalMode === 'full' ? '完全访问立即允许' : '超时自动拒绝'}
+            </span>
+            <span>
+              {approvalMode === 'full'
+                ? '不创建审批请求，也不会等待超时'
+                : '结果由后端执行，离开页面也不会失效'}
+            </span>
+          </div>
         </div>
         {approvalError && (
           <p role="alert" style={{ margin: '7px 2px 0', color: 'var(--color-status-failed)', fontSize: '11px' }}>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, memo } from 'react'
 import type { AgentEntry } from '../utils/types'
 import { WorkspaceSelector, type WorkspaceEntry } from './WorkspaceSelector'
+import { InlineApproval } from './InlineApproval'
 
 export const KimInputBar = memo(function KimInputBar({
   value,
@@ -114,6 +115,7 @@ export const KimInputBar = memo(function KimInputBar({
 
   return (
     <div className="px-4 pb-4 md:px-5 md:pb-5 flex-shrink-0">
+      <InlineApproval />
       <div style={{
         background: 'var(--color-surface)',
         border: '1px solid var(--color-border)',

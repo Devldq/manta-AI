@@ -24,6 +24,7 @@ export interface SecurityContext {
   allowExternalRead?: boolean
   allowExternalWrite?: boolean
   approvalMode?: ApprovalMode
+  approvalTimeoutMs?: number
   onApprovalRequest?: (request: SecurityApprovalRequest) => Promise<boolean>
 }
 

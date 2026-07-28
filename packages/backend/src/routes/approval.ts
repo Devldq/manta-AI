@@ -4,8 +4,18 @@
 
 import type { FastifyPluginAsync } from 'fastify'
 import { approvalManager, type ApprovalRequest } from '../core/security/ApprovalManager'
-import { hydrateDurableApprovals, provideDurableApprovalInput } from './durable-approvals.js'
-import { getApprovalPolicy, isApprovalMode, saveApprovalPolicy } from '../core/security/approval-policy.js'
+import {
+  expirePendingApprovals,
+  hydrateDurableApprovals,
+  provideDurableApprovalInput,
+} from './durable-approvals.js'
+import {
+  getApprovalPolicy,
+  getApprovalTimeoutAction,
+  isApprovalMode,
+  isApprovalTimeoutMs,
+  saveApprovalPolicy,
+} from '../core/security/approval-policy.js'
 
 const APPROVAL_TYPES = new Set<ApprovalRequest['type']>(['read', 'write', 'shell'])
 const APPROVAL_ACTIONS = new Set(['approve', 'deny'])
@@ -19,34 +29,71 @@ function projectRequest(request: ApprovalRequest) {
     requestedBy: request.requestedBy,
     status: request.status,
     createdAt: request.createdAt,
+    expiresAt: request.expiresAt,
+    timeoutAction: request.timeoutAction,
     resolvedAt: request.resolvedAt,
   }
 }
 
 const approvalRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.get('/api/approval/policy', async () => ({
-    success: true,
-    policy: getApprovalPolicy(),
-  }))
+  const reconcileTimer = setInterval(() => {
+    hydrateDurableApprovals(fastify.taskRuntime)
+    expirePendingApprovals(fastify.taskRuntime)
+  }, 500)
+  reconcileTimer.unref()
+  fastify.addHook('onClose', (_instance, done) => {
+    clearInterval(reconcileTimer)
+    done()
+  })
+
+  fastify.get('/api/approval/policy', async () => {
+    const policy = getApprovalPolicy()
+    return {
+      success: true,
+      policy: {
+        ...policy,
+        timeoutAction: getApprovalTimeoutAction(policy.mode),
+      },
+    }
+  })
 
   fastify.put('/api/approval/policy', async (request, reply) => {
-    const body = request.body as { mode?: unknown; confirmFullAccess?: boolean }
+    const body = request.body as {
+      mode?: unknown
+      timeoutMs?: unknown
+      confirmFullAccess?: boolean
+    }
+    const currentPolicy = getApprovalPolicy()
     if (!isApprovalMode(body.mode)) {
       return reply.status(400).send({
         success: false,
         error: 'mode 必须是 request、auto 或 full',
       })
     }
-    if (body.mode === 'full' && getApprovalPolicy().mode !== 'full' && body.confirmFullAccess !== true) {
+    if (body.mode === 'full' && currentPolicy.mode !== 'full' && body.confirmFullAccess !== true) {
       return reply.status(400).send({
         success: false,
         code: 'FULL_ACCESS_CONFIRMATION_REQUIRED',
         error: '启用完全访问前必须明确确认风险',
       })
     }
+    const timeoutMs = body.timeoutMs ?? currentPolicy.timeoutMs
+    if (!isApprovalTimeoutMs(timeoutMs)) {
+      return reply.status(400).send({
+        success: false,
+        error: 'timeoutMs 必须是 5000 到 600000 之间的整数',
+      })
+    }
+    const policy = saveApprovalPolicy({
+      mode: body.mode,
+      timeoutMs,
+    })
     return {
       success: true,
-      policy: saveApprovalPolicy({ mode: body.mode }),
+      policy: {
+        ...policy,
+        timeoutAction: getApprovalTimeoutAction(policy.mode),
+      },
     }
   })
 
@@ -65,11 +112,14 @@ const approvalRoutes: FastifyPluginAsync = async (fastify) => {
       })
     }
 
+    const policy = getApprovalPolicy()
     const requestId = approvalManager.createRequest(
       body.type,
       body.requestedBy.trim(),
       body.path,
       body.command,
+      undefined,
+      policy.timeoutMs,
     )
 
     return {
@@ -81,6 +131,7 @@ const approvalRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/api/approval/pending', async () => {
     hydrateDurableApprovals(fastify.taskRuntime)
+    expirePendingApprovals(fastify.taskRuntime)
     const requests = approvalManager.getPendingRequests().map(projectRequest)
     return { success: true, total: requests.length, requests }
   })
@@ -88,6 +139,7 @@ const approvalRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/api/approval/:id', async (request, reply) => {
     const { id } = request.params as { id: string }
     hydrateDurableApprovals(fastify.taskRuntime)
+    expirePendingApprovals(fastify.taskRuntime)
     const approvalRequest = approvalManager.getRequest(id)
 
     if (!approvalRequest) {
@@ -106,6 +158,7 @@ const approvalRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     hydrateDurableApprovals(fastify.taskRuntime)
+    expirePendingApprovals(fastify.taskRuntime)
     const approvalRequest = approvalManager.getRequest(id)
     if (!approvalRequest) {
       // Decisions are idempotent. A delayed renderer may submit after the

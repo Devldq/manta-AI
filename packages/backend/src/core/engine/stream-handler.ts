@@ -33,7 +33,12 @@ import { createDefaultSecurityContext, type SecurityApprovalRequest } from '../s
 import type { JobExecutorContext } from '@manta/task-runtime'
 import type { AgentRunSnapshot, AgentRunUsage, JsonValue } from '@manta/contracts'
 import { approvalManager } from '../security/ApprovalManager'
-import { getApprovalPolicy } from '../security/approval-policy.js'
+import {
+  getApprovalPolicy,
+  isApprovalMode,
+  isApprovalTimeoutMs,
+  type ApprovalPolicy,
+} from '../security/approval-policy.js'
 import type { ProcessRegistry } from './runner/process-registry'
 import type { AgentRuntimeExtension } from './runtime-hooks'
 import { AgentPublicEventProjector } from './agent-public-events'
@@ -230,12 +235,24 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   const workspace = workspaceId ? getWorkspace(workspaceId) : null
   const resolvedFolderPath = resolveFolderPath(workspace?.folderPath)
   const cwd = resolvedFolderPath || process.cwd()
-  const approvalMode = getApprovalPolicy().mode
+  const configuredApprovalPolicy = getApprovalPolicy()
+  const checkpointedApprovalPolicy = jobContext?.readCheckpoint('agent_approval_policy') as unknown as ApprovalPolicy | undefined
+  const hasValidCheckpointedApprovalPolicy = Boolean(checkpointedApprovalPolicy
+    && isApprovalMode(checkpointedApprovalPolicy.mode)
+    && isApprovalTimeoutMs(checkpointedApprovalPolicy.timeoutMs))
+  const approvalPolicy = hasValidCheckpointedApprovalPolicy
+    ? checkpointedApprovalPolicy!
+    : configuredApprovalPolicy
+  if (jobContext && !hasValidCheckpointedApprovalPolicy) {
+    jobContext.checkpoint('agent_approval_policy', approvalPolicy as unknown as JsonValue)
+  }
+  const approvalMode = approvalPolicy.mode
   const securityContext = resolvedFolderPath || jobContext
     ? createDefaultSecurityContext(jobContext?.job.id ?? conversationId, approvalMode)
     : undefined
   if (securityContext) {
     securityContext.workspaceId = workspaceId
+    securityContext.approvalTimeoutMs = approvalPolicy.timeoutMs
     if (resolvedFolderPath) {
       securityContext.allowedRoots = [resolvedFolderPath]
       securityContext.shellAllowedRoots = [resolvedFolderPath]
@@ -312,7 +329,14 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
       securityContext.attempt = jobContext.attempt
       securityContext.registerProcess = processRegistry ? (pid, label) => processRegistry.register(jobContext.job.id, pid, label, { jobId: jobContext.job.id, attempt: jobContext.attempt }) : undefined
       securityContext.unregisterProcess = processRegistry ? (pid) => processRegistry.cleanupProcess(jobContext.job.id, pid) : undefined
-      securityContext.onApprovalRequest = async (approval) => handleDurableApproval(jobContext, approval, durableStepIndex, () => approvalInput, (value) => { approvalInput = value })
+      securityContext.onApprovalRequest = async (approval) => handleDurableApproval(
+        jobContext,
+        approval,
+        durableStepIndex,
+        securityContext.approvalTimeoutMs ?? approvalPolicy.timeoutMs,
+        () => approvalInput,
+        (value) => { approvalInput = value },
+      )
     }
     logger.info(`[Security] 初始化安全上下文，允许路径: ${resolvedFolderPath}`, {
       conversationId,
@@ -614,6 +638,7 @@ async function handleDurableApproval(
   context: JobExecutorContext,
   approval: SecurityApprovalRequest,
   stepIndex: number,
+  timeoutMs: number,
   readInput: () => DurableApprovalInput | undefined,
   writeInput: (value: DurableApprovalInput | undefined) => void,
 ): Promise<boolean> {
@@ -633,17 +658,28 @@ async function handleDurableApproval(
     return provided.decision === 'approve'
   }
 
+  const createdAt = Date.now()
   const request = {
     id: approvalId,
     jobId: context.job.id,
     type: approval.type,
     requestedBy: context.job.id,
     stepIndex,
-    createdAt: Date.now(),
+    createdAt,
+    expiresAt: createdAt + timeoutMs,
+    timeoutAction: 'deny',
     ...(approval.path ? { path: approval.path } : {}),
     ...(approval.command ? { command: approval.command } : {}),
   } as const
-  approvalManager.createRequest(approval.type, context.job.id, approval.path, approval.command, approvalId)
+  approvalManager.createRequest(
+    approval.type,
+    context.job.id,
+    approval.path,
+    approval.command,
+    approvalId,
+    timeoutMs,
+    createdAt,
+  )
   context.checkpoint('agent_pending_approval', request)
   return context.waitForInput(request)
 }

@@ -14,7 +14,6 @@ import { useConversationStore } from '@/stores/conversation-store'
 import {
   MessageRow,
   AgentStatusBar,
-  FsAccessBanner,
   WelcomeScreen,
   KimInputBar,
 } from './components'
@@ -503,9 +502,6 @@ function ChatView({
           lastActivityAt={activeStatusActivityAt}
         />
 
-        {/* 文件访问授权 */}
-        <FsAccessBanner />
-
         {/* 输入框 */}
         <KimInputBar
           value={inputText}
@@ -636,9 +632,6 @@ function NewChatDraft({
         agents={agents}
         onAgentChange={onAgentChange}
       />
-
-      {/* 文件访问授权 */}
-      <FsAccessBanner />
 
       {/* 输入框 */}
       <KimInputBar

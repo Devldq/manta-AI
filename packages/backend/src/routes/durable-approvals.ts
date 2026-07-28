@@ -22,7 +22,20 @@ export function hydrateDurableApprovals(runtime: TaskRuntime | undefined): void 
     const id = stringValue(request?.id)
     const type = stringValue(request?.type) as ApprovalRequest['type'] | undefined
     if (!id || !type || !TYPES.has(type)) continue
-    approvalManager.createRequest(type, job.id, stringValue(request?.path), stringValue(request?.command), id)
+    const createdAt = numberValue(request?.createdAt) ?? Date.now()
+    const expiresAt = numberValue(request?.expiresAt)
+    const timeoutMs = expiresAt === undefined
+      ? 60_000
+      : Math.max(0, expiresAt - createdAt)
+    approvalManager.createRequest(
+      type,
+      job.id,
+      stringValue(request?.path),
+      stringValue(request?.command),
+      id,
+      timeoutMs,
+      createdAt,
+    )
   }
 }
 
@@ -30,8 +43,24 @@ export function provideDurableApprovalInput(runtime: TaskRuntime | undefined, re
   if (!runtime) return false
   const job = runtime.getJob(request.requestedBy)
   if (job?.kind !== 'agent.run' || job.status !== 'waiting_for_input') return false
-  runtime.provideInput(job.id, { approvalId: request.id, decision: action })
-  return true
+  try {
+    runtime.provideInput(job.id, { approvalId: request.id, decision: action })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function expirePendingApprovals(runtime: TaskRuntime | undefined, now = Date.now()): number {
+  let expired = 0
+  for (const request of approvalManager.getPendingRequests()) {
+    if (request.expiresAt > now) continue
+    if (request.durable && !provideDurableApprovalInput(runtime, request, request.timeoutAction)) {
+      continue
+    }
+    if (approvalManager.respondToRequest(request.id, request.timeoutAction)) expired += 1
+  }
+  return expired
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
@@ -40,4 +69,8 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }

@@ -3,6 +3,7 @@ import * as settingsModalModule from './SettingsModal'
 import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(new URL('./SettingsModal.tsx', import.meta.url), 'utf8')
+const indexCss = readFileSync(new URL('../index.css', import.meta.url), 'utf8')
 const runtime = settingsModalModule as unknown as Record<string, unknown>
 
 type FakeElement = HTMLElement & {
@@ -78,6 +79,11 @@ describe('SettingsModal shell', () => {
     expect(source).toContain("method: 'PUT'")
     expect(source).toContain('confirmFullAccess')
     expect(source).toContain('对新任务生效')
+    expect(source).toContain('aria-label="审批等待时间"')
+    expect(source).toContain('超时自动拒绝')
+    expect(source).toContain('完全访问立即允许')
+    expect(source).toContain('className="approval-policy-controls"')
+    expect(indexCss).toMatch(/@media \(max-width: 420px\)[\s\S]*\.approval-policy-controls\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/)
   })
 
   it('calculates the standard arrow, Home, and End tab destinations', () => {
