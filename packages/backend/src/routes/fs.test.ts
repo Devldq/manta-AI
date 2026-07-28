@@ -13,6 +13,8 @@ async function createFixture() {
   const outside = join(root, 'outside.txt')
   await mkdir(project, { recursive: true })
   await writeFile(join(project, 'README.md'), '# Manta\n')
+  await mkdir(join(project, 'src'), { recursive: true })
+  await writeFile(join(project, 'src', 'index.ts'), 'export {}\n')
   await writeFile(outside, 'secret')
 
   const resolveStorage = (group: string, ...segments: string[]) => join(root, 'storage', group, ...segments)
@@ -50,6 +52,24 @@ describe('workspace file preview', () => {
         expect(response.statusCode).toBe(403)
         expect(response.json().error).toContain('当前工作区')
       }
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('lists one directory level with directories first', async () => {
+    const { app, workspace } = await createFixture()
+    try {
+      const response = await app.inject(`/api/fs/tree?workspaceId=${workspace.id}`)
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({
+        path: '',
+        truncated: false,
+        entries: [
+          { name: 'src', path: 'src', kind: 'directory' },
+          { name: 'README.md', path: 'README.md', kind: 'file' },
+        ],
+      })
     } finally {
       await app.close()
     }
