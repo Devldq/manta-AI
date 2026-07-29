@@ -24,7 +24,7 @@ import {
   type RuntimeSecurityFacts,
 } from '@context/prompt-builder'
 import { getAgentRunToolSnapshot } from '@tools/mcp/setup'
-import { parseMessagesToCore, type UIMessage } from './message-parser'
+import { parseConversationHistoryToCore, parseMessagesToCore, type UIMessage } from './message-parser'
 import { runAgentLoop, type AgentLoopResumeState } from './agent-loop'
 import { createAgentRunContextSnapshot } from './agent-run-context'
 import {
@@ -126,6 +126,8 @@ export interface StreamChatOptions {
   /** Durable Job execution context. When present no LoopRegistry state is required. */
   jobContext?: JobExecutorContext
   messageId?: string
+  /** Use backend-owned durable conversation text instead of request history. */
+  historyMode?: 'request' | 'conversation'
   processRegistry?: ProcessRegistry
   /** Optional observers for this run (tracing, audit, replay, custom logs). */
   runtimeExtensions?: AgentRuntimeExtension[]
@@ -149,7 +151,7 @@ interface IntentAnalysisCheckpoint {
  * 启动流式聊天 Agent Loop（如果该会话已有活跃循环则不重复启动）
  * Loop 与 HTTP 连接完全解耦，通过 LoopRegistry 广播事件
  */
-export async function startAgentLoop({ messages, agentName, conversationId, workspaceId, jobContext, messageId: durableMessageId, processRegistry, runtimeExtensions }: StreamChatOptions): Promise<StreamChatResult> {
+export async function startAgentLoop({ messages, agentName, conversationId, workspaceId, jobContext, messageId: durableMessageId, historyMode = 'request', processRegistry, runtimeExtensions }: StreamChatOptions): Promise<StreamChatResult> {
   const startupStartedAt = performance.now()
   const reportStartupPhase = (phase: string) => {
     const elapsedMs = Math.round(performance.now() - startupStartedAt)
@@ -184,10 +186,6 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
   const messageId = durableMessageId ?? `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const assistantMessageId = jobContext ? `${jobContext.job.id}:assistant` : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-  // 解析消息格式。执行前意图门禁只接收对话文本，不暴露任何工具。
-  const coreMessages = parseMessagesToCore(messages)
-  reportStartupPhase('messages.parsed')
-
   if (jobContext && userPrompt) {
     const persisted = workspaceId
       ? appendWorkspaceMessage(workspaceId, conversationId, 'user', userPrompt, undefined, undefined, undefined, undefined, messageId)
@@ -202,6 +200,18 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     : getConversation(conversationId)
   if (!conversation) throw new Error(`Conversation ${conversationId} was not found`)
   reportStartupPhase('conversation.loaded')
+  // Desktop conversations use backend-owned durable history. Other callers
+  // retain the explicit request-history contract for compatibility.
+  const coreMessages = historyMode === 'conversation'
+    ? parseConversationHistoryToCore(conversation.messages, {
+        id: messageId,
+        content: userPrompt,
+      })
+    : parseMessagesToCore(messages)
+  const sessionMessageCount = historyMode === 'conversation'
+    ? conversation.messages.length
+    : messages.length
+  reportStartupPhase('messages.parsed')
   const pendingIntentPlan = readPendingIntentPlan(conversation.context)
 
   const intentCheckpoint = jobContext?.readCheckpoint('intent_analysis') as unknown as IntentAnalysisCheckpoint | undefined
@@ -311,7 +321,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
       agentName,
       toolContext: toolSnapshot,
       sessionId: conversationId,
-      sessionMessageCount: messages.length,
+      sessionMessageCount,
       conversationId,
       messageId,
     })
@@ -340,7 +350,7 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     prompt: userPrompt,
     model: modelInfo.model,
     provider: modelInfo.provider,
-    messageCount: messages.length,
+    messageCount: sessionMessageCount,
     systemLength: systemPrompt.length,
     hasSoul: soulLength > 0,
     soulLength,

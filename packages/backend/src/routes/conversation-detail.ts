@@ -20,6 +20,25 @@ import { randomUUID } from 'node:crypto'
 import type { AgentPublicEvent, AgentRunPhase, Job, JobEvent, JobStatus, JsonValue } from '@manta/contracts'
 import type { TaskRuntime } from '@manta/task-runtime'
 
+interface AgentStreamRequestMessage {
+  id?: string
+  role: string
+  content?: string
+  parts?: Array<{ type: string; text?: string }>
+}
+
+interface AgentStreamRequestBody {
+  message?: AgentStreamRequestMessage
+  messages?: AgentStreamRequestMessage[]
+  agentName?: string
+}
+
+export function normalizeAgentStreamRequestMessages(
+  body: AgentStreamRequestBody,
+): AgentStreamRequestMessage[] {
+  return body.message ? [body.message] : (body.messages ?? [])
+}
+
 export async function conversationDetailRoutes(app: FastifyInstance) {
   // GET /api/conversations/:id — 获取单个会话
   app.get('/api/conversations/:id', async (request, reply) => {
@@ -228,11 +247,9 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
       }
       if (!conv) return reply.status(404).send({ error: '会话不存在' })
 
-      const body = request.body as {
-        messages: Array<{ role: string; content?: string }>
-        agentName?: string
-      }
-      if (!body.messages?.length) return reply.status(400).send({ error: 'messages 不能为空' })
+      const body = request.body as AgentStreamRequestBody
+      const incomingMessages = normalizeAgentStreamRequestMessages(body)
+      if (!incomingMessages.length) return reply.status(400).send({ error: 'message 不能为空' })
 
       const effectiveAgentName = body.agentName || conv.agentName
 
@@ -248,11 +265,11 @@ export async function conversationDetailRoutes(app: FastifyInstance) {
             })
           }
           const messageId = randomUUID()
-          const job = app.taskRuntime.createJob({ kind: 'agent.run', payload: { conversationId: id, messageId, agentName: effectiveAgentName, ...(workspaceId ? { workspaceId } : {}), messages: body.messages as any }, metadata: { conversationId: id, messageId, ...(workspaceId ? { workspaceId } : {}) }, maxAttempts: 1 })
+          const job = app.taskRuntime.createJob({ kind: 'agent.run', payload: { conversationId: id, messageId, agentName: effectiveAgentName, historyMode: 'conversation', ...(workspaceId ? { workspaceId } : {}), messages: incomingMessages as any }, metadata: { conversationId: id, messageId, ...(workspaceId ? { workspaceId } : {}) }, maxAttempts: 1 })
           return streamAgentJob(app.taskRuntime, job, 0, request, reply)
         } else {
           const { startAgentLoop } = await import('../core/engine/stream-handler')
-          await startAgentLoop({ messages: body.messages, agentName: effectiveAgentName, conversationId: id, workspaceId })
+          await startAgentLoop({ messages: incomingMessages, agentName: effectiveAgentName, conversationId: id, workspaceId, historyMode: 'conversation' })
         }
       } catch (err) {
         console.error('[ai-stream] start error:', err)

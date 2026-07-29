@@ -23,6 +23,7 @@ import { storedMessageToUIMessage } from './utils/formatters'
 import { createStepUsageInterceptor } from './step-usage-sse'
 import { withPendingAssistantMessage } from './pending-assistant'
 import { getAgentRunLastActivityAt, getAgentRunSnapshot, isAgentRunTerminal } from './runtime/agent-run-view'
+import { prepareIncrementalChatRequest } from './chat-transport'
 
 const DEFAULT_AGENT = 'main'
 
@@ -149,6 +150,7 @@ function ChatView({
         : `/api/conversations/${convId}/ai-stream`,
       body: { agentName },
       fetch: interceptedFetch,
+      prepareSendMessagesRequest: prepareIncrementalChatRequest,
     }),
     messages: initialMessages,
     id: convId,

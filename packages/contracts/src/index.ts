@@ -180,6 +180,7 @@ export const AgentRunPayloadSchema = z.object({
   agentId: z.string().min(1).optional(),
   agentName: z.string().min(1),
   workspaceId: z.string().min(1).optional(),
+  historyMode: z.enum(['request', 'conversation']).optional(),
   messages: z.array(JsonValueSchema).min(1),
 })
 export type AgentRunPayload = z.infer<typeof AgentRunPayloadSchema>
