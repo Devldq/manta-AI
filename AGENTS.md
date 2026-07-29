@@ -27,6 +27,7 @@ TypeScript monorepo，使用 pnpm + Turborepo；Desktop 基于 Electron，前端
 
 ## 重要约定
 
+- 开发新功能的时候使用worktree在单独的分支开发，开发完完成合并到本地的main分支。
 - 使用 Node.js 22+ 和仓库声明的 `pnpm@10.30.3`；保留 `pnpm-lock.yaml`，不要生成或提交其他根锁文件
 - 任务执行、恢复和持久化属于 Backend/Service；Frontend 只负责订阅、重连和展示，不把长任务生命周期放进页面组件
 - `@manta/contracts` 是公共契约源；修改 contracts 或 RAG 类型后，先构建上游包，再检查 Backend
