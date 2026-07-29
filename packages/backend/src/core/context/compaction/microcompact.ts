@@ -10,7 +10,7 @@
  * 不清理的工具类型：
  * - create_issue、write_file、edit 等有副作用/产生后续依赖的工具
  * - todoWrite 等状态性工具
- * - tool_search（模型发现工具依赖其结果）
+ * - 最近的 tool_search / skill_search 结果由 KEEP_RECENT_TOOL_RESULTS 统一保护
  */
 
 import type { ModelMessage } from 'ai'
@@ -53,6 +53,9 @@ const CLEARABLE_TOOLS = new Set([
   // 任务查询类
   'todoRead',
   'bashOutput',
+  // 按需能力加载结果；最近 3 条会保留，较老结果可由目录重新加载
+  'tool_search',
+  'skill_search',
 ])
 
 /**

@@ -232,12 +232,12 @@ export class ToolRegistry {
     const lines: string[] = [
       '## 可用工具（按需加载）',
       '',
-      '以下所有工具的完整 Schema 均未展开。需要调用某个工具时，先用 `tool_search` 获取其完整定义。',
+      '以下工具只展示名称和一句话描述。需要时先用 `tool_search` 获取完整 Schema，再通过 `tool_invoke` 执行。',
       '',
     ];
 
     if (systemTools.length > 0) {
-      lines.push('### 系统工具', '');
+      lines.push('### 按需内置工具', '');
       for (const t of systemTools) {
         const brief = t.description.length > 80
           ? t.description.slice(0, 80) + '...'
@@ -250,16 +250,19 @@ export class ToolRegistry {
     if (mcpTools.length > 0) {
       lines.push('### MCP 工具', '');
       // 按 MCP Server 分组
-      const mcpGroups = new Map<string, string[]>();
+      const mcpGroups = new Map<string, ToolDefinition[]>();
       for (const t of mcpTools) {
         const server = t.mcpServer!;
         if (!mcpGroups.has(server)) mcpGroups.set(server, []);
-        mcpGroups.get(server)!.push(t.name);
+        mcpGroups.get(server)!.push(t);
       }
       for (const [server, tools] of mcpGroups) {
         lines.push(`#### ${server}`, '');
-        for (const name of tools) {
-          lines.push(`- ${name}`);
+        for (const tool of tools) {
+          const brief = tool.description.length > 80
+            ? tool.description.slice(0, 80) + '...'
+            : tool.description;
+          lines.push(`- **${tool.name}**: ${brief}`);
         }
         lines.push('');
       }
@@ -315,6 +318,25 @@ export class ToolRegistry {
   }
 
   /**
+   * 将调用方已经选定的固定工具集转换为 AI SDK 格式。
+   * 传入的工具均展开完整 Schema；用于构建 Agent Run 的核心工具快照。
+   */
+  toAISDKFormatForDefinitions(toolList: ToolDefinition[]): Record<string, any> {
+    return this.buildAISDKTools(toolList, new Set(toolList.map(tool => tool.name)));
+  }
+
+  /**
+   * 通过固定 tool_invoke 桥执行 Registry 中的按需工具。
+   * 工具是否属于当前 Run、是否已经搜索加载，由桥接工具的闭包负责校验。
+   */
+  async executeRegisteredTool(name: string, input: Record<string, unknown>): Promise<unknown> {
+    const tool = this.tools.get(name);
+    if (!tool) throw new Error(`工具 ${name} 不存在或当前不可用`);
+    const executable = this.buildAISDKTools([tool], new Set([name]))[name];
+    return executable.execute(input);
+  }
+
+  /**
    * 构建 AI SDK 格式的工具映射
    *
    * - 将 parameters (JSON Schema 对象) 转为 inputSchema
@@ -344,6 +366,7 @@ export class ToolRegistry {
       const maxChars = tool.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS;
       const executeFn = tool.execute;
       const isSafe = tool.isConcurrencySafe === true;
+      const managesOwnConcurrency = tool.managesOwnConcurrency === true;
 
       result[tool.name] = {
         description: tool.description,
@@ -370,13 +393,15 @@ export class ToolRegistry {
             input: toolInput,
             publicReason,
             source: tool.mcpServer ? 'mcp' : 'builtin',
-            concurrency: isSafe ? 'shared' : 'exclusive',
+            concurrency: managesOwnConcurrency ? 'delegated' : isSafe ? 'shared' : 'exclusive',
           });
 
-          if (isSafe) {
-            await registry.acquireConcurrent();
-          } else {
-            await registry.acquireExclusive();
+          if (!managesOwnConcurrency) {
+            if (isSafe) {
+              await registry.acquireConcurrent();
+            } else {
+              await registry.acquireExclusive();
+            }
           }
 
           const startTime = Date.now();
@@ -418,10 +443,12 @@ export class ToolRegistry {
             // 避免因缺少 tool-result 导致 "Tool result is missing" 错误
             return `工具执行出错：${msg}`;
           } finally {
-            if (isSafe) {
-              registry.releaseConcurrent();
-            } else {
-              registry.releaseExclusive();
+            if (!managesOwnConcurrency) {
+              if (isSafe) {
+                registry.releaseConcurrent();
+              } else {
+                registry.releaseExclusive();
+              }
             }
           }
         },

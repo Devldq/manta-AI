@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { getLLMConfig } from '@llm/config-store'
 import {
   appendMessage,
@@ -19,13 +20,17 @@ import type { ToolCallRecord, StepUsageRecord } from '@storage/conversation/type
 import { readAgentSoul } from '@context/agent-soul'
 import {
   buildSystemPromptWithStats,
-  createMantaPromptBuilder,
-  type PromptContext,
+  type RuntimeEnvironmentFacts,
   type RuntimeSecurityFacts,
 } from '@context/prompt-builder'
-import { getAgentPromptToolContext } from '@tools/mcp/setup'
+import { getAgentRunToolSnapshot } from '@tools/mcp/setup'
 import { parseMessagesToCore, type UIMessage } from './message-parser'
 import { runAgentLoop, type AgentLoopResumeState } from './agent-loop'
+import { createAgentRunContextSnapshot } from './agent-run-context'
+import {
+  getCachedConversationContext,
+  setCachedConversationContext,
+} from './conversation-context-cache'
 import { getActiveLoop, registerLoop, emitLoopEvent } from './loop-registry'
 import { logger, logManager } from '@observability/log'
 // 使用共享安全上下文模块（解决 tsx 模块解析问题）
@@ -44,7 +49,7 @@ import type { AgentRuntimeExtension } from './runtime-hooks'
 import { AgentPublicEventProjector } from './agent-public-events'
 import {
   INTENT_GATE_CONTEXT_KEY,
-  buildIntentExecutionPrompt,
+  buildIntentExecutionContext,
   nextIntentGateState,
   readPendingIntentPlan,
   renderIntentResponse,
@@ -89,6 +94,27 @@ function resolveFolderPath(folderPath?: string): string | null {
 
   logger.warn(`[Security] 无法解析 workspace folderPath "${folderPath}" 到任何已存在目录`, undefined, ['security', 'context'])
   return null
+}
+
+function collectRuntimeEnvironment(cwd: string): RuntimeEnvironmentFacts {
+  let gitBranch = 'not-a-git-repository'
+  try {
+    gitBranch = execFileSync('git', ['branch', '--show-current'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2_000,
+    }).trim() || 'detached'
+  } catch {
+    // 非 Git 目录不影响 Agent 启动。
+  }
+
+  return {
+    cwd,
+    os: `${process.platform} ${os.release()} (${process.arch})`,
+    shell: process.env.SHELL || 'unknown',
+    gitBranch,
+  }
 }
 
 /** 流式聊天选项 */
@@ -267,37 +293,43 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     allowExternalWrite: securityContext?.allowExternalWrite ?? false,
     networkAccess: securityContext?.networkAccess,
   }
+  const contextFingerprint = createHash('sha256')
+    .update(JSON.stringify({ agentName, cwd, runtimeFacts }))
+    .digest('hex')
+  let cachedContext = getCachedConversationContext(conversationId, contextFingerprint)
 
-  // 构建 system prompt builder（每步 API 调用时重新 build，确保新存记忆立即可见）
-  const soulPrompt = readAgentSoul(agentName)
-  const promptBuilder = createMantaPromptBuilder({ cwd, soulPrompt, runtimeFacts })
-  reportStartupPhase('prompt.builder.created')
-
-  // 每步重建 system prompt 的闭包：memoryContext pipe 内部实时读 MemoryStore
-  const buildSystemPrompt = async (): Promise<string> => {
-    const toolContext = await getAgentPromptToolContext(agentName)
-    const ctx: PromptContext = {
-      toolCount: toolContext.toolCount,
-      deferredToolSummary: toolContext.deferredToolSummary,
-      sessionMessageCount: messages.length,
+  if (!cachedContext) {
+    reportStartupPhase('conversation.context.snapshot.started')
+    const environment = collectRuntimeEnvironment(cwd)
+    const soulPrompt = readAgentSoul(agentName)
+    const toolSnapshot = await getAgentRunToolSnapshot(agentName)
+    const { prompt: systemPrompt, stats: pipeStats } = await buildSystemPromptWithStats({
+      soulPrompt,
+      cwd,
+      runtimeFacts,
+      environment,
+      agentName,
+      toolContext: toolSnapshot,
       sessionId: conversationId,
+      sessionMessageCount: messages.length,
+      conversationId,
+      messageId,
+    })
+    cachedContext = {
+      fingerprint: contextFingerprint,
+      runContext: createAgentRunContextSnapshot(systemPrompt, toolSnapshot.tools),
+      pipeStats,
+      soulLength: soulPrompt?.length ?? 0,
     }
-    return buildIntentExecutionPrompt(promptBuilder.build(ctx), executionPlan, executionMode)
+    setCachedConversationContext(conversationId, cachedContext)
+    reportStartupPhase('conversation.context.snapshot.completed')
+  } else {
+    reportStartupPhase('conversation.context.snapshot.reused')
   }
 
-  // 首次构建获取初始 system prompt + 统计
-  const { prompt: baseSystemPrompt, stats: pipeStats } = await buildSystemPromptWithStats({
-    soulPrompt,
-    cwd,
-    runtimeFacts,
-    agentName,
-    sessionId: conversationId,
-    sessionMessageCount: messages.length,
-    conversationId,
-    messageId,
-  })
-  reportStartupPhase('prompt.initial.completed')
-  const systemPrompt = buildIntentExecutionPrompt(baseSystemPrompt, executionPlan, executionMode)
+  const { runContext, pipeStats, soulLength } = cachedContext
+  const systemPrompt = runContext.systemPrompt
+  const runInstruction = buildIntentExecutionContext(executionPlan, executionMode)
 
   // 简洁启动日志：模型 + prompt 摘要 + pipe 统计
   const promptPreview = userPrompt.length > 60 ? userPrompt.slice(0, 60) + '…' : userPrompt
@@ -310,8 +342,8 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     provider: modelInfo.provider,
     messageCount: messages.length,
     systemLength: systemPrompt.length,
-    hasSoul: !!soulPrompt,
-    soulLength: soulPrompt?.length ?? 0,
+    hasSoul: soulLength > 0,
+    soulLength,
     extra: {
       pipePieces: pipeStats.filter(s => s.enabled).map(s => s.name),
       pipeTokens: Math.ceil(systemPrompt.length / 2.5),
@@ -398,8 +430,8 @@ export async function startAgentLoop({ messages, agentName, conversationId, work
     reportStartupPhase('loop.invoked')
     void runAgentLoop({
       messages: coreMessages,
-      systemPrompt,
-      buildSystemPrompt,
+      runContext,
+      runInstruction,
       prompt: userPrompt,
       messageId,
       conversationId,

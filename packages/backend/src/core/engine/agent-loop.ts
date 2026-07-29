@@ -3,7 +3,6 @@ import { generateText, streamText, type ModelMessage, stepCountIs } from 'ai'
 import { transformChunk } from './stream-transformer'
 import { getAISDKModel } from '@llm/ai-sdk-provider'
 import { getLLMConfig } from '@llm/config-store'
-import { getAgentToolsForAgent } from '@tools/mcp/setup'
 import { LoopDetector } from '@context/loop-detector'
 import type { LoopDetectionResult } from '@context/loop-detector'
 import { formatAIError, formatErrorForSSE } from './error-formatter'
@@ -38,6 +37,7 @@ import {
   setPublicToolReason,
   withoutPublicToolReason,
 } from '@tools/public-reason'
+import type { AgentRunContextSnapshot } from './agent-run-context'
 
 /** Token 预算默认值 */
 const DEFAULT_MAX_OUTPUT_TOKENS = 1_000_000
@@ -48,14 +48,10 @@ const DEFAULT_MAX_STEPS = 200
 /** Agent Loop 选项 */
 export interface AgentLoopOptions {
   messages: ModelMessage[]
-  /** 初始 system prompt 字符串（用于第一步 + 日志输出） */
-  systemPrompt?: string | null
-  /**
-   * 每步重建 system prompt 的函数。
-   * 传入则每步 API 调用前调用，确保记忆/工具等动态上下文保持最新。
-   * 不传则回退到 systemPrompt 静态字符串。
-   */
-  buildSystemPrompt?: () => Promise<string> | string
+  /** 当前 Conversation 冻结的前五层上下文；Loop 内仅 Messages 持续变化。 */
+  runContext: AgentRunContextSnapshot
+  /** 当前用户回合的 Intent/Plan，作为第六层动态系统消息注入。 */
+  runInstruction?: string
   /** 用户输入的原始提示词（用于日志记录） */
   prompt?: string
   /** 统一的消息ID（整轮 loop 共享，由上层调用方提前生成） */
@@ -348,7 +344,7 @@ function appendStepToMessages(
  * - 退出条件：无工具调用 | Token 预算 | 循环检测 | 安全步数兜底 | 用户停止
  * - 不创建 ReadableStream 或 Response，不感知 HTTP 连接状态
  */
-export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, prompt, messageId: incomingMessageId, abortSignal, conversationId, securityContext, onChunk, onDone, onFinish, onError, resumeState, onStepCommitted, runtimeExtensions, onStartupPhase, throwOnError = false, agentName }: AgentLoopOptions) {
+export async function runAgentLoop({ messages, runContext, runInstruction, prompt, messageId: incomingMessageId, abortSignal, conversationId, securityContext, onChunk, onDone, onFinish, onError, resumeState, onStepCommitted, runtimeExtensions, onStartupPhase, throwOnError = false, agentName }: AgentLoopOptions) {
   const llmConfig = getLLMConfig()
   await onStartupPhase?.('model.create.started')
   const model = await getAISDKModel()
@@ -462,43 +458,49 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
           return
         }
 
-        // 每步重建 system prompt（通过 buildSystemPrompt 闭包实时获取最新记忆/上下文）
-        // 回退：没有 builder 时使用初始的静态 systemPrompt 字符串
-        const basePrompt = buildSystemPrompt
-          ? await buildSystemPrompt()
-          : (systemPrompt ?? undefined)
-
-        // 注入警告消息（循环检测等）
-        const effectiveSystemPrompt = warningMessage
-          ? `${typeof basePrompt === 'string' ? basePrompt : ''}\n\n[系统提醒] ${warningMessage}`
-          : basePrompt
+        // 前五层始终使用 Conversation 首次执行时建立的固定快照。
+        // 临时运行时提醒进入第六层 Messages，不修改固定的 System Prompt。
+        const runtimeWarning = warningMessage
         warningMessage = null
+        const dynamicSystemMessages: ModelMessage[] = []
+        if (runInstruction) {
+          dynamicSystemMessages.push({ role: 'system', content: runInstruction })
+        }
+        if (runtimeWarning) {
+          dynamicSystemMessages.push({
+            role: 'system',
+            content: `[运行时提醒] ${runtimeWarning}`,
+          })
+        }
+        const stepMessages = dynamicSystemMessages.length > 0
+          ? [...dynamicSystemMessages, ...currentMessages]
+          : currentMessages
 
         // 每步调一次 streamText，stopWhen=[stepCountIs(1)] 强制单步执行
         const effectiveTemperature = llmConfig.temperature ?? 0.7
 
-        // 收尾步骤显式禁用工具，避免模型继续调查而不回答用户。
-        const stepTools = forcingFinalResponse ? {} : await getAgentToolsForAgent(agentName ?? null)
+        // 工具层保持固定；收尾步骤通过 toolChoice 禁止调用，而不是替换工具集合。
+        const stepTools = runContext.tools
 
         const stepStartTime = performance.now()
         await runtimeHooks.emit('step.started', {
           stepIndex,
-          messageCount: currentMessages.length,
+          messageCount: stepMessages.length,
           toolCount: Object.keys(stepTools).length,
           forcingFinalResponse,
         })
 
         // 记录传给模型的内容（精简版：仅文本片段，避免日志膨胀）
-        const msgSummary = currentMessages.map(m => {
+        const msgSummary = stepMessages.map(m => {
           const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
           return `${m.role}: ${content.length > 100 ? content.slice(0, 100) + '…' : content}`
         }).join(' | ')
         logger.info(`[AgentLoop] Step ${stepIndex + 1} → 模型`, {
           ...baseMeta,
           stepIndex,
-          systemLength: effectiveSystemPrompt?.length ?? 0,
+          systemLength: runContext.systemPrompt.length,
           extra: {
-            messageCount: currentMessages.length,
+            messageCount: stepMessages.length,
             messagesPreview: msgSummary,
             toolCount: stepTools ? Object.keys(stepTools).length : 0,
           },
@@ -506,15 +508,16 @@ export async function runAgentLoop({ messages, systemPrompt, buildSystemPrompt, 
 
         // 记录上下文快照：保存每一步实际传给 LLM 的完整消息列表
         if (conversationId) {
-          recordContextSnapshot(conversationId, stepIndex, currentMessages)
+          recordContextSnapshot(conversationId, stepIndex, stepMessages)
         }
 
         const result = streamText({
           model,
-          system: effectiveSystemPrompt,
+          system: runContext.systemPrompt,
           tools: stepTools as Parameters<typeof streamText>[0]['tools'],
+          toolChoice: forcingFinalResponse ? 'none' : 'auto',
           temperature: effectiveTemperature,
-          messages: currentMessages,
+          messages: stepMessages,
           abortSignal,  // 仅用户停止时触发（来自 LoopRegistry 的 AbortController）
           stopWhen: stepCountIs(1),
           providerOptions: cacheProviderOptions,

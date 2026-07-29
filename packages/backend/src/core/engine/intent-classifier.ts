@@ -525,14 +525,20 @@ export function buildIntentExecutionPrompt(
   plan: PendingIntentPlan,
   mode: 'direct' | 'confirmed_plan',
 ): string {
+  return `${basePrompt}\n\n${buildIntentExecutionContext(plan, mode)}`
+}
+
+/** 当前用户回合的意图与计划；属于动态 Messages 层，不进入会话固定 System Prompt。 */
+export function buildIntentExecutionContext(
+  plan: PendingIntentPlan,
+  mode: 'direct' | 'confirmed_plan',
+): string {
   const heading = mode === 'direct' ? 'Autonomously Resolved User Intent' : 'Confirmed User Intent'
   const instruction = mode === 'direct'
     ? 'The intent gate first understood the user goal, then created this outcome plan without seeing any tools. Follow the goal and plan within the existing authorization and safety boundaries.'
     : 'The user explicitly confirmed the following goal and outcome plan. Follow it within the existing authorization and safety boundaries.'
   const planLabel = mode === 'direct' ? 'Execution plan' : 'Confirmed plan'
-  return `${basePrompt}
-
-# ${heading}
+  return `# ${heading}
 
 ${instruction}
 

@@ -15,6 +15,11 @@ import { getValidAccessToken } from './oauth';
 import { resolveEnvVarsInObject, normalizeServerConfig } from '../registry/types';
 import { createAllTools } from '@tools/index';
 import { createToolSearchTool } from '../registry/tool-search';
+import {
+  createOnDemandTools,
+  type SkillCatalogEntry,
+} from '../registry/on-demand-tools';
+import { getSkill, listSkills } from '@storage/skill/store';
 
 import type {
   MCPServerEntry,
@@ -31,10 +36,25 @@ let mcpConnected = false;
 let mcpInitPromise: Promise<void> | null = null;
 let lastErrorMap = new Map<string, string>();
 
+/** 启动时直接暴露给模型的高频核心工具。 */
+const CORE_TOOL_NAMES = new Set([
+  'read',
+  'write',
+  'edit',
+  'multiEdit',
+  'lsDir',
+  'glob',
+  'grep',
+  'bash',
+  'bashOutput',
+  'bashKill',
+]);
+
 /**
  * 获取预先配置好的 ToolRegistry（含内置工具 + MCP 工具）。
  * 首次调用时在后台初始化 MCP 连接，但不会阻塞内置工具或 Agent 首字。
- * MCP 工具完成发现后会原子地加入同一个 Registry，后续 Agent 步骤可见。
+ * MCP 工具完成发现后会原子地加入 Registry，并通过固定 tool_search/tool_invoke
+ * 桥进入 Messages；不会修改已经建立的 Conversation 固定层。
  */
 export async function getToolRegistry(): Promise<ToolRegistry> {
   if (!registry) {
@@ -94,15 +114,131 @@ export async function getAgentToolsForAgent(
   return reg.toAISDKFormatForAgent(agentName, effectiveVisibility);
 }
 
-export async function getAgentPromptToolContext(agentName: string | null): Promise<{
+export interface AgentPromptToolContext {
   toolCount: number
   deferredToolSummary: string
-}> {
-  const reg = await getToolRegistry()
-  const tools = reg.getByAgent(agentName, getMCPToolVisibility())
+}
+
+export interface AgentRunToolSnapshot extends AgentPromptToolContext {
+  tools: Record<string, unknown>
+  coreToolNames: string[]
+  deferredToolNames: string[]
+  skillIds: string[]
+}
+
+interface AgentRunToolSelection {
+  initialTools: import('../registry/types').ToolDefinition[]
+  deferredTools: import('../registry/types').ToolDefinition[]
+  skills: SkillCatalogEntry[]
+  deferredToolSummary: string
+}
+
+function getSkillCatalog(agentName: string | null): SkillCatalogEntry[] {
+  try {
+    return listSkills()
+      .filter(skill =>
+        skill.enabled &&
+        (
+          !skill.boundAgents?.length ||
+          (agentName ? skill.boundAgents.includes(agentName) : false)
+        ),
+      )
+      .map(skill => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+      }))
+  } catch {
+    // Agent 启动不能因 Skill Registry 暂时不可用而失败。
+    return []
+  }
+}
+
+function appendSkillCatalog(toolSummary: string, skills: SkillCatalogEntry[]): string {
+  if (skills.length === 0) return toolSummary
+  const lines = [
+    toolSummary,
+    toolSummary ? '' : '## 可用能力（按需加载）',
+    '### Skills',
+    '',
+    ...skills.map(skill => `- **${skill.id} / ${skill.name}**: ${skill.description}`),
+  ]
+  return lines.filter((line, index) => line || index > 0).join('\n')
+}
+
+function buildAgentRunToolSelection(
+  reg: ToolRegistry,
+  agentName: string | null,
+  visibility?: MCPToolVisibility | null,
+): AgentRunToolSelection {
+  const effectiveVisibility = visibility ?? getMCPToolVisibility()
+  const visibleTools = reg.getByAgent(agentName, effectiveVisibility)
+  const coreTools = visibleTools.filter(tool => CORE_TOOL_NAMES.has(tool.name))
+  const deferredTools = visibleTools.filter(tool =>
+    tool.name !== 'tool_search' &&
+    !CORE_TOOL_NAMES.has(tool.name),
+  )
+  const skills = getSkillCatalog(agentName)
+  const onDemandTools = createOnDemandTools({
+    registry: reg,
+    deferredTools,
+    resolveDeferredTools: () => reg
+      .getByAgent(agentName, effectiveVisibility)
+      .filter(tool => tool.name !== 'tool_search' && !CORE_TOOL_NAMES.has(tool.name)),
+    skills,
+    loadSkill: id => {
+      const skill = getSkill(id)
+      if (!skill?.enabled) return null
+      return {
+        id: skill.id,
+        name: skill.metadata.name,
+        description: skill.metadata.description,
+        content: skill.content,
+        parameters: skill.parameters,
+        tools: skill.tools,
+      }
+    },
+  })
+
   return {
-    toolCount: tools.length,
-    deferredToolSummary: reg.getDeferredToolSummary(tools),
+    initialTools: [...coreTools, ...onDemandTools],
+    deferredTools,
+    skills,
+    deferredToolSummary: appendSkillCatalog(
+      reg.getDeferredToolSummary(deferredTools),
+      skills,
+    ),
+  }
+}
+
+/**
+ * 从同一个 Registry 状态生成 Conversation 的固定工具快照。
+ *
+ * Prompt 中的工具摘要和传给模型的可执行 Schema 必须来自同一次读取；
+ * 后续 MCP 连接只能通过固定 tool_search/tool_invoke 桥进入 Messages。
+ */
+export async function getAgentRunToolSnapshot(
+  agentName: string | null,
+  visibility?: MCPToolVisibility | null,
+): Promise<AgentRunToolSnapshot> {
+  const reg = await getToolRegistry()
+  const selection = buildAgentRunToolSelection(reg, agentName, visibility)
+  return {
+    toolCount: selection.initialTools.length,
+    deferredToolSummary: selection.deferredToolSummary,
+    tools: reg.toAISDKFormatForDefinitions(selection.initialTools),
+    coreToolNames: selection.initialTools.map(tool => tool.name),
+    deferredToolNames: selection.deferredTools.map(tool => tool.name),
+    skillIds: selection.skills.map(skill => skill.id),
+  }
+}
+
+export async function getAgentPromptToolContext(agentName: string | null): Promise<AgentPromptToolContext> {
+  const reg = await getToolRegistry()
+  const selection = buildAgentRunToolSelection(reg, agentName)
+  return {
+    toolCount: selection.initialTools.length,
+    deferredToolSummary: selection.deferredToolSummary,
   }
 }
 
