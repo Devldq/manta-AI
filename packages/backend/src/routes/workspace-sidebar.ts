@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import { WorkspaceTerminalService } from '../core/services/workspace-terminal.service'
+import { WorkspaceTerminalService, type WorkspaceTerminalEvent } from '../core/services/workspace-terminal.service'
 import { resolveWorkspaceRoot } from './fs'
 
 const execFileAsync = promisify(execFile)
@@ -16,6 +16,7 @@ interface ReviewFile {
 
 export async function workspaceSidebarRoutes(app: FastifyInstance) {
   const terminals = new WorkspaceTerminalService()
+  app.addHook('onClose', async () => terminals.closeAll())
 
   app.get('/api/workspace-sidebar/review', async (request, reply) => {
     const query = request.query as { workspaceId?: string }
@@ -51,25 +52,16 @@ export async function workspaceSidebarRoutes(app: FastifyInstance) {
     }
   })
 
-  app.get('/api/workspace-sidebar/terminal/capabilities', async (_request, reply) => {
-    return reply.send(await terminals.availability())
-  })
-
   app.get('/api/workspace-sidebar/terminal/sessions', async (request, reply) => {
     const query = request.query as { workspaceId?: string; conversationId?: string }
     if (!query.workspaceId || !query.conversationId) {
       return reply.status(400).send({ error: '缺少 workspaceId 或 conversationId 参数' })
     }
     try {
-      const cwd = await resolveWorkspaceRoot(query.workspaceId)
-      const sessions = await terminals.list({
-        workspaceId: query.workspaceId,
-        conversationId: query.conversationId,
-        cwd,
-      })
-      return reply.send({ sessions, provider: 'iterm2' })
+      const sessions = terminals.list(query.workspaceId, query.conversationId)
+      return reply.send({ sessions, provider: 'system-shell' })
     } catch (error) {
-      return sendWorkspaceError(reply, error, '无法读取 iTerm2 终端会话')
+      return sendWorkspaceError(reply, error, '无法读取终端会话')
     }
   })
 
@@ -80,7 +72,7 @@ export async function workspaceSidebarRoutes(app: FastifyInstance) {
     }
     try {
       const cwd = await resolveWorkspaceRoot(body.workspaceId)
-      const session = await terminals.create({
+      const session = terminals.create({
         workspaceId: body.workspaceId,
         conversationId: body.conversationId,
         cwd,
@@ -91,34 +83,58 @@ export async function workspaceSidebarRoutes(app: FastifyInstance) {
     }
   })
 
-  app.post('/api/workspace-sidebar/terminal/sessions/:id/input', async (request, reply) => {
+  app.get('/api/workspace-sidebar/terminal/sessions/:id/socket', { websocket: true }, (socket, request) => {
     const { id } = request.params as { id: string }
-    const body = request.body as { command?: string }
-    if (typeof body.command !== 'string' || !body.command.trim()) {
-      return reply.status(400).send({ error: '命令不能为空' })
+    const query = request.query as { afterSeq?: string }
+    const session = terminals.get(id)
+    if (!session) {
+      socket.close(1008, '终端会话不存在')
+      return
     }
-    try {
-      await terminals.write(id, body.command)
-      return reply.status(204).send()
-    } catch (error) {
-      return sendWorkspaceError(reply, error, '无法写入终端会话')
+    const requestedAfterSeq = Number.parseInt(query.afterSeq || '0', 10)
+    let lastSeq = Number.isFinite(requestedAfterSeq) ? Math.max(0, requestedAfterSeq) : 0
+    const sendEvent = (event: WorkspaceTerminalEvent) => {
+      if (event.seq <= lastSeq || socket.readyState !== socket.OPEN) return
+      lastSeq = event.seq
+      socket.send(JSON.stringify({ type: event.type, seq: event.seq, data: event.data }))
     }
-  })
+    const unsubscribe = terminals.subscribe(id, sendEvent)
+    for (const event of terminals.events(id, lastSeq)) sendEvent(event)
+    socket.send(JSON.stringify({ type: 'ready', session }))
 
-  app.post('/api/workspace-sidebar/terminal/sessions/:id/focus', async (request, reply) => {
-    const { id } = request.params as { id: string }
-    try {
-      await terminals.focus(id)
-      return reply.status(204).send()
-    } catch (error) {
-      return sendWorkspaceError(reply, error, '无法打开 iTerm2 终端会话')
-    }
+    socket.on('message', (raw: { byteLength: number; toString(): string }) => {
+      if (raw.byteLength > 64 * 1024) {
+        socket.close(1009, '终端消息过大')
+        return
+      }
+      try {
+        const message = JSON.parse(raw.toString()) as {
+          type?: string
+          data?: string
+          cols?: number
+          rows?: number
+        }
+        if (message.type === 'input' && typeof message.data === 'string') {
+          terminals.write(id, message.data)
+        } else if (
+          message.type === 'resize'
+          && Number.isFinite(message.cols)
+          && Number.isFinite(message.rows)
+        ) {
+          terminals.resize(id, Number(message.cols), Number(message.rows))
+        }
+      } catch (error) {
+        app.log.debug({ error, terminalSessionId: id }, 'Ignored invalid terminal WebSocket message')
+      }
+    })
+    socket.once('close', unsubscribe)
+    socket.once('error', unsubscribe)
   })
 
   app.delete('/api/workspace-sidebar/terminal/sessions/:id', async (request, reply) => {
     const { id } = request.params as { id: string }
     try {
-      await terminals.close(id)
+      terminals.close(id)
       return reply.status(204).send()
     } catch (error) {
       return sendWorkspaceError(reply, error, '无法关闭终端会话')

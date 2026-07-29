@@ -6,6 +6,7 @@ import { MessageRow } from './components/MessageRow'
 import { compactReadOnlyStepGroups, mergeAgentRunProgress } from './components/ToolCallLog'
 import {
   describeToolBatch,
+  describeToolCall,
   extractStepGroups,
   getTextContent,
   storedMessageToUIMessage,
@@ -133,6 +134,61 @@ describe('streaming message rendering', () => {
     expect(html).not.toContain('pnpm test')
   })
 
+  it('shows the concrete file path for the actual read tool', () => {
+    const entry = {
+      toolCallId: 'read-actual',
+      toolName: 'read',
+      state: 'output-available',
+      input: { file_path: 'src/main.rs', offset: 20, limit: 40 },
+      output: { content: 'source' },
+    }
+
+    expect(describeToolCall(entry)).toBe('已读取 src/main.rs（从第 20 行，读取 40 行）')
+
+    const html = renderToStaticMarkup(
+      <AgentStepView
+        groups={[{
+          stepIndex: 0,
+          purposeText: '',
+          toolCalls: [entry],
+          isComplete: true,
+          isActive: false,
+        }]}
+        isStreaming
+      />,
+    )
+
+    expect(html).toContain('已读取 src/main.rs')
+    expect(html).toContain('lucide-file-text')
+    expect(html).not.toContain('>read<')
+  })
+
+  it('shows scripts and supports legacy path aliases without exposing unknown sensitive fields', () => {
+    expect(describeToolCall({
+      toolCallId: 'bash-actual',
+      toolName: 'bash',
+      state: 'input-available',
+      input: { command: 'cd app\npnpm test', authorization: 'Bearer secret' },
+      output: undefined,
+    })).toBe('正在运行 cd app pnpm test')
+
+    expect(describeToolCall({
+      toolCallId: 'read-legacy',
+      toolName: 'readFile',
+      state: 'output-available',
+      input: { path: 'Cargo.toml' },
+      output: 'source',
+    })).toBe('已读取 Cargo.toml')
+
+    expect(describeToolCall({
+      toolCallId: 'plugin-1',
+      toolName: 'pluginInspect',
+      state: 'output-available',
+      input: { path: 'src/plugin.ts', authorization: 'Bearer secret' },
+      output: 'done',
+    })).toBe('pluginInspect · src/plugin.ts')
+  })
+
   it('separates a completed tool run from its task summary', () => {
     const html = renderToStaticMarkup(
       <MessageRow
@@ -241,7 +297,7 @@ describe('streaming message rendering', () => {
     expect(html).not.toContain('正在总结')
   })
 
-  it('does not show an empty summary section for a cancelled run', () => {
+  it('shows a durable terminated marker without an empty summary section', () => {
     const html = renderToStaticMarkup(
       <MessageRow
         agentName="default"
@@ -269,6 +325,8 @@ describe('streaming message rendering', () => {
       />,
     )
 
+    expect(html).toContain('已终止')
+    expect(html).not.toContain('已处理')
     expect(html).not.toContain('任务总结')
   })
 

@@ -34,6 +34,7 @@
     "@langchain/core": "^1.2.2",
     "@langchain/ollama": "^1.3.0",
     "@langchain/openai": "^1.5.5",
+    "@lydell/node-pty": "1.2.0-beta.14",
     "@manta/agent-sandbox": "workspace:*",
     "@manta/contracts": "workspace:*",
     "@manta/rag": "workspace:*",
@@ -62,8 +63,17 @@
     "typescript": "^5",
     "vitest": "^2.0.0"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/Devldq/manta-AI.git", "directory": "packages/backend" },
-  "publishConfig": { "access": "public", "provenance": true }
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Devldq/manta-AI.git",
+    "directory": "packages/backend"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
 }

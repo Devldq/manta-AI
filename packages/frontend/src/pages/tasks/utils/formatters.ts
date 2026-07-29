@@ -253,7 +253,7 @@ export function formatValue(v: unknown, maxLen = 400): string {
 /** 格式化工具完整输入为可读字符串（用于展开详情） */
 export function formatToolInput(entry: ToolCallEntry): string {
   if (entry.input === undefined || entry.input === null) return '（无输入）'
-  return formatValue(entry.input, 2000)
+  return formatValue(entry.input, 12000)
 }
 
 /** 格式化工具输出为可读字符串（用于展开详情） */
@@ -262,7 +262,30 @@ export function formatToolOutput(entry: ToolCallEntry): string {
     return `❌ 错误: ${entry.errorText ?? '未知错误'}`
   }
   if (entry.output === undefined || entry.output === null) return '（无输出）'
-  return formatValue(entry.output, 2000)
+  return formatValue(entry.output, 12000)
+}
+
+function inputString(
+  input: Record<string, unknown> | null | undefined,
+  ...keys: string[]
+): string {
+  for (const key of keys) {
+    const value = input?.[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number') return String(value)
+  }
+  return ''
+}
+
+function inlinePreview(value: string, maxLen = 88): string {
+  const compact = value.replace(/\s+/g, ' ').trim()
+  return compact.length > maxLen ? `${compact.slice(0, maxLen)}…` : compact
+}
+
+function toolActionPrefix(entry: ToolCallEntry, completed: string, running: string): string {
+  return entry.state === 'input-streaming' || entry.state === 'input-available'
+    ? running
+    : completed
 }
 
 /** 把工具调用转成一句人读的动作描述（增强版） */
@@ -270,49 +293,98 @@ export function describeToolCall(entry: ToolCallEntry): string {
   const input = entry.input as Record<string, unknown> | null | undefined
   switch (entry.toolName) {
     case 'bash': {
-      const cmd = String(input?.command ?? '')
-      const desc = input?.description ? `（${input.description}）` : ''
-      const displayCmd = cmd.length > 60 ? cmd.slice(0, 60) + '...' : cmd
-      return `${desc ? desc + ' ' : '已运行 '}${displayCmd}`
+      const cmd = inlinePreview(inputString(input, 'command', 'script'))
+      const desc = inlinePreview(inputString(input, 'description'), 36)
+      const prefix = toolActionPrefix(entry, '已运行', '正在运行')
+      return `${desc ? `（${desc}） ` : `${prefix} `}${cmd || '命令'}`
     }
+    case 'bashOutput': {
+      const taskId = inputString(input, 'task_id', 'taskId', 'id')
+      return `${toolActionPrefix(entry, '已查看', '正在查看')}后台任务${taskId ? ` ${taskId}` : ''}的输出`
+    }
+    case 'bashKill': {
+      const taskId = inputString(input, 'task_id', 'taskId', 'id')
+      return `${toolActionPrefix(entry, '已停止', '正在停止')}后台任务${taskId ? ` ${taskId}` : ''}`
+    }
+    case 'listDirectory':
     case 'lsDir': {
-      const p = String(input?.dir_path ?? '')
-      return `已查看 ${p}`
+      const p = inputString(input, 'dir_path', 'path', 'dir', 'directory')
+      return `${toolActionPrefix(entry, '已查看', '正在查看')}目录${p ? ` ${p}` : ''}`
     }
+    case 'read':
     case 'readFile': {
-      const p = String(input?.file_path ?? '')
-      return `已读取 ${p}`
+      const p = inputString(input, 'file_path', 'path', 'file', 'filename')
+      const range = input?.offset || input?.limit
+        ? `（${input?.offset ? `从第 ${input.offset} 行` : '从开头'}${input?.limit ? `，读取 ${input.limit} 行` : ''}）`
+        : ''
+      return `${toolActionPrefix(entry, '已读取', '正在读取')} ${p || '文件'}${range}`
     }
+    case 'find':
     case 'glob': {
-      const pat = String(input?.pattern ?? '')
-      const root = input?.path ? ` 在 ${input.path}` : ''
-      return `已搜索文件 ${pat}${root}`
+      const pattern = inlinePreview(inputString(input, 'pattern', 'query'))
+      const root = inputString(input, 'path', 'search_path', 'root')
+      return `${toolActionPrefix(entry, '已查询', '正在查询')}文件${pattern ? ` “${pattern}”` : ''}${root ? `，范围 ${root}` : ''}`
     }
+    case 'search':
     case 'grep': {
-      const pat = String(input?.pattern ?? '')
-      const sp = input?.search_path ? ` 在 ${input.search_path}` : ''
-      return `已搜索内容 “${pat}”${sp}`
+      const pattern = inlinePreview(inputString(input, 'pattern', 'query'))
+      const root = inputString(input, 'search_path', 'path', 'root')
+      return `${toolActionPrefix(entry, '已查询', '正在查询')}内容${pattern ? ` “${pattern}”` : ''}${root ? `，范围 ${root}` : ''}`
     }
+    case 'writeFile':
     case 'write': {
-      const p = String(input?.file_path ?? '')
-      return `已写入 ${p}`
+      const p = inputString(input, 'file_path', 'path', 'file', 'filename')
+      return `${toolActionPrefix(entry, '已写入', '正在写入')} ${p || '文件'}`
     }
+    case 'batch-edit':
     case 'edit':
+    case 'editFile':
     case 'multiEdit': {
-      const p = String(input?.file_path ?? '')
-      return `已编辑 ${p}`
+      const p = inputString(input, 'file_path', 'path', 'file', 'filename')
+      return `${toolActionPrefix(entry, '已编辑', '正在编辑')} ${p || '文件'}`
     }
-    default:
-      return entry.toolName
+    case 'webFetch':
+    case 'web': {
+      const url = inlinePreview(inputString(input, 'url', 'uri'))
+      return `${toolActionPrefix(entry, '已访问', '正在访问')}网页${url ? ` ${url}` : ''}`
+    }
+    case 'webSearch': {
+      const query = inlinePreview(inputString(input, 'query', 'q', 'search'))
+      return `${toolActionPrefix(entry, '已搜索', '正在搜索')}网页${query ? ` “${query}”` : ''}`
+    }
+    case 'viewImage':
+    case 'view_image':
+    case 'image': {
+      const p = inputString(input, 'path', 'file_path', 'image_path')
+      return `${toolActionPrefix(entry, '已查看', '正在查看')}图像${p ? ` ${p}` : ''}`
+    }
+    case 'todoRead':
+      return `${toolActionPrefix(entry, '已读取', '正在读取')}任务清单`
+    case 'todoWrite':
+      return `${toolActionPrefix(entry, '已更新', '正在更新')}任务清单`
+    default: {
+      // 未知或插件工具仅展示经过白名单筛选的定位信息，避免泄露密钥、Header 等参数。
+      const detail = inputString(
+        input,
+        'file_path',
+        'path',
+        'url',
+        'query',
+        'pattern',
+        'command',
+        'task_id',
+        'name',
+      )
+      return detail ? `${entry.toolName} · ${inlinePreview(detail)}` : entry.toolName
+    }
   }
 }
 
 /** 返回工具操作涉及的文件路径，供侧栏预览使用。 */
 export function getToolFilePath(entry: ToolCallEntry): string | null {
   const input = entry.input as Record<string, unknown> | null | undefined
-  const candidate = input?.file_path ?? input?.path
-  if (typeof candidate !== 'string' || !candidate.trim()) return null
-  return candidate
+  const candidate = inputString(input, 'file_path', 'path', 'file', 'filename', 'image_path')
+  return candidate || null
 }
 
 /** 根据工具调用推断步骤目的（当没有 purposeText 时使用） */

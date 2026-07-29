@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { AlertCircle, ChevronRight, File, Folder, FolderOpen, Image, Loader2 } from 'lucide-react'
 import type { SessionSidebarContext } from './tabs'
 import { PanelEmpty, PanelError, PanelLoading, RetryButton } from './PanelState'
+import { ReadonlyCodeEditor } from './ReadonlyCodeEditor'
 
 interface FileEntry {
   name: string
@@ -146,7 +147,7 @@ export function FilesTab({ workspaceId, previewPath }: SessionSidebarContext) {
           <>
             <div className="file-preview-meta">
               <span title={preview?.path || selectedPath}>{preview?.path || selectedPath}</span>
-              {preview ? <small>{formatBytes(preview.size)}</small> : null}
+              {preview ? <small>只读 · {formatBytes(preview.size)}</small> : null}
             </div>
             {previewLoading ? <div className="file-preview-status"><Loader2 size={15} className="tool-spinner" />正在读取文件…</div> : null}
             {previewError ? <div className="file-preview-status is-error"><AlertCircle size={15} />{previewError}</div> : null}
@@ -155,7 +156,13 @@ export function FilesTab({ workspaceId, previewPath }: SessionSidebarContext) {
                 <img src={`data:${preview.mimeType};base64,${preview.content}`} alt={preview.path} />
               </div>
             ) : null}
-            {preview?.kind === 'text' ? <pre className="file-preview-code" tabIndex={0}><code>{preview.content}</code></pre> : null}
+            {preview?.kind === 'text' ? (
+              <ReadonlyCodeEditor
+                value={preview.content}
+                path={preview.path}
+                ariaLabel={`${preview.path} 只读代码预览`}
+              />
+            ) : null}
           </>
         )}
       </div>

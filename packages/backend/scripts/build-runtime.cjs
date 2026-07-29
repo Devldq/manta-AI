@@ -24,6 +24,7 @@ build({
   },
   external: [
     'better-sqlite3',
+    '@lydell/node-pty',
     '@langchain/openai',
     '@langchain/ollama',
     '@langchain/anthropic',

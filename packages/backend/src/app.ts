@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import multipart from '@fastify/multipart'
+import websocket from '@fastify/websocket'
 import type { StorageHealthResult, StorageResolver } from './storage/runtime'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -47,6 +48,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     }
   })
   if (options.localAccess) await registerLocalAccess(app, options.localAccess)
+  await app.register(websocket)
   app.get('/api/health', async () => ({ success: true, data: { status: 'ok', version: '2.0.0', timestamp: new Date().toISOString(), dataDir: options.storage.resolve('config') } }))
   app.get('/v1/health', async () => ({ data: { status: 'ok', apiVersion: 'v1', timestamp: new Date().toISOString() } }))
   app.get('/api/health/storage', async () => ({ success: true, data: options.storage.healthCheck ? await options.storage.healthCheck() : { ok: true, status: 'healthy', warnings: [] } }))

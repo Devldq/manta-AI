@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { ExternalLink, Plus, RefreshCw, SquareTerminal, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { FitAddon } from '@xterm/addon-fit'
+import { Terminal } from '@xterm/xterm'
+import '@xterm/xterm/css/xterm.css'
+import { Plus, RefreshCw, SquareTerminal, X } from 'lucide-react'
 import type { SessionSidebarContext } from './tabs'
 import { PanelEmpty, PanelError, PanelLoading, RetryButton } from './PanelState'
 
@@ -9,9 +12,18 @@ interface TerminalSession {
   conversationId: string
   cwd: string
   name: string
-  tty: string
-  provider: 'iterm2'
-  status: 'running'
+  shell: string
+  provider: 'system-shell'
+  status: 'running' | 'exited' | 'failed'
+  lastSeq: number
+  cols: number
+  rows: number
+}
+
+interface TerminalSocketEvent {
+  type: 'ready' | 'status' | 'output' | 'exit'
+  seq?: number
+  data?: string
 }
 
 export function TerminalTab({ workspaceId, conversationId }: SessionSidebarContext) {
@@ -19,9 +31,7 @@ export function TerminalTab({ workspaceId, conversationId }: SessionSidebarConte
   const [activeId, setActiveId] = useState('')
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [available, setAvailable] = useState<boolean | null>(null)
   const [error, setError] = useState('')
-  const [command, setCommand] = useState('')
   const [busyId, setBusyId] = useState('')
 
   const activeSession = useMemo(
@@ -34,27 +44,17 @@ export function TerminalTab({ workspaceId, conversationId }: SessionSidebarConte
     if (showLoading) setLoading(true)
     setError('')
     try {
-      const capabilityResponse = await fetch('/api/workspace-sidebar/terminal/capabilities')
-      const capability = await capabilityResponse.json()
-      if (!capabilityResponse.ok) throw new Error(capability.error || '无法检查 iTerm2')
-      setAvailable(Boolean(capability.available))
-      if (!capability.available) {
-        setSessions([])
-        setActiveId('')
-        return
-      }
-
       const query = new URLSearchParams({ workspaceId, conversationId })
       const response = await fetch(`/api/workspace-sidebar/terminal/sessions?${query}`)
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || '无法恢复 iTerm2 终端')
+      if (!response.ok) throw new Error(data.error || '无法恢复终端会话')
       const nextSessions = data.sessions as TerminalSession[]
       setSessions(nextSessions)
       setActiveId((current) => nextSessions.some((session) => session.id === current)
         ? current
         : (nextSessions[0]?.id ?? ''))
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '无法恢复 iTerm2 终端')
+      setError(reason instanceof Error ? reason.message : '无法恢复终端会话')
     } finally {
       if (showLoading) setLoading(false)
     }
@@ -63,7 +63,6 @@ export function TerminalTab({ workspaceId, conversationId }: SessionSidebarConte
   useEffect(() => {
     setSessions([])
     setActiveId('')
-    setCommand('')
     void loadSessions()
   }, [loadSessions])
 
@@ -86,59 +85,14 @@ export function TerminalTab({ workspaceId, conversationId }: SessionSidebarConte
         body: JSON.stringify({ workspaceId, conversationId }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || '无法启动 iTerm2 终端')
+      if (!response.ok) throw new Error(data.error || '无法启动终端')
       const next = data.session as TerminalSession
       setSessions((current) => [...current.filter((session) => session.id !== next.id), next])
       setActiveId(next.id)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '无法启动 iTerm2 终端')
+      setError(reason instanceof Error ? reason.message : '无法启动终端')
     } finally {
       setCreating(false)
-    }
-  }
-
-  async function focusSession(session: TerminalSession) {
-    setBusyId(session.id)
-    setError('')
-    try {
-      const response = await fetch(`/api/workspace-sidebar/terminal/sessions/${encodeURIComponent(session.id)}/focus`, {
-        method: 'POST',
-      })
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || '无法打开 iTerm2 终端')
-      }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '无法打开 iTerm2 终端')
-      await loadSessions(false)
-    } finally {
-      setBusyId('')
-    }
-  }
-
-  async function submitCommand(event: FormEvent) {
-    event.preventDefault()
-    const nextCommand = command.trim()
-    if (!activeSession || !nextCommand) return
-    setCommand('')
-    setBusyId(activeSession.id)
-    setError('')
-    try {
-      const response = await fetch(`/api/workspace-sidebar/terminal/sessions/${encodeURIComponent(activeSession.id)}/input`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: nextCommand }),
-      })
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || '命令发送失败')
-      }
-    } catch (reason) {
-      setCommand(nextCommand)
-      setError(reason instanceof Error ? reason.message : '命令发送失败')
-      await loadSessions(false)
-    } finally {
-      setBusyId('')
     }
   }
 
@@ -151,16 +105,22 @@ export function TerminalTab({ workspaceId, conversationId }: SessionSidebarConte
       })
       if (!response.ok) {
         const data = await response.json()
-        throw new Error(data.error || '无法关闭 iTerm2 终端')
+        throw new Error(data.error || '无法关闭终端')
       }
       setSessions((current) => current.filter((item) => item.id !== session.id))
       setActiveId((current) => current === session.id ? '' : current)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '无法关闭 iTerm2 终端')
+      setError(reason instanceof Error ? reason.message : '无法关闭终端')
       await loadSessions(false)
     } finally {
       setBusyId('')
     }
+  }
+
+  function handleSessionExit(sessionId: string) {
+    setSessions((current) => current.map((session) => session.id === sessionId
+      ? { ...session, status: 'exited' }
+      : session))
   }
 
   function handleSessionTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, sessionIndex: number) {
@@ -185,30 +145,20 @@ export function TerminalTab({ workspaceId, conversationId }: SessionSidebarConte
       />
     )
   }
-  if (loading) return <PanelLoading label="正在发现 iTerm2 终端…" />
-  if (error && available === null) {
+  if (loading) return <PanelLoading label="正在恢复终端会话…" />
+  if (error && !sessions.length) {
     return <PanelError message={error} action={<RetryButton onClick={() => void loadSessions()} />} />
-  }
-  if (available === false) {
-    return (
-      <PanelEmpty
-        title="需要 iTerm2"
-        description="未检测到 iTerm2。安装后重新打开此面板，Manta 会在 iTerm2 中创建和恢复真实终端会话。"
-        icon={<SquareTerminal size={18} aria-hidden="true" />}
-        action={<RetryButton onClick={() => void loadSessions()} />}
-      />
-    )
   }
   if (!sessions.length) {
     return (
       <PanelEmpty
         title="尚未启动终端"
-        description="终端由 iTerm2 持有，支持完整的交互程序；你可以为当前对话同时开启多个终端。"
+        description="Manta 内置交互式终端使用系统默认 Shell，支持快捷键、补全和终端程序。"
         icon={<SquareTerminal size={18} aria-hidden="true" />}
         action={(
           <button type="button" className="workspace-panel-button" onClick={() => void createSession()} disabled={creating}>
             <SquareTerminal size={14} aria-hidden="true" />
-            {creating ? '正在启动…' : '新建 iTerm2 终端'}
+            {creating ? '正在启动…' : '新建终端'}
           </button>
         )}
       />
@@ -217,7 +167,7 @@ export function TerminalTab({ workspaceId, conversationId }: SessionSidebarConte
 
   return (
     <div className="workspace-terminal">
-      <div className="workspace-terminal-tabs" role="tablist" aria-label="iTerm2 终端会话">
+      <div className="workspace-terminal-tabs" role="tablist" aria-label="终端会话">
         <div className="workspace-terminal-tabs-scroll">
           {sessions.map((session, sessionIndex) => {
             const selected = session.id === activeSession?.id
@@ -233,9 +183,9 @@ export function TerminalTab({ workspaceId, conversationId }: SessionSidebarConte
                   className="workspace-terminal-tab-select"
                   onClick={() => setActiveId(session.id)}
                   onKeyDown={(event) => handleSessionTabKeyDown(event, sessionIndex)}
-                  title={`${session.name} · ${session.tty}`}
+                  title={`${session.name} · ${session.cwd}`}
                 >
-                  <span className="workspace-terminal-dot is-running" aria-hidden="true" />
+                  <span className={`workspace-terminal-dot is-${session.status}`} aria-hidden="true" />
                   <span>{session.name}</span>
                 </button>
                 <button
@@ -255,9 +205,18 @@ export function TerminalTab({ workspaceId, conversationId }: SessionSidebarConte
         <button
           type="button"
           className="workspace-terminal-tab-action"
+          onClick={() => void loadSessions(false)}
+          aria-label="刷新终端列表"
+          title="刷新终端列表"
+        >
+          <RefreshCw size={13} />
+        </button>
+        <button
+          type="button"
+          className="workspace-terminal-tab-action"
           onClick={() => void createSession()}
           disabled={creating}
-          aria-label="新建 iTerm2 终端"
+          aria-label="新建终端"
           title="新建终端"
         >
           <Plus size={14} />
@@ -266,61 +225,166 @@ export function TerminalTab({ workspaceId, conversationId }: SessionSidebarConte
 
       {error ? <div className="workspace-terminal-warning" role="status">{error}</div> : null}
 
-      {activeSession ? (
-        <>
-          <div
-            id={sessionPanelId(activeSession.id)}
-            className="workspace-terminal-summary"
-            role="tabpanel"
-            aria-labelledby={sessionTabId(activeSession.id)}
-          >
-            <div className="workspace-terminal-mark" aria-hidden="true"><SquareTerminal size={20} /></div>
-            <strong>{activeSession.name}</strong>
-            <span title={activeSession.cwd}>{activeSession.cwd}</span>
-            <code>{activeSession.tty || 'iTerm2 session'}</code>
-            <p>完整终端界面和输出由 iTerm2 承载。你可以在这里发送命令，或打开 iTerm2 继续交互。</p>
-            <button
-              type="button"
-              className="workspace-panel-button"
-              onClick={() => void focusSession(activeSession)}
-              disabled={busyId === activeSession.id}
-            >
-              <ExternalLink size={14} />
-              在 iTerm2 中打开
-            </button>
-          </div>
-          <form className="workspace-terminal-input" onSubmit={submitCommand}>
-            <span aria-hidden="true">❯</span>
-            <label className="sr-only" htmlFor={`terminal-command-${activeSession.id}`}>发送命令到 {activeSession.name}</label>
-            <input
-              id={`terminal-command-${activeSession.id}`}
-              value={command}
-              onChange={(event) => setCommand(event.target.value)}
-              disabled={busyId === activeSession.id}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={`发送命令到${activeSession.name}`}
-            />
-            <button
-              type="button"
-              className="workspace-terminal-refresh"
-              onClick={() => void loadSessions(false)}
-              aria-label="刷新终端列表"
-              title="刷新终端列表"
-            >
-              <RefreshCw size={13} />
-            </button>
-          </form>
-        </>
-      ) : null}
+      <div className="workspace-terminal-canvases">
+        {sessions.map((session) => (
+          <TerminalViewport
+            key={session.id}
+            session={session}
+            active={session.id === activeSession?.id}
+            onExit={() => handleSessionExit(session.id)}
+            onConnectionError={setError}
+          />
+        ))}
+      </div>
     </div>
   )
 }
 
+function TerminalViewport({
+  session,
+  active,
+  onExit,
+  onConnectionError,
+}: {
+  session: TerminalSession
+  active: boolean
+  onExit(): void
+  onConnectionError(message: string): void
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const terminalRef = useRef<Terminal | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
+  const socketRef = useRef<WebSocket | null>(null)
+  const activeRef = useRef(active)
+  const exitedRef = useRef(session.status !== 'running')
+  const lastSeqRef = useRef(0)
+  const onExitRef = useRef(onExit)
+  const onConnectionErrorRef = useRef(onConnectionError)
+
+  activeRef.current = active
+  onExitRef.current = onExit
+  onConnectionErrorRef.current = onConnectionError
+
+  useEffect(() => {
+    const terminal = terminalRef.current
+    const fitAddon = fitAddonRef.current
+    if (!active || !terminal || !fitAddon) return
+    requestAnimationFrame(() => {
+      fitAddon.fit()
+      sendResize(socketRef.current, terminal)
+      terminal.focus()
+    })
+  }, [active])
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const styles = getComputedStyle(document.documentElement)
+    const terminal = new Terminal({
+      cursorBlink: true,
+      cursorStyle: 'block',
+      fontFamily: styles.getPropertyValue('--font-mono').trim() || 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      fontSize: 11,
+      lineHeight: 1.35,
+      scrollback: 10_000,
+      screenReaderMode: true,
+      theme: {
+        background: readColor(styles, '--color-background', '#0b0c10'),
+        foreground: readColor(styles, '--color-text-primary', '#e7e7ea'),
+        cursor: readColor(styles, '--color-accent', '#c77dff'),
+        selectionBackground: readColor(styles, '--color-accent-subtle', '#40304d'),
+      },
+    })
+    const fitAddon = new FitAddon()
+    terminal.loadAddon(fitAddon)
+    terminal.open(container)
+    terminalRef.current = terminal
+    fitAddonRef.current = fitAddon
+
+    let disposed = false
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+
+    const connect = () => {
+      if (disposed || exitedRef.current) return
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const path = `/api/workspace-sidebar/terminal/sessions/${encodeURIComponent(session.id)}/socket`
+      const socket = new WebSocket(`${protocol}//${window.location.host}${path}?afterSeq=${lastSeqRef.current}`)
+      socketRef.current = socket
+      socket.onopen = () => {
+        onConnectionErrorRef.current('')
+        if (activeRef.current) {
+          fitAddon.fit()
+          sendResize(socket, terminal)
+          terminal.focus()
+        }
+      }
+      socket.onmessage = (event) => {
+        const message = JSON.parse(String(event.data)) as TerminalSocketEvent
+        if (typeof message.seq === 'number') lastSeqRef.current = Math.max(lastSeqRef.current, message.seq)
+        if (message.data) terminal.write(message.data)
+        if (message.type === 'exit') {
+          exitedRef.current = true
+          terminal.options.disableStdin = true
+          onExitRef.current()
+        }
+      }
+      socket.onclose = () => {
+        if (disposed || exitedRef.current) return
+        onConnectionErrorRef.current('终端连接已中断，正在自动重连…')
+        reconnectTimer = setTimeout(connect, 1_000)
+      }
+      socket.onerror = () => socket.close()
+    }
+
+    const input = terminal.onData((data) => {
+      const socket = socketRef.current
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'input', data }))
+    })
+    const resizeObserver = new ResizeObserver(() => {
+      if (!activeRef.current) return
+      fitAddon.fit()
+      sendResize(socketRef.current, terminal)
+    })
+    resizeObserver.observe(container)
+    connect()
+
+    return () => {
+      disposed = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      resizeObserver.disconnect()
+      input.dispose()
+      socketRef.current?.close()
+      terminal.dispose()
+      terminalRef.current = null
+      fitAddonRef.current = null
+    }
+  }, [session.id])
+
+  return (
+    <div
+      id={sessionPanelId(session.id)}
+      ref={containerRef}
+      className={`workspace-terminal-canvas${active ? ' is-active' : ''}`}
+      role="tabpanel"
+      aria-labelledby={sessionTabId(session.id)}
+      aria-hidden={!active}
+    />
+  )
+}
+
+function sendResize(socket: WebSocket | null, terminal: Terminal) {
+  if (socket?.readyState !== WebSocket.OPEN || terminal.cols < 2 || terminal.rows < 1) return
+  socket.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }))
+}
+
+function readColor(styles: CSSStyleDeclaration, name: string, fallback: string): string {
+  return styles.getPropertyValue(name).trim() || fallback
+}
+
 function sessionTabId(id: string): string {
-  return `iterm-session-tab-${encodeURIComponent(id)}`
+  return `terminal-session-tab-${encodeURIComponent(id)}`
 }
 
 function sessionPanelId(id: string): string {
-  return `iterm-session-panel-${encodeURIComponent(id)}`
+  return `terminal-session-panel-${encodeURIComponent(id)}`
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { FileDiff, RefreshCw } from 'lucide-react'
 import type { SessionSidebarContext } from './tabs'
 import { PanelEmpty, PanelError, PanelLoading, RetryButton } from './PanelState'
+import { ReadonlyCodeEditor } from './ReadonlyCodeEditor'
 
 interface ReviewFile {
   path: string
@@ -106,10 +107,14 @@ export function ReviewTab({ workspaceId }: SessionSidebarContext) {
           <div className="workspace-review-diff-heading">
             <FileDiff size={13} aria-hidden="true" />
             <span>差异预览</span>
-            {review.truncated ? <small>已截断</small> : null}
+            <small>{review.truncated ? '只读 · 已截断' : '只读'}</small>
           </div>
           {review.diff ? (
-            <pre className="workspace-review-diff" tabIndex={0}><code>{review.diff}</code></pre>
+            <ReadonlyCodeEditor
+              value={review.diff}
+              language="diff"
+              ariaLabel="只读 Git 差异"
+            />
           ) : (
             <div className="workspace-review-note">未跟踪文件会列在上方；加入 Git 后可查看行级差异。</div>
           )}

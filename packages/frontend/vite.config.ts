@@ -16,6 +16,7 @@ export default defineConfig({
       '/api': {
         target: process.env.MANTA_API_TARGET ?? 'http://127.0.0.1:3001',
         changeOrigin: true,
+        ws: true,
       },
     },
   },

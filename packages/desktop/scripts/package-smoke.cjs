@@ -167,7 +167,7 @@ async function bundleBackendForElectron(appDir) {
       '@llm': join(backendDist, 'core', 'llm'),
       '@routes': join(backendDist, 'routes'),
     },
-    external: ['better-sqlite3', '@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core', '@langchain/core/messages', '@manta/shared', '@manta/storage-hub', '@manta/contracts', '@manta/task-runtime', '@manta/skill-runtime'],
+    external: ['better-sqlite3', '@lydell/node-pty', '@langchain/openai', '@langchain/ollama', '@langchain/anthropic', '@langchain/core', '@langchain/core/messages', '@manta/shared', '@manta/storage-hub', '@manta/contracts', '@manta/task-runtime', '@manta/skill-runtime'],
     define: { 'import.meta.url': 'undefined' },
   })
   const backendManifestPath = join(backendDir, 'package.json')

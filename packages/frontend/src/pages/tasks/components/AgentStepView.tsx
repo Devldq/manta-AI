@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  CircleStop,
   Eye,
   FileSearch,
   FileText,
@@ -27,14 +28,20 @@ import { formatAgentRunDuration, isAgentRunTerminal } from '../runtime/agent-run
 
 const TOOL_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
   bash: Terminal,
+  bashKill: Terminal,
+  bashOutput: Terminal,
+  'batch-edit': Pencil,
   edit: Pencil,
   editFile: Pencil,
+  find: FileSearch,
   glob: FileSearch,
   grep: Search,
   listDirectory: Folder,
   lsDir: Folder,
   multiEdit: Pencil,
+  read: FileText,
   readFile: FileText,
+  search: Search,
   write: Pencil,
   writeFile: Pencil,
 }
@@ -182,11 +189,14 @@ export const AgentStepView = memo(function AgentStepView({
   if (groups.length === 0 && !agentRun) return null
 
   const effectiveStreaming = agentRun ? !terminal : isStreaming
+  const cancelled = agentRun?.status === 'cancelled' || agentRun?.phase === 'cancelled'
   const duration = formatAgentRunDuration(agentRun?.durationMs ?? agentRun?.usage?.durationMs)
   const totalTools = groups.reduce((count, group) => count + group.toolCalls.length, 0)
-  const summary = effectiveStreaming
-    ? `处理中${totalTools > 0 ? ` · ${totalTools} 个工具调用` : ''}`
-    : `已处理${duration ? ` ${duration}` : ''}`
+  const summary = cancelled
+    ? `已终止${duration ? ` ${duration}` : ''}`
+    : effectiveStreaming
+      ? `处理中${totalTools > 0 ? ` · ${totalTools} 个工具调用` : ''}`
+      : `已处理${duration ? ` ${duration}` : ''}`
 
   return (
     <div className="tool-events">
@@ -199,7 +209,11 @@ export const AgentStepView = memo(function AgentStepView({
           setExpanded((value) => !value)
         }}
       >
-        {effectiveStreaming ? <Loader2 size={16} className="tool-spinner" /> : <Wrench size={16} />}
+        {cancelled
+          ? <CircleStop size={16} />
+          : effectiveStreaming
+            ? <Loader2 size={16} className="tool-spinner" />
+            : <Wrench size={16} />}
         <span>{summary}</span>
         {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
