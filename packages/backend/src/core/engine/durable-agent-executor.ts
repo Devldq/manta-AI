@@ -33,6 +33,7 @@ export function createAgentRunExecutor(options: { processRegistry?: ProcessRegis
         conversationId: payload.conversationId,
         workspaceId: payload.workspaceId,
         messageId: payload.messageId,
+        historyMode: payload.historyMode,
         jobContext: context,
         processRegistry: options.processRegistry,
       })

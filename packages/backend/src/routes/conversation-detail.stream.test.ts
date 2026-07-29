@@ -2,7 +2,11 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import type { Job, JobEvent } from '@manta/contracts'
 import type { TaskRuntime } from '@manta/task-runtime'
-import { latestStreamingAgentJob, streamAgentJob } from './conversation-detail.js'
+import {
+  latestStreamingAgentJob,
+  normalizeAgentStreamRequestMessages,
+  streamAgentJob,
+} from './conversation-detail.js'
 import {
   decideBlankFinalResponse,
   needsFinalResponseSynthesis,
@@ -80,6 +84,23 @@ describe('streamAgentJob', () => {
     expect(payload).toContain('run.cancellation_requested')
     expect(payload).toContain('cancelling')
     expect(harness.response.end).not.toHaveBeenCalled()
+  })
+})
+
+describe('normalizeAgentStreamRequestMessages', () => {
+  it('prefers the incremental message payload', () => {
+    const current = { id: 'user-new', role: 'user', parts: [{ type: 'text', text: '继续' }] }
+
+    expect(normalizeAgentStreamRequestMessages({
+      message: current,
+      messages: [{ id: 'user-old', role: 'user', content: '旧消息' }],
+    })).toEqual([current])
+  })
+
+  it('keeps legacy full-message clients compatible', () => {
+    const messages = [{ id: 'user-old', role: 'user', content: '旧消息' }]
+
+    expect(normalizeAgentStreamRequestMessages({ messages })).toEqual(messages)
   })
 })
 
