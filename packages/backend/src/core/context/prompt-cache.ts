@@ -235,7 +235,7 @@ export class CacheStatsAccumulator {
  * - workingDirectory: 取决于 cwd（会话内不变）✓
  * - deferredTools: 工具列表可能变化（变化频率中）✓
  * - agentSoul: 取决于 soulPrompt（会话内不变）✓
- * - sessionContext: 会话消息数（每步变化）→ 应放在最后 ✓
+ * - sessionContext: 固定 Conversation 标识；消息数量只存在于 Messages 层 ✓
  *
  * 不需要额外排序。
  */

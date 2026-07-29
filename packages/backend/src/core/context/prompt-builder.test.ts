@@ -1,14 +1,21 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  buildSystemPromptWithStats,
   coreRules,
   projectInstructions,
   runtimeSecurityFacts,
   type PromptContext,
 } from './prompt-builder.js'
 import { loadProjectInstructions } from './project-instructions.js'
+
+vi.mock('@storage/memory', () => ({
+  getMemoryStore: () => ({
+    buildPromptSection: () => '# Memory\n\nNo saved memories.',
+  }),
+}))
 
 const promptContext: PromptContext = {
   toolCount: 0,
@@ -114,5 +121,35 @@ describe('project instructions', () => {
     fs.mkdirSync(path.join(directory, '.git'))
 
     expect(projectInstructions(directory)(promptContext)).toBeNull()
+  })
+})
+
+describe('run-start prompt snapshot', () => {
+  it('uses the supplied frozen tool summary instead of refreshing the registry', async () => {
+    const directory = createTemporaryDirectory()
+    fs.mkdirSync(path.join(directory, '.git'))
+
+    const result = await buildSystemPromptWithStats({
+      cwd: directory,
+      environment: {
+        cwd: directory,
+        os: 'darwin test',
+        shell: '/bin/zsh',
+        gitBranch: 'codex/five-layer-context',
+      },
+      toolContext: {
+        toolCount: 1,
+        deferredToolSummary: '# Run Tool Snapshot\n\n- `read`: Read files',
+      },
+      sessionId: 'conversation-id',
+      sessionMessageCount: 2,
+    })
+
+    expect(result.prompt).toContain('# Run Tool Snapshot')
+    expect(result.prompt).toContain('`read`: Read files')
+    expect(result.prompt).toContain('对话历史与工具结果位于 Messages 层')
+    expect(result.prompt).toContain('Operating system: darwin test')
+    expect(result.prompt).toContain('Shell: /bin/zsh')
+    expect(result.prompt).toContain('Git branch: codex/five-layer-context')
   })
 })

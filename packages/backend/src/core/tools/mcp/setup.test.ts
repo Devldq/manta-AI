@@ -28,7 +28,22 @@ vi.mock('./client.js', () => ({
 }))
 
 vi.mock('@tools/index', () => ({
-  createAllTools: () => [],
+  createAllTools: () => [
+    {
+      name: 'read',
+      description: 'Read files',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => 'read',
+    },
+    {
+      name: 'webSearch',
+      description: 'Search the web',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => 'web',
+      shouldDefer: true,
+      searchHint: 'web search internet',
+    },
+  ],
 }))
 
 vi.mock('../registry/tool-search.js', () => ({
@@ -38,6 +53,11 @@ vi.mock('../registry/tool-search.js', () => ({
     parameters: { type: 'object', properties: {} },
     execute: async () => [],
   }),
+}))
+
+vi.mock('@storage/skill/store', () => ({
+  listSkills: () => [],
+  getSkill: () => null,
 }))
 
 describe('MCP tool registry startup', () => {
@@ -53,6 +73,23 @@ describe('MCP tool registry startup', () => {
     ])
 
     expect(outcome).toBe('ready')
+    connectGate.release()
+  })
+
+  it('creates a prompt and executable tool snapshot from one registry state', async () => {
+    const { getAgentRunToolSnapshot } = await import('./setup.js')
+    const snapshot = await getAgentRunToolSnapshot('main')
+
+    expect(snapshot.toolCount).toBe(4)
+    expect(snapshot.coreToolNames).toEqual([
+      'read',
+      'tool_search',
+      'tool_invoke',
+      'skill_search',
+    ])
+    expect(snapshot.deferredToolNames).toEqual(['webSearch'])
+    expect(snapshot.deferredToolSummary).toContain('webSearch')
+    expect(Object.keys(snapshot.tools)).toEqual(snapshot.coreToolNames)
     connectGate.release()
   })
 })

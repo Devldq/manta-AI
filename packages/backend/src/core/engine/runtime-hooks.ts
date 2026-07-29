@@ -71,7 +71,7 @@ export interface AgentRuntimeEventMap {
     input: unknown
     publicReason?: string
     source: 'builtin' | 'mcp'
-    concurrency: 'shared' | 'exclusive'
+    concurrency: 'shared' | 'exclusive' | 'delegated'
   }
   'tool.completed': {
     toolName: string

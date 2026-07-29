@@ -24,6 +24,8 @@ export interface ToolDefinition {
   isConcurrencySafe?: boolean;
   /** 是否只读工具 */
   isReadOnly?: boolean;
+  /** 工具内部会委托 Registry 执行另一个工具，外层不应再次持有全局锁。 */
+  managesOwnConcurrency?: boolean;
   /** 执行结果最大字符数，超出则截断（默认 3000） */
   maxResultChars?: number;
   /** 工具执行函数 */

@@ -56,6 +56,13 @@ export interface RuntimeSecurityFacts {
   networkAccess?: boolean
 }
 
+export interface RuntimeEnvironmentFacts {
+  cwd: string
+  os: string
+  shell: string
+  gitBranch: string
+}
+
 /** Pipe 函数：接收上下文，返回 prompt 片段或 null（跳过） */
 export type PipeFn = (ctx: PromptContext) => string | null
 
@@ -211,11 +218,17 @@ Do not narrate hidden deliberation. Keep simple answers direct. End with what ch
 Assist with authorized defensive security, security research, CTFs, and education. Refuse destructive attacks, denial of service, mass targeting, supply-chain compromise, credential theft, or malicious detection evasion. Dual-use security work requires a clear authorized context.`
 }
 
-/** 工作目录引导 — 通过闭包注入 cwd */
-export function workingDirectory(cwd: string = process.cwd()): PipeFn {
-  return () => `# Working Directory
+/** 运行环境 — 在 Agent Run 启动时冻结 cwd、OS、Shell 和 Git 分支。 */
+export function workingDirectory(
+  cwd: string = process.cwd(),
+  environment?: RuntimeEnvironmentFacts | null,
+): PipeFn {
+  return () => `# Runtime Environment
 
-The current working directory for file operations is: ${cwd}
+Working directory: ${cwd}
+Operating system: ${environment?.os ?? process.platform}
+Shell: ${environment?.shell ?? 'unknown'}
+Git branch: ${environment?.gitBranch ?? 'unknown'}
 
 When accessing files:
 - Use paths relative to the working directory above
@@ -289,11 +302,13 @@ export function toolGuide(): PipeFn {
 
 ## 工具加载机制
 
-所有工具默认采用延迟加载。只有 \`tool_search\` 工具始终可见。
+高频文件、搜索和命令工具在当前 Run 启动时固定加载。低频内置工具、MCP 工具和 Skills 只在目录中展示名称与一句话描述。
 
-当需要调用某个工具时：
-1. 先调用 \`tool_search\`，传入工具名获取该工具的完整参数 Schema
-2. 拿到 Schema 后，再按需调用目标工具
+当需要低频或 MCP 工具时：
+1. 调用 \`tool_search\` 搜索能力并获取完整参数 Schema
+2. 调用固定的 \`tool_invoke\`，传入精确工具名和符合 Schema 的 arguments
+
+当需要 Skill 时，调用 \`skill_search\`；Skill 正文会作为工具结果进入 Messages，按其中说明执行。
 
 ## 真实性规则
 
@@ -320,19 +335,19 @@ export function agentSoul(soulPrompt?: string | null): PipeFn {
   }
 }
 
-/** 会话上下文 — 有历史消息时才输出 */
+/** 会话标识 — Conversation 生命周期内固定；消息数量只存在于 Messages 层。 */
 export function sessionContext(): PipeFn {
   return (ctx) => {
-    if (ctx.sessionMessageCount === 0) return null
-    return `[会话信息] 会话 ${ctx.sessionId.slice(0, 8)} 已有 ${ctx.sessionMessageCount} 条历史消息`
+    if (!ctx.sessionId) return null
+    return `[会话信息] Conversation ${ctx.sessionId.slice(0, 8)}；对话历史与工具结果位于 Messages 层。`
   }
 }
 
 /**
- * 跨会话记忆 — 自包含闭包，每次 build 实时从 MemoryStore 读取。
+ * 跨会话记忆 — 在 Conversation 固定上下文首次建立时从 MemoryStore 读取。
  *
- * 这样每步 API 调用都能看到最新的记忆内容（刚存的记忆立即可用，刚删的立即消失）。
- * "先静后动"原则：记忆在整轮对话中可能变化，放在靠后的位置。
+ * 当前 Conversation 内使用固定快照；新增或删除的记忆从新 Conversation 开始生效。
+ * 放在靠后的位置，保证前面的平台规则和环境前缀稳定。
  */
 export function memoryContext(): PipeFn {
   return () => {
@@ -350,8 +365,9 @@ export function createMantaPromptBuilder(options: {
   cwd?: string
   soulPrompt?: string | null
   runtimeFacts?: RuntimeSecurityFacts | null
+  environment?: RuntimeEnvironmentFacts | null
 } = {}): PromptBuilder {
-  const { cwd = process.cwd(), soulPrompt = null, runtimeFacts = null } = options
+  const { cwd = process.cwd(), soulPrompt = null, runtimeFacts = null, environment = null } = options
 
   // Pipe 注册顺序影响 KV Cache 命中率：
   // prompt 前缀不变 → 计算结果可复用。因此 不变的 section 放前面，变的放后面。
@@ -359,7 +375,7 @@ export function createMantaPromptBuilder(options: {
     .pipe('coreRules', coreRules())
     .pipe('runtimeSecurityFacts', runtimeSecurityFacts(runtimeFacts))
     .pipe('toolGuide', toolGuide())
-    .pipe('workingDirectory', workingDirectory(cwd))
+    .pipe('workingDirectory', workingDirectory(cwd, environment))
     .pipe('projectInstructions', projectInstructions(cwd))
     .pipe('deferredTools', deferredTools())
     .pipe('agentSoul', agentSoul(soulPrompt))
@@ -375,15 +391,18 @@ export async function buildSystemPromptWithStats(options: {
   soulPrompt?: string | null
   cwd?: string
   runtimeFacts?: RuntimeSecurityFacts | null
+  environment?: RuntimeEnvironmentFacts | null
   agentName?: string | null
+  /** Conversation 固定上下文建立时冻结的能力目录；不提供时兼容旧调用方并现场读取。 */
+  toolContext?: Pick<PromptContext, 'toolCount' | 'deferredToolSummary'>
   sessionId?: string
   sessionMessageCount?: number
   conversationId?: string
   messageId?: string
 } = {}): Promise<{ prompt: string; stats: PipeStats[]; debug(): PipeStats[] }> {
-  const { soulPrompt = null, cwd = process.cwd(), runtimeFacts = null, agentName = null, sessionId = '', sessionMessageCount = 0, conversationId = '', messageId = '' } = options
+  const { soulPrompt = null, cwd = process.cwd(), runtimeFacts = null, environment = null, agentName = null, toolContext: providedToolContext, sessionId = '', sessionMessageCount = 0, conversationId = '', messageId = '' } = options
 
-  const toolContext = await getAgentPromptToolContext(agentName)
+  const toolContext = providedToolContext ?? await getAgentPromptToolContext(agentName)
 
   const ctx: PromptContext = {
     toolCount: toolContext.toolCount,
@@ -392,7 +411,7 @@ export async function buildSystemPromptWithStats(options: {
     sessionId,
   }
 
-  const builder = createMantaPromptBuilder({ cwd, soulPrompt, runtimeFacts })
+  const builder = createMantaPromptBuilder({ cwd, soulPrompt, runtimeFacts, environment })
   const result = builder.buildWithStats(ctx)
 
   logger.info('Prompt Pipe 构建完成', {
