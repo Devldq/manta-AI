@@ -94,7 +94,7 @@ export class WorkspaceTerminalService {
     const ids = this.sessionIdsByScope.get(scope) ?? new Set<string>()
     ids.add(session.id)
     this.sessionIdsByScope.set(scope, ids)
-    this.publish(session, 'status', `${session.name} · ${basename(shell)} · ${input.cwd}\n`)
+    this.publish(session, 'status', `${session.name} · ${basename(shell)} · ${input.cwd}\r\n`)
 
     child.onData((data) => this.publish(session, 'output', data, 'stdout'))
     child.onExit(({ exitCode }) => {

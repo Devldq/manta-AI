@@ -27,6 +27,9 @@ describe('SessionSidebar', () => {
     expect(html).toContain('role="tablist"')
     expect(html).toContain('aria-label="工作区工具"')
     expect(html).toContain('aria-selected="true"')
+    expect(html).toContain('role="separator"')
+    expect(html).toContain('aria-label="调整工作区侧边栏宽度"')
+    expect(html).toContain('aria-valuenow="680"')
     for (const label of ['审阅', '终端', '文件', 'Logs']) expect(html).toContain(label)
   })
 

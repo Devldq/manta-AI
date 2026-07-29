@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
-import Editor, { loader, type Monaco } from '@monaco-editor/react'
+import Editor, { DiffEditor, loader, type Monaco } from '@monaco-editor/react'
 
 const DIFF_LANGUAGE = 'manta-unified-diff'
-let localMonacoSetup: Promise<void> | null = null
+type MonacoApi = typeof import('monaco-editor/esm/vs/editor/editor.api')
+type EditorColorMode = 'light' | 'dark'
+
+let localMonacoSetup: Promise<MonacoApi> | null = null
 
 function setupLocalMonaco() {
   if (localMonacoSetup) return localMonacoSetup
@@ -49,6 +52,7 @@ function setupLocalMonaco() {
         },
       })
     }
+    return monaco
   })()
   return localMonacoSetup
 }
@@ -90,20 +94,99 @@ function languageForPath(path?: string) {
   return LANGUAGE_BY_EXTENSION[extension] || 'plaintext'
 }
 
-function useSystemEditorTheme() {
-  const [theme, setTheme] = useState<'vs' | 'vs-dark'>(() => (
-    typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs'
-  ))
+export function resolveApplicationEditorMode(className: string, systemDark = false): EditorColorMode {
+  const classes = new Set(className.split(/\s+/).filter(Boolean))
+  if (classes.has('dark')) return 'dark'
+  if (classes.has('light')) return 'light'
+  return systemDark ? 'dark' : 'light'
+}
+
+function readApplicationEditorMode(): EditorColorMode {
+  if (typeof document === 'undefined') return 'light'
+  return resolveApplicationEditorMode(
+    document.documentElement.className,
+    window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
+  )
+}
+
+function useApplicationEditorTheme() {
+  const [snapshot, setSnapshot] = useState(() => ({ mode: readApplicationEditorMode(), revision: 0 }))
 
   useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)')
-    const updateTheme = () => setTheme(media.matches ? 'vs-dark' : 'vs')
+    const root = document.documentElement
+    const updateTheme = () => {
+      const mode = readApplicationEditorMode()
+      setSnapshot((current) => ({ mode, revision: current.revision + 1 }))
+    }
+    const observer = new MutationObserver(updateTheme)
+    observer.observe(root, { attributes: true, attributeFilter: ['class', 'style'] })
     updateTheme()
-    media.addEventListener('change', updateTheme)
-    return () => media.removeEventListener('change', updateTheme)
+    return () => observer.disconnect()
   }, [])
 
-  return theme
+  return snapshot
+}
+
+function rootColor(variable: string, fallback: string) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(variable).trim()
+  return /^#[\da-f]{6}$/i.test(value) ? value : fallback
+}
+
+function withAlpha(color: string, alpha: string, fallback: string) {
+  return /^#[\da-f]{6}$/i.test(color) ? `${color}${alpha}` : fallback
+}
+
+function tokenColor(color: string) {
+  return color.replace(/^#/, '')
+}
+
+function applyApplicationEditorTheme(monaco: MonacoApi, mode: EditorColorMode) {
+  const dark = mode === 'dark'
+  const background = rootColor('--color-background', dark ? '#0a0a14' : '#f8f6f0')
+  const surface = rootColor('--color-surface-elevated', dark ? '#1e1e2e' : '#ffffff')
+  const foreground = rootColor('--color-text-primary', dark ? '#e8e8e8' : '#1a1a1a')
+  const secondary = rootColor('--color-text-secondary', dark ? '#a0a0a0' : '#5a5a5a')
+  const muted = rootColor('--color-text-muted', dark ? '#707070' : '#8a8a8a')
+  const border = rootColor('--color-border', dark ? '#2a2a3a' : '#e0ddd5')
+  const borderSubtle = rootColor('--color-border-subtle', dark ? '#1a1a2a' : '#ece9e1')
+  const accent = rootColor('--color-accent', dark ? '#5ed68a' : '#2d8a4e')
+  const added = rootColor('--color-status-done', dark ? '#5ed68a' : '#22863a')
+  const deleted = rootColor('--color-status-failed', dark ? '#ff7b9c' : '#cf222e')
+  const themeName = `manta-${mode}`
+
+  monaco.editor.defineTheme(themeName, {
+    base: dark ? 'vs-dark' : 'vs',
+    inherit: true,
+    rules: [
+      { token: 'inserted', foreground: tokenColor(added) },
+      { token: 'deleted', foreground: tokenColor(deleted) },
+      { token: 'number', foreground: tokenColor(added), fontStyle: 'bold' },
+      { token: 'keyword', foreground: tokenColor(accent) },
+      { token: 'meta', foreground: tokenColor(secondary) },
+    ],
+    colors: {
+      'editor.background': background,
+      'editor.foreground': foreground,
+      'editorGutter.background': background,
+      'editorLineNumber.foreground': muted,
+      'editorLineNumber.activeForeground': secondary,
+      'editorCursor.foreground': accent,
+      'editor.selectionBackground': withAlpha(accent, '40', dark ? '#5ed68a40' : '#2d8a4e40'),
+      'editor.inactiveSelectionBackground': withAlpha(accent, '24', dark ? '#5ed68a24' : '#2d8a4e24'),
+      'editorIndentGuide.background1': borderSubtle,
+      'editorIndentGuide.activeBackground1': border,
+      'editorWhitespace.foreground': border,
+      'editorWidget.background': surface,
+      'editorWidget.border': border,
+      'editorHoverWidget.background': surface,
+      'editorHoverWidget.border': border,
+      'editorFindMatch.background': withAlpha(accent, '55', dark ? '#5ed68a55' : '#2d8a4e55'),
+      'scrollbarSlider.background': withAlpha(muted, '33', dark ? '#70707033' : '#8a8a8a33'),
+      'scrollbarSlider.hoverBackground': withAlpha(muted, '55', dark ? '#70707055' : '#8a8a8a55'),
+    },
+  })
+  monaco.editor.setTheme(themeName)
+  return themeName
 }
 
 export function ReadonlyCodeEditor({
@@ -117,21 +200,26 @@ export function ReadonlyCodeEditor({
   language?: 'diff'
   ariaLabel: string
 }) {
-  const theme = useSystemEditorTheme()
+  const applicationTheme = useApplicationEditorTheme()
+  const theme = `manta-${applicationTheme.mode}`
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState('')
 
   useEffect(() => {
     let active = true
-    void setupLocalMonaco().then(() => {
-      if (active) setReady(true)
+    void setupLocalMonaco().then((monaco) => {
+      applyApplicationEditorTheme(monaco, applicationTheme.mode)
+      if (active) {
+        setLoadError('')
+        setReady(true)
+      }
     }).catch((reason) => {
       if (active) setLoadError(reason instanceof Error ? reason.message : '内置编辑器加载失败')
     })
     return () => {
       active = false
     }
-  }, [])
+  }, [applicationTheme.mode, applicationTheme.revision])
 
   return (
     <div className="workspace-code-editor" data-editor-theme={theme}>
@@ -165,6 +253,76 @@ export function ReadonlyCodeEditor({
           wordWrap: 'off',
         }}
       /> : loadError ? null : <div className="file-preview-status">正在加载内置编辑器…</div>}
+    </div>
+  )
+}
+
+export function ReadonlyDiffEditor({
+  original,
+  modified,
+  path,
+  ariaLabel,
+}: {
+  original: string
+  modified: string
+  path: string
+  ariaLabel: string
+}) {
+  const applicationTheme = useApplicationEditorTheme()
+  const theme = `manta-${applicationTheme.mode}`
+  const [ready, setReady] = useState(false)
+  const [loadError, setLoadError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    void setupLocalMonaco().then((monaco) => {
+      applyApplicationEditorTheme(monaco, applicationTheme.mode)
+      if (active) {
+        setLoadError('')
+        setReady(true)
+      }
+    }).catch((reason) => {
+      if (active) setLoadError(reason instanceof Error ? reason.message : '内置差异编辑器加载失败')
+    })
+    return () => {
+      active = false
+    }
+  }, [applicationTheme.mode, applicationTheme.revision])
+
+  return (
+    <div className="workspace-code-editor" data-editor-theme={theme}>
+      {loadError ? <div className="file-preview-status is-error">{loadError}</div> : null}
+      {ready ? <DiffEditor
+        original={original}
+        modified={modified}
+        originalModelPath={`manta-diff://original/${path}`}
+        modifiedModelPath={`manta-diff://modified/${path}`}
+        language={languageForPath(path)}
+        theme={theme}
+        loading={<div className="file-preview-status">正在加载拆分差异…</div>}
+        options={{
+          readOnly: true,
+          domReadOnly: true,
+          originalEditable: false,
+          ariaLabel,
+          automaticLayout: true,
+          contextmenu: true,
+          diffCodeLens: false,
+          enableSplitViewResizing: true,
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          glyphMargin: false,
+          lineDecorationsWidth: 8,
+          lineNumbersMinChars: 3,
+          minimap: { enabled: false },
+          overviewRulerBorder: false,
+          renderOverviewRuler: false,
+          renderSideBySide: true,
+          scrollBeyondLastLine: false,
+          useInlineViewWhenSpaceIsLimited: false,
+          wordWrap: 'off',
+        }}
+      /> : null}
     </div>
   )
 }

@@ -39,3 +39,55 @@
 - The Codex in-app browser loaded the authenticated application shell but blocked the compiled JavaScript asset; therefore the active visual state was captured with a static fixture that uses the implementation DOM and CSS, while the real Desktop screenshot confirms the integrated layout in the completed state.
 
 final result: passed
+
+---
+
+# Review Workspace Design QA
+
+- Source visual truth:
+  - `/var/folders/m1/lc3l7y696010cp1f23dwyz540000gn/T/codex-clipboard-1f46b225-7478-4a46-9881-7de928296413.png`
+  - `/var/folders/m1/lc3l7y696010cp1f23dwyz540000gn/T/codex-clipboard-18d24f0d-f22c-40f1-8009-5be12942d512.png`
+- Implementation screenshot: `/tmp/manta-review-implementation-clean.png`
+- Focused commit screenshot: `/tmp/manta-review-commit-final.png`
+- Comparison boards:
+  - `/tmp/manta-review-final-comparison.png`
+  - `/tmp/manta-review-commit-final-comparison.png`
+- Viewport: 1000 × 1200 CSS px
+- Source pixels: 960 × 1738 and 846 × 594
+- Implementation pixels: 1000 × 1200
+- Density normalization: reference and implementation were resized to equal comparison heights before side-by-side review.
+- State: light theme, unified diff selected for the full view; split diff and open commit panel checked as focused interaction states.
+
+## Findings
+
+- No actionable P0/P1/P2 mismatch remains.
+- The implementation preserves Manta's compact workspace density while matching the reference hierarchy: branch and line statistics, file navigation, selected-file diff, view switch, and commit actions.
+- The commit panel is intentionally shorter than the modal-like reference because it is embedded in the persistent workspace sidebar.
+
+## Required Fidelity Surfaces
+
+- Fonts and typography: existing Manta sans and monospace tokens are retained; labels, paths, statistics, and code keep their established hierarchy and truncation.
+- Spacing and layout rhythm: file navigation and diff remain side-by-side at desktop width; controls use compact existing radii and spacing.
+- Colors and visual tokens: all controls and Monaco surfaces use Manta theme variables; light mode was visually verified.
+- Image quality and asset fidelity: no raster assets are required; interface icons use the project's existing icon package.
+- Copy and content: Chinese action labels clearly distinguish unified/split, commit, commit-and-push, push, and include-unstaged behavior.
+
+## Interaction Evidence
+
+- Clicking a file updated both selected state and the diff heading/content.
+- Unified and split controls switched to Monaco's real side-by-side diff editor.
+- Hiding the file list removed the navigation and expanded the diff preview to the full width; showing restored it.
+- Opening the commit panel exposed the message field, checked include-unstaged option, and all three Git actions.
+- Entering a commit message enabled Commit and Commit & Push; Push remained disabled at ahead `0`.
+- A fresh browser tab reported no console warnings or errors.
+
+## Comparison History
+
+- Initial QA harness inherited the host dark preference while the surrounding fixture was light. The harness was normalized to Manta's `light` root class, then recaptured.
+- Post-fix evidence: `/tmp/manta-review-implementation-clean.png` and `/tmp/manta-review-commit-final.png`.
+
+## Follow-up Polish
+
+- P3: a future iteration could add a draggable divider between the file list and diff preview.
+
+final result: passed

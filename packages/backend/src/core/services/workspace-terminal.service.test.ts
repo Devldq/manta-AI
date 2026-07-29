@@ -25,6 +25,10 @@ describe('WorkspaceTerminalService', () => {
       expect(first).toMatchObject({ name: '终端 1', provider: 'system-shell', status: 'running' })
       expect(second).toMatchObject({ name: '终端 2', provider: 'system-shell', status: 'running' })
       expect(service.list('workspace-a', 'conversation-a').map((session) => session.id)).toEqual([first.id, second.id])
+      expect(service.events(first.id)[0]).toMatchObject({
+        type: 'status',
+        data: `终端 1 · ${first.shell.split('/').at(-1)} · ${cwd}\r\n`,
+      })
 
       service.write(second.id, "printf '__MANTA_TERMINAL_TWO__\\n'\r")
       await waitFor(() => service.events(second.id).some(
