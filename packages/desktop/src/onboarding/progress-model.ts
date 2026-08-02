@@ -7,7 +7,7 @@ const LABELS: Record<OnboardingProgressStepId, string> = {
   'write-manifest': '写入存储清单',
   'commit-bootstrap': '提交 Bootstrap 配置',
   'verify-storage': '验证目录与分组健康状态',
-  'initialize-services': '初始化 ASH 与 Codex 服务',
+  'initialize-services': '初始化 Manta AI 服务',
   'start-backend': '启动 Backend 并完成健康检查',
   'open-main': '打开 Manta AI',
 }

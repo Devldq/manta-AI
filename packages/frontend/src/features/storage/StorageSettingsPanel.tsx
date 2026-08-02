@@ -7,7 +7,6 @@ import { StorageOverview } from './StorageOverview'
 import { StorageVolumeCard } from './StorageVolumeCard'
 import { storageApi, type StorageBackup, type StorageGitBinding, type StorageGitCapability, type StorageOverview as Overview, type StorageVolumeDetails } from './storage-api'
 import { useStorageOperation } from './useStorageOperation'
-import { AgentConnectionsSection } from './AgentConnectionsSection'
 import { StoragePageHeader, StorageSection, StorageSkeleton } from './StoragePrimitives'
 import { formatStorageBytes, formatStorageOperation } from './storage-ui'
 import './storage.css'
@@ -56,7 +55,7 @@ export function StorageVolumesEmpty({ busy, onCreate }: { busy: boolean; onCreat
   return <div className="storage-empty storage-empty--action" role="status">
     <div>
       <strong>No storage volumes</strong>
-      <p>Create a volume to initialize ASH storage in a location you choose.</p>
+      <p>Create a volume to initialize Manta AI storage in a location you choose.</p>
     </div>
     <button type="button" className="storage-button storage-button--primary" disabled={busy} onClick={onCreate}>Create volume</button>
   </div>
@@ -137,7 +136,7 @@ export function StorageSettingsPanel() {
       setActionError(reason instanceof Error ? reason : new Error(String(reason)))
     }
   }, [run])
-  const createVolume = () => setDialog({ title: 'Create storage volume', body: `Choose a parent folder. ASH will create a ${ASH_VOLUME_DIR_NAME} directory inside it.`, confirmLabel: 'Choose location', action: async () => { const selected = await invokeStorage({ channel: 'storage:select-parent', purpose: 'createVolume' }); if (selected.kind !== 'parent-selected' || !selected.selectionId) return; const created = await invokeStorage({ channel: 'storage:create-volume', selectionId: selected.selectionId, name: `Volume ${volumes.length + 1}` }); if (created.kind !== 'volume-created') throw new Error('Storage volume creation did not return a volume identifier'); await reconcile() } })
+  const createVolume = () => setDialog({ title: 'Create storage volume', body: `Choose a parent folder. Manta AI will create a ${ASH_VOLUME_DIR_NAME} directory inside it.`, confirmLabel: 'Choose location', action: async () => { const selected = await invokeStorage({ channel: 'storage:select-parent', purpose: 'createVolume' }); if (selected.kind !== 'parent-selected' || !selected.selectionId) return; const created = await invokeStorage({ channel: 'storage:create-volume', selectionId: selected.selectionId, name: `Volume ${volumes.length + 1}` }); if (created.kind !== 'volume-created') throw new Error('Storage volume creation did not return a volume identifier'); await reconcile() } })
   const migrateVolume = (volume: StorageVolumeDetails) => setDialog({ title: `Migrate ${volume.name}`, body: 'A verified backup remains at the current location. The app relaunches only after the new volume is committed and healthy.', confirmLabel: 'Choose new location', action: async () => { const selected = await invokeStorage({ channel: 'storage:select-parent', purpose: 'migrateVolume' }); if (selected.kind === 'parent-selected' && selected.selectionId) await run({ channel: 'storage:relocate-volume', volumeId: volume.id, selectionId: selected.selectionId }) } })
   const moveGroup = (groupId: StorageGroupId, targetVolumeId: string) => setDialog({ title: 'Move storage group', body: 'The group is copied, validated, and then committed atomically. Its source remains an automatic backup.', confirmLabel: 'Move group', action: () => run({ channel: 'storage:move-group', groupId, targetVolumeId }) })
   const operationFailed = operation.operation?.status === 'failed' || operation.operation?.phase === 'failed'
@@ -173,7 +172,7 @@ export function StorageSettingsPanel() {
       <span>{error.message}</span>
       <button type="button" className="storage-button" onClick={() => void refresh().catch((reason) => setError(reason as Error))}>Retry</button>
     </div> : <>
-      <StorageSection title="Volumes" description="Physical locations managed by ASH.">
+      <StorageSection title="Volumes" description="Physical locations managed by Manta AI.">
         {volumes.length === 0 ? <StorageVolumesEmpty busy={busy} onCreate={createVolume} /> : <div className="storage-volumes">{volumes.map((volume) => <StorageVolumeCard
           key={volume.id}
           volume={volume}
@@ -197,7 +196,6 @@ export function StorageSettingsPanel() {
       <StorageSection title="Storage groups" description="Seven portable data domains routed across your volumes.">
         <StorageOverview overview={overview} onMove={moveGroup} disabled={busy} />
       </StorageSection>
-      <AgentConnectionsSection />
       <StorageSection title="Automatic backups" description="Verified inactive copies retained after storage changes.">
         {backups.length === 0 ? <div className="storage-empty storage-empty--compact">
           <strong>No automatic backups</strong>

@@ -24,7 +24,7 @@ import { isServiceDescriptorLive, readServiceDescriptor, serviceLogPath } from '
 import { followLogFile, type StopFollowingLog } from './logging/followLogFile'
 
 interface BackendModule {
-  createBackendStorageComposition(store: BootstrapStore, options?: { onProgress?: (progress: unknown) => void; onAgentProgress?: (progress: unknown) => void; deferAgentRecovery?: boolean }): Promise<any>
+  createBackendStorageComposition(store: BootstrapStore, options?: { onProgress?: (progress: unknown) => void }): Promise<any>
   startServer(options: any): Promise<any>
 }
 
@@ -260,7 +260,7 @@ let qdrant: ManagedQdrant | undefined
 let disposeStorageIpc: (() => void) | undefined
 let disposeLegacyIpc: (() => void) | undefined
 let quitting = false
-let exclusiveStorageSession: { id: string; kind: 'git-import' | 'agent-plan'; composition: any; timer: NodeJS.Timeout } | undefined
+let exclusiveStorageSession: { id: string; kind: 'git-import'; composition: any; timer: NodeJS.Timeout } | undefined
 const selections = new SelectionStore()
 const bootstrapPath = () => join(app.getPath('userData'), 'ash-bootstrap.json')
 let sharedControlStore: StorageControlStore | undefined
@@ -311,13 +311,10 @@ async function withExclusiveStorage<T>(operation: (value: any) => Promise<T>): P
   await stopLocalService(app.getPath('userData')).catch(() => false)
   const backend = await importEsm('@manta/backend') as BackendModule
   const value = await backend.createBackendStorageComposition(new BootstrapStore(bootstrapPath()), {
-    deferAgentRecovery: true,
-    onAgentProgress: (progress: unknown) => activeWindow?.webContents.send('storage:agent-progress', progress),
     onProgress: (progress: unknown) => activeWindow?.webContents.send('storage:progress', progress),
   })
   try {
     await value.hub.migrations?.recoverPending()
-    await value.activateAgents()
     return await operation(value)
   } finally {
     await value.runtime.close().catch(() => undefined)
@@ -340,12 +337,9 @@ async function openExclusiveStorage(): Promise<any> {
   await stopLocalService(app.getPath('userData')).catch(() => false)
   const backend = await importEsm('@manta/backend') as BackendModule
   const current = await backend.createBackendStorageComposition(new BootstrapStore(bootstrapPath()), {
-    deferAgentRecovery: true,
-    onAgentProgress: (progress: unknown) => activeWindow?.webContents.send('storage:agent-progress', progress),
     onProgress: (progress: unknown) => activeWindow?.webContents.send('storage:progress', progress),
   })
   await current.hub.migrations?.recoverPending()
-  await current.activateAgents()
   return current
 }
 
@@ -361,7 +355,7 @@ async function closeExclusiveStorageSession(session: NonNullable<typeof exclusiv
   if (restart) await restartServiceRenderer()
 }
 
-async function beginExclusiveStorageSession<T>(kind: 'git-import' | 'agent-plan', operation: (current: any) => Promise<T>, sessionId: (value: T) => string): Promise<T> {
+async function beginExclusiveStorageSession<T>(kind: 'git-import', operation: (current: any) => Promise<T>, sessionId: (value: T) => string): Promise<T> {
   const current = await openExclusiveStorage()
   try {
     const value = await operation(current)
@@ -379,7 +373,7 @@ async function beginExclusiveStorageSession<T>(kind: 'git-import' | 'agent-plan'
   }
 }
 
-async function useExclusiveStorageSession<T>(kind: 'git-import' | 'agent-plan', id: string, operation: (current: any) => Promise<T>): Promise<T> {
+async function useExclusiveStorageSession<T>(kind: 'git-import', id: string, operation: (current: any) => Promise<T>): Promise<T> {
   const session = exclusiveStorageSession
   if (!session || session.kind !== kind || session.id !== id) throw Object.assign(new Error('Storage plan is unknown, expired, or already used'), { code: 'STORAGE_PLAN_INVALID' })
   try { return await operation(session.composition) }
@@ -393,7 +387,6 @@ function startExternalTrackedMigration(kind: 'volume' | 'group', value: string, 
     await stopLocalService(app.getPath('userData')).catch(() => false)
     const backend = await importEsm('@manta/backend') as BackendModule
     const current = await backend.createBackendStorageComposition(new BootstrapStore(bootstrapPath()), {
-      deferAgentRecovery: true,
       onProgress: (progress: unknown) => activeWindow?.webContents.send('storage:progress', progress),
     })
     try {
@@ -436,10 +429,6 @@ function installServiceStorageIpc(origin: string): void {
       return { volumeId, sessionId: result.sessionId, ...result.plan }
     },
     applyGitImport: (volumeId, input) => useExclusiveStorageSession('git-import', input.sessionId, (current) => current.git.applyRemoteImport(volumeId, input)),
-    agentPlanImport: (adapterId, installationId, assetIds, senderId) => beginExclusiveStorageSession('agent-plan', (current) => current.agents.mutations.previewImport(adapterId, installationId, assetIds, senderId), (value: any) => value.planSessionId),
-    agentPlanProjection: (adapterId, installationId, assetIds, senderId) => beginExclusiveStorageSession('agent-plan', (current) => current.agents.mutations.previewProjection(adapterId, installationId, assetIds, senderId), (value: any) => value.planSessionId),
-    agentApply: (planSessionId, senderId) => useExclusiveStorageSession('agent-plan', planSessionId, (current) => current.agents.mutations.apply(planSessionId, senderId)),
-    agentRollback: (operationId) => withExclusiveStorage((current) => current.agents.mutations.rollback(operationId)),
   } })
 }
 
@@ -485,10 +474,6 @@ function installMainStorageIpc(origin: string): void {
     async applyGitImport(volumeId, input) {
       await composition.git.applyRemoteImport(volumeId, input)
     },
-    agentPlanImport: (adapterId, installationId, assetIds, senderId) => composition.agents.mutations.previewImport(adapterId, installationId, assetIds, senderId),
-    agentPlanProjection: (adapterId, installationId, assetIds, senderId) => composition.agents.mutations.previewProjection(adapterId, installationId, assetIds, senderId),
-    agentApply: (planSessionId, senderId) => composition.agents.mutations.apply(planSessionId, senderId),
-    agentRollback: (operationId) => composition.agents.mutations.rollback(operationId),
   } })
 }
 
@@ -496,7 +481,7 @@ let disposeOnboarding: (() => void) | undefined
 const controller = new DesktopLifecycleController({
   async readBootstrap() { return new BootstrapStore(bootstrapPath()).read() },
   preflightStorage: (...bootstraps) => upgradeBootstrapVolumeDirectories(...bootstraps),
-  async recover() { if (!shouldRecoverStorageInDesktopProcess()) return; const bootstrapStore=new BootstrapStore(bootstrapPath()); qdrant ??= await startManagedQdrant(); const before=await bootstrapStore.read(); const journal=before?.pendingMigration; const trackedKind=journal&&trackedRecoveredMigrationKind(journal); const backend = await importEsm('@manta/backend'); composition = await (backend as BackendModule).createBackendStorageComposition(bootstrapStore, { deferAgentRecovery: true, onAgentProgress: (progress: unknown) => activeWindow?.webContents.send('storage:agent-progress', progress), onProgress: (raw: unknown) => { const progress=raw as StorageOperationProgress; if(shouldTrackStorageProgress(progress)){const prior=progressTails.get(progress.operationId) ?? Promise.resolve(); const next=prior.then(()=>controlStore().recordProgress(progress)); progressTails.set(progress.operationId,next.catch(()=>{})); void next.catch(()=>{})} activeWindow?.webContents.send('storage:progress',progress) } }); try { await composition.hub.migrations?.recoverPending(); await composition.activateAgents(); if (journal&&trackedKind) { await controlStore().startOperation(journal.id,trackedKind); const after=await bootstrapStore.read(); if (['planned','quiescing','copying','validating'].includes(journal.phase) || !before?.previous || !after) await controlStore().failOperation(journal.id,new Error('Migration rolled back during startup recovery')); else { const previous={schemaVersion:1 as const,...before.previous}; const value=trackedKind==='volume'?journal.sourceVolumeId:journal.groups[0]; await controlStore().completeOperation(journal.id,buildBackupRefs(journal.id,trackedKind,previous,after,value),{previous,current:after}) } }
+  async recover() { if (!shouldRecoverStorageInDesktopProcess()) return; const bootstrapStore=new BootstrapStore(bootstrapPath()); qdrant ??= await startManagedQdrant(); const before=await bootstrapStore.read(); const journal=before?.pendingMigration; const trackedKind=journal&&trackedRecoveredMigrationKind(journal); const backend = await importEsm('@manta/backend'); composition = await (backend as BackendModule).createBackendStorageComposition(bootstrapStore, { onProgress: (raw: unknown) => { const progress=raw as StorageOperationProgress; if(shouldTrackStorageProgress(progress)){const prior=progressTails.get(progress.operationId) ?? Promise.resolve(); const next=prior.then(()=>controlStore().recordProgress(progress)); progressTails.set(progress.operationId,next.catch(()=>{})); void next.catch(()=>{})} activeWindow?.webContents.send('storage:progress',progress) } }); try { await composition.hub.migrations?.recoverPending(); if (journal&&trackedKind) { await controlStore().startOperation(journal.id,trackedKind); const after=await bootstrapStore.read(); if (['planned','quiescing','copying','validating'].includes(journal.phase) || !before?.previous || !after) await controlStore().failOperation(journal.id,new Error('Migration rolled back during startup recovery')); else { const previous={schemaVersion:1 as const,...before.previous}; const value=trackedKind==='volume'?journal.sourceVolumeId:journal.groups[0]; await controlStore().completeOperation(journal.id,buildBackupRefs(journal.id,trackedKind,previous,after,value),{previous,current:after}) } }
     cloudSync = createCloudSyncRuntime({
       volumes: async () => {
         const [bootstrap, bindings] = await Promise.all([bootstrapStore.read(), composition.git.listBindings()])
@@ -510,7 +495,7 @@ const controller = new DesktopLifecycleController({
     })
   } catch(error) { if (journal&&trackedKind) { await controlStore().startOperation(journal.id,trackedKind); await controlStore().failOperation(journal.id,error) } throw error } },
   async composeStorage() { return useLocalService ? { runtime: undefined, hub: {} } : composition },
-  async startServer({ storage, bundledSeedRoot }) { if (useLocalService) return serviceRendererHandle(); const backend = await importEsm('@manta/backend') as BackendModule; await cloudSync?.start(); return backend.startServer({ storage, port: 0, host: '127.0.0.1', bundledSeedRoot, frontendDist: app.isPackaged ? join(process.resourcesPath, 'frontend', 'dist') : join(__dirname, '../../frontend/dist'), isDev: false, storageApi: { readBootstrap: () => new BootstrapStore(bootstrapPath()).read(), inventory: composition.hub.inventory, capacityMetrics: composition.hub.capacityMetrics, volumeHealth: async () => cloudSync?.health() ?? {}, getOperation:(id:string)=>controlStore().getOperation(id), listOperations:()=>controlStore().listOperations(), listBackups, agents: composition.agents.readModel, git: { capability: () => composition.git.capability(), bindings: () => composition.git.listBindings(), status: (volumeId:string) => composition.git.status(volumeId), history: (volumeId:string) => composition.git.history(volumeId) } } }) },
+  async startServer({ storage, bundledSeedRoot }) { if (useLocalService) return serviceRendererHandle(); const backend = await importEsm('@manta/backend') as BackendModule; await cloudSync?.start(); return backend.startServer({ storage, port: 0, host: '127.0.0.1', bundledSeedRoot, frontendDist: app.isPackaged ? join(process.resourcesPath, 'frontend', 'dist') : join(__dirname, '../../frontend/dist'), isDev: false, storageApi: { readBootstrap: () => new BootstrapStore(bootstrapPath()).read(), inventory: composition.hub.inventory, capacityMetrics: composition.hub.capacityMetrics, volumeHealth: async () => cloudSync?.health() ?? {}, getOperation:(id:string)=>controlStore().getOperation(id), listOperations:()=>controlStore().listOperations(), listBackups, git: { capability: () => composition.git.capability(), bindings: () => composition.git.listBindings(), status: (volumeId:string) => composition.git.status(volumeId), history: (volumeId:string) => composition.git.history(volumeId) } } }) },
   async openOnboarding() { disposeOnboarding?.(); onboardingHandoff=false; onboardingWindow = createOnboardingWindow(); disposeOnboarding = registerSecureOnboardingIpc({ ipcMain, getWindow: () => onboardingWindow, dialog, app, selections, bootstrapPath: bootstrapPath(), initializeStorage: initializeStorageDirectory, completeInitialization: (onProgress) => controller.continueAfterOnboarding(onProgress), onInitialized() { const completedWindow=onboardingWindow; onboardingHandoff=true; setImmediate(() => { if (completedWindow && onboardingWindow===completedWindow) { disposeOnboarding?.(); disposeOnboarding=undefined; completedWindow.close() } }) }, onboardingUrl: onboardingPageUrl() }); const senderId = onboardingWindow.webContents.id; onboardingWindow.on('closed', () => { const completedHandoff=onboardingHandoff; onboardingHandoff=false; selections.clearSender(senderId); onboardingWindow = undefined; if (!quitting && !completedHandoff) app.quit() }) },
   async openMain(url) { activeWindow = createMainWindow(url, { forwardConsole: !app.isPackaged }); if (useLocalService) installServiceStorageIpc(new URL(url).origin); else installMainStorageIpc(url); disposeLegacyIpc?.(); disposeLegacyIpc = registerLegacyIpc(); const senderId = activeWindow.webContents.id; activeWindow.on('closed', () => { selections.clearSender(senderId); activeWindow = undefined }) },
   async readRelaunchIntent() { const intent=await controlStore().readIntent(); if(!intent)return undefined; const active=await new BootstrapStore(bootstrapPath()).read(); try { if(!active) throw new Error('Bootstrap is missing'); return await validateRelaunchIntent(intent,active,controlStore()) } catch(error) { await controlStore().quarantineIntent(); throw Object.assign(error as Error,{code:'RELAUNCH_INTENT_INVALID'}) } },

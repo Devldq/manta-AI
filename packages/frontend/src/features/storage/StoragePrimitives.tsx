@@ -36,7 +36,7 @@ export function StoragePageHeader({ status, disabled, onCreate, createButtonRef 
         </span>
         <div>
           <h2>Storage</h2>
-          <p>Manage ASH storage locations, groups, and connected Agent data.</p>
+          <p>Manage Manta AI storage locations, groups, and synchronization.</p>
         </div>
       </div>
       <div className="storage-page__commands">
@@ -86,7 +86,6 @@ export function StorageSkeleton() {
       <span className="storage-sr-only">Loading storage status</span>
       <span aria-hidden="true" className="storage-skeleton__section storage-skeleton__section--volume" />
       <span aria-hidden="true" className="storage-skeleton__section storage-skeleton__section--groups" />
-      <span aria-hidden="true" className="storage-skeleton__section storage-skeleton__section--agent" />
       <span aria-hidden="true" className="storage-skeleton__section storage-skeleton__section--backups" />
     </div>
   )

@@ -1,7 +1,7 @@
 /* MemoryStore — 记忆系统存储层
  *
  * 架构：MEMORY.md 索引 + 独立 .md 文件（YAML frontmatter 格式）
- * Storage path: ASH work/memory.
+ * Storage path: Manta storage work/memory.
  *
  * 硬性约束：
  * - MAX_INDEX_LINES = 200  — 索引最多 200 行，低价值记忆自然淘汰

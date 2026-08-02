@@ -1,6 +1,4 @@
 import {
-  AgentStorageProgressSchema,
-  type AgentStorageProgress,
   type StorageIpcRequest,
   type StorageIpcResponse,
   type StorageOperationProgress,
@@ -19,14 +17,6 @@ export function createStorageRendererBridge(ipc: StorageIpcRenderer) {
       const listener = (_event: unknown, progress: unknown) => callback(progress as StorageOperationProgress)
       ipc.on('storage:progress', listener)
       return () => ipc.removeListener('storage:progress', listener)
-    },
-    subscribeAgentProgress(callback: (progress: AgentStorageProgress) => void) {
-      const listener = (_event: unknown, progress: unknown) => {
-        const parsed = AgentStorageProgressSchema.safeParse(progress)
-        if (parsed.success) callback(parsed.data)
-      }
-      ipc.on('storage:agent-progress', listener)
-      return () => ipc.removeListener('storage:agent-progress', listener)
     },
   }
 }

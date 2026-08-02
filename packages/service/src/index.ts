@@ -153,28 +153,10 @@ export async function startLocalService(options: LocalServiceOptions = {}): Prom
     })
     recordStartupPhase('start-qdrant')
     composition = await createBackendStorageComposition(bootstrapStore, {
-      deferAgentRecovery: true,
       localCacheRoot: join(home, 'cache'),
     })
     recordStartupPhase('compose-storage')
     const activeComposition = composition
-    const agentStorageStartedAt = performance.now()
-    const agentStorage = activeComposition.activateAgents().then((value) => {
-      process.stdout.write(`MANTA_STARTUP_BACKGROUND_TIMING ${JSON.stringify({
-        phase: 'activate-agent-storage',
-        durationMs: Math.round(performance.now() - agentStorageStartedAt),
-      })}\n`)
-      return value
-    })
-    // Agent storage is isolated from the task/project path. Its routes await
-    // this promise on demand while the core Service can become ready.
-    void agentStorage.catch(() => undefined)
-    const agentReadModel = {
-      agents: async () => (await agentStorage).readModel.agents(),
-      assets: async (adapterId: string, installationId: string) => (await agentStorage).readModel.assets(adapterId, installationId),
-      reuse: async () => (await agentStorage).readModel.reuse(),
-      operation: async (operationId: string) => (await agentStorage).readModel.operation(operationId),
-    }
     const taskRuntimeDatabase = await prepareTaskRuntimeDatabase({
       home,
       legacyDatabasePath: activeComposition.runtime.resolve('work', 'jobs', 'jobs.sqlite'),
@@ -193,7 +175,6 @@ export async function startLocalService(options: LocalServiceOptions = {}): Prom
         inventory: activeComposition.hub.inventory,
         capacityMetrics: activeComposition.hub.capacityMetrics,
         listBackups: async () => [],
-        agents: agentReadModel,
         git: {
           capability: () => activeComposition.git.capability(),
           bindings: () => activeComposition.git.listBindings(),

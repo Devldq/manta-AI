@@ -1,5 +1,7 @@
 # Agent Storage Hub verification record
 
+> Historical record. The external Codex adapter/Agent Connections scope and its Phase 4 verification were removed on 2026-08-02. Current verification covers Manta AI storage and synchronization only; do not use the Phase 4 evidence below as a current product contract.
+
 Verified on 2026-07-15 and completed on 2026-07-16 from branch `codex/agent-storage-hub`, using an isolated worktree based on `d338928` plus the Task 20 changes, on Windows with pnpm 10.30.3. The design source is [2026-07-11-agent-storage-hub-design.md](../specs/2026-07-11-agent-storage-hub-design.md).
 
 ## Requirement-to-evidence matrix

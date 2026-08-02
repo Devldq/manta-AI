@@ -45,7 +45,7 @@ async function runPackageSmoke(): Promise<void> {
     const bootstrap = { schemaVersion: 1 as const, generation: 1, volumes: [{ id: volumeId, name: 'Smoke', parentPath, createdAt: now, updatedAt: now }], groupAssignments: Object.fromEntries(storageHub.STORAGE_GROUP_IDS.map((group) => [group, volumeId])) }
     const store = new storageHub.BootstrapStore(join(dirname(markerPath), 'ash-bootstrap.json'))
     await store.write(bootstrap as any)
-    const composition = await backend.createBackendStorageComposition(store, { deferAgentRecovery: true })
+    const composition = await backend.createBackendStorageComposition(store)
     marker.composition = true
     await persistMarker()
     const server = await backend.startServer({ storage: composition.runtime, port: 0, host: '127.0.0.1', startSchedulers: false, startup: false, isDev: true })

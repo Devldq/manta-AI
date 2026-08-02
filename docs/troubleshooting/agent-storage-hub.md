@@ -20,10 +20,6 @@ Check that the volume has at most one binding, the cloud folder is online, no mi
 
 The secrets group is excluded from Git by default. Enabling it requires the native high-risk confirmation for that exact volume; a normal Git configuration confirmation cannot enable it. If you disable it, run Sync now to commit removal from the current snapshot. Active secrets remain in ASH, but any copies already committed may remain in Git history. Treat private repositories as risk reduction, not absolute safety.
 
-## Codex import or projection failed
-
-Run Detect and Inspect again, create a new preview, and approve that exact preview. Plans are one-use and reject stale source or target state. A failed apply records rollback evidence; use Roll back from Agent Connections. Raw MCP credential values are never accepted in portable plans.
-
 ## Collecting safe diagnostics
 
 Record the Manta version, operating system, Storage status/error text, volume and group IDs, operation ID, and whether the path is local or cloud-backed. Do not attach the secrets group, `.env` files, Git credentials, MCP tokens, an entire `manta-ai-data` volume, or `ash-bootstrap.json`. Developers should reproduce with the commands in [ASH development and packaging](../development/agent-storage-hub.md) and include only sanitized command output.

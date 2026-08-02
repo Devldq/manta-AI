@@ -66,7 +66,6 @@ describe('backend lifecycle', () => {
     const composition = await createBackendStorageComposition(bootstrap)
     expect(composition.hub.migrations).toBeDefined()
     expect(composition.hub.drivers).toBe(composition.runtime.drivers)
-    expect(composition.agents.readModel).toBeDefined(); expect(composition.agents.mutations).toBeDefined()
     expect((await composition.hub.migrations!.recoverPending())?.generation).toBe(1)
     await composition.runtime.close()
   })
@@ -76,7 +75,7 @@ describe('backend lifecycle', () => {
     const bootstrap = new BootstrapStore(join(base, 'bootstrap.json')); const now = new Date().toISOString(); const groups = ['config', 'secrets', 'extensions', 'knowledge', 'work', 'diagnostics', 'cache'] as StorageGroupId[]
     const snapshot = { generation: 1, volumes: [{ id: 'source', name: 'Source', parentPath: source, createdAt: now, updatedAt: now }, { id: 'target', name: 'Target', parentPath: target, createdAt: now, updatedAt: now }], groupAssignments: Object.fromEntries(groups.map((id) => [id, 'source'])) as Record<StorageGroupId, string> }
     await bootstrap.write({ schemaVersion: 1, ...snapshot, previous: snapshot, pendingMigration: { id: 'move', kind: 'group', sourceVolumeId: 'source', targetVolumeId: 'target', groups: ['work'], sourceGeneration: 1, targetGeneration: 2, phase: 'copying', filesCompleted: 0, filesTotal: 1, bytesCompleted: 0, bytesTotal: 1 } })
-    const { createBackendStorageComposition } = await import('./runtime'); const composition = await createBackendStorageComposition(bootstrap, { deferAgentRecovery: true })
+    const { createBackendStorageComposition } = await import('./runtime'); const composition = await createBackendStorageComposition(bootstrap)
     const metrics = await composition.hub.capacityMetrics()
     expect(metrics.volumes).toEqual(expect.arrayContaining([expect.objectContaining({ volumeId: 'source', scanStatus: 'degraded', verifiedDedupSavedBytes: null }), expect.objectContaining({ volumeId: 'target', scanStatus: 'degraded', verifiedDedupSavedBytes: null })]))
     expect(metrics.volumes.every((item) => item.blockers.some((blocker) => blocker.detail.includes('migration')))).toBe(true)
@@ -89,7 +88,7 @@ describe('backend lifecycle', () => {
     await bootstrap.write({ schemaVersion: 1, generation: 1, volumes: [{ id: 'default', name: 'Default', parentPath: parent, createdAt: now, updatedAt: now }], groupAssignments: Object.fromEntries(groups.map((id) => [id, 'default'])) as Record<StorageGroupId, string> })
     const stagingRoot = join(parent, 'manta-ai-data', 'cache', 'git-sync', 'default', '.ash', 'sync', 'import-staging')
     mkdirSync(join(stagingRoot, '..'), { recursive: true }); writeFileSync(stagingRoot, 'not a directory')
-    const { createBackendStorageComposition } = await import('./runtime'); const composition = await createBackendStorageComposition(bootstrap, { deferAgentRecovery: true })
+    const { createBackendStorageComposition } = await import('./runtime'); const composition = await createBackendStorageComposition(bootstrap)
     const metrics = await composition.hub.capacityMetrics(); const result = metrics.volumes.find((item) => item.volumeId === 'default')
     expect(result).toMatchObject({ scanStatus: 'degraded', physicalImmutableBytes: null, verifiedDedupSavedBytes: null })
     expect(result?.blockers).toContainEqual({ code: 'git-import-unreadable', path: stagingRoot, detail: 'Git import staging root is not an ordinary directory' })

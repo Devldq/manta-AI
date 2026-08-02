@@ -2,7 +2,7 @@
   "name": "@manta/desktop",
   "version": "2.0.0",
   "private": true,
-  "description": "Manta AI desktop application with Agent Storage Hub-managed local assets",
+  "description": "Manta AI desktop application with managed local storage and synchronization",
   "main": "dist/main.js",
   "scripts": {
     "prepare-qdrant": "node scripts/prepare-qdrant.cjs",

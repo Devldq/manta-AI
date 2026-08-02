@@ -20,19 +20,10 @@ declare module '@manta/backend' {
     healthCheck(): Promise<{ ok: boolean; status: string; warnings: unknown[]; error?: string }>
   }
 
-  interface AgentReadModel {
-    agents(): Promise<any>
-    assets(adapterId: string, installationId: string): Promise<any>
-    reuse(): Promise<any>
-    operation(operationId: string): Promise<any>
-  }
-
-  export function createBackendStorageComposition(store: BootstrapStore, options?: { deferAgentRecovery?: boolean; localCacheRoot?: string }): Promise<{
+  export function createBackendStorageComposition(store: BootstrapStore, options?: { localCacheRoot?: string }): Promise<{
     runtime: BackendStorageRuntime
     hub: { inventory(scope?: unknown): Promise<{ files: number; bytes: number; entries: unknown[] }>; capacityMetrics(): Promise<unknown> }
     git: { capability(): Promise<unknown>; listBindings(): Promise<unknown[]>; status(volumeId: string): Promise<string>; history(volumeId: string): Promise<string> }
-    agents: { readModel: AgentReadModel }
-    activateAgents(): Promise<{ readModel: AgentReadModel }>
   }>
   export function startServer(options: {
     storage: BackendStorageRuntime

@@ -41,7 +41,7 @@ describe('storage settings presentation', () => {
     )
 
     expect(html).toContain('Storage')
-    expect(html).toContain('ASH storage')
+    expect(html).toContain('Manta AI storage')
     expect(html).toContain('Healthy')
     expect(html).toContain('Create volume')
     expect(html).toContain('storage-button--primary')
@@ -128,9 +128,9 @@ describe('storage settings presentation', () => {
     expect(html).toContain('role="status"')
     expect(html).toContain('aria-live="polite"')
     expect(html).toContain('<span class="storage-sr-only">Loading storage status</span>')
-    expect(html.match(/aria-hidden="true" class="storage-skeleton__section /g)).toHaveLength(4)
-    expect(html.match(/class="storage-skeleton__section /g)).toHaveLength(4)
-    for (const section of ['volume', 'groups', 'agent', 'backups']) expect(html).toContain(`storage-skeleton__section--${section}`)
+    expect(html.match(/aria-hidden="true" class="storage-skeleton__section /g)).toHaveLength(3)
+    expect(html.match(/class="storage-skeleton__section /g)).toHaveLength(3)
+    for (const section of ['volume', 'groups', 'backups']) expect(html).toContain(`storage-skeleton__section--${section}`)
   })
 
   it('assigns each same-title section its own labelled heading', () => {
@@ -160,14 +160,12 @@ describe('storage settings presentation', () => {
     const header = source.indexOf('<StoragePageHeader')
     const volumes = source.indexOf('title="Volumes"')
     const groups = source.indexOf('title="Storage groups"')
-    const agents = source.indexOf('<AgentConnectionsSection')
     const backups = source.indexOf('title="Automatic backups"')
     expect(header).toBeGreaterThan(-1)
     expect(volumes).toBeGreaterThan(-1)
     expect(header).toBeLessThan(volumes)
     expect(volumes).toBeLessThan(groups)
-    expect(groups).toBeLessThan(agents)
-    expect(agents).toBeLessThan(backups)
+    expect(groups).toBeLessThan(backups)
     expect(source).toContain('Verified inactive backups appear here after a migration.')
     expect(source).toContain('storage-empty storage-empty--compact')
     expect(source).toContain('backup.path &&')
@@ -387,17 +385,13 @@ describe('storage settings presentation', () => {
     expect(css).toMatch(/@media \(max-width: 680px\)[\s\S]*\.storage-dialog\s*\{[\s\S]*max-height:\s*calc\(100dvh - 24px\)/)
   })
 
-  it('uses section-shaped loading placeholders and avoids nesting the Agent preview card', () => {
+  it('uses section-shaped loading placeholders for the remaining storage sections', () => {
     const css = readFileSync(new URL('./storage.css', import.meta.url), 'utf8')
-    const preview = css.match(/\.storage-agent__preview\s*\{([^}]*)\}/)?.[1] ?? ''
 
-    for (const section of ['volume', 'groups', 'agent', 'backups']) {
+    for (const section of ['volume', 'groups', 'backups']) {
       expect(css).toMatch(new RegExp(`\\.storage-skeleton__section--${section}\\s*\\{[^}]*min-height:`))
     }
-    expect(preview).toContain('border-top: 1px solid var(--color-border-subtle)')
-    expect(preview).not.toMatch(/border:\s*1px/)
-    expect(preview).not.toContain('border-radius')
-    expect(preview).not.toContain('background:')
+    expect(css).not.toContain('storage-skeleton__section--agent')
   })
 
   it('keeps the two mobile volume actions on one compact row', () => {
@@ -419,10 +413,10 @@ describe('storage settings presentation', () => {
 
     expect(css).toMatch(/\.storage-control:hover:not\(:disabled\)/)
     expect(css).toMatch(/\.storage-control:active:not\(:disabled\)/)
-    expect(css).toMatch(/\.storage-git > summary:hover[\s\S]*\.storage-agent__details > summary:hover/)
+    expect(css).toMatch(/\.storage-git > summary:hover/)
     expect(css).toMatch(/\.storage-button--danger:active:not\(:disabled\)/)
     expect(css).toMatch(/\.storage-checkbox:has\(input:disabled\)/)
-    expect(mobile).toMatch(/\.storage-checkbox,[\s\S]*\.storage-agent__checkbox\s*\{[\s\S]*min-height:\s*44px/)
+    expect(mobile).toMatch(/\.storage-checkbox\s*\{[\s\S]*min-height:\s*44px/)
   })
 
   it('renders action-specific destructive confirmation and an in-dialog error', () => {

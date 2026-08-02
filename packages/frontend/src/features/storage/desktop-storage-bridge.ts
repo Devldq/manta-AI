@@ -1,8 +1,8 @@
-import type { AgentStorageProgress, StorageIpcRequest, StorageIpcResponse, StorageOperationProgress } from '@manta/shared'
+import type { StorageIpcRequest, StorageIpcResponse, StorageOperationProgress } from '@manta/shared'
 
 export type StorageIpcSuccess = Extract<StorageIpcResponse, { ok: true }>
 
-export interface DesktopStorageBridge { invoke(request: StorageIpcRequest): Promise<StorageIpcResponse>; subscribeProgress(callback: (value: StorageOperationProgress) => void): () => void; subscribeAgentProgress?(callback: (value: AgentStorageProgress) => void): () => void }
+export interface DesktopStorageBridge { invoke(request: StorageIpcRequest): Promise<StorageIpcResponse>; subscribeProgress(callback: (value: StorageOperationProgress) => void): () => void }
 export function desktopStorageBridge(): DesktopStorageBridge | undefined { return window.mantaDesktop?.storage }
 
 export async function invokeStorage(request: StorageIpcRequest): Promise<StorageIpcSuccess> {

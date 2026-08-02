@@ -20,11 +20,10 @@ From Storage settings you can:
 - move a group between volumes;
 - relocate a complete volume;
 - bind at most one Git repository to a volume and run or schedule synchronization;
-- inspect Codex assets, preview import or projection changes, approve them, and roll them back.
 
 Migration validates the copy before switching paths. A successful relocation marks and retains the source as an inactive backup and restarts Manta immediately. ASH excludes that backup from active routing and protects it from ASH's active-volume deletion flow; it does not currently change operating-system permissions to make the whole tree read-only. If the new location fails health checks after restart, Manta restores the previous bootstrap mapping. Never delete a path merely because it resembles a backup: confirm that Storage settings identifies the active volume and that the migration is complete first.
 
-Git snapshots exclude secrets by default, and always exclude diagnostics, cache, and transient control data. A configured volume can opt in to syncing its secrets group only through the native high-risk confirmation in Storage settings. Git history is hard to erase, and a private repository is not absolute safety. Turning the option off removes secrets from the next Git snapshot and index without deleting active ASH secrets, but it cannot erase earlier Git history. Codex MCP credentials otherwise remain secret references rather than portable literal values.
+Git snapshots exclude secrets by default, and always exclude diagnostics, cache, and transient control data. A configured volume can opt in to syncing its secrets group only through the native high-risk confirmation in Storage settings. Git history is hard to erase, and a private repository is not absolute safety. Turning the option off removes secrets from the next Git snapshot and index without deleting active ASH secrets, but it cannot erase earlier Git history.
 
 ## Before moving or synchronizing data
 
@@ -34,4 +33,4 @@ Git snapshots exclude secrets by default, and always exclude diagnostics, cache,
 - Resolve reported conflict copies before the next import.
 - Keep the retained source backup until the new volume has been used successfully.
 
-See [ASH troubleshooting](../troubleshooting/agent-storage-hub.md) when onboarding, migration, Git, cloud health, or Agent projection does not complete.
+See [ASH troubleshooting](../troubleshooting/agent-storage-hub.md) when onboarding, migration, Git, or cloud health does not complete.

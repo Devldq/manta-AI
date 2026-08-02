@@ -1,4 +1,4 @@
-/* Workspace state persists under ASH work/workspaces. */
+/* Workspace state persists under Manta storage work/workspaces. */
 
 import * as fs from 'fs'
 import * as path from 'path'

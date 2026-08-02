@@ -1,4 +1,4 @@
-import { StorageIpcRequestSchema, StorageIpcResponseSchema, type AgentOperationSummary, type AgentPlanPreview, type StorageGitImportPlan, type StorageGroupId, type StorageIpcRequest, type StorageIpcResponse } from '@manta/shared'
+import { StorageIpcRequestSchema, StorageIpcResponseSchema, type StorageGitImportPlan, type StorageGroupId, type StorageIpcRequest, type StorageIpcResponse } from '@manta/shared'
 import { randomUUID } from 'node:crypto'
 import { createStorageRendererBridge } from './storageRendererBridge'
 
@@ -19,10 +19,6 @@ export interface StorageIpcServices {
   syncVolume?(volumeId: string): Promise<unknown>
   planGitImport?(volumeId: string): Promise<StorageGitImportPlan>
   applyGitImport?(volumeId: string, input: Pick<Extract<StorageIpcRequest, { channel: 'storage:apply-git-import' }>, 'sessionId' | 'decisions'>): Promise<void>
-  agentPlanImport?(adapterId: string, installationId: string, assetIds: readonly string[], senderId: string): Promise<AgentPlanPreview>
-  agentPlanProjection?(adapterId: string, installationId: string, assetIds: readonly string[], senderId: string): Promise<AgentPlanPreview>
-  agentApply?(planSessionId: string, senderId: string): Promise<{ operationId: string; result: AgentOperationSummary }>
-  agentRollback?(operationId: string): Promise<AgentOperationSummary>
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
@@ -79,10 +75,6 @@ export function registerStorageIpc(options: { ipcMain: IpcMainLike; trustedOrigi
         case 'storage:sync-volume': assertId(request.volumeId, 'volumeId'); if (!options.services.syncVolume) throw new Error('Sync is unavailable'); await options.services.syncVolume(request.volumeId); response = { ok: true, kind: 'completed' }; break
         case 'storage:plan-git-import': assertId(request.volumeId, 'volumeId'); if (!options.services.planGitImport) throw Object.assign(new Error('Git import is unavailable'), { code: 'GIT_IMPORT_UNAVAILABLE' }); response = { ok: true, kind: 'git-import-plan', plan: await options.services.planGitImport(request.volumeId) }; break
         case 'storage:apply-git-import': assertId(request.volumeId, 'volumeId'); assertId(request.sessionId, 'sessionId'); if (!options.services.applyGitImport) throw Object.assign(new Error('Git import is unavailable'), { code: 'GIT_IMPORT_UNAVAILABLE' }); await options.services.applyGitImport(request.volumeId, { sessionId: request.sessionId, decisions: request.decisions }); response = { ok: true, kind: 'completed' }; break
-        case 'storage:agent-plan-import': if (!options.services.agentPlanImport) throw Object.assign(new Error('Agent integration is unavailable'), { code: 'AGENT_INTEGRATION_UNAVAILABLE' }); response = { ok: true, kind: 'agent-plan', plan: await options.services.agentPlanImport(request.adapterId, request.installationId, request.assetIds, senderId) }; break
-        case 'storage:agent-plan-projection': if (!options.services.agentPlanProjection) throw Object.assign(new Error('Agent integration is unavailable'), { code: 'AGENT_INTEGRATION_UNAVAILABLE' }); response = { ok: true, kind: 'agent-plan', plan: await options.services.agentPlanProjection(request.adapterId, request.installationId, request.assetIds, senderId) }; break
-        case 'storage:agent-apply': if (!options.services.agentApply) throw Object.assign(new Error('Agent integration is unavailable'), { code: 'AGENT_INTEGRATION_UNAVAILABLE' }); { const applied = await options.services.agentApply(request.planSessionId, senderId); response = { ok: true, kind: 'agent-applied', ...applied }; break }
-        case 'storage:agent-rollback': if (!options.services.agentRollback) throw Object.assign(new Error('Agent integration is unavailable'), { code: 'AGENT_INTEGRATION_UNAVAILABLE' }); response = { ok: true, kind: 'agent-rolled-back', result: await options.services.agentRollback(request.operationId) }; break
       }
       return StorageIpcResponseSchema.parse(response)
     } catch (error) {

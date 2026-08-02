@@ -7,7 +7,7 @@
  * - 诊断"模型看不到什么信息"的问题
  *
  * 存储格式：NDJSON（每行一条 JSON），写入会话专属文件
- * Path: ASH work/conversations/<id>/context-snapshots.ndjson
+ * Path: Manta storage work/conversations/<id>/context-snapshots.ndjson
  *
  * 注意：此文件可能较大（完整消息内容），每次新 loop 启动时截断重写
  */

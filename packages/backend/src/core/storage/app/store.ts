@@ -1,4 +1,4 @@
-/* App state persists under ASH work/apps. */
+/* App state persists under Manta storage work/apps. */
 
 import * as fs from 'fs'
 import * as path from 'path'

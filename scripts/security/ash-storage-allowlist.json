@@ -1082,30 +1082,6 @@
       "reason": "Reviewed Phase 3 verification orchestrator which launches fixed repository tests, typechecks, and the storage audit; it does not select application persistence paths."
     },
     {
-      "file": "scripts/verify/ash-phase4.ts", "line": 40, "column": 18, "operation": "spawnSync",
-      "reason": "Reviewed Phase 4 verification orchestrator which launches only fixed repository acceptance commands and does not execute an Agent harness or select application persistence paths."
-    },
-    {
-      "file": "packages/backend/src/storage/agent-storage.ts", "line": 77, "column": 15, "operation": "mkdir",
-      "reason": "Reviewed creation of the documented external Codex user skill directory only after validating the direct user-home parent identity; this is an Agent-native integration root, not application persistence."
-    },
-    {
-      "file": "packages/backend/src/storage/agent-storage.ts", "line": 68, "column": 15, "operation": "mkdir",
-      "reason": "Reviewed ordinary-directory creation below injected routed extensions or secrets group roots after snapshotting and revalidating every ancestor identity."
-    },
-    {
-      "file": "packages/backend/src/storage/agent-storage.ts", "line": 85, "column": 24, "operation": "open",
-      "reason": "Reviewed no-follow ordinary-file read below injected routed extensions or secrets group roots after snapshotting and revalidating every ancestor identity."
-    },
-    {
-      "file": "packages/backend/src/storage/agent-storage.ts", "line": 98, "column": 24, "operation": "open",
-      "reason": "Reviewed no-follow parent-directory handle used to durably create ordinary files below injected routed extensions or secrets group roots."
-    },
-    {
-      "file": "packages/backend/src/storage/agent-storage.ts", "line": 101, "column": 26, "operation": "open",
-      "reason": "Reviewed exclusive durable ordinary-file creation and parent fsync below injected routed extensions or secrets group roots using validated fixed namespaces and opaque IDs."
-    },
-    {
       "file": "packages/desktop/scripts/run-dev.cjs", "line": 94, "column": 27, "operation": "mkdtemp",
       "reason": "Reviewed development-only native ABI snapshot directory under the operating-system temporary directory."
     },
@@ -1190,82 +1166,6 @@
     {
       "file": "packages/storage-hub/src/content-store/materialize.ts", "line": 32, "column": 21, "operation": "rm",
       "reason": "Reviewed cleanup of owned materialization staging files."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 23, "column": 11, "operation": "mkdir",
-      "reason": "Reviewed creation of the privileged caller-authorized adapter root; its configured parent prefix is trusted, while the created root is immediately lstat-verified as an ordinary directory and durably synced."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 31, "column": 19, "operation": "mkdir",
-      "reason": "Reviewed one-level durable directory creation after every existing ancestor was checked as an ordinary directory below an injected ASH or approved external Agent root."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 38, "column": 166, "operation": "open",
-      "reason": "Reviewed exclusive staging-file creation beside an approved adapter journal or native restore target after linked-ancestor validation."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 39, "column": 141, "operation": "rm",
-      "reason": "Reviewed failure cleanup restricted to the random exclusively-created adapter staging file."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 46, "column": 11, "operation": "rename",
-      "reason": "Reviewed atomic publication of a synced adapter journal staging file within its validated ASH state directory."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 47, "column": 27, "operation": "rm",
-      "reason": "Reviewed failed-publication cleanup restricted to the random adapter staging file."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 53, "column": 20, "operation": "open",
-      "reason": "Reviewed exclusive no-overwrite backup creation below the validated operation-specific ASH backup directory."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 55, "column": 62, "operation": "rm",
-      "reason": "Reviewed cleanup only when this call successfully created and still owns the exclusive adapter backup target."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 61, "column": 20, "operation": "open",
-      "reason": "Reviewed exclusive publication of a random nonce claim at an approved create target after its digest and fixed byte count were durably journaled."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 64, "column": 62, "operation": "rm",
-      "reason": "Reviewed failure cleanup restricted to a create claim while its exclusive creation handle remains owned by the coordinator."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 77, "column": 9, "operation": "rename",
-      "reason": "Reviewed same-directory atomic quarantine rename after the coordinator verified the approved create-claim file identity."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 81, "column": 9, "operation": "unlink",
-      "reason": "Reviewed removal of a quarantined create claim only after a no-follow handle revalidated its durable identity and required final evidence."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 90, "column": 37, "operation": "rename",
-      "reason": "Reviewed atomic rollback restore from a synced sibling staging file after repeated approved-native-path validation."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 90, "column": 145, "operation": "rm",
-      "reason": "Reviewed rollback staging cleanup restricted to the random exclusively-created sibling file."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/projection-coordinator.ts", "line": 520, "column": 90, "operation": "open",
-      "reason": "Reviewed no-follow ordinary-file reads restricted to validated adapter native, journal, or backup paths."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 68, "column": 9, "operation": "mkdir",
-      "reason": "Reviewed exclusive empty directory-claim creation after prepared ownership evidence was durably journaled for an approved external Agent target."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/durable-io.ts", "line": 72, "column": 9, "operation": "rmdir",
-      "reason": "Reviewed empty-only removal of an approved external Agent directory claim after its durable marker and file identity were revalidated."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/codex/native-io.ts", "line": 7, "column": 24, "operation": "open",
-      "reason": "Reviewed read-only no-follow access to a file inside the detected and approved Codex home or user-skills native root."
-    },
-    {
-      "file": "packages/storage-hub/src/adapters/codex/native-io.ts", "line": 14, "column": 24, "operation": "open",
-      "reason": "Reviewed no-follow writable handle access restricted to a coordinator-owned approved Codex projection claim with before-and-after identity verification."
     }
   ],
   "literals": [

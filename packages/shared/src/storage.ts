@@ -230,59 +230,7 @@ export const StorageGitImportPlanSchema = z.object({
   requiresConfirmation: z.boolean(),
 })
 
-const AgentOpaqueIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/)
-const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
-export const AgentPreviewOperationSchema = z.object({
-  id: AgentOpaqueIdSchema,
-  kind: z.enum(['read', 'create-directory', 'create', 'modify', 'delete']),
-  rootId: AgentOpaqueIdSchema,
-  nativePath: z.string().min(1).max(2048),
-  expectedBeforeSha256: Sha256Schema.optional(),
-  expectedAfterSha256: Sha256Schema.optional(),
-}).strict()
-export const AgentPlanPreviewSchema = z.object({
-  planSessionId: AgentOpaqueIdSchema,
-  kind: z.enum(['import', 'projection']),
-  expiresAt: TimestampSchema,
-  operations: z.array(AgentPreviewOperationSchema),
-}).strict()
-export const AgentOperationSummarySchema = z.object({
-  operationId: AgentOpaqueIdSchema,
-  adapterId: AgentOpaqueIdSchema,
-  installationId: AgentOpaqueIdSchema,
-  kind: z.enum(['import', 'projection']),
-  phase: z.enum(['committed', 'rolled-back']),
-  status: z.enum(['committed', 'rolled-back']),
-  verified: z.boolean(),
-  completedAt: TimestampSchema,
-  operationCount: z.number().int().nonnegative(),
-  materializationStrategies: z.object({ clone: z.number().int().nonnegative(), copy: z.number().int().nonnegative() }).strict().optional(),
-}).strict()
-export const AgentOperationReadSummarySchema = z.object({
-  operationId: AgentOpaqueIdSchema,
-  adapterId: AgentOpaqueIdSchema,
-  installationId: AgentOpaqueIdSchema,
-  kind: z.enum(['import', 'projection']),
-  phase: z.enum(['journaled', 'backing-up', 'backed-up', 'claiming', 'aborting-claims', 'applying', 'applied', 'committed', 'rolling-back', 'rolled-back']),
-  status: z.enum(['running', 'recovering', 'committed', 'rolled-back']),
-  verified: z.boolean(),
-  startedAt: TimestampSchema,
-  updatedAt: TimestampSchema,
-  operationCount: z.number().int().nonnegative(),
-  materializationStrategies: z.object({ clone: z.number().int().nonnegative(), copy: z.number().int().nonnegative() }).strict().optional(),
-}).strict()
-export const AgentStorageProgressSchema = z.object({
-  operationId: AgentOpaqueIdSchema,
-  phase: z.enum(['applying', 'completed', 'rolling-back', 'rolled-back', 'failed']),
-  status: z.enum(['running', 'completed', 'failed']),
-  operationsCompleted: z.number().int().nonnegative(),
-  operationsTotal: z.number().int().nonnegative(),
-}).strict().refine((value) => value.operationsCompleted <= value.operationsTotal, 'Completed operation count exceeds total')
-
-export type AgentPlanPreview = z.infer<typeof AgentPlanPreviewSchema>
-export type AgentOperationSummary = z.infer<typeof AgentOperationSummarySchema>
-export type AgentOperationReadSummary = z.infer<typeof AgentOperationReadSummarySchema>
-export type AgentStorageProgress = z.infer<typeof AgentStorageProgressSchema>
+const StorageGrantIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/)
 
 export const StorageIpcRequestSchema = z.union([
   z.object({ channel: z.literal('storage:select-parent'), purpose: z.enum(['createVolume', 'migrateVolume']) }),
@@ -296,17 +244,13 @@ export const StorageIpcRequestSchema = z.union([
   z.object({ channel: z.literal('storage:request-git-secrets-grant'), volumeId: z.string().min(1) }).strict(),
   z.union([
     z.object({ channel: z.literal('storage:set-git-secrets-policy'), volumeId: z.string().min(1), includeSecrets: z.literal(false) }).strict(),
-    z.object({ channel: z.literal('storage:set-git-secrets-policy'), volumeId: z.string().min(1), includeSecrets: z.literal(true), grant: AgentOpaqueIdSchema }).strict(),
+    z.object({ channel: z.literal('storage:set-git-secrets-policy'), volumeId: z.string().min(1), includeSecrets: z.literal(true), grant: StorageGrantIdSchema }).strict(),
   ]),
   z.object({ channel: z.literal('storage:sync-volume'), volumeId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:plan-git-import'), volumeId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:apply-git-import'), volumeId: z.string().min(1), sessionId: z.string().min(1), decisions: z.partialRecord(StorageGroupIdSchema, StorageImportChoiceSchema) }),
   z.object({ channel: z.literal('storage:delete-backup'), backupId: z.string().min(1) }),
   z.object({ channel: z.literal('storage:open-volume'), volumeId: z.string().min(1) }),
-  z.object({ channel: z.literal('storage:agent-plan-import'), adapterId: AgentOpaqueIdSchema, installationId: AgentOpaqueIdSchema, assetIds: z.array(AgentOpaqueIdSchema).min(1).max(256).refine((ids) => new Set(ids).size === ids.length, 'Native asset ids must be unique') }).strict(),
-  z.object({ channel: z.literal('storage:agent-plan-projection'), adapterId: AgentOpaqueIdSchema, installationId: AgentOpaqueIdSchema, assetIds: z.array(AgentOpaqueIdSchema).min(1).max(256).refine((ids) => new Set(ids).size === ids.length, 'Portable asset ids must be unique') }).strict(),
-  z.object({ channel: z.literal('storage:agent-apply'), planSessionId: AgentOpaqueIdSchema }).strict(),
-  z.object({ channel: z.literal('storage:agent-rollback'), operationId: AgentOpaqueIdSchema }).strict(),
 ])
 
 export const StorageIpcResponseSchema = z.union([
@@ -314,13 +258,10 @@ export const StorageIpcResponseSchema = z.union([
   z.object({ ok: z.literal(true), kind: z.literal('volume-created'), volumeId: z.string().min(1) }),
   z.object({ ok: z.literal(true), kind: z.literal('operation-started'), operationId: z.string().min(1) }),
   z.object({ ok: z.literal(true), kind: z.literal('git-configured'), binding: StorageGitBindingSchema }),
-  z.object({ ok: z.literal(true), kind: z.literal('git-secrets-grant'), grant: AgentOpaqueIdSchema, expiresAt: z.number().int().nonnegative() }).strict(),
+  z.object({ ok: z.literal(true), kind: z.literal('git-secrets-grant'), grant: StorageGrantIdSchema, expiresAt: z.number().int().nonnegative() }).strict(),
   z.object({ ok: z.literal(true), kind: z.literal('git-secrets-policy'), binding: StorageGitBindingSchema }).strict(),
   z.object({ ok: z.literal(true), kind: z.literal('completed') }),
   z.object({ ok: z.literal(true), kind: z.literal('git-import-plan'), plan: StorageGitImportPlanSchema }),
-  z.object({ ok: z.literal(true), kind: z.literal('agent-plan'), plan: AgentPlanPreviewSchema }).strict(),
-  z.object({ ok: z.literal(true), kind: z.literal('agent-applied'), operationId: AgentOpaqueIdSchema, result: AgentOperationSummarySchema }).strict(),
-  z.object({ ok: z.literal(true), kind: z.literal('agent-rolled-back'), result: AgentOperationSummarySchema }).strict(),
   z.object({ ok: z.literal(false), error: z.object({ code: z.string().min(1), message: z.string().min(1), details: z.record(z.string(), z.unknown()).optional() }) }),
 ])
 

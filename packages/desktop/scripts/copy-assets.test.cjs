@@ -46,7 +46,7 @@ test('onboarding source contains readable Simplified Chinese controls', () => {
     assert.match(html, new RegExp(label))
   }
   const source = readFileSync(join(__dirname, '..', 'src', 'onboarding', 'progress-model.ts'), 'utf8')
-  for (const label of ['创建 7 个数据分组', '提交 Bootstrap 配置', '初始化 ASH 与 Codex 服务', '启动 Backend 并完成健康检查']) {
+  for (const label of ['创建 7 个数据分组', '提交 Bootstrap 配置', '初始化 Manta AI 服务', '启动 Backend 并完成健康检查']) {
     assert.match(source, new RegExp(label))
   }
 })
